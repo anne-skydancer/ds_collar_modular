@@ -1,133 +1,156 @@
 /* =============================================================
-   PLUGIN TEMPLATE: DS Collar Plugin (2025-07-31)
-   Protocol-safe, Back-to-root ready, serial auto-assigned
+   PLUGIN: ds_collar_plugin_TEMPLATE.lsl (DS Collar Canonical)
+   PURPOSE: Template for DS Collar plugins (Core 1.4+)
+   AUTHOR:  [Your Name or Project]
+   DATE:    2025-08-01
    ============================================================= */
 
 integer DEBUG = TRUE;
 
-// Protocol constants
-string REGISTER_MSG      = "register";
-string SETTINGS_SYNC_MSG = "settings_sync";
-string SHOW_DIALOG_MSG   = "show_dialog";
-string GET_SETTINGS_MSG  = "get_settings";
-string SHOW_MENU_MSG     = "show_menu";
-string ROOT_CONTEXT      = "core_root";
-string BACK_BTN_LABEL    = "Back";
-string FILLER_BTN_LABEL  = "~";
+// ---- CANONICAL PROTOCOL CONSTANTS (USE ACROSS ALL SCRIPTS) ----
+string REGISTER_MSG_START      = "register";
+string REGISTER_NOW_MSG_START  = "register_now";
+string DEREGISTER_MSG_START    = "deregister";
+string SOFT_RESET_MSG_START    = "core_soft_reset";
+string SETTINGS_SYNC_MSG_START = "settings_sync";
+string SHOW_MENU_MSG_START     = "show_menu";
 
-// Plugin identity (serial auto-assigned)
-integer PLUGIN_SN        = 0; // assigned at state_entry
-string  PLUGIN_LABEL     = "MyPlugin";
-integer PLUGIN_MIN_ACL   = 4;
-string  PLUGIN_CONTEXT   = "myplugin_context";
+// ---- PLUGIN PARAMETERS (CUSTOMIZE PER PLUGIN) ----
+string  PLUGIN_CONTEXT      = "core_template";  // Must match in core and UI
+string  ROOT_CONTEXT        = "core_root";      // Where "Back" always returns
+string  PLUGIN_LABEL        = "Template";
+integer PLUGIN_MIN_ACL      = 4;
+integer PLUGIN_SN           = 0;
 
-// Channels
+// ---- CHANNELS ----
 integer PLUGIN_REG_QUERY_NUM = 500;
 integer PLUGIN_REG_REPLY_NUM = 501;
-integer PLUGIN_UNREG_NUM     = 502;
-integer UI_SHOW_MENU_NUM     = 601;
-integer UI_DIALOG_NUM        = 602;
 integer SETTINGS_QUERY_NUM   = 800;
 integer SETTINGS_SYNC_NUM    = 870;
+integer UI_SHOW_MENU_NUM     = 601;
 
-// Persistent state (example)
-key     owner_key        = NULL_KEY;
-string  owner_hon        = "";
+// ---- UI CONSTANTS ----
+string  BACK_BTN_LABEL   = "Back";
+string  FILLER_BTN_LABEL = "~";
+integer DIALOG_TIMEOUT   = 180;
 
-// Settings keys (example)
-string KEY_OWNER_KEY     = "owner_key";
-string KEY_OWNER_HON     = "owner_hon";
+// ---- SESSION STATE ----
+key     last_user        = NULL_KEY;
+integer last_chan        = 0;
+integer g_listen_handle  = 0;
 
-// Helpers
+// ---- SETTINGS STATE (Example) ----
+// Add plugin settings here as needed
+
+// ---- SETTINGS HANDLER ----
 update_from_settings(list parts) {
-    integer len = llGetListLength(parts);
-    integer i;
-    owner_key = NULL_KEY;
-    owner_hon = "";
-    for (i = 1; i < len; ++i) {
-        string kv = llList2String(parts, i);
-        integer sep_idx = llSubStringIndex(kv, "=");
-        if (sep_idx != -1) {
-            string k = llGetSubString(kv, 0, sep_idx - 1);
-            string v = llGetSubString(kv, sep_idx + 1, -1);
-            if (k == KEY_OWNER_KEY) owner_key = (key)v;
-            else if (k == KEY_OWNER_HON) owner_hon = v;
-        }
-    }
+    // Parse and update plugin-specific settings here if needed
+    // See compliance notes for standard format.
 }
 
-// Dialog builder (example: just shows owner info)
-string build_status() {
-    string s = "Owner: ";
-    if (owner_key != NULL_KEY)
-        s += owner_hon;
-    else
-        s += "(unowned)";
-    s += "\n";
-    return s;
+// ---- CANONICAL REGISTRATION ----
+register_plugin() {
+    string msg = REGISTER_MSG_START + "|" +
+                 (string)PLUGIN_SN + "|" +
+                 PLUGIN_LABEL + "|" +
+                 (string)PLUGIN_MIN_ACL + "|" +
+                 PLUGIN_CONTEXT + "|" +
+                 llGetScriptName();
+    llMessageLinked(LINK_SET, PLUGIN_REG_REPLY_NUM, msg, NULL_KEY);
+    if (DEBUG) llOwnerSay("[TEMPLATE] Registered: " + msg);
 }
 
-// Show plugin's main dialog
+// ---- UI MENU LOGIC ----
 show_plugin_menu(key avatar) {
-    // Filler, Back, Filler (main menu on Back)
-    list buttons = [FILLER_BTN_LABEL, BACK_BTN_LABEL, FILLER_BTN_LABEL];
-    string msg = SHOW_DIALOG_MSG + "|" + (string)avatar + "|" +
-                 llEscapeURL(build_status()) + "|" +
-                 llDumpList2String(buttons, ",") + "|" +
-                 PLUGIN_CONTEXT;
-    llMessageLinked(LINK_SET, UI_DIALOG_NUM, msg, NULL_KEY);
-    if (DEBUG) llOwnerSay("[PLUGIN] Showed dialog to " + (string)avatar);
+    list buttons = [ FILLER_BTN_LABEL, BACK_BTN_LABEL, FILLER_BTN_LABEL ];
+    integer menu_chan = -(integer)llFrand(1000000.0) - 100000;
+    if (g_listen_handle != 0) llListenRemove(g_listen_handle);
+    g_listen_handle = llListen(menu_chan, "", avatar, "");
+    last_user = avatar;
+    last_chan = menu_chan;
+    llDialog(avatar, "This is a template plugin menu.\n(Back returns to main menu.)", buttons, menu_chan);
+    llSetTimerEvent((float)DIALOG_TIMEOUT);
+    if (DEBUG) llOwnerSay("[TEMPLATE] Menu to " + (string)avatar + " (chan=" + (string)menu_chan + ")");
 }
 
-// MAIN EVENT HANDLERS
+// ---- RETURN TO MAIN MENU ----
+return_to_main_menu(key avatar) {
+    string menu_req = SHOW_MENU_MSG_START + "|" + ROOT_CONTEXT + "|" + (string)avatar + "|0";
+    llMessageLinked(LINK_SET, UI_SHOW_MENU_NUM, menu_req, NULL_KEY);
+    if (DEBUG) llOwnerSay("[TEMPLATE] Sent Back to main menu for " + (string)avatar);
+}
+
+// ---- CLEANUP ----
+cleanup_session() {
+    if (g_listen_handle != 0) llListenRemove(g_listen_handle);
+    g_listen_handle = 0;
+    last_user = NULL_KEY;
+    last_chan = 0;
+    llSetTimerEvent(0.0);
+}
+
+// ---- MAIN EVENT LOOP ----
 default
 {
     state_entry()
     {
-        // Assign a random serial for portable uniqueness
         PLUGIN_SN = (integer)(llFrand(1.0e5));
-        if (DEBUG) llOwnerSay("[PLUGIN] state_entry, registering plugin: SN=" + (string)PLUGIN_SN);
-        string reg = REGISTER_MSG + "|" + (string)PLUGIN_SN + "|" +
-                     PLUGIN_LABEL + "|" + (string)PLUGIN_MIN_ACL + "|" + PLUGIN_CONTEXT;
-        llMessageLinked(LINK_SET, PLUGIN_REG_REPLY_NUM, reg, NULL_KEY);
-        llMessageLinked(LINK_SET, SETTINGS_QUERY_NUM, GET_SETTINGS_MSG, NULL_KEY);
+        if (DEBUG) llOwnerSay("[TEMPLATE] state_entry, registering plugin.");
+        register_plugin();
+        llMessageLinked(LINK_SET, SETTINGS_QUERY_NUM, "get_settings", NULL_KEY);
     }
 
     link_message(integer sender, integer num, string str, key id)
     {
-        // Handle settings sync
+        // Settings sync (optional for settings-aware plugins)
         if (num == SETTINGS_SYNC_NUM) {
             list parts = llParseStringKeepNulls(str, ["|"], []);
-            if (llList2String(parts, 0) == SETTINGS_SYNC_MSG) {
+            if (llList2String(parts, 0) == SETTINGS_SYNC_MSG_START) {
                 update_from_settings(parts);
-                if (DEBUG) llOwnerSay("[PLUGIN] Updated settings from sync.");
+                if (DEBUG) llOwnerSay("[TEMPLATE] Updated settings from sync.");
             }
             return;
         }
-
-        // Respond to UI show_menu call
+        // Menu request from UI
         if (num == UI_SHOW_MENU_NUM) {
             list parts = llParseStringKeepNulls(str, ["|"], []);
             if (llGetListLength(parts) >= 3) {
                 string ctx = llList2String(parts, 1);
                 key avatar = (key)llList2String(parts, 2);
-                // If user pressed *this* plugin's button, show plugin menu
                 if (ctx == PLUGIN_CONTEXT) {
                     show_plugin_menu(avatar);
                     return;
                 }
-                // If user pressed Back in a plugin, and context is root, go back to main menu
-                if (ctx == ROOT_CONTEXT) {
-                    // No-op here, UI will handle redrawing main menu
-                    // Optionally, log this event for debugging
-                    if (DEBUG) llOwnerSay("[PLUGIN] Back to main menu requested by " + (string)avatar);
-                    return;
-                }
+            }
+        }
+        // Registration protocol (re-registration handshake)
+        if ((num == PLUGIN_REG_QUERY_NUM) && llSubStringIndex(str, REGISTER_NOW_MSG_START + "|") == 0)
+        {
+            string script_req = llGetSubString(str, llStringLength(REGISTER_NOW_MSG_START) + 1, -1);
+            if (script_req == llGetScriptName()) {
+                register_plugin();
             }
         }
     }
 
     listen(integer channel, string name, key id, string msg) {
-        // Not used in simple plugins
+        // Only react to current dialog channel and user
+        if (channel == last_chan && id == last_user) {
+            if (msg == BACK_BTN_LABEL) {
+                return_to_main_menu(id);
+            }
+            cleanup_session();
+        }
+    }
+
+    timer() {
+        cleanup_session();
+    }
+
+    changed(integer change) {
+        if (change & CHANGED_OWNER) {
+            llOwnerSay("[TEMPLATE] Owner changed. Resetting plugin.");
+            llResetScript();
+        }
     }
 }
