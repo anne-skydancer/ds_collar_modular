@@ -1,360 +1,284 @@
 /* =============================================================
-   TITLE: ds_collar_core.lsl (NO UI/SESSION)
-   PURPOSE: Orchestrator & registry for DS Collar (no UI code)
-            Delegates all user interaction, session, dialog,
-            and touch handling to ds_collar_ui module.
-            Fully parametric dynamic settings cache, no legacy vars.
-   DATE:    2025-07-31 (UI-extracted, modular architecture, dynamic settings)
+   MODULE: ds_collar_ui.lsl (Canonical, Multi-User, Session-Aware)
+   PURPOSE: Robust UI handler for DS Collar Core 1.4+
+   DATE:    2025-08-01 (Cookbook, dedup/blank menu patch)
    ============================================================= */
 
 integer DEBUG = TRUE;
 
-//── Canonical Protocol Message Roots ───────────────────────────
-string REGISTER_MSG_START      = "register";
-string REGISTER_NOW_MSG_START  = "register_now";
-string DEREGISTER_MSG_START    = "deregister";
-string SOFT_RESET_MSG_START    = "core_soft_reset";
-string SETTINGS_SYNC_MSG_START = "settings_sync";
+// --- Protocol/Channel constants ---
+string PLUGIN_LIST_MSG = "plugin_list";
+string SHOW_MENU_MSG   = "show_menu";
+string ROOT_LABEL      = "Main";
+string ROOT_CONTEXT    = "core_root";
 
-//── Plugin registry state ──────────────────────────────────────
-list    g_plugins        = [];  // [sn,label,min_acl,ctx, ...]
-list    g_plugin_queue   = [];
-integer g_registering     = FALSE;
-integer g_plugins_changed = FALSE;
-integer g_first_boot      = TRUE;
-list    g_pending_plugins = [];
-integer g_loading_timer   = 0;
-list g_deregister_queue   = [];
-integer g_deregistering   = FALSE;
-list g_reg_queue          = [];
-list g_dereg_queue        = [];
+// Channels
+integer UI_ACL_QUERY_NUM  = 700;
+integer UI_ACL_RESULT_NUM = 710;
+integer PLUGIN_LIST_NUM   = 600;
+integer UI_SHOW_MENU_NUM  = 601;
+integer UI_DIALOG_NUM     = 602;
 
+// --- Menu/Session constants ---
+integer DIALOG_TIMEOUT = 180;
+integer PAGE_SIZE = 6; // plugin entries per page
 
+// --- State ---
+list g_plugin_data     = []; // [sn, label, min_acl, context, ...]
+list g_plugin_labels   = [];
+list g_plugin_contexts = [];
 
-//── Dynamic Settings Cache ─────────────────────────────────────
-list g_setting_keys = [];
-list g_setting_vals = [];
+// --- Multi-user session table ---
+// Each entry: [avatar, page, menu_chan, listen_handle, timestamp]
+list g_sessions;
 
-//── Link-message channels ──────────────────────────────────────
-integer PLUGIN_REG_QUERY_NUM   = 500;
-integer PLUGIN_REG_REPLY_NUM   = 501;
-integer PLUGIN_DEREG_NUM       = 502;
-integer PLUGIN_SOFT_RESET_NUM  = 503;
-integer PLUGIN_ACTION_NUM      = 510;
-integer AUTH_QUERY_NUM         = 700;
-integer AUTH_RESULT_NUM        = 710;
-integer SETTINGS_QUERY_NUM     = 800;
-integer SETTINGS_SYNC_NUM      = 870;
-
-//── Helpers for dynamic plugin adding/removing ─────────────────────────
-
-register_plugins_begin() {
-    g_reg_queue = [];
-    integer n = llGetInventoryNumber(INVENTORY_SCRIPT);
+// --- Helpers ---
+rebuild_plugin_menus() {
+    g_plugin_labels = [ ROOT_LABEL ];
+    g_plugin_contexts = [ ROOT_CONTEXT ];
+    integer n = llGetListLength(g_plugin_data) / 4;
     integer i;
     for (i = 0; i < n; ++i) {
-        string script_name = llGetInventoryName(INVENTORY_SCRIPT, i);
-        if (script_name != llGetScriptName()) {
-            if (llSubStringIndex(script_name, "ds_collar_plugin_") == 0) {
-                g_reg_queue += [script_name];
-            }
+        string label   = llList2String(g_plugin_data, i*4 + 1);
+        string context = llList2String(g_plugin_data, i*4 + 3);
+        // Deduplicate: only add if label/context not already present
+        if (llListFindList(g_plugin_labels, [label]) == -1) {
+            g_plugin_labels   += [label];
+            g_plugin_contexts += [context];
         }
     }
-    g_registering = TRUE;
-    llSetTimerEvent(0.02);
+    if (DEBUG) llOwnerSay("[UI] Rebuilt plugin menus: " +
+        llDumpList2String(g_plugin_labels, ",") + " (contexts: " +
+        llDumpList2String(g_plugin_contexts, ",") + ")");
 }
 
-deregister_plugins_begin() {
-    g_dereg_queue = [];
-    integer n = llGetListLength(g_plugins) / 4;
+list get_page_buttons(integer page) {
+    list result = [];
+    integer total_plugins = llGetListLength(g_plugin_labels) - 1;
+    integer total_pages = (total_plugins + PAGE_SIZE - 1) / PAGE_SIZE;
+    if (total_plugins < 1) total_pages = 1;
+
+    if (page > 0) result += ["<<"]; else result += ["~"];
+    result += ["~"];
+    if ((page + 1) < total_pages) result += [">>"]; else result += ["~"];
+
+    integer start = page * PAGE_SIZE + 1;
     integer i;
-    for (i = 0; i < n; ++i) {
-        // Here, we only know SN, label, acl, context -- script name is not tracked!
-        // If you want to deregister by SN, you must define the message format plugins expect for deregistration.
-        integer sn = llList2Integer(g_plugins, i*4 + 0);
-        g_dereg_queue += [sn];
+    for (i = 0; i < PAGE_SIZE; ++i) {
+        integer plugin_idx = start + i;
+        if (plugin_idx <= total_plugins)
+            result += [llList2String(g_plugin_labels, plugin_idx)];
     }
-    g_deregistering = TRUE;
-    llSetTimerEvent(0.02);
+    return result;
 }
 
-remove_plugin(integer sn) {
-    integer i;
-    for(i=0; i<llGetListLength(g_plugins); i+=4){
-        if(llList2Integer(g_plugins, i) == sn) {
-            g_plugins = llDeleteSubList(g_plugins, i, i+3);
-            // No break needed, continue in case of dups
-        }
+// --- Session Management ---
+integer session_idx(key av) {
+    integer n = llGetListLength(g_sessions);
+    integer i = 0;
+    while (i < n) {
+        if (llList2Key(g_sessions, i) == av)
+            return i;
+        i += 5;
     }
-    notify_ui_plugins();
+    return -1;
 }
 
-process_next_registration() {
-    if (llGetListLength(g_reg_queue) == 0) {
-        g_registering = FALSE;
-        llSetTimerEvent(0.0);
-        notify_ui_plugins(); // signal UI that registry is updated
-        if (DEBUG) llOwnerSay("[CORE] All plugins registered.");
+session_set(key av, integer page, integer chan, integer listen_handle) {
+    integer now = llGetUnixTime();
+    integer i = session_idx(av);
+    if (i != -1) {
+        integer old_listen = llList2Integer(g_sessions, i+3);
+        if (old_listen != 0) llListenRemove(old_listen);
+        g_sessions = llDeleteSubList(g_sessions, i, i+4);
+    }
+    g_sessions += [av, page, chan, listen_handle, now + DIALOG_TIMEOUT];
+}
+
+session_clear(key av) {
+    integer i = session_idx(av);
+    if (i != -1) {
+        integer old_listen = llList2Integer(g_sessions, i+3);
+        if (old_listen != 0) llListenRemove(old_listen);
+        g_sessions = llDeleteSubList(g_sessions, i, i+4);
+    }
+}
+
+list session_get(key av) {
+    integer i = session_idx(av);
+    if (i != -1) return llList2List(g_sessions, i, i+4);
+    return [];
+}
+
+// --- Main Menu Handler ---
+show_main_menu(key av, integer page) {
+    // Suppress menu if only root entry is present (no plugins)
+    if (llGetListLength(g_plugin_labels) <= 1) {
+        if (DEBUG) llOwnerSay("[UI] No plugins available, main menu NOT shown.");
         return;
     }
-    string script_name = llList2String(g_reg_queue, 0);
-    g_reg_queue = llDeleteSubList(g_reg_queue, 0, 0);
-    llMessageLinked(LINK_THIS, PLUGIN_REG_QUERY_NUM,
-        REGISTER_NOW_MSG_START + "|" + script_name, NULL_KEY);
-    if (DEBUG) llOwnerSay("[CORE] Registering: " + script_name);
-    llSetTimerEvent(0.02);
+    list btns = get_page_buttons(page);
+    integer menu_chan = -(integer)llFrand(1000000.0) - 100000;
+    integer lh = llListen(menu_chan, "", av, "");
+    session_set(av, page, menu_chan, lh);
+    llDialog(av, "Select function:", btns, menu_chan);
+    if (DEBUG) llOwnerSay("[UI] Main menu to " + (string)av + " page=" + (string)page + " chan=" + (string)menu_chan);
 }
 
-process_next_deregistration() {
-    if (llGetListLength(g_dereg_queue) == 0) {
-        g_deregistering = FALSE;
-        llSetTimerEvent(0.0);
-        if (DEBUG) llOwnerSay("[CORE] All plugins deregistered.");
-        // Now trigger registration phase
-        register_plugins_begin();
-        return;
-    }
-    integer sn = llList2Integer(g_dereg_queue, 0);
-    g_dereg_queue = llDeleteSubList(g_dereg_queue, 0, 0);
-    // Canonical message for deregistration
-    llMessageLinked(LINK_THIS, PLUGIN_DEREG_NUM, DEREGISTER_MSG_START + "|" + (string)sn, NULL_KEY);
-    if (DEBUG) llOwnerSay("[CORE] Deregistering plugin SN: " + (string)sn);
-    llSetTimerEvent(0.02);
+// --- Plugin Dialog Forwarder ---
+show_plugin_dialog(key av, string msg, list btns) {
+    integer menu_chan = -(integer)llFrand(1000000.0) - 100000;
+    integer lh = llListen(menu_chan, "", av, "");
+    session_set(av, 0, menu_chan, lh);
+    llDialog(av, msg, btns, menu_chan);
+    if (DEBUG) llOwnerSay("[UI] Plugin dialog to " + (string)av + " chan=" + (string)menu_chan);
 }
 
-notify_ui_plugins()
-{
-    // Send as: "plugin_list|sn|label|min_acl|context|sn|label|min_acl|context|..."
-    list msg = [ "plugin_list" ] + g_plugins;
-    llMessageLinked(LINK_SET, 600, llDumpList2String(msg, "|"), NULL_KEY);
-    if (DEBUG) llOwnerSay("[CORE][DEBUG] Sent plugin_list to UI: " + llDumpList2String(msg, "|"));
-}
-
-//── Helpers for dynamic settings cache ─────────────────────────
-
-integer idx_of_key(string key_str) {
-    return llListFindList(g_setting_keys, [key_str]);
-}
-
-string get_setting_val(string key_str) {
-    integer idx = idx_of_key(key_str);
-    if (idx == -1) return "";
-    return llList2String(g_setting_vals, idx);
-}
-
-integer get_setting_int(string key_str, integer default_val) {
-    string val = get_setting_val(key_str);
-    if (val == "") return default_val;
-    return (integer)val;
-}
-
-key get_setting_key(string key_str) {
-    string val = get_setting_val(key_str);
-    if (val == "") return NULL_KEY;
-    return (key)val;
-}
-
-list get_setting_list_csv(string key_str) {
-    string csv = get_setting_val(key_str);
-    if (csv == "") return [];
-    return llParseString2List(csv, [","], []);
-}
-
-//── Plugin registry logic ──────────────────────────────────────
-
-add_plugin(integer sn, string label, integer min_acl, string ctx) {
-    g_plugin_queue += [sn, label, min_acl, ctx];
-    if (!g_registering) {
-        g_registering = TRUE;
-        process_next_plugin();
-    }
-}
-
-process_next_plugin() {
-    if (llGetListLength(g_plugin_queue) == 0) {
-        g_registering = FALSE;
-        notify_ui_plugins();
-        if(DEBUG) llOwnerSay("[CORE] All plugins registered.");
-        llSetTimerEvent(0);
-    } else {
-        g_registering = TRUE;
-        integer sn      = llList2Integer(g_plugin_queue,0);
-        string label    = llList2String(g_plugin_queue,1);
-        integer min_acl = llList2Integer(g_plugin_queue,2);
-        string ctx      = llList2String(g_plugin_queue,3);
-        integer i;
-        for(i=0; i<llGetListLength(g_plugins); i+=4){
-            if(llList2Integer(g_plugins, i) == sn) {
-                g_plugins = llDeleteSubList(g_plugins, i, i+3);
-            }
+// --- Timer for session expiry ---
+expire_sessions() {
+    integer now = llGetUnixTime();
+    integer i = 0;
+    while (i < llGetListLength(g_sessions)) {
+        key av = llList2Key(g_sessions, i);
+        integer expiry = llList2Integer(g_sessions, i+4);
+        if (now > expiry) {
+            session_clear(av);
+        } else {
+            i += 5;
         }
-        g_plugins += [sn, label, min_acl, ctx];
-        g_plugin_queue = llDeleteSubList(g_plugin_queue,0,3);
-        llSetTimerEvent(0.1); // controls registration pacing
     }
 }
 
-//── Default state ──────────────────────────────────────────────
-
+// --- Main Event Loop ---
 default
 {
     state_entry() {
-        if (DEBUG) llOwnerSay("[CORE] state_entry");
-        // Query ACL and settings on startup
-        llMessageLinked(LINK_SET, AUTH_QUERY_NUM,
-            "acl_query" + "|" + (string)llGetOwner(), NULL_KEY);
-        llMessageLinked(LINK_SET, SETTINGS_QUERY_NUM,
-            "get_settings", NULL_KEY);
-
-        // Begin plugin registration
-        integer n = llGetInventoryNumber(INVENTORY_SCRIPT);
-        integer i;
-        for (i = 0; i < n; ++i) {
-            string script_name = llGetInventoryName(INVENTORY_SCRIPT,i);
-            if (script_name != llGetScriptName()) {
-                if (llSubStringIndex(script_name, "ds_collar_plugin_") == 0) {
-                    llMessageLinked(LINK_THIS, PLUGIN_REG_QUERY_NUM, REGISTER_NOW_MSG_START + "|" + script_name, NULL_KEY);
-                    if (DEBUG) llOwnerSay("[CORE] " + REGISTER_NOW_MSG_START + "|" + script_name);
-                }
-            }
-        }
-        llSetTimerEvent(1.0);
+        g_sessions = [];
+        g_plugin_data = [];
+        g_plugin_labels = [];
+        g_plugin_contexts = [];
+        if (DEBUG) llOwnerSay("[UI] Canonical UI module ready.");
+        llMessageLinked(LINK_SET, PLUGIN_LIST_NUM, PLUGIN_LIST_MSG, NULL_KEY);
     }
 
-    link_message(integer sn, integer num, string msg_str, key sender_id) {
-        if (DEBUG) llOwnerSay("[CORE][DEBUG] link_message: sn=" + (string)sn + " num=" + (string)num + " str=" + msg_str + " id=" + (string)sender_id);
+    touch_start(integer total_number) {
+        key toucher = llDetectedKey(0);
+        llMessageLinked(LINK_SET, UI_ACL_QUERY_NUM,
+            "acl_query|" + (string)toucher, NULL_KEY);
+    }
 
-        // ───── SOFT RESET HANDLER: custom channel ─────
-        if (num == PLUGIN_SOFT_RESET_NUM && msg_str == SOFT_RESET_MSG_START) {
-            if (DEBUG) llOwnerSay("[CORE][DEBUG] Received core_soft_reset (503). Performing soft reset logic.");
+    link_message(integer sender, integer num, string str, key id)
+    {
+        // Update plugin list from core
+        if (num == PLUGIN_LIST_NUM) {
+            list parts = llParseStringKeepNulls(str, ["|"], []);
+            if (llList2String(parts, 0) == PLUGIN_LIST_MSG) {
+                g_plugin_data = llDeleteSubList(parts, 0, 0);
+                rebuild_plugin_menus();
+                if (DEBUG) llOwnerSay("[UI] Updated plugin menu: " + llDumpList2String(g_plugin_data, "|"));
+            }
+            return;
+        }
+        // Handle ACL result for touch
+        if (num == UI_ACL_RESULT_NUM) {
+            list parts = llParseStringKeepNulls(str, ["|"], []);
+            string cmd = llList2String(parts, 0);
+            key av = (key)llList2String(parts, 1);
+            integer acl = (integer)llList2String(parts, 2);
 
-            // 1. Clear plugin registry and queue
-            g_plugins = [];
-            g_plugin_queue = [];
-            g_registering = FALSE;
-
-            // 2. Re-fetch dynamic settings from settings module
-            llMessageLinked(LINK_SET, SETTINGS_QUERY_NUM, "get_settings", NULL_KEY);
-
-            // 3. Re-query plugin registrations (resend register_now to all plugins)
-            integer n = llGetInventoryNumber(INVENTORY_SCRIPT);
-            integer i;
-            for (i = 0; i < n; ++i) {
-                string script_name = llGetInventoryName(INVENTORY_SCRIPT,i);
-                if (script_name != llGetScriptName()) {
-                    if (llSubStringIndex(script_name, "ds_collar_plugin_") == 0) {
-                        llMessageLinked(LINK_THIS, PLUGIN_REG_QUERY_NUM, REGISTER_NOW_MSG_START + "|" + script_name, NULL_KEY);
-                        if (DEBUG) llOwnerSay("[CORE][SOFT_RESET] " + REGISTER_NOW_MSG_START + "|" + script_name);
-                    }
+            if (cmd == "acl_result") {
+                if (acl >= 1 && acl <= 4) {
+                    show_main_menu(av, 0);
+                } else {
+                    integer menu_chan = -(integer)llFrand(1000000.0) - 100000;
+                    integer lh = llListen(menu_chan, "", av, "");
+                    session_set(av, 0, menu_chan, lh);
+                    llDialog(av, "You do not have access.", ["OK"], menu_chan);
                 }
             }
-
-            // 4. Optionally, reset other runtime state if any (g_first_boot, etc.)
-            g_first_boot = FALSE;
-            // 5. End handler
             return;
         }
-        // ──────────────────────────────────────────────
-
-        // Handle SETTINGS_SYNC_NUM (usually 870)
-        if (num == SETTINGS_SYNC_NUM) {
-            if (llSubStringIndex(msg_str, SETTINGS_SYNC_MSG_START + "|") == 0) {
-                list p = llParseStringKeepNulls(msg_str, ["|"], []);
-                g_setting_keys = [];
-                g_setting_vals = [];
-                integer len = llGetListLength(p);
-                integer i;
-                for (i = 1; i < len; i++) {
-                    string kv = llList2String(p, i);
-                    integer sep_idx = llSubStringIndex(kv, "=");
-                    if (sep_idx != -1) {
-                        string key_str = llGetSubString(kv, 0, sep_idx - 1);
-                        string val_str = llGetSubString(kv, sep_idx + 1, -1);
-                        g_setting_keys += [key_str];
-                        g_setting_vals += [val_str];
-                    } else {
-                        if (DEBUG) llOwnerSay("[CORE][DEBUG] Malformed key=val skipped: " + kv);
-                    }
+        // Handle plugin dialog requests (forwards to user)
+        if (num == UI_DIALOG_NUM) {
+            list parts = llParseStringKeepNulls(str, ["|"], []);
+            if (llGetListLength(parts) >= 5) {
+                key avatar = (key)llList2String(parts, 1);
+                string dialog_msg = llUnescapeURL(llList2String(parts, 2));
+                list btns = llParseString2List(llList2String(parts, 3), [","], []);
+                show_plugin_dialog(avatar, dialog_msg, btns);
+            }
+            return;
+        }
+        // Handle main/root menu requests (plugin or self)
+        if (num == UI_SHOW_MENU_NUM) {
+            list parts = llParseStringKeepNulls(str, ["|"], []);
+            if (llGetListLength(parts) >= 3) {
+                string ctx = llList2String(parts, 1);
+                key avatar = (key)llList2String(parts, 2);
+                if (ctx == ROOT_CONTEXT) {
+                    list s = session_get(avatar);
+                    integer page = 0;
+                    if (llGetListLength(s) == 5) page = llList2Integer(s, 1);
+                    show_main_menu(avatar, page);
+                    return;
                 }
-                if (DEBUG) llOwnerSay("[CORE][DEBUG] Settings synced dynamically: keys=" + llDumpList2String(g_setting_keys, ","));
             }
+        }
+    }
+
+    listen(integer channel, string name, key id, string msg) {
+        list sess = session_get(id);
+        if (llGetListLength(sess) < 3) return;
+        integer page = llList2Integer(sess, 1);
+        integer total_plugins = llGetListLength(g_plugin_labels) - 1;
+        integer total_pages = (total_plugins + PAGE_SIZE - 1) / PAGE_SIZE;
+        if (total_plugins < 1) total_pages = 1;
+
+        if (msg == "<<") {
+            if (page > 0) page--;
+            show_main_menu(id, page);
+            return;
+        }
+        if (msg == ">>") {
+            if ((page + 1) < total_pages) page++;
+            show_main_menu(id, page);
+            return;
+        }
+        if (msg == "~") {
+            session_clear(id);
             return;
         }
 
-        // --- PLUGIN REGISTRATION HANDSHAKE ---
-        if (num == PLUGIN_REG_QUERY_NUM) {
-            list parts = llParseStringKeepNulls(msg_str, ["|"], []);
-            if (llGetListLength(parts) >= 2 && llList2String(parts, 0) == REGISTER_NOW_MSG_START) {
-                if (DEBUG) llOwnerSay("[CORE][DEBUG] Received register_now for " + llList2String(parts, 1));
-            } else {
-                if (DEBUG) llOwnerSay("[CORE][DEBUG] Unexpected msg on PLUGIN_REG_QUERY_NUM: " + msg_str);
+        integer start = page * PAGE_SIZE + 1;
+        integer i;
+        integer idx = -1;
+        for (i = 0; i < PAGE_SIZE; ++i) {
+            integer plugin_idx = start + i;
+            if (plugin_idx <= total_plugins) {
+                if (llList2String(g_plugin_labels, plugin_idx) == msg && idx == -1) {
+                    idx = plugin_idx;
+                    i = PAGE_SIZE; // exit loop
+                }
             }
-            return;
         }
-
-        // Handle PLUGIN_REG_REPLY_NUM (501): register|sn|label|min_acl|context
-        if (num == PLUGIN_REG_REPLY_NUM) {
-            list p = llParseStringKeepNulls(msg_str, ["|"], []);
-            if (llGetListLength(p) >= 5 && llList2String(p, 0) == REGISTER_MSG_START) {
-                add_plugin(
-                    (integer)llList2String(p, 1),
-                    llList2String(p, 2),
-                    (integer)llList2String(p, 3),
-                    llList2String(p, 4)
-                );
-                if (DEBUG) llOwnerSay("[CORE][DEBUG] Registered plugin: sn=" + llList2String(p, 1) + " label=" + llList2String(p, 2));
-            } else {
-                if (DEBUG) llOwnerSay("[CORE][DEBUG] Unexpected msg on PLUGIN_REG_REPLY_NUM: " + msg_str);
-            }
-            return;
+        if (idx != -1) {
+            string ctx = llList2String(g_plugin_contexts, idx);
+            string menu_req = SHOW_MENU_MSG + "|" + ctx + "|" + (string)id + "|0";
+            llMessageLinked(LINK_SET, UI_SHOW_MENU_NUM, menu_req, NULL_KEY);
         }
-
-        // Plugin deregistration
-        if (num == PLUGIN_DEREG_NUM) {
-            list p = llParseStringKeepNulls(msg_str, ["|"], []);
-            if (llGetListLength(p) >= 2 && llList2String(p, 0) == DEREGISTER_MSG_START) {
-                integer rsn = (integer)llList2String(p, 1);
-                remove_plugin(rsn);
-                if (DEBUG) llOwnerSay("[CORE][DEBUG] Deregistered plugin sn=" + llList2String(p, 1));
-            }
-            return;
-        }
-
-        // Only log for core-specific plugin channels
-        if (DEBUG && (num == PLUGIN_REG_QUERY_NUM || num == PLUGIN_REG_REPLY_NUM || num == PLUGIN_DEREG_NUM || num == PLUGIN_SOFT_RESET_NUM)) {
-            llOwnerSay("[CORE][DEBUG] Unknown or unhandled msg: num=" + (string)num + " str=" + msg_str);
-        }
-        // (Relay menu requests/dispatch from UI to plugin could be added here.)
+        session_clear(id);
     }
 
     timer() {
-        if (g_registering) {
-            process_next_plugin();
-        }
-        if (g_plugins_changed) {
-            g_plugins_changed = FALSE;
-            llMessageLinked(LINK_SET, PLUGIN_SOFT_RESET_NUM,
-                SOFT_RESET_MSG_START, NULL_KEY);
-            if (DEBUG) llOwnerSay("[CORE] Plugins changed, soft reset: requesting plugin re-registration.");
-            deregister_plugins_begin();
-            register_plugins_begin();
-        }
-        if (g_first_boot && llGetTime() > 5.0) {
-            g_first_boot = FALSE;
-        }
+        expire_sessions();
     }
-
+    
     changed(integer change) {
         if (change & CHANGED_INVENTORY) {
-            if (DEBUG) llOwnerSay ("[CORE][DEBUG] Inventory changed. Refreshing plugins.");
-            deregister_plugins_begin();
-            register_plugins_begin();
-            return;
-        }
-            
-        if (change & CHANGED_OWNER) {
-            llOwnerSay("[CORE] Owner changed; resetting script.");
-            llResetScript();
+            if (DEBUG) llOwnerSay("[UI] Inventory or rez changed. Plugin menus reset.");
+            g_plugin_data = [];
+            g_plugin_labels = [];
+            g_plugin_contexts = [];
         }
     }
 }
