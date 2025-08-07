@@ -2,7 +2,7 @@
    MODULE: ds_collar_ui.lsl (Canonical, Multi-User, Session-Aware)
    PURPOSE: Robust UI handler for DS Collar Core 1.4+
    AUTHOR:  [Your Name or Project]
-   DATE:    2025-08-01
+   DATE:    2025-08-01 (Cookbook, ACL/blacklist-aware)
    ============================================================= */
 
 integer DEBUG = TRUE;
@@ -112,6 +112,11 @@ list session_get(key av) {
 
 // --- Main Menu Handler ---
 show_main_menu(key av, integer page) {
+    // Suppress menu if only root entry is present (no plugins)
+    if (llGetListLength(g_plugin_labels) <= 1) {
+        if (DEBUG) llOwnerSay("[UI] No plugins available, main menu NOT shown.");
+        return;
+    }
     list btns = get_page_buttons(page);
     integer menu_chan = -(integer)llFrand(1000000.0) - 100000;
     integer lh = llListen(menu_chan, "", av, "");
@@ -151,7 +156,7 @@ default
         g_sessions = [];
         if (DEBUG) llOwnerSay("[UI] Canonical UI module ready.");
         llMessageLinked(LINK_SET, PLUGIN_LIST_NUM, PLUGIN_LIST_MSG, NULL_KEY);
-        }
+    }
 
     touch_start(integer total_number) {
         key toucher = llDetectedKey(0);
@@ -172,7 +177,7 @@ default
             }
             return;
         }
-        // Handle ACL result for touch
+        // --- ACL result for touch, blacklist-aware PATCH ---
         if (num == UI_ACL_RESULT_NUM) {
             list parts = llParseStringKeepNulls(str, ["|"], []);
             string cmd = llList2String(parts, 0);
@@ -180,13 +185,32 @@ default
             integer acl = (integer)llList2String(parts, 2);
 
             if (cmd == "acl_result") {
-                if (acl >= 1 && acl <= 4) {
+                if (acl == 5) {
+                    integer menu_chan = -(integer)llFrand(1000000.0) - 100000;
+                    integer lh = llListen(menu_chan, "", av, "");
+                    session_set(av, 0, menu_chan, lh);
+                    llDialog(av, "You have no access to this collar.", ["OK"], menu_chan);
+                    if (DEBUG) llOwnerSay("[UI] Blacklisted user tried to access UI: " + (string)av);
+                    return;
+                }
+                // Scan plugin list for at least one accessible plugin
+                integer any_accessible = FALSE;
+                integer n = llGetListLength(g_plugin_data) / 4;
+                integer i;
+                for (i = 0; i < n; ++i) {
+                    integer min_acl = llList2Integer(g_plugin_data, i*4 + 2);
+                    if (acl <= min_acl) {
+                        any_accessible = TRUE;
+                    }
+                }
+                if (any_accessible) {
                     show_main_menu(av, 0);
                 } else {
                     integer menu_chan = -(integer)llFrand(1000000.0) - 100000;
                     integer lh = llListen(menu_chan, "", av, "");
                     session_set(av, 0, menu_chan, lh);
-                    llDialog(av, "You do not have access.", ["OK"], menu_chan);
+                    llDialog(av, "No actions are available for your type of access.", ["OK"], menu_chan);
+                    if (DEBUG) llOwnerSay("[UI] User with ACL " + (string)acl + " has no accessible plugins.");
                 }
             }
             return;
@@ -272,13 +296,9 @@ default
         // If scripts, notecards, etc. change, or object is rezzed
         if (change & CHANGED_INVENTORY) {
             if (DEBUG) llOwnerSay("[UI] Inventory or rez changed. Requesting plugin list refresh.");
-            // Option 1: If core always broadcasts plugin_list on inventory change,
-            // this may be enough; otherwise, send explicit request if you support it.
-            // Option 2: Reset internal plugin menu, will be rebuilt on next event.
             g_plugin_data = [];
             g_plugin_labels = [];
             g_plugin_contexts = [];
-            // Optionally trigger a UI refresh (core should broadcast plugin_list again)
         }
     }
 }
