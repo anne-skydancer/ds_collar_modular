@@ -348,7 +348,6 @@ default
         if (change & CHANGED_INVENTORY) {
             if (DEBUG) llOwnerSay ("[CORE][DEBUG] Inventory changed. Refreshing plugins.");
             deregister_plugins_begin();
-            g_plugins = [];
             register_plugins_begin();
             return;
         }
