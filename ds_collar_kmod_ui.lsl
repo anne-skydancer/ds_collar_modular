@@ -1,46 +1,60 @@
 /* =============================================================
    MODULE:  ds_collar_kmod_ui.lsl
    ROLE:    Root UI (context-based, paged, safe listeners)
+   NOTES:   Uses shared protocol "magic words" constants
    ============================================================= */
 
 integer DEBUG = TRUE;
 
-/* ---------- Kernel ABI constants ---------- */
-integer AUTH_QUERY_NUM        = 700;
-integer AUTH_RESULT_NUM       = 710;
-integer PLUGIN_START_NUM      = 900;
-integer PLUGIN_RETURN_NUM     = 901;
-integer K_PLUGIN_LIST_NUM     = 600;
-integer K_PLUGIN_LIST_REQUEST = 601;
+/* ---------- Global String Constants (Magic Words) ---------- */
+string TYPE_REGISTER           = "register";
+string TYPE_REGISTER_NOW       = "register_now";
+string TYPE_PLUGIN_LIST        = "plugin_list";
+string TYPE_PLUGIN_RETURN      = "plugin_return";
+string TYPE_START_UI           = "plugin_start";   // what plugins expect from UI
+string TYPE_ACL_QUERY          = "acl_query";
 
-string ROOT_CONTEXT = "core_root";
+string BTN_NAV_LEFT            = "<<";
+string BTN_NAV_GAP             = " ";
+string BTN_NAV_RIGHT           = ">>";
 
-integer MAX_FUNC_BTNS = 9;
-string NAV_LEFT   = "<<";
-string NAV_SPACER = " ";
-string NAV_RIGHT  = ">>";
+/* ---------- Link message channels ---------- */
+integer AUTH_QUERY_NUM         = 700;   // UI  → ACL   : {"type":"acl_query","avatar":"<key>"}
+integer AUTH_RESULT_NUM        = 710;   // ACL → UI    : {"type":"acl_result","avatar":"<key>","level":<int>}
 
-list g_plugins = []; // [label, context, label, context...]
+integer K_PLUGIN_LIST_NUM      = 600;   // Kernel → UI : {"type":"plugin_list","plugins":[{...}]}
+integer K_PLUGIN_LIST_REQUEST  = 601;   // UI → Kernel : (empty) ask snapshot
 
-key     gToucher      = NULL_KEY;
-integer gListen       = 0;
-integer gPage         = 0;
-integer gAuthPending  = FALSE;
-integer gMenuChan     = 0;
+integer K_PLUGIN_START_NUM     = 900;   // UI → Plugin : {"type":"plugin_start","context":"core_x"}
+integer K_PLUGIN_RETURN_NUM    = 901;   // Plugin → UI : {"type":"plugin_return","context":"core_root"}
+
+string ROOT_CONTEXT            = "core_root";
+
+/* ---------- UI constants ---------- */
+integer MAX_FUNC_BTNS          = 9;     // buttons per page for functions (rest is used by nav row)
+
+/* ---------- State ---------- */
+list    g_plugins = [];                 // [label, context, label, context, ...]
+key     gToucher  = NULL_KEY;
+integer gListen   = 0;
+integer gPage     = 0;
+integer gAuthPending = FALSE;
+integer gMenuChan = 0;
 
 /* ---------- Helpers ---------- */
-logd(string s) { if (DEBUG) llOwnerSay("[UI] " + s); }
-
 integer json_has(string j, list path) {
     return (llJsonGetValue(j, path) != JSON_INVALID);
 }
 
+logd(string s) { if (DEBUG) llOwnerSay("[UI] " + s); }
+
 list getPluginLabels() {
-    list names;
-    integer i;
+    list names = [];
+    integer i = 0;
     integer n = llGetListLength(g_plugins);
-    for (i = 0; i < n; i += 2) {
+    while (i < n) {
         names += llList2String(g_plugins, i);
+        i += 2;
     }
     return names;
 }
@@ -64,11 +78,11 @@ list buildButtonsForPage(integer page, list labels) {
 
     list buttons = [];
     if (pages > 1) {
-        string left  = NAV_SPACER;
-        string right = NAV_SPACER;
-        if (page > 0) left = NAV_LEFT;
-        if (page < pages - 1) right = NAV_RIGHT;
-        buttons += [ left, NAV_SPACER, right ];
+        string left  = BTN_NAV_GAP;
+        string right = BTN_NAV_GAP;
+        if (page > 0) left = BTN_NAV_LEFT;
+        if (page < pages - 1) right = BTN_NAV_RIGHT;
+        buttons += [ left, BTN_NAV_GAP, right ];
     }
     buttons += slice;
     return buttons;
@@ -107,9 +121,9 @@ showRootMenu(key av, integer page) {
 handoffToPluginByContext(string context, key av) {
     if (context == "") return;
     string j = llList2Json(JSON_OBJECT, []);
-    j = llJsonSetValue(j, ["type"], "plugin_start");
+    j = llJsonSetValue(j, ["type"], TYPE_START_UI);
     j = llJsonSetValue(j, ["context"], context);
-    llMessageLinked(LINK_SET, PLUGIN_START_NUM, j, av);
+    llMessageLinked(LINK_SET, K_PLUGIN_START_NUM, j, av);
     logd("Start plugin context: " + context + " for " + (string)av);
 }
 
@@ -118,27 +132,32 @@ default {
     state_entry() {
         gPage = 0;
         g_plugins = [];
+        // Prime with a fresh list
         llMessageLinked(LINK_SET, K_PLUGIN_LIST_REQUEST, "", NULL_KEY);
     }
 
+    /* ---- Touch kicks off ACL check + list snapshot ---- */
     touch_start(integer total_number) {
         gToucher = llDetectedKey(0);
         gAuthPending = TRUE;
 
+        // Ask ACL
         string j = llList2Json(JSON_OBJECT, []);
-        j = llJsonSetValue(j, ["type"], "acl_query");
+        j = llJsonSetValue(j, ["type"], TYPE_ACL_QUERY);
         j = llJsonSetValue(j, ["avatar"], (string)gToucher);
         llMessageLinked(LINK_SET, AUTH_QUERY_NUM, j, NULL_KEY);
 
+        // Ask kernel for latest plugin list snapshot
         llMessageLinked(LINK_SET, K_PLUGIN_LIST_REQUEST, "", NULL_KEY);
     }
 
     link_message(integer src, integer num, string msg, key id) {
+        // ACL result
         if (num == AUTH_RESULT_NUM && gAuthPending) {
             gAuthPending = FALSE;
             if (json_has(msg, ["level"])) {
                 integer level = (integer)llJsonGetValue(msg, ["level"]);
-                if (level >= 1) {
+                if (level >= 0) {
                     showRootMenu(gToucher, 0);
                 } else {
                     llRegionSayTo(gToucher, 0, "Access denied.");
@@ -147,27 +166,30 @@ default {
             return;
         }
 
+        // Kernel → UI: plugin list snapshot
         if (num == K_PLUGIN_LIST_NUM) {
-            if (json_has(msg, ["type"]) && llJsonGetValue(msg, ["type"]) == "plugin_list") {
+            if (json_has(msg, ["type"]) && llJsonGetValue(msg, ["type"]) == TYPE_PLUGIN_LIST) {
                 g_plugins = [];
                 string arr = llJsonGetValue(msg, ["plugins"]);
                 list objs = llJson2List(arr);
-                integer i;
+                integer i = 0;
                 integer n = llGetListLength(objs);
-                for (i = 0; i < n; i++) {
+                while (i < n) {
                     string o = llList2String(objs, i);
                     string label = llJsonGetValue(o, ["label"]);
                     string ctx   = llJsonGetValue(o, ["context"]);
                     if (label != JSON_INVALID && ctx != JSON_INVALID) {
                         g_plugins += [ label, ctx ];
                     }
+                    i += 1;
                 }
                 logd("Plugin list updated (" + (string)(llGetListLength(g_plugins)/2) + ")");
             }
             return;
         }
 
-        if (num == PLUGIN_RETURN_NUM) {
+        // Plugin → UI: return to root
+        if (num == K_PLUGIN_RETURN_NUM) {
             if (json_has(msg, ["context"]) && llJsonGetValue(msg, ["context"]) == ROOT_CONTEXT) {
                 showRootMenu(id, gPage);
             }
@@ -176,15 +198,15 @@ default {
     }
 
     listen(integer channel, string name, key id, string message) {
-        if (message == NAV_LEFT) {
+        if (message == BTN_NAV_LEFT) {
             showRootMenu(id, gPage - 1);
             return;
         }
-        if (message == NAV_RIGHT) {
+        if (message == BTN_NAV_RIGHT) {
             showRootMenu(id, gPage + 1);
             return;
         }
-        if (message == NAV_SPACER) {
+        if (message == BTN_NAV_GAP) {
             return;
         }
         string ctx = contextFromLabel(message);
