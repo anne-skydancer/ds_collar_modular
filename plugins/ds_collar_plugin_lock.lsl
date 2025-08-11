@@ -1,306 +1,295 @@
 // =============================================================
-//  PLUGIN: ds_collar_plugin_lock.lsl (Canonical, LSL-cookbook-compliant)
-//  PURPOSE: Lock management, visibility, RLV enforcement, DS Collar Modular Core
+// PLUGIN: ds_collar_plugin_locking.lsl
+// PURPOSE: Single, tidy menu with Back + Lock/Unlock toggle.
+//          - No kernel re-register on toggle (purely local UI update)
+//          - Applies/clears RLV
+//          - Persists to settings (JSON)
+//          - Heartbeat + soft-reset safe
+// LSL-SAFE: No ternaries used
 // =============================================================
 
 integer DEBUG = TRUE;
 
-// ==== Canonical protocol constants (as in your system) ====
-string REGISTER_MSG_START      = "register";
-string REGISTER_NOW_MSG_START  = "register_now";
-string DEREGISTER_MSG_START    = "deregister";
-string SOFT_RESET_MSG_START    = "core_soft_reset";
-string SETTINGS_SYNC_MSG_START = "settings_sync";
-string SHOW_MENU_MSG_START     = "show_menu";
-string SETTINGS_SET_PREFIX     = "set_";
+/* ---------- Link numbers (kernel ABI) ---------- */
+integer K_PLUGIN_REG_QUERY   = 500; // Kernel → Plugins: {"type":"register_now","script":"<name>"}
+integer K_PLUGIN_REG_REPLY   = 501; // Plugins → Kernel: {"type":"register",...}
+integer K_PLUGIN_SOFT_RESET  = 504; // Plugins → Kernel: {"type":"plugin_soft_reset","context":...}
 
-// ==== Plugin info ====
-integer PLUGIN_SN         = 0;
-string  PLUGIN_LABEL      = "Lock";
-integer PLUGIN_MIN_ACL    = 1;
-string  PLUGIN_CONTEXT    = "core_lock";
-string  ROOT_CONTEXT      = "core_root";
-string  CTX_MAIN          = "main";
+integer K_PLUGIN_PING        = 650; // Kernel → Plugins: {"type":"plugin_ping","context":...}
+integer K_PLUGIN_PONG        = 651; // Plugins → Kernel: {"type":"plugin_pong","context":...}
 
-// ==== Settings sync protocol/channel ====
-integer SETTINGS_QUERY_NUM   = 800;
-integer SETTINGS_SYNC_NUM    = 870;
+integer K_SETTINGS_QUERY     = 800; // Plugin ↔ Settings (JSON)
+integer K_SETTINGS_SYNC      = 870; // Settings → Plugin  (JSON)
 
-// ==== Registration/UI menu channels ====
-integer PLUGIN_REG_REPLY_NUM = 501;
-integer UI_SHOW_MENU_NUM     = 601;
+integer K_PLUGIN_START       = 900; // UI → Plugins   : {"type":"plugin_start","context":...}
+integer K_PLUGIN_RETURN_NUM  = 901; // Plugins → UI   : {"type":"plugin_return","context":"core_root"}
 
-float   DIALOG_TIMEOUT = 180.0;
+/* ---------- Shared “magic words” ---------- */
+string CONS_TYPE_REGISTER          = "register";
+string CONS_TYPE_REGISTER_NOW      = "register_now";
+string CONS_TYPE_PLUGIN_START      = "plugin_start";
+string CONS_TYPE_PLUGIN_RETURN     = "plugin_return";
+string CONS_TYPE_PLUGIN_SOFT_RESET = "plugin_soft_reset";
+string CONS_TYPE_PLUGIN_PING       = "plugin_ping";
+string CONS_TYPE_PLUGIN_PONG       = "plugin_pong";
 
-// ==== Session state ====
-list    g_sessions;
+string CONS_SETTINGS_GET           = "settings_get";
+string CONS_SETTINGS_SYNC          = "settings_sync";
+string CONS_SETTINGS_SET           = "set";
 
-// ==== State ====
-integer g_locked = FALSE;
+/* ---------- Identity ---------- */
+/* Keep context = core_lock so legacy mappings keep working */
+string  PLUGIN_CONTEXT = "core_lock";
+string  ROOT_CONTEXT   = "core_root";
+string  PLUGIN_LABEL   = "Locking";  // one-time label for root UI
+integer PLUGIN_SN      = 0;
+integer PLUGIN_MIN_ACL = 1;
 
-// ==== Settings key ====
+/* ---------- Settings keys ---------- */
 string KEY_LOCKED = "locked";
 
-// ==== Prim names ====
+/* ---------- Optional prim names for visuals ---------- */
 string PRIM_LOCKED   = "locked";
 string PRIM_UNLOCKED = "unlocked";
 
-// === Session Helpers ===
-integer s_idx(key av) { return llListFindList(g_sessions, [av]); }
-integer s_set(key av, integer page, string csv, float expiry, string ctx, string param, string step, string menucsv, integer chan)
-{
-    integer i = s_idx(av);
-    if (~i) {
-        integer old = llList2Integer(g_sessions, i+9);
-        if (old != -1) llListenRemove(old);
-        g_sessions = llDeleteSubList(g_sessions, i, i+9);
-    }
-    integer lh = llListen(chan, "", av, "");
-    g_sessions += [av, page, csv, expiry, ctx, param, step, menucsv, chan, lh];
-    return TRUE;
-}
-integer s_clear(key av)
-{
-    integer i = s_idx(av);
-    if (~i) {
-        integer old = llList2Integer(g_sessions, i+9);
-        if (old != -1) llListenRemove(old);
-        g_sessions = llDeleteSubList(g_sessions, i, i+9);
-    }
-    return TRUE;
-}
-list s_get(key av)
-{
-    integer i = s_idx(av);
-    if (~i) return llList2List(g_sessions, i, i+9);
-    return [];
+/* ---------- Session state ---------- */
+integer g_locked        = FALSE;   // 0=unlocked, 1=locked
+key     g_menu_user     = NULL_KEY;
+integer g_listen_handle = 0;
+integer g_menu_chan     = 0;
+integer g_menu_timeout  = 180;
+
+/* ========================== Helpers ========================== */
+integer json_has(string j, list path) {
+    return (llJsonGetValue(j, path) != JSON_INVALID);
 }
 
-// === Prim visibility logic ===
-set_lock_visibility(integer lock_state)
-{
+register_once() {
+    string j = llList2Json(JSON_OBJECT, []);
+    j = llJsonSetValue(j, ["type"],     CONS_TYPE_REGISTER);
+    j = llJsonSetValue(j, ["sn"],       (string)PLUGIN_SN);
+    j = llJsonSetValue(j, ["label"],    PLUGIN_LABEL);
+    j = llJsonSetValue(j, ["min_acl"],  (string)PLUGIN_MIN_ACL);
+    j = llJsonSetValue(j, ["context"],  PLUGIN_CONTEXT);
+    llMessageLinked(LINK_SET, K_PLUGIN_REG_REPLY, j, NULL_KEY);
+    if (DEBUG) llOwnerSay("[LOCKING] Registered with kernel. Label=" + PLUGIN_LABEL);
+}
+
+notify_soft_reset() {
+    string j = llList2Json(JSON_OBJECT, []);
+    j = llJsonSetValue(j, ["type"],    CONS_TYPE_PLUGIN_SOFT_RESET);
+    j = llJsonSetValue(j, ["context"], PLUGIN_CONTEXT);
+    llMessageLinked(LINK_SET, K_PLUGIN_SOFT_RESET, j, NULL_KEY);
+}
+
+request_settings_get() {
+    string j = llList2Json(JSON_OBJECT, []);
+    j = llJsonSetValue(j, ["type"], CONS_SETTINGS_GET);
+    llMessageLinked(LINK_SET, K_SETTINGS_QUERY, j, NULL_KEY);
+}
+
+persist_locked(integer value01) {
+    if (value01 != 0) value01 = 1;
+    string j = llList2Json(JSON_OBJECT, []);
+    j = llJsonSetValue(j, ["type"],  CONS_SETTINGS_SET);
+    j = llJsonSetValue(j, ["key"],   KEY_LOCKED);
+    j = llJsonSetValue(j, ["value"], (string)value01);
+    llMessageLinked(LINK_SET, K_SETTINGS_QUERY, j, NULL_KEY);
+    if (DEBUG) llOwnerSay("[LOCKING] Persisted locked=" + (string)value01);
+}
+
+/* ---------- Visuals ---------- */
+set_lock_visibility(integer lock_state) {
     integer total = llGetNumberOfPrims();
-    integer i;
-    for (i = 1; i <= total; ++i)
-    {
+    integer i = 1;
+    while (i <= total) {
         string pname = llGetLinkName(i);
-        if (pname == PRIM_LOCKED)
-        {
-            if (lock_state) {
-                llSetLinkAlpha(i, 1.0, ALL_SIDES);
-            } else {
-                llSetLinkAlpha(i, 0.0, ALL_SIDES);
-            }
+        if (pname == PRIM_LOCKED) {
+            if (lock_state) llSetLinkAlpha(i, 1.0, ALL_SIDES);
+            else            llSetLinkAlpha(i, 0.0, ALL_SIDES);
+        } else if (pname == PRIM_UNLOCKED) {
+            if (lock_state) llSetLinkAlpha(i, 0.0, ALL_SIDES);
+            else            llSetLinkAlpha(i, 1.0, ALL_SIDES);
         }
-        else if (pname == PRIM_UNLOCKED)
-        {
-            if (lock_state) {
-                llSetLinkAlpha(i, 0.0, ALL_SIDES);
-            } else {
-                llSetLinkAlpha(i, 1.0, ALL_SIDES);
-            }
-        }
+        i += 1;
     }
-    if (DEBUG) llOwnerSay("[LOCK] set_lock_visibility: locked=" + (string)lock_state);
 }
 
-// === RLV enforcement logic ===
-enforce_rlv_detach(integer lock_state)
-{
+/* ---------- RLV ---------- */
+apply_rlv(integer lock_state) {
     if (lock_state) {
         llOwnerSay("@detach=n");
-        if (DEBUG) llOwnerSay("[LOCK] RLV sent: @detach=n");
+        if (DEBUG) llOwnerSay("[LOCKING] RLV: @detach=n");
     } else {
         llOwnerSay("@detach=y");
-        if (DEBUG) llOwnerSay("[LOCK] RLV sent: @detach=y");
+        if (DEBUG) llOwnerSay("[LOCKING] RLV: @detach=y");
     }
 }
 
-// === Persistence ===
-persist_locked(integer value)
-{
-    string msg = SETTINGS_SET_PREFIX + KEY_LOCKED + "|" + (string)value;
-    llMessageLinked(LINK_SET, SETTINGS_QUERY_NUM, msg, NULL_KEY);
-    llMessageLinked(LINK_SET, SETTINGS_QUERY_NUM, "get_settings", NULL_KEY);
-    if (DEBUG) llOwnerSay("[LOCK] Persisted: " + KEY_LOCKED + "=" + (string)value);
+/* ---------- Core state change (no re-register) ---------- */
+set_lock_state(integer new_state, integer do_persist, integer refresh_local_menu) {
+    if (new_state != 0) new_state = 1;
+    g_locked = new_state;
+
+    set_lock_visibility(g_locked);
+    apply_rlv(g_locked);
+
+    if (do_persist) {
+        persist_locked(g_locked);
+    }
+
+    if (refresh_local_menu && g_menu_user != NULL_KEY) {
+        // Just rebuild this plugin’s own dialog so the action button text flips
+        show_locking_menu(g_menu_user);
+    }
+
+    if (DEBUG) llOwnerSay("[LOCKING] State → locked=" + (string)g_locked);
 }
 
-// === Menu Logic ===
-show_lock_menu(key user)
-{
-    list btns = ["~", "Back", "~"];
-    if (g_locked) {
-        btns += [ "Unlock" ];
-    } else {
-        btns += [ "Lock" ];
-    }
-    while ((llGetListLength(btns) % 3) != 0) {
-        btns += " ";
-    }
+/* ---------- Settings intake ---------- */
+apply_settings_sync(string msg) {
+    if (!json_has(msg, ["type"])) return;
+    if (llJsonGetValue(msg, ["type"]) != CONS_SETTINGS_SYNC) return;
+    if (!json_has(msg, ["kv"])) return;
 
-    integer menu_chan = (integer)(-1000000.0 * llFrand(1.0) - 1.0);
-    s_set(user, 0, "", llGetUnixTime() + DIALOG_TIMEOUT, CTX_MAIN, "", "", "", menu_chan);
+    string kv = llJsonGetValue(msg, ["kv"]);
+    string v  = llJsonGetValue(kv, [ KEY_LOCKED ]);
+    if (v == JSON_INVALID) return;
 
-    string msg = "The collar is currently ";
-    if (g_locked) {
-        msg += "LOCKED.\nUnlock the collar?";
-    } else {
-        msg += "UNLOCKED.\nLock the collar?";
-    }
-    llDialog(user, msg, btns, menu_chan);
+    integer want = (integer)v;
+    if (want != 0) want = 1;
 
-    if (DEBUG) llOwnerSay("[LOCK] Menu → " + (string)user + " chan=" + (string)menu_chan);
-}
-
-// === Settings/State Sync ===
-update_state_from_settings(list p)
-{
-    integer k;
-    for (k = 1; k < llGetListLength(p); ++k) {
-        string kv = llList2String(p, k);
-        integer eq = llSubStringIndex(kv, "=");
-        if (eq != -1) {
-            string pname = llGetSubString(kv, 0, eq-1);
-            string pval  = llGetSubString(kv, eq+1, -1);
-            if (pname == KEY_LOCKED) {
-                if (pval == "1") {
-                    g_locked = TRUE;
-                } else {
-                    g_locked = FALSE;
-                }
-                set_lock_visibility(g_locked);
-                enforce_rlv_detach(g_locked);
-                if (DEBUG) llOwnerSay("[LOCK] Sync: locked=" + (string)g_locked);
-            }
-        }
+    if (g_locked != want) {
+        set_lock_state(want, FALSE, TRUE);
+        if (DEBUG) llOwnerSay("[LOCKING] Settings sync applied: locked=" + (string)want);
     }
 }
 
-// === MAIN EVENT LOOP ===
+/* ---------- Menu ---------- */
+show_locking_menu(key user) {
+    // Build a minimal 3-button menu: [Back, Action, ~]
+    list buttons;
+    string action = "Lock";
+    if (g_locked) action = "Unlock";
+
+    buttons = [ "Back", action, "~" ];
+
+    // (Optional) no need to pad to 12; 3 is valid in llDialog
+    if (g_listen_handle) llListenRemove(g_listen_handle);
+    g_menu_chan     = -100000 - (integer)llFrand(1000000.0);
+    g_menu_user     = user;
+    g_listen_handle = llListen(g_menu_chan, "", user, "");
+
+    string msg = "Collar is currently ";
+    if (g_locked) msg += "LOCKED.\nTap Unlock to allow detach.";
+    else          msg += "UNLOCKED.\nTap Lock to prevent detach.";
+
+    llDialog(user, msg, buttons, g_menu_chan);
+    llSetTimerEvent((float)g_menu_timeout);
+
+    if (DEBUG) llOwnerSay("[LOCKING] Menu → " + (string)user + " action=" + action + " chan=" + (string)g_menu_chan);
+}
+
+cleanup_session() {
+    if (g_listen_handle) llListenRemove(g_listen_handle);
+    g_listen_handle = 0;
+    g_menu_user     = NULL_KEY;
+    g_menu_chan     = 0;
+    llSetTimerEvent(0.0);
+}
+
+/* =========================== Events ========================== */
 default
 {
-    state_entry()
-    {
-        PLUGIN_SN = (integer)(llFrand(1.0e5));
-        string reg_msg = REGISTER_MSG_START + "|" + (string)PLUGIN_SN + "|" + PLUGIN_LABEL + "|"
-                        + (string)PLUGIN_MIN_ACL + "|" + PLUGIN_CONTEXT + "|" + llGetScriptName();
-        llMessageLinked(LINK_SET, PLUGIN_REG_REPLY_NUM, reg_msg, NULL_KEY);
+    state_entry() {
+        cleanup_session();
+        PLUGIN_SN = (integer)(llFrand(1.0e9));
+        notify_soft_reset();
+        register_once();
+        request_settings_get();
 
-        llMessageLinked(LINK_SET, SETTINGS_QUERY_NUM, "get_settings", NULL_KEY);
-
+        // Bootstrap visuals in case settings are empty
         set_lock_visibility(g_locked);
-        enforce_rlv_detach(g_locked);
+        apply_rlv(g_locked);
 
-        if (DEBUG) llOwnerSay("[LOCK] Ready, SN=" + (string)PLUGIN_SN);
+        if (DEBUG) llOwnerSay("[LOCKING] Ready. SN=" + (string)PLUGIN_SN);
     }
 
-    link_message(integer sender, integer num, string str, key id)
-    {
-        if ((num == 500) && llSubStringIndex(str, REGISTER_NOW_MSG_START + "|") == 0)
-        {
-            string script_req = llGetSubString(str, llStringLength(REGISTER_NOW_MSG_START) + 1, -1);
-            if (script_req == llGetScriptName())
-            {
-                string reg_msg = REGISTER_MSG_START + "|" + (string)PLUGIN_SN + "|" + PLUGIN_LABEL + "|"
-                                + (string)PLUGIN_MIN_ACL + "|" + PLUGIN_CONTEXT + "|" + llGetScriptName();
-                llMessageLinked(LINK_SET, PLUGIN_REG_REPLY_NUM, reg_msg, NULL_KEY);
-                if (DEBUG) llOwnerSay("[LOCK] Registration reply sent.");
+    link_message(integer sender, integer num, string msg, key id) {
+        // Heartbeat
+        if (num == K_PLUGIN_PING) {
+            if (json_has(msg, ["type"]) && llJsonGetValue(msg, ["type"]) == CONS_TYPE_PLUGIN_PING) {
+                if (json_has(msg, ["context"]) && llJsonGetValue(msg, ["context"]) == PLUGIN_CONTEXT) {
+                    string pong = llList2Json(JSON_OBJECT, []);
+                    pong = llJsonSetValue(pong, ["type"],    CONS_TYPE_PLUGIN_PONG);
+                    pong = llJsonSetValue(pong, ["context"], PLUGIN_CONTEXT);
+                    llMessageLinked(LINK_SET, K_PLUGIN_PONG, pong, NULL_KEY);
+                }
             }
             return;
         }
 
-        if (num == SETTINGS_SYNC_NUM) {
-            list parts = llParseStringKeepNulls(str, ["|"], []);
-            if (llList2String(parts, 0) == SETTINGS_SYNC_MSG_START) {
-                update_state_from_settings(parts);
+        // Kernel: “register_now” for THIS script
+        if (num == K_PLUGIN_REG_QUERY) {
+            if (json_has(msg, ["type"]) && llJsonGetValue(msg, ["type"]) == CONS_TYPE_REGISTER_NOW) {
+                if (json_has(msg, ["script"]) && llJsonGetValue(msg, ["script"]) == llGetScriptName()) {
+                    register_once();
+                }
             }
             return;
         }
 
-        if (num == 520 && llSubStringIndex(str, "state_sync|") == 0) {
-            list p = llParseString2List(str, ["|"], []);
-            if (llGetListLength(p) >= 7) {
-                string lock_str = llList2String(p, 6);
-                if (lock_str == "1") {
-                    g_locked = TRUE;
-                } else {
-                    g_locked = FALSE;
-                }
-                set_lock_visibility(g_locked);
-                enforce_rlv_detach(g_locked);
-                if (DEBUG) llOwnerSay("[LOCK] Legacy sync: locked=" + (string)g_locked);
-            }
+        // Settings sync
+        if (num == K_SETTINGS_SYNC) {
+            apply_settings_sync(msg);
             return;
         }
 
-        if ((num == UI_SHOW_MENU_NUM)) {
-            list parts = llParseStringKeepNulls(str, ["|"], []);
-            if (llGetListLength(parts) >= 3) {
-                string ctx = llList2String(parts, 1);
-                key user = (key)llList2String(parts, 2);
-                if (ctx == PLUGIN_CONTEXT) {
-                    show_lock_menu(user);
-                    return;
+        // UI: start → open our minimal menu (no toggle on arrival)
+        if (num == K_PLUGIN_START) {
+            if (json_has(msg, ["type"]) && llJsonGetValue(msg, ["type"]) == CONS_TYPE_PLUGIN_START) {
+                if (json_has(msg, ["context"]) && llJsonGetValue(msg, ["context"]) == PLUGIN_CONTEXT) {
+                    show_locking_menu(id);
                 }
             }
+            return;
         }
     }
 
-    listen(integer chan, string name, key id, string msg)
-    {
-        list sess = s_get(id);
-        if (llGetListLength(sess) == 10 && chan == llList2Integer(sess, 8))
-        {
-            string ctx = llList2String(sess, 4);
+    listen(integer chan, string name, key id, string pressed) {
+        if (chan != g_menu_chan) return;
+        if (id != g_menu_user)   return;
 
-            if (msg == "Back") {
-                string menu_req = SHOW_MENU_MSG_START + "|" + ROOT_CONTEXT + "|" + (string)id + "|0";
-                llMessageLinked(LINK_SET, UI_SHOW_MENU_NUM, menu_req, NULL_KEY);
-                s_clear(id);
-                return;
-            }
+        if (pressed == "Back") {
+            string r = llList2Json(JSON_OBJECT, []);
+            r = llJsonSetValue(r, ["type"],    CONS_TYPE_PLUGIN_RETURN);
+            r = llJsonSetValue(r, ["context"], ROOT_CONTEXT);
+            llMessageLinked(LINK_SET, K_PLUGIN_RETURN_NUM, r, g_menu_user);
+            cleanup_session();
+            return;
+        }
 
-            if (ctx == CTX_MAIN)
-            {
-                if ((msg == "Lock") && (!g_locked)) {
-                    g_locked = TRUE;
-                    persist_locked(g_locked);
-                    set_lock_visibility(g_locked);
-                    enforce_rlv_detach(g_locked);
-                    show_lock_menu(id);
-                    return;
-                }
-                if ((msg == "Unlock") && (g_locked)) {
-                    g_locked = FALSE;
-                    persist_locked(g_locked);
-                    set_lock_visibility(g_locked);
-                    enforce_rlv_detach(g_locked);
-                    show_lock_menu(id);
-                    return;
-                }
-            }
+        if (pressed == "Lock") {
+            // Go locked
+            set_lock_state(TRUE, TRUE, TRUE); // persist + refresh dialog
+            return;
+        }
+
+        if (pressed == "Unlock") {
+            // Go unlocked
+            set_lock_state(FALSE, TRUE, TRUE); // persist + refresh dialog
+            return;
         }
     }
 
-    timer()
-    {
-        integer now = llGetUnixTime();
-        integer i = 0;
-        while (i < llGetListLength(g_sessions)) {
-            float exp = llList2Float(g_sessions, i+3);
-            key av = llList2Key(g_sessions, i);
-            if (now > exp) {
-                s_clear(av);
-            } else {
-                i += 10;
-            }
-        }
+    timer() {
+        // Close menu on timeout
+        cleanup_session();
     }
 
-    changed(integer change)
-    {
+    changed(integer change) {
         if (change & CHANGED_OWNER) {
-            llOwnerSay("[LOCK] Owner changed. Resetting plugin.");
+            llOwnerSay("[LOCKING] Owner changed. Resetting plugin.");
             llResetScript();
         }
     }
