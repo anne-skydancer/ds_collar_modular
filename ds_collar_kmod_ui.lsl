@@ -157,9 +157,13 @@ default {
             gAuthPending = FALSE;
             if (json_has(msg, ["level"])) {
                 integer level = (integer)llJsonGetValue(msg, ["level"]);
-                if (level >= 0) {
+                key wearer = llGetOwner();
+
+                // Allow: wearer always (even ACL 0), otherwise ACL >= 1
+                if (gToucher == wearer || level >= 1) {
                     showRootMenu(gToucher, 0);
-                } else {
+                } 
+                else {
                     llRegionSayTo(gToucher, 0, "Access denied.");
                 }
             }
