@@ -1,12 +1,11 @@
 /* =============================================================
    PLUGIN: ds_collar_plugin_animate.lsl  (authoritative GUH logic)
    PURPOSE: Paginated animation menu with << / Back / >> / Relax,
-            tested inventory-driven flow, heartbeat + soft reset,
+            inventory-driven flow, heartbeat + soft reset,
             and ACL gate (allowed: 1,2,3,4,5).
-   NOTES:
-     - One private negative dialog channel per session.
-     - Requests PERMISSION_TRIGGER_ANIMATION once per avatar.
-     - No ternaries; constants match your global “magic words”.
+   NOTE:    Animations ALWAYS target the WEARER (llGetOwner()).
+            Requests PERMISSION_TRIGGER_ANIMATION in state_entry,
+            before handling link messages (like leash control perms).
    ============================================================= */
 
 integer DEBUG = TRUE;
@@ -63,12 +62,12 @@ integer PAGE_SIZE     = 8; // anims per page (indices 4–11)
 
 /* ---------- State ---------- */
 integer g_has_perm     = FALSE;
-key     g_perm_avatar  = NULL_KEY;
+key     g_perm_avatar  = NULL_KEY; // should always be the wearer
 
 list    g_anims        = [];
 integer g_page         = 0;
 
-key     g_user         = NULL_KEY;
+key     g_user         = NULL_KEY; // toucher who opened the menu (for dialog routing)
 integer g_listen       = 0;
 integer g_menu_chan    = 0;
 integer g_no_anims     = FALSE;
@@ -79,10 +78,7 @@ integer g_acl_pending  = FALSE;
 /* ========================== Helpers ========================== */
 integer json_has(string j, list path) { return (llJsonGetValue(j, path) != JSON_INVALID); }
 
-integer logd(string s) {
-    if (DEBUG) llOwnerSay("[ANIMATE] " + s);
-    return 0;
-}
+integer logd(string s) { if (DEBUG) llOwnerSay("[ANIMATE] " + s); return 0; }
 
 integer acl_allowed(integer lvl) {
     if (llListFindList(ALLOWED_ACLS, [lvl]) != -1) return TRUE;
@@ -120,7 +116,7 @@ integer notify_soft_reset() {
     return 0;
 }
 
-/* ---------- Anim helpers ---------- */
+/* ---------- Anim helpers (always target WEARER) ---------- */
 integer get_anims() {
     g_anims = [];
     integer n = llGetInventoryNumber(INVENTORY_ANIMATION);
@@ -134,38 +130,34 @@ integer get_anims() {
 }
 
 integer start_anim(string anim) {
-    if (!g_has_perm || g_perm_avatar != g_user) {
-        if (g_user != NULL_KEY) {
-            llRequestPermissions(g_user, PERMISSION_TRIGGER_ANIMATION);
-            logd("Requesting anim permission from " + (string)g_user);
-        }
-        else {
-            llRequestPermissions(llGetOwner(), PERMISSION_TRIGGER_ANIMATION);
-            logd("Requesting anim permission from wearer (no user set).");
-        }
+    key wearer = llGetOwner();
+    if (!g_has_perm || g_perm_avatar != wearer) {
+        llRequestPermissions(wearer, PERMISSION_TRIGGER_ANIMATION);
+        logd("Requesting anim permission from wearer.");
         return 0;
     }
     llStartAnimation(anim);
-    logd("Playing animation: " + anim);
+    logd("Playing animation on wearer: " + anim);
     show_menu(g_user, g_page);
     return 0;
 }
 
 integer stop_all_anims() {
-    if (!g_has_perm || g_perm_avatar != g_user) {
-        if (g_user != NULL_KEY) {
-            llRequestPermissions(g_user, PERMISSION_TRIGGER_ANIMATION);
-            logd("Requesting anim permission (Relax).");
-        }
+    key wearer = llGetOwner();
+
+    if (!g_has_perm || g_perm_avatar != wearer) {
+        llRequestPermissions(wearer, PERMISSION_TRIGGER_ANIMATION);
+        logd("Requesting anim permission (Relax) from wearer.");
         return 0;
     }
+
     integer i = 0;
     integer n = llGetInventoryNumber(INVENTORY_ANIMATION);
     while (i < n) {
         llStopAnimation(llGetInventoryName(INVENTORY_ANIMATION, i));
         i += 1;
     }
-    logd("Stopped all animations.");
+    logd("Stopped all animations on wearer.");
     show_menu(g_user, g_page);
     return 0;
 }
@@ -252,14 +244,18 @@ default
         notify_soft_reset();
         register_plugin();
 
+        /* Request anim permission from WEARER immediately (like leash does for controls) */
+        llRequestPermissions(llGetOwner(), PERMISSION_TRIGGER_ANIMATION);
+        logd("Requested animation permission from wearer on state_entry.");
+
         logd("Ready. SN=" + (string)PLUGIN_SN);
     }
 
     run_time_permissions(integer perm) {
         if ((perm & PERMISSION_TRIGGER_ANIMATION) != 0) {
             g_has_perm    = TRUE;
-            g_perm_avatar = g_user;
-            logd("Animation permission granted by " + (string)g_perm_avatar);
+            g_perm_avatar = llGetOwner(); // wearer
+            logd("Animation permission granted by wearer.");
         }
     }
 
@@ -301,9 +297,10 @@ default
             g_acl_pending = FALSE;
 
             if (acl_allowed(g_acl_level)) {
-                /* optional: pre-request anim perm once per session */
-                if (!g_has_perm || g_perm_avatar != g_user) {
-                    llRequestPermissions(g_user, PERMISSION_TRIGGER_ANIMATION);
+                /* If wearer denied earlier, we can retry once here (optional fallback) */
+                if (!g_has_perm || g_perm_avatar != llGetOwner()) {
+                    llRequestPermissions(llGetOwner(), PERMISSION_TRIGGER_ANIMATION);
+                    logd("Retrying animation permission from wearer after ACL.");
                 }
                 show_menu(g_user, 0);
             } else {
@@ -384,7 +381,7 @@ default
             return;
         }
 
-        /* Try to play chosen animation */
+        /* Try to play chosen animation (on wearer) */
         integer idx = llListFindList(g_anims, [msg]);
         if (idx != -1) {
             start_anim(msg);
