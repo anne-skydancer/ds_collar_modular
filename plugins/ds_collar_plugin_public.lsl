@@ -1,246 +1,339 @@
-// =============================================================
-//  PLUGIN: ds_collar_plugin_public.lsl (Canonical protocol, Animate/Status-style UI)
-//  PURPOSE: Public Access management, DS Collar Modular Core 1.4+
-//  DATE:    2025-08-01 (Authoritative, canonical protocol roots)
-// =============================================================
+/* =============================================================
+   PLUGIN: ds_collar_plugin_public.lsl
+   PURPOSE: Manage Public Access (enable/disable) with strict ACL
+            - New kernel JSON register + heartbeat + soft-reset
+            - Settings JSON key "public_mode" (scalar "0"/"1")
+            - Animate/Status-style UI (Back centered)
+            - Private dialog channel + safe listens
+   ACL: Allowed levels = TRUSTEE(3), UNOWNED(4), PRIMARY_OWNER(5)
+   ============================================================= */
 
 integer DEBUG = TRUE;
 
-// ==== Canonical protocol constants (GLOBAL for all DS Collar scripts) ====
-string REGISTER_MSG_START      = "register";
-string REGISTER_NOW_MSG_START  = "register_now";
-string DEREGISTER_MSG_START    = "deregister";
-string SOFT_RESET_MSG_START    = "core_soft_reset";
-string SETTINGS_SYNC_MSG_START = "settings_sync";
-string SHOW_MENU_MSG_START     = "show_menu";
-string SETTINGS_SET_PREFIX     = "set_";
+/* ---------- Link numbers (kernel ABI) ---------- */
+integer K_PLUGIN_REG_QUERY   = 500; // Kernel → Plugins: {"type":"register_now","script":"<name>"}
+integer K_PLUGIN_REG_REPLY   = 501; // Plugins → Kernel: {"type":"register",...}
+integer K_PLUGIN_SOFT_RESET  = 504; // Plugins → Kernel: {"type":"plugin_soft_reset","context":...}
 
-// ==== Plugin info (parametric) ====
-integer PLUGIN_SN         = 0;
-string  PLUGIN_LABEL      = "Public";
-integer PLUGIN_MIN_ACL    = 1;
-string  PLUGIN_CONTEXT    = "core_public";
-string  ROOT_CONTEXT      = "core_root";
-string  CTX_MAIN          = "main";
+integer K_PLUGIN_PING        = 650; // Kernel → Plugins: {"type":"plugin_ping","context":...}
+integer K_PLUGIN_PONG        = 651; // Plugins → Kernel: {"type":"plugin_pong","context":...}
 
-// ==== Settings sync protocol/channel ====
-integer SETTINGS_QUERY_NUM   = 800;
-integer SETTINGS_SYNC_NUM    = 870;
+integer AUTH_QUERY_NUM       = 700; // to Auth  : {"type":"acl_query","avatar":"<key>"}
+integer AUTH_RESULT_NUM      = 710; // from Auth: {"type":"acl_result","avatar":"<key>","level":"<int>"}
 
-// ==== Registration/UI menu channels ====
-integer PLUGIN_REG_REPLY_NUM = 501;
-integer UI_SHOW_MENU_NUM     = 601;
+integer K_SETTINGS_QUERY     = 800; // Plugin ↔ Settings (JSON)
+integer K_SETTINGS_SYNC      = 870; // Settings → Plugin  (JSON)
 
-float   DIALOG_TIMEOUT = 180.0;
+integer K_PLUGIN_START       = 900; // UI → Plugin: {"type":"plugin_start","context":...}
+integer K_PLUGIN_RETURN_NUM  = 901; // Plugin → UI : {"type":"plugin_return","context":"core_root"}
 
-// ==== Session state ([av, page, csv, expiry, ctx, param, step, menucsv, chan, listen]) ====
-list    g_sessions;
+/* ---------- Shared magic words ---------- */
+string CONS_TYPE_REGISTER          = "register";
+string CONS_TYPE_REGISTER_NOW      = "register_now";
+string CONS_TYPE_PLUGIN_START      = "plugin_start";
+string CONS_TYPE_PLUGIN_RETURN     = "plugin_return";
+string CONS_TYPE_PLUGIN_SOFT_RESET = "plugin_soft_reset";
+string CONS_TYPE_PLUGIN_PING       = "plugin_ping";
+string CONS_TYPE_PLUGIN_PONG       = "plugin_pong";
 
-// ==== State ====
-integer g_public_access = FALSE;
-key g_owner = NULL_KEY;
+string CONS_SETTINGS_GET           = "settings_get";
+string CONS_SETTINGS_SYNC          = "settings_sync";
+string CONS_SETTINGS_SET           = "set";
 
-// ==== Settings key ====
-string KEY_PUBLIC_MODE = "public_mode";
+string CONS_MSG_ACL_QUERY          = "acl_query";
+string CONS_MSG_ACL_RESULT         = "acl_result";
 
-// === Session Helpers ===
-integer s_idx(key av) { return llListFindList(g_sessions, [av]); }
-integer s_set(key av, integer page, string csv, float expiry, string ctx, string param, string step, string menucsv, integer chan)
-{
-    integer i = s_idx(av);
-    if (~i) {
-        integer old = llList2Integer(g_sessions, i+9);
-        if (old != -1) llListenRemove(old);
-        g_sessions = llDeleteSubList(g_sessions, i, i+9);
-    }
-    integer lh = llListen(chan, "", av, "");
-    g_sessions += [av, page, csv, expiry, ctx, param, step, menucsv, chan, lh];
-    return TRUE;
+/* ---------- ACL levels (authoritative map) ---------- */
+integer ACL_BLACKLIST     = -1;
+integer ACL_NOACCESS      = 0; /* TPE: no wearer access */
+integer ACL_PUBLIC        = 1;
+integer ACL_OWNED         = 2;
+integer ACL_TRUSTEE       = 3;
+integer ACL_UNOWNED       = 4;
+integer ACL_PRIMARY_OWNER = 5;
+
+/* ---------- Identity ---------- */
+string  PLUGIN_CONTEXT   = "core_public";
+string  ROOT_CONTEXT     = "core_root";
+string  PLUGIN_LABEL     = "Public";
+integer PLUGIN_SN        = 0;
+integer PLUGIN_MIN_ACL   = 3;   /* kernel-side filter: 3+ covers 3,4,5 */
+
+/* ---------- Settings ---------- */
+string KEY_PUBLIC_MODE   = "public_mode";
+
+/* ---------- UI/session state ---------- */
+integer DIALOG_TIMEOUT_SEC = 180;
+
+key     g_user       = NULL_KEY;  /* current operator (active session) */
+integer g_listen     = 0;
+integer g_menu_chan  = 0;
+string  g_ctx        = "";        /* "main" */
+
+integer g_public_access = FALSE;  /* 0/1 state */
+
+integer g_acl_pending = FALSE;
+
+/* ========================== Helpers ========================== */
+integer json_has(string j, list path) { return (llJsonGetValue(j, path) != JSON_INVALID); }
+
+integer logd(string s) { if (DEBUG) llOwnerSay("[PUBLIC] " + s); return 0; }
+
+/* ---------- Register / Soft reset ---------- */
+integer register_plugin() {
+    string j = llList2Json(JSON_OBJECT, []);
+    j = llJsonSetValue(j, ["type"],     CONS_TYPE_REGISTER);
+    j = llJsonSetValue(j, ["sn"],       (string)PLUGIN_SN);
+    j = llJsonSetValue(j, ["label"],    PLUGIN_LABEL);
+    j = llJsonSetValue(j, ["min_acl"],  (string)PLUGIN_MIN_ACL);
+    j = llJsonSetValue(j, ["context"],  PLUGIN_CONTEXT);
+    llMessageLinked(LINK_SET, K_PLUGIN_REG_REPLY, j, NULL_KEY);
+    logd("Registered with kernel.");
+    return 0;
 }
-integer s_clear(key av)
-{
-    integer i = s_idx(av);
-    if (~i) {
-        integer old = llList2Integer(g_sessions, i+9);
-        if (old != -1) llListenRemove(old);
-        g_sessions = llDeleteSubList(g_sessions, i, i+9);
-    }
-    return TRUE;
-}
-list s_get(key av)
-{
-    integer i = s_idx(av);
-    if (~i) return llList2List(g_sessions, i, i+9);
-    return [];
+
+integer notify_soft_reset() {
+    string j = llList2Json(JSON_OBJECT, []);
+    j = llJsonSetValue(j, ["type"],    CONS_TYPE_PLUGIN_SOFT_RESET);
+    j = llJsonSetValue(j, ["context"], PLUGIN_CONTEXT);
+    llMessageLinked(LINK_SET, K_PLUGIN_SOFT_RESET, j, NULL_KEY);
+    logd("Soft reset notified.");
+    return 0;
 }
 
-// === Persistence ===
-persist_public(integer value)
-{
-    // Canonical dynamic settings protocol message
-    string msg = SETTINGS_SET_PREFIX + KEY_PUBLIC_MODE + "|" + (string)value;
-    llMessageLinked(LINK_SET, SETTINGS_QUERY_NUM, msg, NULL_KEY);
-    llMessageLinked(LINK_SET, SETTINGS_QUERY_NUM, "get_settings", NULL_KEY);
-    if (DEBUG) llOwnerSay("[PUBLIC] Persisted: " + KEY_PUBLIC_MODE + "=" + (string)value);
+/* ---------- Settings I/O ---------- */
+integer request_settings_get() {
+    string j = llList2Json(JSON_OBJECT, []);
+    j = llJsonSetValue(j, ["type"], CONS_SETTINGS_GET);
+    llMessageLinked(LINK_SET, K_SETTINGS_QUERY, j, NULL_KEY);
+    logd("Requested settings_get.");
+    return 0;
 }
 
-// === Menu Logic ===
-show_public_menu(key user)
-{
-    // Animate/Status-style: always ["~", "Back", "~", ...]
-    list btns = ["~", "Back", "~"];
-    if (g_public_access)
-        btns += [ "Disable" ];
-    else
-        btns += [ "Enable" ];
-    while (llGetListLength(btns) % 3 != 0) btns += " ";
+integer persist_public(integer value01) {
+    if (value01 != 0) value01 = 1;
+    string j = llList2Json(JSON_OBJECT, []);
+    j = llJsonSetValue(j, ["type"],  CONS_SETTINGS_SET);
+    j = llJsonSetValue(j, ["key"],   KEY_PUBLIC_MODE);
+    j = llJsonSetValue(j, ["value"], (string)value01);
+    llMessageLinked(LINK_SET, K_SETTINGS_QUERY, j, NULL_KEY);
+    logd("Persisted public_mode=" + (string)value01);
+    return 0;
+}
 
-    integer menu_chan = (integer)(-1000000.0 * llFrand(1.0) - 1.0);
-    s_set(user, 0, "", llGetUnixTime() + DIALOG_TIMEOUT, CTX_MAIN, "", "", "", menu_chan);
+/* ---------- ACL ---------- */
+integer acl_is_allowed(integer level) {
+    if (level == ACL_TRUSTEE)       return TRUE;  /* 3 */
+    if (level == ACL_UNOWNED)       return TRUE;  /* 4 */
+    if (level == ACL_PRIMARY_OWNER) return TRUE;  /* 5 */
+    return FALSE; /* deny 0,1,2 */
+}
+
+integer request_acl(key av) {
+    string j = llList2Json(JSON_OBJECT, []);
+    j = llJsonSetValue(j, ["type"],   CONS_MSG_ACL_QUERY);
+    j = llJsonSetValue(j, ["avatar"], (string)av);
+    llMessageLinked(LINK_SET, AUTH_QUERY_NUM, j, NULL_KEY);
+    g_acl_pending = TRUE;
+    logd("ACL query → " + (string)av);
+    return 0;
+}
+
+/* ---------- UI plumbing ---------- */
+integer reset_listen() {
+    if (g_listen) llListenRemove(g_listen);
+    g_listen = 0;
+    g_menu_chan = 0;
+    return 0;
+}
+
+integer begin_dialog(key user, string ctx, string body, list buttons) {
+    reset_listen();
+    g_user = user;
+    g_ctx  = ctx;
+
+    g_menu_chan = -100000 - (integer)llFrand(1000000.0);
+    g_listen    = llListen(g_menu_chan, "", g_user, "");
+
+    while ((llGetListLength(buttons) % 3) != 0) buttons += " ";
+
+    llDialog(g_user, body, buttons, g_menu_chan);
+    llSetTimerEvent((float)DIALOG_TIMEOUT_SEC);
+    return 0;
+}
+
+/* ---------- UI content ---------- */
+integer show_main_menu(key user) {
+    list btns = ["~","Back","~"];
+    if (g_public_access) btns += ["Disable"];
+    else                 btns += ["Enable"];
 
     string msg = "Public access is currently ";
     if (g_public_access) msg += "ENABLED.\nDisable public access?";
     else                 msg += "DISABLED.\nEnable public access?";
-    llDialog(user, msg, btns, menu_chan);
 
-    if (DEBUG) llOwnerSay("[PUBLIC] Menu → " + (string)user + " chan=" + (string)menu_chan);
+    begin_dialog(user, "main", msg, btns);
+    logd("Menu → " + (string)user + " chan=" + (string)g_menu_chan);
+    return 0;
 }
 
-// === Settings/State Sync ===
-update_state_from_settings(list p)
-{
-    integer k;
-    for (k = 1; k < llGetListLength(p); ++k) {
-        string kv = llList2String(p, k);
-        integer eq = llSubStringIndex(kv, "=");
-        if (eq != -1) {
-            string pname = llGetSubString(kv, 0, eq-1);
-            string pval  = llGetSubString(kv, eq+1, -1);
-            if (pname == KEY_PUBLIC_MODE) {
-                if (pval == "1") g_public_access = TRUE;
-                else             g_public_access = FALSE;
-                if (DEBUG) llOwnerSay("[PUBLIC] Sync: public=" + (string)g_public_access);
-            }
-        }
+/* ---------- Settings intake ---------- */
+integer apply_settings_sync(string payload) {
+    if (!json_has(payload, ["type"])) return 0;
+    if (llJsonGetValue(payload, ["type"]) != CONS_SETTINGS_SYNC) return 0;
+    if (!json_has(payload, ["kv"])) return 0;
+
+    string kv = llJsonGetValue(payload, ["kv"]);
+    string v  = llJsonGetValue(kv, [ KEY_PUBLIC_MODE ]);
+    if (v == JSON_INVALID) return 0;
+
+    integer want = (integer)v;
+    if (want != 0) want = 1;
+
+    if (g_public_access != want) {
+        g_public_access = want;
+        logd("Settings sync applied: public=" + (string)g_public_access);
     }
+    return 0;
 }
 
-// === MAIN EVENT LOOP ===
-default
-{
-    state_entry()
-    {
-        PLUGIN_SN = (integer)(llFrand(1.0e5));
-        string reg_msg = REGISTER_MSG_START + "|" + (string)PLUGIN_SN + "|" + PLUGIN_LABEL + "|"
-                        + (string)PLUGIN_MIN_ACL + "|" + PLUGIN_CONTEXT + "|" + llGetScriptName();
-        llMessageLinked(LINK_SET, PLUGIN_REG_REPLY_NUM, reg_msg, NULL_KEY);
+/* =========================== Events ========================== */
+default {
+    state_entry() {
+        PLUGIN_SN = (integer)(llFrand(1.0e9));
 
-        llMessageLinked(LINK_SET, SETTINGS_QUERY_NUM, "get_settings", NULL_KEY);
+        notify_soft_reset();
+        register_plugin();
+        request_settings_get();
 
-        if (DEBUG) llOwnerSay("[PUBLIC] Ready, SN=" + (string)PLUGIN_SN);
+        g_user = NULL_KEY;
+        reset_listen();
+        g_ctx = "";
+        g_acl_pending = FALSE;
+        llSetTimerEvent(0.0);
+
+        logd("Ready. SN=" + (string)PLUGIN_SN);
     }
 
-    link_message(integer sender, integer num, string str, key id)
-    {
-        // Canonical registration protocol
-        if ((num == 500) && llSubStringIndex(str, REGISTER_NOW_MSG_START + "|") == 0)
-        {
-            string script_req = llGetSubString(str, llStringLength(REGISTER_NOW_MSG_START) + 1, -1);
-            if (script_req == llGetScriptName())
-            {
-                string reg_msg = REGISTER_MSG_START + "|" + (string)PLUGIN_SN + "|" + PLUGIN_LABEL + "|"
-                                + (string)PLUGIN_MIN_ACL + "|" + PLUGIN_CONTEXT + "|" + llGetScriptName();
-                llMessageLinked(LINK_SET, PLUGIN_REG_REPLY_NUM, reg_msg, NULL_KEY);
-                if (DEBUG) llOwnerSay("[PUBLIC] Registration reply sent.");
-            }
-            return;
-        }
-
-        // SETTINGS SYNC (authoritative)
-        if (num == SETTINGS_SYNC_NUM) {
-            list parts = llParseStringKeepNulls(str, ["|"], []);
-            if (llList2String(parts, 0) == SETTINGS_SYNC_MSG_START) {
-                update_state_from_settings(parts);
-            }
-            return;
-        }
-
-        // Legacy core sync
-        if (num == 520 && llSubStringIndex(str, "state_sync|") == 0) {
-            list p = llParseString2List(str, ["|"], []);
-            if (llGetListLength(p) >= 7) {
-                string pub_str = llList2String(p, 6);
-                if (pub_str == "1") g_public_access = TRUE;
-                else                g_public_access = FALSE;
-                if (DEBUG) llOwnerSay("[PUBLIC] Legacy sync: public=" + (string)g_public_access);
-            }
-            return;
-        }
-
-        // UI show menu
-        if ((num == UI_SHOW_MENU_NUM)) {
-            list parts = llParseStringKeepNulls(str, ["|"], []);
-            if (llGetListLength(parts) >= 3) {
-                string ctx = llList2String(parts, 1);
-                key user = (key)llList2String(parts, 2);
-                if (ctx == PLUGIN_CONTEXT) {
-                    show_public_menu(user);
-                    return;
+    link_message(integer sender, integer num, string msg, key id) {
+        /* Heartbeat */
+        if (num == K_PLUGIN_PING) {
+            if (json_has(msg, ["type"]) && llJsonGetValue(msg, ["type"]) == CONS_TYPE_PLUGIN_PING) {
+                if (json_has(msg, ["context"]) && llJsonGetValue(msg, ["context"]) == PLUGIN_CONTEXT) {
+                    string pong = llList2Json(JSON_OBJECT, []);
+                    pong = llJsonSetValue(pong, ["type"],    CONS_TYPE_PLUGIN_PONG);
+                    pong = llJsonSetValue(pong, ["context"], PLUGIN_CONTEXT);
+                    llMessageLinked(LINK_SET, K_PLUGIN_PONG, pong, NULL_KEY);
                 }
             }
+            return;
+        }
+
+        /* Kernel: re-register request for this script */
+        if (num == K_PLUGIN_REG_QUERY) {
+            if (json_has(msg, ["type"]) && llJsonGetValue(msg, ["type"]) == CONS_TYPE_REGISTER_NOW) {
+                if (json_has(msg, ["script"]) && llJsonGetValue(msg, ["script"]) == llGetScriptName()) {
+                    register_plugin();
+                }
+            }
+            return;
+        }
+
+        /* Settings sync */
+        if (num == K_SETTINGS_SYNC) {
+            apply_settings_sync(msg);
+            return;
+        }
+
+        /* ACL result gate */
+        if (num == AUTH_RESULT_NUM) {
+            if (!g_acl_pending) return;
+            if (!json_has(msg, ["type"])) return;
+            if (llJsonGetValue(msg, ["type"]) != CONS_MSG_ACL_RESULT) return;
+            if (!json_has(msg, ["avatar"])) return;
+            if (!json_has(msg, ["level"])) return;
+
+            key who = (key)llJsonGetValue(msg, ["avatar"]);
+            integer lvl = (integer)llJsonGetValue(msg, ["level"]);
+
+            if (who != g_user) return;
+
+            g_acl_pending = FALSE;
+
+            if (acl_is_allowed(lvl)) {
+                show_main_menu(g_user);
+            } else {
+                llRegionSayTo(g_user, 0, "Access denied.");
+                string r = llList2Json(JSON_OBJECT, []);
+                r = llJsonSetValue(r, ["type"],    CONS_TYPE_PLUGIN_RETURN);
+                r = llJsonSetValue(r, ["context"], ROOT_CONTEXT);
+                llMessageLinked(LINK_SET, K_PLUGIN_RETURN_NUM, r, g_user);
+
+                reset_listen();
+                g_user = NULL_KEY;
+                g_ctx = "";
+                llSetTimerEvent(0.0);
+            }
+            return;
+        }
+
+        /* UI start */
+        if (num == K_PLUGIN_START) {
+            if (json_has(msg, ["type"]) && llJsonGetValue(msg, ["type"]) == CONS_TYPE_PLUGIN_START) {
+                if (json_has(msg, ["context"]) && llJsonGetValue(msg, ["context"]) == PLUGIN_CONTEXT) {
+                    g_user = id;
+                    request_acl(g_user); /* defer UI until Auth says OK */
+                }
+            }
+            return;
         }
     }
 
-    listen(integer chan, string name, key id, string msg)
-    {
-        list sess = s_get(id);
-        if (llGetListLength(sess) == 10 && chan == llList2Integer(sess, 8))
-        {
-            string ctx = llList2String(sess, 4);
+    listen(integer chan, string name, key id, string message) {
+        if (chan != g_menu_chan) return;
+        if (id != g_user) return;
 
-            // Canonical: Back always routes to ROOT_CONTEXT and clears session
-            if (msg == "Back") {
-                string menu_req = SHOW_MENU_MSG_START + "|" + ROOT_CONTEXT + "|" + (string)id + "|0";
-                llMessageLinked(LINK_SET, UI_SHOW_MENU_NUM, menu_req, NULL_KEY);
-                s_clear(id);
+        if (message == "Back") {
+            string r = llList2Json(JSON_OBJECT, []);
+            r = llJsonSetValue(r, ["type"],    CONS_TYPE_PLUGIN_RETURN);
+            r = llJsonSetValue(r, ["context"], ROOT_CONTEXT);
+            llMessageLinked(LINK_SET, K_PLUGIN_RETURN_NUM, r, g_user);
+
+            reset_listen();
+            g_user = NULL_KEY;
+            g_ctx = "";
+            llSetTimerEvent(0.0);
+            return;
+        }
+
+        if (g_ctx == "main") {
+            if (message == "Enable") {
+                g_public_access = TRUE;
+                persist_public(g_public_access);
+                show_main_menu(g_user);
                 return;
             }
-
-            if (ctx == CTX_MAIN)
-            {
-                if (msg == "Enable") {
-                    g_public_access = TRUE;
-                    persist_public(g_public_access);
-                    show_public_menu(id);
-                    return;
-                }
-                if (msg == "Disable") {
-                    g_public_access = FALSE;
-                    persist_public(g_public_access);
-                    show_public_menu(id);
-                    return;
-                }
+            if (message == "Disable") {
+                g_public_access = FALSE;
+                persist_public(g_public_access);
+                show_main_menu(g_user);
+                return;
             }
         }
+
+        /* Fallback: redraw */
+        show_main_menu(g_user);
     }
 
-    timer()
-    {
-        integer now = llGetUnixTime();
-        integer i = 0;
-        while (i < llGetListLength(g_sessions)) {
-            float exp = llList2Float(g_sessions, i+3);
-            key av = llList2Key(g_sessions, i);
-            if (now > exp) {
-                s_clear(av);
-            } else {
-                i += 10;
-            }
-        }
+    timer() {
+        /* No multi-user session table here; simply close on timeout */
+        reset_listen();
+        g_user = NULL_KEY;
+        g_ctx = "";
+        llSetTimerEvent(0.0);
     }
 
-    changed(integer change)
-    {
+    changed(integer change) {
         if (change & CHANGED_OWNER) {
             llOwnerSay("[PUBLIC] Owner changed. Resetting plugin.");
             llResetScript();
