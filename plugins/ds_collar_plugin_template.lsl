@@ -1,99 +1,97 @@
 /* =============================================================
-   PLUGIN: ds_collar_plugin_template.lsl
-   PURPOSE: Authoritative DS Collar boilerplate for new kernel
-            - JSON register
-            - Heartbeat (ping/pong)
-            - Plugin soft-reset notify
-            - ACL-gated entry (Auth module)
-            - Animate/Status-style menu (Back centered)
-            - Private dialog channel + safe listener
-   NOTES:
-     • Change the identity block (CONTEXT/LABEL/MIN_ACL).
-     • If per-button ACL is needed, use allow_level() again at click-time.
+   PLUGIN BOILERPLATE: ds_collar_plugin_boilerplate.lsl
+   PURPOSE: Hardened base for DS Collar plugins
+     - JSON register + soft reset notify
+     - Standard heartbeat (plugin_ping/pong)
+     - Standard ACL handshake (query on start, gate UI)
+     - Private dialog channel + Back to root
+     - Optional per-button ACL re-check example
+   NOTE: Replace identity fields, labels, and show_menu() body.
    ============================================================= */
 
 integer DEBUG = TRUE;
 
 /* ---------- Link numbers (kernel ABI) ---------- */
-integer K_PLUGIN_REG_QUERY     = 500; // Kernel → Plugins: {"type":"register_now","script":"<name>"}
-integer K_PLUGIN_REG_REPLY     = 501; // Plugins → Kernel: {"type":"register",...}
-integer K_PLUGIN_SOFT_RESET    = 504; // Plugins → Kernel: {"type":"plugin_soft_reset","context":...}
+integer K_PLUGIN_REG_QUERY   = 500;  // Kernel → Plugins: {"type":"register_now","script":"<name>"}
+integer K_PLUGIN_REG_REPLY   = 501;  // Plugins → Kernel : {"type":"register",...}
+integer K_PLUGIN_SOFT_RESET  = 504;  // Plugins → Kernel : {"type":"plugin_soft_reset","context":...}
 
-integer K_PLUGIN_PING          = 650; // Kernel → Plugins: {"type":"plugin_ping","context":...}
-integer K_PLUGIN_PONG          = 651; // Plugins → Kernel: {"type":"plugin_pong","context":...}
+integer K_PLUGIN_PING        = 650;  // Kernel → Plugins: {"type":"plugin_ping","context":...}
+integer K_PLUGIN_PONG        = 651;  // Plugins → Kernel : {"type":"plugin_pong","context":...}
 
-integer AUTH_QUERY_NUM         = 700; // to Auth: {"type":"acl_query","avatar":"<key>"}
-integer AUTH_RESULT_NUM        = 710; // from Auth: {"type":"acl_result","avatar":"<key>","level":"<int>"}
+integer AUTH_QUERY_NUM       = 700;  // Plugin → Auth    : {"type":"acl_query","avatar":"<key>"}
+integer AUTH_RESULT_NUM      = 710;  // Auth   → Plugin  : {"type":"acl_result","avatar":"<key>","level":"<int>"}
 
-integer K_SETTINGS_QUERY       = 800; // Plugin ↔ Settings (JSON)
-integer K_SETTINGS_SYNC        = 870; // Settings → Plugin  (JSON)
+integer K_SETTINGS_QUERY     = 800;  // (optional) settings
+integer K_SETTINGS_SYNC      = 870;  // (optional) settings
 
-integer K_PLUGIN_START         = 900; // UI → Plugin : {"type":"plugin_start","context":...}
-integer K_PLUGIN_RETURN_NUM    = 901; // Plugin → UI : {"type":"plugin_return","context":"core_root"}
+integer K_PLUGIN_START       = 900;  // UI     → Plugin  : {"type":"plugin_start","context":...}
+integer K_PLUGIN_RETURN_NUM  = 901;  // Plugin → UI      : {"type":"plugin_return","context":"core_root"}
 
-/* ---------- Shared magic words (keep consistent) ---------- */
+/* ---------- Magic words (protocol strings) ---------- */
 string CONS_TYPE_REGISTER          = "register";
 string CONS_TYPE_REGISTER_NOW      = "register_now";
+string CONS_TYPE_PLUGIN_SOFT_RESET = "plugin_soft_reset";
 string CONS_TYPE_PLUGIN_START      = "plugin_start";
 string CONS_TYPE_PLUGIN_RETURN     = "plugin_return";
-string CONS_TYPE_PLUGIN_SOFT_RESET = "plugin_soft_reset";
 string CONS_TYPE_PLUGIN_PING       = "plugin_ping";
 string CONS_TYPE_PLUGIN_PONG       = "plugin_pong";
-
-string CONS_SETTINGS_GET           = "settings_get";
-string CONS_SETTINGS_SYNC          = "settings_sync";
-string CONS_SETTINGS_SET           = "set";
-string CONS_SETTINGS_LIST_ADD      = "list_add";
-string CONS_SETTINGS_LIST_REMOVE   = "list_remove";
 
 string CONS_MSG_ACL_QUERY          = "acl_query";
 string CONS_MSG_ACL_RESULT         = "acl_result";
 
-/* ---------- Identity (edit these per plugin) ---------- */
+/* ---------- Identity (CHANGE THESE) ---------- */
 string  PLUGIN_CONTEXT   = "core_template";
 string  ROOT_CONTEXT     = "core_root";
 string  PLUGIN_LABEL     = "Template";
 integer PLUGIN_SN        = 0;
-/* Minimum ACL required to open this plugin’s UI at all.
-   Authoritative ACL levels:
-     -1 BLACKLIST, 0 NOACCESS, 1 PUBLIC, 2 OWNED, 3 TRUSTEE, 4 UNOWNED, 5 PRIMARY_OWNER
-   Example: allow 1..5 (public and up) by default. Change as needed. */
-integer PLUGIN_MIN_ACL   = 1;
 
-/* ---------- ACL allowlist for this plugin (optional refinement) ----------
-   By default we accept anything >= PLUGIN_MIN_ACL. You can narrow it here. */
-integer ALLOW_BLACKLIST     = FALSE; // -1
-integer ALLOW_NOACCESS      = FALSE; // 0
-integer ALLOW_PUBLIC        = TRUE;  // 1
-integer ALLOW_OWNED         = TRUE;  // 2
-integer ALLOW_TRUSTEE       = TRUE;  // 3
-integer ALLOW_UNOWNED       = TRUE;  // 4
-integer ALLOW_PRIMARY_OWNER = TRUE;  // 5
+/* ACL levels (authoritative mapping) */
+integer ACL_BLACKLIST     = -1;
+integer ACL_NOACCESS      = 0; // no wearer access
+integer ACL_PUBLIC        = 1;
+integer ACL_OWNED         = 2;
+integer ACL_TRUSTEE       = 3;
+integer ACL_UNOWNED       = 4;
+integer ACL_PRIMARY_OWNER = 5;
 
-/* ---------- UI/session state ---------- */
+/* ---------- Access policy for THIS plugin ----------
+   Populate with the levels that may open this plugin.
+   Example: allow Public, Owned, Trustee, Unowned, Primary
+   list ALLOWED_ACL_LEVELS = [1,2,3,4,5];
+*/
+list ALLOWED_ACL_LEVELS = [1,2,3,4,5];
+
+/* ---------- UI/session ---------- */
 integer DIALOG_TIMEOUT_SEC = 180;
-
-key     g_user      = NULL_KEY; // current operator (this session)
+key     g_user      = NULL_KEY;
 integer g_listen    = 0;
 integer g_menu_chan = 0;
-string  g_ctx       = "";       // "main", or plugin-specific
+
+/* Gate state */
 integer g_acl_pending = FALSE;
+integer g_acl_level   = ACL_NOACCESS;
 
 /* ========================== Helpers ========================== */
-integer json_has(string j, list path) { return (llJsonGetValue(j, path) != JSON_INVALID); }
+
+integer json_has(string j, list path) {
+    string v = llJsonGetValue(j, path);
+    if (v == JSON_INVALID) return FALSE;
+    return TRUE;
+}
 
 integer logd(string s) {
-    if (DEBUG) llOwnerSay("[TEMPLATE] " + s);
+    if (DEBUG) llOwnerSay("[PLUGIN " + PLUGIN_CONTEXT + "] " + s);
     return 0;
 }
 
-/* ----- Registration & soft reset ----- */
+/* ----- Kernel/Register/Soft reset ----- */
 integer register_plugin() {
     string j = llList2Json(JSON_OBJECT, []);
     j = llJsonSetValue(j, ["type"],     CONS_TYPE_REGISTER);
     j = llJsonSetValue(j, ["sn"],       (string)PLUGIN_SN);
     j = llJsonSetValue(j, ["label"],    PLUGIN_LABEL);
-    j = llJsonSetValue(j, ["min_acl"],  (string)PLUGIN_MIN_ACL);
+    j = llJsonSetValue(j, ["min_acl"],  "0");               // informational only; UI may ignore
     j = llJsonSetValue(j, ["context"],  PLUGIN_CONTEXT);
     llMessageLinked(LINK_SET, K_PLUGIN_REG_REPLY, j, NULL_KEY);
     logd("Registered with kernel.");
@@ -109,23 +107,9 @@ integer notify_soft_reset() {
     return 0;
 }
 
-/* ----- Settings (optional; template ready) ----- */
-integer request_settings_get() {
-    string j = llList2Json(JSON_OBJECT, []);
-    j = llJsonSetValue(j, ["type"], CONS_SETTINGS_GET);
-    llMessageLinked(LINK_SET, K_SETTINGS_QUERY, j, NULL_KEY);
-    return 0;
-}
-
 /* ----- ACL ----- */
-integer allow_level(integer lvl) {
-    if (lvl == -1 && ALLOW_BLACKLIST) return TRUE;
-    if (lvl ==  0 && ALLOW_NOACCESS) return TRUE;
-    if (lvl ==  1 && ALLOW_PUBLIC) return TRUE;
-    if (lvl ==  2 && ALLOW_OWNED) return TRUE;
-    if (lvl ==  3 && ALLOW_TRUSTEE) return TRUE;
-    if (lvl ==  4 && ALLOW_UNOWNED) return TRUE;
-    if (lvl ==  5 && ALLOW_PRIMARY_OWNER) return TRUE;
+integer in_allowed_levels(integer lvl) {
+    if (llListFindList(ALLOWED_ACL_LEVELS, [lvl]) != -1) return TRUE;
     return FALSE;
 }
 
@@ -147,44 +131,47 @@ integer reset_listen() {
     return 0;
 }
 
-integer begin_dialog(key user, string ctx, string body, list buttons) {
+integer begin_dialog(key user, string body, list buttons) {
     reset_listen();
     g_user = user;
-    g_ctx  = ctx;
+
+    /* pad buttons to multiple of 3 */
+    while ((llGetListLength(buttons) % 3) != 0) buttons += " ";
 
     g_menu_chan = -100000 - (integer)llFrand(1000000.0);
     g_listen    = llListen(g_menu_chan, "", g_user, "");
-
-    while ((llGetListLength(buttons) % 3) != 0) buttons += " ";
-
     llDialog(g_user, body, buttons, g_menu_chan);
     llSetTimerEvent((float)DIALOG_TIMEOUT_SEC);
     return 0;
 }
 
-/* ----- UI content (customize per plugin) ----- */
-integer show_main_menu(key user) {
-    // Placeholder menu: Back centered, two example buttons
-    string msg = "Template plugin.\nReplace this message and buttons with your UI.";
-    list btns = ["~", "Back", "~", "Do A", "Do B"];
-    begin_dialog(user, "main", msg, btns);
-    logd("Main menu → " + (string)user + " chan=" + (string)g_menu_chan);
+/* ----- UI content (REPLACE for real plugin) ----- */
+integer show_menu(key user) {
+    list btns = ["~", "Back", "~", "Example"];
+    begin_dialog(user, "Template menu.\nReplace this with your content.", btns);
+    logd("Menu → " + (string)user + " chan=" + (string)g_menu_chan);
     return 0;
+}
+
+/* Example per-button ACL re-check (call before action) */
+integer enforce_button_acl(integer lvl, list allowed_for_button) {
+    if (llListFindList(allowed_for_button, [lvl]) != -1) return TRUE;
+    llRegionSayTo(g_user, 0, "You do not have permission for that action.");
+    return FALSE;
 }
 
 /* =========================== Events ========================== */
 default {
     state_entry() {
         PLUGIN_SN = (integer)(llFrand(1.0e9));
+        g_user = NULL_KEY;
+        g_acl_pending = FALSE;
+        g_acl_level = ACL_NOACCESS;
+        reset_listen();
+        llSetTimerEvent(0.0);
+
         notify_soft_reset();
         register_plugin();
-        // If you need settings for initial state, uncomment:
-        // request_settings_get();
-
-        g_user = NULL_KEY;
-        reset_listen();
-        g_ctx = "";
-        llSetTimerEvent(0.0);
 
         logd("Ready. SN=" + (string)PLUGIN_SN);
     }
@@ -203,7 +190,7 @@ default {
             return;
         }
 
-        /* Kernel: “register_now” for THIS script */
+        /* Kernel asks this specific script to re-register */
         if (num == K_PLUGIN_REG_QUERY) {
             if (json_has(msg, ["type"]) && llJsonGetValue(msg, ["type"]) == CONS_TYPE_REGISTER_NOW) {
                 if (json_has(msg, ["script"]) && llJsonGetValue(msg, ["script"]) == llGetScriptName()) {
@@ -213,10 +200,14 @@ default {
             return;
         }
 
-        /* (Optional) Settings sync intake */
-        if (num == K_SETTINGS_SYNC) {
-            // string kv = llJsonGetValue(msg, ["kv"]);
-            // apply your settings if needed
+        /* UI start → secure: request ACL, defer menu until result */
+        if (num == K_PLUGIN_START) {
+            if (json_has(msg, ["type"]) && llJsonGetValue(msg, ["type"]) == CONS_TYPE_PLUGIN_START) {
+                if (json_has(msg, ["context"]) && llJsonGetValue(msg, ["context"]) == PLUGIN_CONTEXT) {
+                    g_user = id;
+                    request_acl(g_user);
+                }
+            }
             return;
         }
 
@@ -226,19 +217,19 @@ default {
             if (!json_has(msg, ["type"])) return;
             if (llJsonGetValue(msg, ["type"]) != CONS_MSG_ACL_RESULT) return;
             if (!json_has(msg, ["avatar"])) return;
+
+            key who = (key)llJsonGetValue(msg, ["avatar"]);
+            if (who != g_user) return;
+
             if (!json_has(msg, ["level"])) return;
-
-            key av = (key)llJsonGetValue(msg, ["avatar"]);
-            if (av != g_user) return;
-
-            integer level = (integer)llJsonGetValue(msg, ["level"]);
+            g_acl_level = (integer)llJsonGetValue(msg, ["level"]);
             g_acl_pending = FALSE;
 
-            if (level >= PLUGIN_MIN_ACL && allow_level(level)) {
-                show_main_menu(g_user);
+            if (in_allowed_levels(g_acl_level)) {
+                show_menu(g_user);
             } else {
                 llRegionSayTo(g_user, 0, "Access denied.");
-                // Return to root UI
+                /* return to root */
                 string r = llList2Json(JSON_OBJECT, []);
                 r = llJsonSetValue(r, ["type"],    CONS_TYPE_PLUGIN_RETURN);
                 r = llJsonSetValue(r, ["context"], ROOT_CONTEXT);
@@ -250,24 +241,20 @@ default {
             return;
         }
 
-        /* UI: start this plugin */
-        if (num == K_PLUGIN_START) {
-            if (json_has(msg, ["type"]) && llJsonGetValue(msg, ["type"]) == CONS_TYPE_PLUGIN_START) {
-                if (json_has(msg, ["context"]) && llJsonGetValue(msg, ["context"]) == PLUGIN_CONTEXT) {
-                    g_user = id;
-                    request_acl(g_user);
-                }
-            }
+        /* (Optional) settings sync hook if your plugin needs it
+        if (num == K_SETTINGS_SYNC) {
+            // read settings JSON here
             return;
         }
+        */
     }
 
-    /* Dialog handler */
     listen(integer chan, string name, key id, string message) {
         if (chan != g_menu_chan) return;
         if (id != g_user) return;
 
         if (message == "Back") {
+            /* Return to root UI */
             string r = llList2Json(JSON_OBJECT, []);
             r = llJsonSetValue(r, ["type"],    CONS_TYPE_PLUGIN_RETURN);
             r = llJsonSetValue(r, ["context"], ROOT_CONTEXT);
@@ -275,41 +262,33 @@ default {
 
             reset_listen();
             g_user = NULL_KEY;
-            g_ctx = "";
             llSetTimerEvent(0.0);
             return;
         }
 
-        /* Example button actions (add real logic): */
-        if (g_ctx == "main") {
-            if (message == "Do A") {
-                // (Optional) per-button ACL re-check via request_acl(g_user)
-                llRegionSayTo(g_user, 0, "You pressed Do A.");
-                show_main_menu(g_user);
-                return;
-            }
-            if (message == "Do B") {
-                llRegionSayTo(g_user, 0, "You pressed Do B.");
-                show_main_menu(g_user);
-                return;
-            }
+        if (message == "Example") {
+            /* Example per-button ACL: only Trustees+ (3,5) allowed */
+            list allow_btn = [ACL_TRUSTEE, ACL_PRIMARY_OWNER];
+            if (!enforce_button_acl(g_acl_level, allow_btn)) return;
+
+            llRegionSayTo(g_user, 0, "Example action executed.");
+            show_menu(g_user);
+            return;
         }
 
-        // Fallback
-        show_main_menu(g_user);
+        /* Unknown → redraw */
+        show_menu(g_user);
     }
 
-    /* Timeout closes dialog + session */
     timer() {
         reset_listen();
         g_user = NULL_KEY;
-        g_ctx = "";
         llSetTimerEvent(0.0);
     }
 
     changed(integer change) {
         if (change & CHANGED_OWNER) {
-            llOwnerSay("[TEMPLATE] Owner changed. Resetting plugin.");
+            llOwnerSay("Owner changed. Resetting plugin: " + PLUGIN_CONTEXT);
             llResetScript();
         }
     }
