@@ -1,567 +1,640 @@
 /* =============================================================
-   PLUGIN: ds_collar_owner.lsl (DS Collar Canonical, Strict LSL)
-   PURPOSE: Owner Control and Management Plugin (Core 1.4+)
-   AUTHOR:  [Your Project/Name]
-   DATE:    2025-08-02
+   PLUGIN: ds_collar_owner.lsl (New Kernel ABI, JSON)
+   PURPOSE: Owner Control & Management
+   BASED ON: ds_collar_plugin_boilerplate.lsl
+   DATE: 2025-08-12
    ============================================================= */
 
-/* -------- CANONICAL PROTOCOL CONSTANTS -------- */
-string REGISTER_MSG_START      = "register";
-string REGISTER_NOW_MSG_START  = "register_now";
-string DEREGISTER_MSG_START    = "deregister";
-string SOFT_RESET_MSG_START    = "core_soft_reset";
-string SETTINGS_SYNC_MSG_START = "settings_sync";
-string SHOW_MENU_MSG_START     = "show_menu";
+integer DEBUG = TRUE;
 
-/* -------- PLUGIN PARAMETERS -------- */
-string  PLUGIN_CONTEXT      = "core_owner";
-string  ROOT_CONTEXT        = "core_root";
-string  PLUGIN_LABEL        = "Owner";
-integer PLUGIN_MIN_ACL      = 1;
-integer PLUGIN_SN           = 0;
+/* ---------- Link numbers (kernel ABI) ---------- */
+integer K_PLUGIN_REG_QUERY   = 500;
+integer K_PLUGIN_REG_REPLY   = 501;
+integer K_PLUGIN_SOFT_RESET  = 504;
 
-/* -------- CHANNELS -------- */
-integer PLUGIN_REG_QUERY_NUM = 500;
-integer PLUGIN_REG_REPLY_NUM = 501;
-integer SETTINGS_QUERY_NUM   = 800;
-integer SETTINGS_SYNC_NUM    = 870;
-integer UI_SHOW_MENU_NUM     = 601;
+integer K_PLUGIN_PING        = 650;
+integer K_PLUGIN_PONG        = 651;
 
-/* -------- UI CONSTANTS -------- */
-string  BACK_BTN_LABEL   = "Back";
-string  FILLER_BTN_LABEL = "~";
-string  YES_LABEL        = "Yes";
-string  NO_LABEL         = "No";
-string  CANCEL_LABEL     = "Cancel";
-string  OK_LABEL         = "OK";
-integer DIALOG_TIMEOUT   = 180;
+integer AUTH_QUERY_NUM       = 700;
+integer AUTH_RESULT_NUM      = 710;
 
-/* -------- SESSION STATE -------- */
-key     sess_user        = NULL_KEY;
-integer sess_chan        = 0;
-integer sess_listen      = 0;
-string  sess_context     = "";
-string  sess_param1      = "";
-string  sess_param2      = "";
-string  sess_stepdata    = "";
+integer K_SETTINGS_QUERY     = 800;
+integer K_SETTINGS_SYNC      = 870;
 
-/* -------- OWNER/STATE MIRROR -------- */
-key     collar_owner = NULL_KEY;
-string  collar_owner_honorific = "";
-integer collar_locked = FALSE;
-integer collar_public_access = FALSE;
-list    collar_trustees = [];
-list    collar_trustee_honorifics = [];
+integer K_PLUGIN_START       = 900;
+integer K_PLUGIN_RETURN_NUM  = 901;
 
-/* -------- HELPERS -------- */
-list owner_honorifics() {
-    return ["Master", "Mistress", "Daddy", "Mommy", "King", "Queen"];
+/* ---------- Magic words (protocol strings) ---------- */
+string CONS_TYPE_REGISTER          = "register";
+string CONS_TYPE_REGISTER_NOW      = "register_now";
+string CONS_TYPE_PLUGIN_SOFT_RESET = "plugin_soft_reset";
+string CONS_TYPE_PLUGIN_START      = "plugin_start";
+string CONS_TYPE_PLUGIN_RETURN     = "plugin_return";
+string CONS_TYPE_PLUGIN_PING       = "plugin_ping";
+string CONS_TYPE_PLUGIN_PONG       = "plugin_pong";
+
+string CONS_MSG_ACL_QUERY          = "acl_query";
+string CONS_MSG_ACL_RESULT         = "acl_result";
+
+/* Settings protocol (JSON) */
+string CONS_SETTINGS_SYNC          = "settings_sync";   // inbound/outbound
+string CONS_SETTINGS_NS_OWNER      = "owner";           // namespace/key for this module
+
+/* ---------- Identity ---------- */
+string  PLUGIN_CONTEXT   = "core_owner";
+string  ROOT_CONTEXT     = "core_root";
+string  PLUGIN_LABEL     = "Owner";
+integer PLUGIN_SN        = 0;
+
+/* ACL levels */
+integer ACL_BLACKLIST     = -1;
+integer ACL_NOACCESS      = 0;
+integer ACL_PUBLIC        = 1;
+integer ACL_OWNED         = 2;  // wearer while owned
+integer ACL_TRUSTEE       = 3;
+integer ACL_UNOWNED       = 4;  // wearer while unowned
+integer ACL_PRIMARY_OWNER = 5;
+
+/* Who can OPEN the plugin menu */
+list ALLOWED_ACL_LEVELS = [ACL_OWNED, ACL_UNOWNED, ACL_PRIMARY_OWNER];
+
+/* ---------- UI/session ---------- */
+integer DIALOG_TIMEOUT_SEC = 180;
+key     g_user       = NULL_KEY;  // current menu owner (who opened plugin)
+integer g_listen     = 0;
+integer g_menu_chan  = 0;
+
+/* Gate state */
+integer g_acl_pending = FALSE;
+integer g_acl_level   = ACL_NOACCESS;
+
+/* ---------- Owner/state mirror ---------- */
+key     collar_owner             = NULL_KEY;
+string  collar_owner_honorific   = "";
+integer collar_locked            = FALSE;
+integer collar_public_access     = FALSE;
+list    collar_trustees          = [];
+list    collar_trustee_honorifics= [];
+
+/* ---------- Flow/session state ---------- */
+string  s_context   = "";     // "", "menu", "add_owner_select", "add_owner_hon", "add_owner_cand_ok", "add_owner_wearer_ok", "transfer_select", "transfer_hon", "transfer_confirm", "release_owner_confirm", "release_wearer_confirm", "runaway_confirm"
+string  s_param1    = "";     // general scratch (e.g., candidate key)
+string  s_param2    = "";     // general scratch (e.g., chosen honorific)
+string  s_data      = "";     // csv payload (e.g., candidate keys)
+
+/* ========================== Helpers ========================== */
+integer json_has(string j, list path) {
+    string v = llJsonGetValue(j, path);
+    if (v == JSON_INVALID) return FALSE;
+    return TRUE;
 }
-list make_yes_no_cancel() { return [YES_LABEL, NO_LABEL, CANCEL_LABEL]; }
-list make_ok_only() { return [OK_LABEL]; }
-string wearer_display_name() {
-    // Display name of the collar wearer (llGetDisplayName is not in LSL; use llKey2Name)
-    return llKey2Name(llGetOwner());
+integer logd(string s) { if (DEBUG) llOwnerSay("[OWNER] " + s); return 0; }
+
+/* Honorific options */
+list owner_honorifics() { return ["Master","Mistress","Daddy","Mommy","King","Queen"]; }
+
+/* Names */
+string wearer_display_name() { return llKey2Name(llGetOwner()); }
+string candidate_display_name(key k) { return llKey2Name(k); }
+string owner_display_name() { return candidate_display_name(collar_owner); }
+
+/* ---------- Kernel/Register/Soft reset ---------- */
+integer register_plugin() {
+    string j = llList2Json(JSON_OBJECT, []);
+    j = llJsonSetValue(j, ["type"],    CONS_TYPE_REGISTER);
+    j = llJsonSetValue(j, ["sn"],      (string)PLUGIN_SN);
+    j = llJsonSetValue(j, ["label"],   PLUGIN_LABEL);
+    j = llJsonSetValue(j, ["min_acl"], "0");
+    j = llJsonSetValue(j, ["context"], PLUGIN_CONTEXT);
+    llMessageLinked(LINK_SET, K_PLUGIN_REG_REPLY, j, NULL_KEY);
+    logd("Registered.");
+    return 0;
 }
-string candidate_display_name(key candidate) {
-    return llKey2Name(candidate);
-}
-string owner_display_name() {
-    return candidate_display_name(collar_owner);
+integer notify_soft_reset() {
+    string j = llList2Json(JSON_OBJECT, []);
+    j = llJsonSetValue(j, ["type"],    CONS_TYPE_PLUGIN_SOFT_RESET);
+    j = llJsonSetValue(j, ["context"], PLUGIN_CONTEXT);
+    llMessageLinked(LINK_SET, K_PLUGIN_SOFT_RESET, j, NULL_KEY);
+    return 0;
 }
 
-/* -------- STATE SYNC WITH CORE/SETTINGS -------- */
-update_from_settings(list parts) {
-    // settings_sync|owner|owner_hon|trustees_csv|trustees_hon_csv|unused|public_access|locked
-    if (llGetListLength(parts) < 8) return;
-    collar_owner = (key)llList2String(parts, 1);
-    collar_owner_honorific = llList2String(parts, 2);
-    string trustees_csv = llList2String(parts, 3);
-    string trustees_hon_csv = llList2String(parts, 4);
-    string pub_str = llList2String(parts, 6);
-    string lock_str = llList2String(parts, 7);
+/* ---------- ACL ---------- */
+integer in_allowed_levels(integer lvl) {
+    if (~llListFindList(ALLOWED_ACL_LEVELS, [lvl])) return TRUE;
+    return FALSE;
+}
+integer request_acl(key av) {
+    string j = llList2Json(JSON_OBJECT, []);
+    j = llJsonSetValue(j, ["type"],   CONS_MSG_ACL_QUERY);
+    j = llJsonSetValue(j, ["avatar"], (string)av);
+    llMessageLinked(LINK_SET, AUTH_QUERY_NUM, j, NULL_KEY);
+    g_acl_pending = TRUE;
+    logd("ACL query → " + (string)av);
+    return 0;
+}
 
-    if (trustees_csv == " ") {
-        collar_trustees = [];
-    } else {
-        collar_trustees = llParseString2List(trustees_csv, [","], []);
+/* ---------- Settings sync ---------- */
+/* Push our mirror to kernel */
+integer push_settings() {
+    string j = llList2Json(JSON_OBJECT, []);
+    j = llJsonSetValue(j, ["type"],      CONS_SETTINGS_SYNC);
+    j = llJsonSetValue(j, ["ns"],        CONS_SETTINGS_NS_OWNER);
+    j = llJsonSetValue(j, ["owner"],     (string)collar_owner);
+    string hon = collar_owner_honorific;
+    if (hon == "") hon = " ";
+    j = llJsonSetValue(j, ["owner_hon"], hon);
+    j = llJsonSetValue(j, ["trustees"],  llList2Json(JSON_ARRAY, collar_trustees));
+    j = llJsonSetValue(j, ["trustees_hon"], llList2Json(JSON_ARRAY, collar_trustee_honorifics));
+    string pub = "0";
+    if (collar_public_access) pub = "1";
+    j = llJsonSetValue(j, ["public_access"], pub);
+    string lck = "0";
+    if (collar_locked) lck = "1";
+    j = llJsonSetValue(j, ["locked"], lck);
+    llMessageLinked(LINK_SET, K_SETTINGS_SYNC, j, NULL_KEY);
+    logd("Settings pushed.");
+    return 0;
+}
+
+/* Pull values from inbound settings JSON (kernel → plugins) */
+integer ingest_settings(string j) {
+    if (json_has(j, ["ns"]) && llJsonGetValue(j, ["ns"]) != CONS_SETTINGS_NS_OWNER) return 0;
+
+    if (json_has(j, ["owner"]))       collar_owner = (key)llJsonGetValue(j, ["owner"]);
+    if (json_has(j, ["owner_hon"]))   collar_owner_honorific = llJsonGetValue(j, ["owner_hon"]);
+
+    if (json_has(j, ["trustees"])) {
+        list arr = llJson2List(llJsonGetValue(j, ["trustees"]));
+        collar_trustees = arr;
     }
-    if (trustees_hon_csv == " ") {
-        collar_trustee_honorifics = [];
-    } else {
-        collar_trustee_honorifics = llParseString2List(trustees_hon_csv, [","], []);
+    if (json_has(j, ["trustees_hon"])) {
+        list arrh = llJson2List(llJsonGetValue(j, ["trustees_hon"]));
+        collar_trustee_honorifics = arrh;
     }
-    if (pub_str == "1") {
-        collar_public_access = TRUE;
-    } else {
-        collar_public_access = FALSE;
-    }
-    if (lock_str == "1") {
-        collar_locked = TRUE;
-    } else {
-        collar_locked = FALSE;
-    }
-}
-sync_state_to_core() {
-    string owner_hon = collar_owner_honorific;
-    if (owner_hon == "") owner_hon = " ";
-    string trust_csv = llDumpList2String(collar_trustees, ",");
-    if (llGetListLength(collar_trustees) == 0) trust_csv = " ";
-    string trust_hon_csv = llDumpList2String(collar_trustee_honorifics, ",");
-    if (llGetListLength(collar_trustee_honorifics) == 0) trust_hon_csv = " ";
-    string pub_str;
-    if (collar_public_access == TRUE) {
-        pub_str = "1";
-    } else {
-        pub_str = "0";
-    }
-    string lock_str;
-    if (collar_locked == TRUE) {
-        lock_str = "1";
-    } else {
-        lock_str = "0";
-    }
-    string msg = SETTINGS_SYNC_MSG_START + "|" +
-        (string)collar_owner + "|" + owner_hon + "|" +
-        trust_csv + "|" + trust_hon_csv + "|" +
-        " " + "|" + pub_str + "|" + lock_str;
-    llMessageLinked(LINK_SET, SETTINGS_SYNC_NUM, msg, NULL_KEY);
+    if (json_has(j, ["public_access"])) collar_public_access = ((integer)llJsonGetValue(j, ["public_access"])) != 0;
+    if (json_has(j, ["locked"]))        collar_locked        = ((integer)llJsonGetValue(j, ["locked"])) != 0;
+
+    return 0;
 }
 
-/* -------- PLUGIN REGISTRATION -------- */
-register_plugin() {
-    string msg = REGISTER_MSG_START + "|" +
-                 (string)PLUGIN_SN + "|" +
-                 PLUGIN_LABEL + "|" +
-                 (string)PLUGIN_MIN_ACL + "|" +
-                 PLUGIN_CONTEXT + "|" +
-                 llGetScriptName();
-    llMessageLinked(LINK_SET, PLUGIN_REG_REPLY_NUM, msg, NULL_KEY);
+/* ---------- UI plumbing ---------- */
+integer reset_listen() {
+    if (g_listen) llListenRemove(g_listen);
+    g_listen = 0;
+    g_menu_chan = 0;
+    return 0;
 }
 
-/* -------- SESSION CLEANUP -------- */
-cleanup_session() {
-    if (sess_listen != 0) {
-        llListenRemove(sess_listen);
-    }
-    sess_listen = 0;
-    sess_user = NULL_KEY;
-    sess_chan = 0;
-    sess_context = "";
-    sess_param1 = "";
-    sess_param2 = "";
-    sess_stepdata = "";
-    llSetTimerEvent(0.0);
+/* open a dialog for a specific avatar and listen only to them */
+integer dialog_to(key who, string body, list buttons) {
+    reset_listen();
+    while ((llGetListLength(buttons) % 3) != 0) buttons += " ";
+    g_menu_chan = -100000 - (integer)llFrand(1000000.0);
+    g_listen    = llListen(g_menu_chan, "", who, "");
+    llDialog(who, body, buttons, g_menu_chan);
+    llSetTimerEvent((float)DIALOG_TIMEOUT_SEC);
+    return 0;
 }
 
-/* -------- MAIN MENU DISPLAY -------- */
-show_plugin_menu(key avatar) {
-    list btns;
+/* back to root */
+integer ui_return_root(key toUser) {
+    string r = llList2Json(JSON_OBJECT, []);
+    r = llJsonSetValue(r, ["type"],    CONS_TYPE_PLUGIN_RETURN);
+    r = llJsonSetValue(r, ["context"], ROOT_CONTEXT);
+    llMessageLinked(LINK_SET, K_PLUGIN_RETURN_NUM, r, toUser);
+    return 0;
+}
+
+/* ---------- Menu ---------- */
+list base_menu_buttons() {
+    list btns = [];
     integer show_add_owner = FALSE;
-    integer show_transfer = FALSE;
-    integer show_release = FALSE;
-    integer show_runaway = FALSE;
+    integer show_transfer  = FALSE;
+    integer show_release   = FALSE;
+    integer show_runaway   = FALSE;
 
-    // Add Owner: ONLY for unowned wearer (no owner assigned, avatar is the wearer)
-    if (collar_owner == NULL_KEY && avatar == llGetOwner()) {
-        show_add_owner = TRUE;
-    }
-
-    // Transfer/Release: ONLY for primary owner
-    if (collar_owner != NULL_KEY && avatar == collar_owner) {
+    if (collar_owner == NULL_KEY && g_acl_level == ACL_UNOWNED) show_add_owner = TRUE;
+    if (collar_owner != NULL_KEY && g_acl_level == ACL_PRIMARY_OWNER) {
         show_transfer = TRUE;
-        show_release = TRUE;
+        show_release  = TRUE;
     }
+    if (collar_owner != NULL_KEY && g_acl_level == ACL_OWNED) show_runaway = TRUE;
 
-    // Runaway: ONLY for owned wearer (not for owner or unowned)
-    if (collar_owner != NULL_KEY && avatar == llGetOwner()) {
-        show_runaway = TRUE;
-    }
+    if (show_add_owner) btns += ["Add Owner"];
+    if (show_transfer)  btns += ["Transfer Sub"];
+    if (show_release)   btns += ["Release Sub"];
+    if (show_runaway)   btns += ["Runaway"];
 
-    if (show_add_owner == TRUE) {
-        btns += ["Add Owner"];
-    }
-    if (show_transfer == TRUE) {
-        btns += ["Transfer Sub"];
-    }
-    if (show_release == TRUE) {
-        btns += ["Release Sub"];
-    }
-    if (show_runaway == TRUE) {
-        btns += ["Runaway"];
-    }
-    btns += [BACK_BTN_LABEL];
-    while (llGetListLength(btns) % 3 != 0) {
-        btns += FILLER_BTN_LABEL;
-    }
-
-    integer menu_chan = -(integer)llFrand(1000000.0) - 100000;
-    if (sess_listen != 0) {
-        llListenRemove(sess_listen);
-    }
-    sess_listen = llListen(menu_chan, "", avatar, "");
-    sess_user = avatar;
-    sess_chan = menu_chan;
-    sess_context = PLUGIN_CONTEXT;
-    sess_param1 = "";
-    sess_param2 = "";
-    sess_stepdata = "";
-    llDialog(avatar, "Owner Management Menu:", btns, menu_chan);
-    llSetTimerEvent((float)DIALOG_TIMEOUT);
+    btns += ["Back"];
+    return btns;
 }
 
-/* -------- MAIN MENU RETURN -------- */
-return_to_main_menu(key avatar) {
-    string menu_req = SHOW_MENU_MSG_START + "|" + ROOT_CONTEXT + "|" + (string)avatar + "|0";
-    llMessageLinked(LINK_SET, UI_SHOW_MENU_NUM, menu_req, NULL_KEY);
+integer show_menu(key user) {
+    s_context = "menu";
+    g_user = user;
+
+    // Build owner line without ternaries
+    string owner_line = "(none)";
+    if (collar_owner != NULL_KEY) {
+        owner_line = owner_display_name();
+        // llKey2Name can be empty if the owner isn’t in region; fall back to key
+        if (owner_line == "") owner_line = (string)collar_owner;
+    }
+
+    string hon_suffix = "";
+    if (collar_owner_honorific != "") {
+        hon_suffix = " (" + collar_owner_honorific + ")";
+    }
+
+    string body = "Owner Management\n"
+                  + "Wearer: " + wearer_display_name() + "\n"
+                  + "Owner : " + owner_line + hon_suffix;
+
+    list btns = base_menu_buttons();
+    dialog_to(user, body, btns);
+    logd("Menu → " + (string)user);
+    return 0;
 }
 
-/* -------- FLOW HANDLERS -------- */
-// --- Add Owner (Edge Case a)
-begin_add_owner(key avatar, integer chan) {
-    // Sensor to find candidate
-    llSensor("", NULL_KEY, AGENT, 20.0, PI * 2);
-    sess_user = avatar;
-    sess_chan = chan;
-    sess_context = "add_owner_select";
-    sess_param1 = "";
-    sess_param2 = "";
-    sess_stepdata = "";
+/* ---------- Flows ---------- */
+/* UTIL: proximity scan and numbered picker for g_user */
+integer begin_pick_candidate(string next_context) {
+    s_context = next_context; // "add_owner_select" or "transfer_select"
+    s_param1 = "";
+    s_param2 = "";
+    s_data   = "";
+    llSensor("", NULL_KEY, AGENT, 20.0, PI * 2.0);
+    return 0;
 }
-// --- Transfer Sub (Edge Case b)
-begin_transfer_sub(key avatar, integer chan) {
-    llSensor("", NULL_KEY, AGENT, 20.0, PI * 2);
-    sess_user = avatar;
-    sess_chan = chan;
-    sess_context = "transfer_select";
-    sess_param1 = "";
-    sess_param2 = "";
-    sess_stepdata = "";
-}
-// --- Release Sub (Edge Case c)
-begin_release_sub(key avatar, integer chan) {
-    sess_user = avatar;
-    sess_chan = chan;
-    sess_context = "release_owner_confirm";
-    sess_param1 = "";
-    sess_param2 = "";
-    sess_stepdata = "";
-    llDialog(avatar, "Are you sure you want to relinquish your claim as " + wearer_display_name() + "'s " + collar_owner_honorific + "? They will be free if you confirm.", make_yes_no_cancel(), chan);
-}
-// --- Runaway (Edge Case d)
-begin_runaway(key avatar, integer chan) {
-    sess_user = avatar;
-    sess_chan = chan;
-    sess_context = "runaway_confirm";
-    sess_param1 = "";
-    sess_param2 = "";
-    sess_stepdata = "";
-    llDialog(avatar, "You are about to run away from your " + collar_owner_honorific + ", " + owner_display_name() + ". Please confirm your decision.", make_yes_no_cancel(), chan);
+
+/* Build numbered dialog from a list of avatar keys kept in s_data CSV */
+integer dialog_candidates_select(list candidates) {
+    if (llGetListLength(candidates) == 0) {
+        dialog_to(g_user, "No valid candidates found within 20m.", ["Back"]);
+        s_context = "menu";
+        return FALSE;
+    }
+
+    list names = [];
+    integer i; for (i=0; i<llGetListLength(candidates); ++i) names += llKey2Name((key)llList2String(candidates, i));
+
+    string body = "Select candidate:\n";
+    for (i=0; i<llGetListLength(names); ++i) body += (string)(i+1) + ". " + llList2String(names, i) + "\n";
+
+    list buttons = [];
+    for (i=0; i<llGetListLength(names); ++i) buttons += (string)(i+1);
+    while (llGetListLength(buttons) % 3) buttons += " ";
+
+    s_data = llDumpList2String(candidates, ",");
+    dialog_to(g_user, body, buttons);
+    return TRUE;
 }
 
 /* =============================================================
-   MAIN EVENT LOOP
+   EVENTS
    ============================================================= */
-default
-{
+default {
     state_entry() {
-        PLUGIN_SN = 100000 + (integer)(llFrand(899999));
+        PLUGIN_SN = (integer)(llFrand(1.0e9));
+        g_user = NULL_KEY;
+        g_acl_pending = FALSE;
+        g_acl_level = ACL_NOACCESS;
+        reset_listen();
+        llSetTimerEvent(0.0);
+
+        notify_soft_reset();
         register_plugin();
-        llMessageLinked(LINK_SET, SETTINGS_QUERY_NUM, "get_settings", NULL_KEY);
+
+        /* ask kernel for settings (optional) */
+        string q = llList2Json(JSON_OBJECT, []);
+        q = llJsonSetValue(q, ["type"], CONS_SETTINGS_SYNC);
+        q = llJsonSetValue(q, ["ns"],   CONS_SETTINGS_NS_OWNER);
+        q = llJsonSetValue(q, ["action"], "get");
+        llMessageLinked(LINK_SET, K_SETTINGS_QUERY, q, NULL_KEY);
+
+        logd("Ready. SN=" + (string)PLUGIN_SN);
     }
-    link_message(integer sender, integer num, string str, key id)
-    {
-        if (num == SETTINGS_SYNC_NUM) {
-            list parts = llParseStringKeepNulls(str, ["|"], []);
-            if (llList2String(parts, 0) == SETTINGS_SYNC_MSG_START) {
-                update_from_settings(parts);
+
+    link_message(integer sender, integer num, string msg, key id) {
+        /* Heartbeat */
+        if (num == K_PLUGIN_PING) {
+            if (json_has(msg, ["type"]) && llJsonGetValue(msg, ["type"]) == CONS_TYPE_PLUGIN_PING) {
+                if (json_has(msg, ["context"]) && llJsonGetValue(msg, ["context"]) == PLUGIN_CONTEXT) {
+                    string pong = llList2Json(JSON_OBJECT, []);
+                    pong = llJsonSetValue(pong, ["type"],    CONS_TYPE_PLUGIN_PONG);
+                    pong = llJsonSetValue(pong, ["context"], PLUGIN_CONTEXT);
+                    llMessageLinked(LINK_SET, K_PLUGIN_PONG, pong, NULL_KEY);
+                }
             }
             return;
         }
-        if (num == UI_SHOW_MENU_NUM) {
-            list parts = llParseStringKeepNulls(str, ["|"], []);
-            if (llGetListLength(parts) >= 3) {
-                string ctx = llList2String(parts, 1);
-                key avatar = (key)llList2String(parts, 2);
-                if (ctx == PLUGIN_CONTEXT) {
-                    show_plugin_menu(avatar);
-                    return;
+
+        /* Kernel asks this specific script to re-register */
+        if (num == K_PLUGIN_REG_QUERY) {
+            if (json_has(msg, ["type"]) && llJsonGetValue(msg, ["type"]) == CONS_TYPE_REGISTER_NOW) {
+                if (json_has(msg, ["script"]) && llJsonGetValue(msg, ["script"]) == llGetScriptName()) {
+                    register_plugin();
                 }
             }
+            return;
         }
-        if ((num == PLUGIN_REG_QUERY_NUM) && llSubStringIndex(str, REGISTER_NOW_MSG_START + "|") == 0) {
-            string script_req = llGetSubString(str, llStringLength(REGISTER_NOW_MSG_START) + 1, -1);
-            if (script_req == llGetScriptName()) {
-                register_plugin();
+
+        /* UI start → secure: request ACL, defer menu until result */
+        if (num == K_PLUGIN_START) {
+            if (json_has(msg, ["type"]) && llJsonGetValue(msg, ["type"]) == CONS_TYPE_PLUGIN_START) {
+                if (json_has(msg, ["context"]) && llJsonGetValue(msg, ["context"]) == PLUGIN_CONTEXT) {
+                    g_user = id;
+                    request_acl(g_user);
+                }
             }
+            return;
+        }
+
+        /* ACL result */
+        if (num == AUTH_RESULT_NUM) {
+            if (!g_acl_pending) return;
+            if (!json_has(msg, ["type"])) return;
+            if (llJsonGetValue(msg, ["type"]) != CONS_MSG_ACL_RESULT) return;
+            if (!json_has(msg, ["avatar"])) return;
+
+            key who = (key)llJsonGetValue(msg, ["avatar"]);
+            if (who != g_user) return;
+
+            if (!json_has(msg, ["level"])) return;
+            g_acl_level = (integer)llJsonGetValue(msg, ["level"]);
+            g_acl_pending = FALSE;
+
+            if (in_allowed_levels(g_acl_level)) {
+                show_menu(g_user);
+            } else {
+                llRegionSayTo(g_user, 0, "Access denied.");
+                ui_return_root(g_user);
+                g_user = NULL_KEY;
+                reset_listen();
+                llSetTimerEvent(0.0);
+            }
+            return;
+        }
+
+        /* Settings sync (optional) */
+        if (num == K_SETTINGS_SYNC) {
+            if (json_has(msg, ["type"]) && llJsonGetValue(msg, ["type"]) == CONS_SETTINGS_SYNC) {
+                ingest_settings(msg);
+            }
+            return;
         }
     }
-    listen(integer channel, string name, key id, string msg)
-    {
-        if (channel != sess_chan || id != sess_user) return;
 
-        // MAIN MENU
-        if (sess_context == PLUGIN_CONTEXT) {
-            if (msg == "Add Owner") {
-                begin_add_owner(id, channel);
-                return;
-            }
-            if (msg == "Transfer Sub") {
-                begin_transfer_sub(id, channel);
-                return;
-            }
-            if (msg == "Release Sub") {
-                begin_release_sub(id, channel);
-                return;
-            }
-            if (msg == "Runaway") {
-                begin_runaway(id, channel);
-                return;
-            }
-            if (msg == BACK_BTN_LABEL) {
-                return_to_main_menu(id);
-                cleanup_session();
-                return;
-            }
+    /* ---------- Dialog / UI ---------- */
+    listen(integer chan, string name, key id, string message) {
+        if (chan != g_menu_chan) return;
+
+        /* ROOT NAV */
+        if (message == "Back") {
+            ui_return_root(id);
+            reset_listen();
+            if (id == g_user) g_user = NULL_KEY;
+            llSetTimerEvent(0.0);
+            s_context = "";
+            return;
         }
 
-        // ADD OWNER FLOW
-        if (sess_context == "add_owner_select") {
-            // Candidate selection (from sensor)
-            list keys = llParseString2List(sess_stepdata, [","], []);
-            integer picked_index = (integer)msg - 1;
-            if (picked_index >= 0 && picked_index < llGetListLength(keys)) {
-                key candidate_key = llList2Key(keys, picked_index);
-                // Ask candidate for approval, honorific selection
+        /* MENU HANDLERS */
+        if (s_context == "menu") {
+            if (message == "Add Owner") {
+                if (!(collar_owner == NULL_KEY && g_acl_level == ACL_UNOWNED)) { show_menu(g_user); return; }
+                begin_pick_candidate("add_owner_select");
+                return;
+            }
+            if (message == "Transfer Sub") {
+                if (!(collar_owner != NULL_KEY && g_acl_level == ACL_PRIMARY_OWNER)) { show_menu(g_user); return; }
+                begin_pick_candidate("transfer_select");
+                return;
+            }
+            if (message == "Release Sub") {
+                if (!(collar_owner != NULL_KEY && g_acl_level == ACL_PRIMARY_OWNER)) { show_menu(g_user); return; }
+                s_context = "release_owner_confirm";
+                string body = "Are you sure you want to relinquish your claim as "
+                              + wearer_display_name() + "'s " + collar_owner_honorific + "?";
+                dialog_to(id, body, ["Yes","No","Cancel"]);
+                return;
+            }
+            if (message == "Runaway") {
+                if (!(collar_owner != NULL_KEY && g_acl_level == ACL_OWNED)) { show_menu(g_user); return; }
+                s_context = "runaway_confirm";
+                string body = "You are about to run away from your " + collar_owner_honorific
+                              + ", " + owner_display_name() + ". Confirm?";
+                dialog_to(id, body, ["Yes","No","Cancel"]);
+                return;
+            }
+            /* unknown → redraw */
+            show_menu(g_user);
+            return;
+        }
+
+        /* ------- ADD OWNER FLOW ------- */
+        if (s_context == "add_owner_select") {
+            list keys = llParseString2List(s_data, [","], []);
+            integer idx = (integer)message - 1;
+            if (idx >= 0 && idx < llGetListLength(keys)) {
+                key cand = (key)llList2String(keys, idx);
+                s_param1 = (string)cand;
+
                 list honors = owner_honorifics();
-                string dialog_body = wearer_display_name() + " wishes to submit to you as their owner. Choose the honorific you wish to be called.";
-                list buttons = [];
-                integer i = 0;
-                while (i < llGetListLength(honors)) {
-                    buttons += llList2String(honors, i);
-                    i = i + 1;
-                }
-                while (llGetListLength(buttons) % 3 != 0) {
-                    buttons += FILLER_BTN_LABEL;
-                }
-                sess_context = "add_owner_honorific";
-                sess_param1 = (string)candidate_key;
-                sess_param2 = "";
-                sess_stepdata = llDumpList2String(honors, ",");
-                llDialog(candidate_key, dialog_body, buttons, channel);
+                string body = wearer_display_name() + " wishes to submit to you as their owner.\nChoose the honorific you wish to be called.";
+                /* Send dialog to the candidate and listen to THEM */
+                s_context = "add_owner_hon";
+                dialog_to(cand, body, honors);
                 return;
             }
+            show_menu(g_user);
+            return;
         }
-        if (sess_context == "add_owner_honorific") {
-            list honors = llParseString2List(sess_stepdata, [","], []);
-            integer sel_index = llListFindList(honors, [msg]);
-            if (sel_index != -1) {
-                key candidate_key = (key)sess_param1;
-                string chosen_honorific = llList2String(honors, sel_index);
-                // Candidate owner confirms
-                sess_context = "add_owner_candidate_confirm";
-                sess_param2 = chosen_honorific;
-                llDialog(candidate_key, wearer_display_name() + " has submitted to you as their " + chosen_honorific + ". Accept?", make_yes_no_cancel(), channel);
+        if (s_context == "add_owner_hon") {
+            /* id is the candidate */
+            list honors = owner_honorifics();
+            integer sel = llListFindList(honors, [message]);
+            if (sel != -1) {
+                s_param2 = llList2String(honors, sel);
+                s_context = "add_owner_cand_ok";
+                string body = wearer_display_name() + " has submitted to you as their "
+                              + s_param2 + ". Accept?";
+                dialog_to(id, body, ["Yes","No","Cancel"]);
                 return;
             }
+            /* unexpected button → re-ask */
+            dialog_to(id, "Please choose an honorific.", honors);
+            return;
         }
-        if (sess_context == "add_owner_candidate_confirm") {
-            if (msg == YES_LABEL) {
-                // Ask wearer for confirmation
-                key candidate_key = (key)sess_param1;
-                string chosen_honorific = sess_param2;
-                sess_context = "add_owner_wearer_confirm";
-                llDialog(llGetOwner(), "You have submitted to " + candidate_display_name(candidate_key) + " as your " + chosen_honorific + ". Confirm?", make_yes_no_cancel(), channel);
+        if (s_context == "add_owner_cand_ok") {
+            if (message == "Yes") {
+                /* Ask wearer to confirm */
+                s_context = "add_owner_wearer_ok";
+                string body = "You have submitted to " + candidate_display_name((key)s_param1)
+                              + " as your " + s_param2 + ". Confirm?";
+                dialog_to(llGetOwner(), body, ["Yes","No","Cancel"]);
                 return;
             }
-            if (msg == NO_LABEL || msg == CANCEL_LABEL) {
-                cleanup_session();
-                return;
-            }
+            /* cancel flow */
+            show_menu(g_user);
+            return;
         }
-        if (sess_context == "add_owner_wearer_confirm") {
-            if (msg == YES_LABEL) {
-                key candidate_key = (key)sess_param1;
-                string chosen_honorific = sess_param2;
-                // Complete: assign owner, update state, notify both
-                collar_owner = candidate_key;
-                collar_owner_honorific = chosen_honorific;
-                sync_state_to_core();
-                llDialog(candidate_key, wearer_display_name() + " has submitted to you as their \"" + chosen_honorific + "\".", make_ok_only(), channel);
-                llDialog(llGetOwner(), "You have submitted to " + candidate_display_name(candidate_key) + " as your " + chosen_honorific + ".", make_ok_only(), channel);
-                cleanup_session();
+        if (s_context == "add_owner_wearer_ok") {
+            if (message == "Yes") {
+                key newOwner = (key)s_param1;
+                string hon   = s_param2;
+
+                collar_owner = newOwner;
+                collar_owner_honorific = hon;
+                push_settings();
+
+                dialog_to(newOwner, wearer_display_name() + " has submitted to you as their \"" + hon + "\".", ["OK"]);
+                dialog_to(llGetOwner(), "You have submitted to " + candidate_display_name(newOwner) + " as your " + hon + ".", ["OK"]);
+                s_context = "menu";
+                show_menu(g_user);
                 return;
             }
-            if (msg == NO_LABEL || msg == CANCEL_LABEL) {
-                cleanup_session();
-                return;
-            }
+            show_menu(g_user);
+            return;
         }
 
-        // TRANSFER SUB FLOW
-        if (sess_context == "transfer_select") {
-            // Candidate selection (from sensor)
-            list keys = llParseString2List(sess_stepdata, [","], []);
-            integer picked_index = (integer)msg - 1;
-            if (picked_index >= 0 && picked_index < llGetListLength(keys)) {
-                key new_owner_key = llList2Key(keys, picked_index);
-                // Ask new owner for approval, honorific selection
+        /* ------- TRANSFER FLOW ------- */
+        if (s_context == "transfer_select") {
+            list keys = llParseString2List(s_data, [","], []);
+            integer idx = (integer)message - 1;
+            if (idx >= 0 && idx < llGetListLength(keys)) {
+                key newOwner = (key)llList2String(keys, idx);
+                s_param1 = (string)newOwner;
+
                 list honors = owner_honorifics();
-                string dialog_body = "You have been offered ownership of " + wearer_display_name() + ". Choose the honorific you wish to be called.";
-                list buttons = [];
-                integer i = 0;
-                while (i < llGetListLength(honors)) {
-                    buttons += llList2String(honors, i);
-                    i = i + 1;
-                }
-                while (llGetListLength(buttons) % 3 != 0) {
-                    buttons += FILLER_BTN_LABEL;
-                }
-                sess_context = "transfer_honorific";
-                sess_param1 = (string)new_owner_key;
-                sess_param2 = "";
-                sess_stepdata = llDumpList2String(honors, ",");
-                llDialog(new_owner_key, dialog_body, buttons, channel);
+                string body = "You have been offered ownership of " + wearer_display_name()
+                              + ". Choose the honorific you wish to be called.";
+                s_context = "transfer_hon";
+                dialog_to(newOwner, body, honors);
                 return;
             }
+            show_menu(g_user);
+            return;
         }
-        if (sess_context == "transfer_honorific") {
-            list honors = llParseString2List(sess_stepdata, [","], []);
-            integer sel_index = llListFindList(honors, [msg]);
-            if (sel_index != -1) {
-                key new_owner_key = (key)sess_param1;
-                string chosen_honorific = llList2String(honors, sel_index);
-                sess_context = "transfer_confirm_new_owner";
-                sess_param2 = chosen_honorific;
-                llDialog(new_owner_key, "You are about to take ownership of " + wearer_display_name() + " as their " + chosen_honorific + ". Accept?", make_yes_no_cancel(), channel);
+        if (s_context == "transfer_hon") {
+            list honors = owner_honorifics();
+            integer sel = llListFindList(honors, [message]);
+            if (sel != -1) {
+                s_param2 = llList2String(honors, sel);
+                s_context = "transfer_confirm";
+                string body = "You are about to take ownership of " + wearer_display_name()
+                              + " as their " + s_param2 + ". Accept?";
+                dialog_to(id, body, ["Yes","No","Cancel"]);
                 return;
             }
+            dialog_to(id, "Please choose an honorific.", honors);
+            return;
         }
-        if (sess_context == "transfer_confirm_new_owner") {
-            if (msg == YES_LABEL) {
-                key new_owner_key = (key)sess_param1;
-                string chosen_honorific = sess_param2;
-                key old_owner_key = collar_owner;
-                // Complete: assign new owner, update state, notify both
-                collar_owner = new_owner_key;
-                collar_owner_honorific = chosen_honorific;
-                sync_state_to_core();
-                llDialog(old_owner_key, "You have transferred your sub " + wearer_display_name() + " to the hands of " + candidate_display_name(new_owner_key) + " as their " + chosen_honorific + ".", make_ok_only(), channel);
-                llDialog(new_owner_key, "You are now the owner of " + wearer_display_name() + " as their " + chosen_honorific + ".", make_ok_only(), channel);
-                cleanup_session();
+        if (s_context == "transfer_confirm") {
+            if (message == "Yes") {
+                key newOwner = (key)s_param1;
+                string hon   = s_param2;
+                key  oldOwner= collar_owner;
+
+                collar_owner = newOwner;
+                collar_owner_honorific = hon;
+                push_settings();
+
+                dialog_to(oldOwner, "You have transferred your sub " + wearer_display_name()
+                          + " to " + candidate_display_name(newOwner) + " as their " + hon + ".", ["OK"]);
+                dialog_to(newOwner, "You are now the owner of " + wearer_display_name()
+                          + " as their " + hon + ".", ["OK"]);
+                s_context = "menu";
+                show_menu(g_user);
                 return;
             }
-            if (msg == NO_LABEL || msg == CANCEL_LABEL) {
-                cleanup_session();
-                return;
-            }
+            show_menu(g_user);
+            return;
         }
 
-        // RELEASE SUB FLOW
-        if (sess_context == "release_owner_confirm") {
-            if (msg == YES_LABEL) {
-                // Ask wearer for confirmation
-                sess_context = "release_wearer_confirm";
-                llDialog(llGetOwner(), "You have been released as " + collar_owner_honorific + " " + owner_display_name() + "'s submissive. You are now free.", make_yes_no_cancel(), channel);
+        /* ------- RELEASE FLOW ------- */
+        if (s_context == "release_owner_confirm") {
+            if (message == "Yes") {
+                s_context = "release_wearer_confirm";
+                string body = "You have been released as " + collar_owner_honorific + " "
+                              + owner_display_name() + "'s submissive. Confirm freedom?";
+                dialog_to(llGetOwner(), body, ["Yes","No","Cancel"]);
                 return;
             }
-            if (msg == NO_LABEL || msg == CANCEL_LABEL) {
-                cleanup_session();
-                return;
-            }
+            show_menu(g_user);
+            return;
         }
-        if (sess_context == "release_wearer_confirm") {
-            if (msg == YES_LABEL) {
-                // Complete: remove owner, update state, notify both
-                key old_owner = collar_owner;
-                string old_honorific = collar_owner_honorific;
+        if (s_context == "release_wearer_confirm") {
+            if (message == "Yes") {
+                key old = collar_owner; string oldHon = collar_owner_honorific;
+                collar_owner = NULL_KEY; collar_owner_honorific = "";
+                push_settings();
+
+                dialog_to(old, wearer_display_name() + " is now free.", ["OK"]);
+                dialog_to(llGetOwner(), "You have been released as " + oldHon + " "
+                          + candidate_display_name(old) + "'s submissive. You are now free.", ["OK"]);
+                s_context = "menu";
+                show_menu(g_user);
+                return;
+            }
+            show_menu(g_user);
+            return;
+        }
+
+        /* ------- RUNAWAY FLOW ------- */
+        if (s_context == "runaway_confirm") {
+            if (message == "Yes") {
                 collar_owner = NULL_KEY;
                 collar_owner_honorific = "";
-                sync_state_to_core();
-                llDialog(old_owner, "You have relinquished your claim as " + wearer_display_name() + "'s " + old_honorific + ". They are now free.", make_ok_only(), channel);
-                llDialog(llGetOwner(), "You have been released as " + old_honorific + " " + candidate_display_name(old_owner) + "'s submissive. You are now free.", make_ok_only(), channel);
-                cleanup_session();
+                push_settings();
+                dialog_to(id, "You have run away and are now unowned.", ["OK"]);
+                s_context = "menu";
+                show_menu(g_user);
                 return;
             }
-            if (msg == NO_LABEL || msg == CANCEL_LABEL) {
-                cleanup_session();
-                return;
-            }
+            show_menu(g_user);
+            return;
         }
 
-        // RUNAWAY FLOW
-        if (sess_context == "runaway_confirm") {
-            if (msg == YES_LABEL) {
-                // Complete: remove owner, update state, notify wearer
-                collar_owner = NULL_KEY;
-                collar_owner_honorific = "";
-                sync_state_to_core();
-                llDialog(id, "You have run away and are now unowned.", make_ok_only(), channel);
-                cleanup_session();
-                return;
-            }
-            if (msg == NO_LABEL || msg == CANCEL_LABEL) {
-                cleanup_session();
-                return;
-            }
-        }
+        /* Fallback → redraw */
+        show_menu(g_user);
     }
-    sensor(integer n)
-    {
-        // Only for add_owner_select or transfer_select
-        if (sess_context == "add_owner_select" || sess_context == "transfer_select") {
-            list candidates = [];
-            integer i = 0;
-            while (i < n) {
-                key candidate_key = llDetectedKey(i);
-                if (candidate_key != sess_user && candidate_key != collar_owner) {
-                    candidates += candidate_key;
-                }
-                i = i + 1;
-            }
-            if (llGetListLength(candidates) == 0) {
-                llDialog(sess_user, "No valid candidates found within 20m.", make_ok_only(), sess_chan);
-                cleanup_session();
-                return;
-            }
-            list names = [];
-            i = 0;
-            while (i < llGetListLength(candidates)) {
-                names += llKey2Name(llList2Key(candidates, i));
-                i = i + 1;
-            }
-            string dialog_body = "Select candidate:\n";
-            i = 0;
-            while (i < llGetListLength(names)) {
-                dialog_body += (string)(i + 1) + ". " + llList2String(names, i) + "\n";
-                i = i + 1;
-            }
-            list buttons = [];
-            i = 0;
-            while (i < llGetListLength(names)) {
-                buttons += (string)(i + 1);
-                i = i + 1;
-            }
-            while (llGetListLength(buttons) % 3 != 0) {
-                buttons += FILLER_BTN_LABEL;
-            }
-            sess_stepdata = llDumpList2String(candidates, ",");
-            llDialog(sess_user, dialog_body, buttons, sess_chan);
+
+    /* ---------- Proximity scan for candidate selection ---------- */
+    sensor(integer n) {
+        if (s_context != "add_owner_select" && s_context != "transfer_select") return;
+
+        list candidates = [];
+        integer i;
+        for (i=0; i<n; ++i) {
+            key k = llDetectedKey(i);
+            if (k == g_user)       jump continue;
+            if (k == collar_owner) jump continue;
+            candidates += (string)k;
+            @continue;
         }
+        dialog_candidates_select(candidates);
     }
     no_sensor() {
-        if (sess_context == "add_owner_select" || sess_context == "transfer_select") {
-            llDialog(sess_user, "No avatars found nearby.", make_ok_only(), sess_chan);
-            cleanup_session();
+        if (s_context == "add_owner_select" || s_context == "transfer_select") {
+            dialog_to(g_user, "No avatars found nearby.", ["OK"]);
+            s_context = "menu";
         }
     }
+
+    /* ---------- Housekeeping ---------- */
     timer() {
-        cleanup_session();
+        reset_listen();
+        g_user = NULL_KEY;
+        s_context = "";
+        s_param1 = s_param2 = s_data = "";
+        llSetTimerEvent(0.0);
     }
+
     changed(integer change) {
         if (change & CHANGED_OWNER) {
+            llOwnerSay("Owner changed. Resetting plugin: " + PLUGIN_CONTEXT);
             llResetScript();
         }
     }
 }
-/* ============================================================= */
