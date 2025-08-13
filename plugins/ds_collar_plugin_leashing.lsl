@@ -27,6 +27,7 @@ integer AUTH_QUERY_NUM         = 700;
 integer AUTH_RESULT_NUM        = 710;
 integer K_PLUGIN_START         = 900;
 integer K_PLUGIN_RETURN_NUM    = 901;
+integer SOS_MSG_NUM            = 999; //SOS plugin link channel
 
 /* ---------- Shared “magic words” ---------- */
 string CONS_TYPE_REGISTER          = "register";
@@ -535,6 +536,15 @@ default
                 }
             }
             return;
+        }
+        
+        if (num == SOS_MSG_NUM && json_has(msg, [ "type" ])) {
+            string t = llJsonGetValue(msg, ["type"]);
+            if ( t == "sos_unleash") {
+                stop_leash_particles(); llStopMoveToTarget(); clear_turn();
+                llOwnerSay("[SOS] Leash released.");
+                return;
+            }
         }
     }
 
