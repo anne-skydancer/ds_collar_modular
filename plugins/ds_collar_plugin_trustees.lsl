@@ -1,302 +1,526 @@
 /* =============================================================
-   PLUGIN: ds_collar_trustees.lsl (DS Collar Canonical, Strict LSL)
-   PURPOSE: Trustees Plugin (Core 1.4+)
-   AUTHOR:  [Your Name or Project]
-   DATE:    2025-08-02
+   PLUGIN: ds_collar_trustees.lsl (New Kernel ABI, JSON)
+   PURPOSE: Manage Trustees (add/remove)
+   BASED ON: ds_collar_plugin_boilerplate.lsl
+   DATE: 2025-08-13
    ============================================================= */
 
-/* ---- CANONICAL PROTOCOL CONSTANTS ---- */
-string REGISTER_MSG_START      = "register";
-string REGISTER_NOW_MSG_START  = "register_now";
-string DEREGISTER_MSG_START    = "deregister";
-string SETTINGS_SYNC_MSG_START = "settings_sync";
-string SHOW_MENU_MSG_START     = "show_menu";
+integer DEBUG = TRUE;
 
-/* ---- PLUGIN PARAMETERS ---- */
-string  PLUGIN_CONTEXT      = "core_trustees";
-string  ROOT_CONTEXT        = "core_root";
-string  PLUGIN_LABEL        = "Trustees";
-integer PLUGIN_MIN_ACL      = 1;
-integer PLUGIN_SN           = 0;
-integer MAX_TRUSTEES        = 4;
+/* ---------- Link numbers (kernel ABI) ---------- */
+integer K_PLUGIN_REG_QUERY   = 500;  // {"type":"register_now","script":...}
+integer K_PLUGIN_REG_REPLY   = 501;  // {"type":"register", ...}
+integer K_PLUGIN_SOFT_RESET  = 504;  // {"type":"plugin_soft_reset",...}
 
-/* ---- CHANNELS ---- */
-integer PLUGIN_REG_QUERY_NUM = 500;
-integer PLUGIN_REG_REPLY_NUM = 501;
-integer SETTINGS_SYNC_NUM    = 870;
-integer UI_SHOW_MENU_NUM     = 601;
-integer SETTINGS_QUERY_NUM   = 800;
-string  SETTINGS_SET_PREFIX  = "set_";
+integer K_PLUGIN_PING        = 650;  // {"type":"plugin_ping","context":...}
+integer K_PLUGIN_PONG        = 651;  // {"type":"plugin_pong","context":...}
 
-/* ---- UI CONSTANTS ---- */
-string  BACK_BTN_LABEL       = "Back";
-string  TRUSTEE_ADD_LABEL    = "Trustee +";
-string  TRUSTEE_REMOVE_LABEL = "Trustee -";
-string  FILLER_BTN_LABEL     = "~";
-integer DIALOG_TIMEOUT       = 180;
+integer AUTH_QUERY_NUM       = 700;  // {"type":"acl_query","avatar":...}
+integer AUTH_RESULT_NUM      = 710;  // {"type":"acl_result","avatar":...,"level":...}
 
-/* ---- SESSION STATE ---- */
-key     sess_user        = NULL_KEY;
-integer sess_chan        = 0;
-integer sess_listen      = 0;
-string  sess_context     = "";
-string  sess_param1      = "";
-string  sess_param2      = "";
-string  sess_stepdata    = "";
+integer K_SETTINGS_QUERY     = 800;  // (optional) settings get
+integer K_SETTINGS_SYNC      = 870;  // settings sync (JSON)
 
-/* ---- TRUSTEE STATE ---- */
+integer K_PLUGIN_START       = 900;  // {"type":"plugin_start","context":...}
+integer K_PLUGIN_RETURN_NUM  = 901;  // {"type":"plugin_return","context":"core_root"}
+
+/* ---------- Magic words (protocol strings) ---------- */
+string CONS_TYPE_REGISTER          = "register";
+string CONS_TYPE_REGISTER_NOW      = "register_now";
+string CONS_TYPE_PLUGIN_SOFT_RESET = "plugin_soft_reset";
+string CONS_TYPE_PLUGIN_START      = "plugin_start";
+string CONS_TYPE_PLUGIN_RETURN     = "plugin_return";
+string CONS_TYPE_PLUGIN_PING       = "plugin_ping";
+string CONS_TYPE_PLUGIN_PONG       = "plugin_pong";
+
+string CONS_MSG_ACL_QUERY          = "acl_query";
+string CONS_MSG_ACL_RESULT         = "acl_result";
+
+/* Settings protocol (JSON) */
+string CONS_SETTINGS_SYNC          = "settings_sync";  // in/out
+string CONS_SETTINGS_NS_OWNER      = "owner";          // same NS as Owner plugin
+
+/* ---------- Identity ---------- */
+string  PLUGIN_CONTEXT   = "core_trustees";
+string  ROOT_CONTEXT     = "core_root";
+string  PLUGIN_LABEL     = "Trustees";
+integer PLUGIN_SN        = 0;
+
+/* ---------- ACL levels (authoritative mapping) ---------- */
+integer ACL_BLACKLIST     = -1;
+integer ACL_NOACCESS      = 0;
+integer ACL_PUBLIC        = 1;
+integer ACL_OWNED         = 2; // wearer (owned)
+integer ACL_TRUSTEE       = 3;
+integer ACL_UNOWNED       = 4; // wearer (unowned)
+integer ACL_PRIMARY_OWNER = 5;
+
+/* Who can OPEN the plugin menu (mirror of canonical behavior: Owner or Unowned wearer) */
+list ALLOWED_ACL_LEVELS = [ACL_UNOWNED, ACL_PRIMARY_OWNER];
+
+/* ---------- UI / labels ---------- */
+integer DIALOG_TIMEOUT_SEC = 180;
+string  BTN_BACK           = "Back";
+string  BTN_TRUSTEE_ADD    = "Trustee +";
+string  BTN_TRUSTEE_REMOVE = "Trustee -";
+
+/* ---------- Session plumbing ---------- */
+key     g_user      = NULL_KEY;
+integer g_listen    = 0;
+integer g_menu_chan = 0;
+
+/* Gate state */
+integer g_acl_pending = FALSE;
+integer g_acl_level   = ACL_NOACCESS;
+
+/* ---------- Data mirror ---------- */
 key   collar_owner = NULL_KEY;
 list  collar_trustees = [];
 list  collar_trustee_honorifics = [];
+integer MAX_TRUSTEES = 4;
 
-/* ---- HELPERS ---- */
-list trustee_honorifics() {
-    return ["Sir", "Miss", "Milord", "Milady"];
+/* ---------- Flow/session state ---------- */
+string  s_context = "";   // "menu","add_scan","add_pick","add_honor","remove_pick"
+string  s_param1  = "";   // generic (e.g., selected key)
+string  s_param2  = "";   // generic
+string  s_data    = "";   // csv payload (e.g., candidate keys)
+
+/* ========================== Helpers ========================== */
+integer json_has(string j, list path) {
+    string v = llJsonGetValue(j, path);
+    if (v == JSON_INVALID) return FALSE;
+    return TRUE;
 }
-integer g_idx(list l, key k) { return llListFindList(l, [k]); }
-integer get_acl(key av) {
-    if (av == collar_owner) return 1; // Owner
-    if (av == llGetOwner()) {
-        if (collar_owner == NULL_KEY) return 1; // Unowned wearer
-        return 3; // Owned wearer
+integer logd(string s) { if (DEBUG) llOwnerSay("[TRUSTEES] " + s); return 0; }
+
+list trustee_honorifics() { return ["Sir","Miss","Milord","Milady"]; }
+
+string name_or_key(key k) {
+    string n = llKey2Name(k);
+    if (n == "") n = (string)k;
+    return n;
+}
+
+/* ---------- Kernel/Register/Soft reset ---------- */
+integer register_plugin() {
+    string j = llList2Json(JSON_OBJECT, []);
+    j = llJsonSetValue(j, ["type"],    CONS_TYPE_REGISTER);
+    j = llJsonSetValue(j, ["sn"],      (string)PLUGIN_SN);
+    j = llJsonSetValue(j, ["label"],   PLUGIN_LABEL);
+    j = llJsonSetValue(j, ["min_acl"], "0");
+    j = llJsonSetValue(j, ["context"], PLUGIN_CONTEXT);
+    llMessageLinked(LINK_SET, K_PLUGIN_REG_REPLY, j, NULL_KEY);
+    logd("Registered.");
+    return 0;
+}
+integer notify_soft_reset() {
+    string j = llList2Json(JSON_OBJECT, []);
+    j = llJsonSetValue(j, ["type"],    CONS_TYPE_PLUGIN_SOFT_RESET);
+    j = llJsonSetValue(j, ["context"], PLUGIN_CONTEXT);
+    llMessageLinked(LINK_SET, K_PLUGIN_SOFT_RESET, j, NULL_KEY);
+    return 0;
+}
+
+/* ---------- ACL ---------- */
+integer in_allowed_levels(integer lvl) {
+    if (llListFindList(ALLOWED_ACL_LEVELS, [lvl]) != -1) return TRUE;
+    return FALSE;
+}
+integer request_acl(key av) {
+    string j = llList2Json(JSON_OBJECT, []);
+    j = llJsonSetValue(j, ["type"],   CONS_MSG_ACL_QUERY);
+    j = llJsonSetValue(j, ["avatar"], (string)av);
+    llMessageLinked(LINK_SET, AUTH_QUERY_NUM, j, NULL_KEY);
+    g_acl_pending = TRUE;
+    logd("ACL query → " + (string)av);
+    return 0;
+}
+
+/* ---------- Settings ---------- */
+/* Pull values from inbound settings JSON (kernel → plugins) */
+integer ingest_settings(string j) {
+    if (json_has(j, ["ns"]) && llJsonGetValue(j, ["ns"]) != CONS_SETTINGS_NS_OWNER) return 0;
+
+    if (json_has(j, ["owner"]))        collar_owner = (key)llJsonGetValue(j, ["owner"]);
+    if (json_has(j, ["trustees"]))     collar_trustees = llJson2List(llJsonGetValue(j, ["trustees"]));
+    if (json_has(j, ["trustees_hon"])) collar_trustee_honorifics = llJson2List(llJsonGetValue(j, ["trustees_hon"]));
+
+    return 0;
+}
+
+/* Push trustees only (kernel should merge per-key within NS) */
+integer push_trustees() {
+    string j = llList2Json(JSON_OBJECT, []);
+    j = llJsonSetValue(j, ["type"],          CONS_SETTINGS_SYNC);
+    j = llJsonSetValue(j, ["ns"],            CONS_SETTINGS_NS_OWNER);
+    j = llJsonSetValue(j, ["trustees"],      llList2Json(JSON_ARRAY, collar_trustees));
+    j = llJsonSetValue(j, ["trustees_hon"],  llList2Json(JSON_ARRAY, collar_trustee_honorifics));
+    llMessageLinked(LINK_SET, K_SETTINGS_SYNC, j, NULL_KEY);
+    logd("Trustees saved (" + (string)llGetListLength(collar_trustees) + ").");
+    return 0;
+}
+
+/* ---------- UI plumbing ---------- */
+integer reset_listen() {
+    if (g_listen) llListenRemove(g_listen);
+    g_listen = 0;
+    g_menu_chan = 0;
+    return 0;
+}
+integer dialog_to(key who, string body, list buttons) {
+    reset_listen();
+    while ((llGetListLength(buttons) % 3) != 0) buttons += " ";
+    g_menu_chan = -100000 - (integer)llFrand(1000000.0);
+    g_listen    = llListen(g_menu_chan, "", who, "");
+    llDialog(who, body, buttons, g_menu_chan);
+    llSetTimerEvent((float)DIALOG_TIMEOUT_SEC);
+    return 0;
+}
+integer ui_return_root(key toUser) {
+    string r = llList2Json(JSON_OBJECT, []);
+    r = llJsonSetValue(r, ["type"],    CONS_TYPE_PLUGIN_RETURN);
+    r = llJsonSetValue(r, ["context"], ROOT_CONTEXT);
+    llMessageLinked(LINK_SET, K_PLUGIN_RETURN_NUM, r, toUser);
+    return 0;
+}
+
+/* ---------- UI content ---------- */
+list base_menu_buttons() {
+    list btns = [];
+    if (llGetListLength(collar_trustees) < MAX_TRUSTEES) btns += BTN_TRUSTEE_ADD; else btns += "~";
+    if (llGetListLength(collar_trustees) > 0)            btns += BTN_TRUSTEE_REMOVE; else btns += "~";
+    btns += BTN_BACK;
+    return btns;
+}
+
+string trustee_list_text() {
+    string out = "";
+    integer i;
+    for (i=0; i<llGetListLength(collar_trustees); ++i) {
+        string nm = name_or_key((key)llList2String(collar_trustees, i));
+        string hon = "";
+        if (i < llGetListLength(collar_trustee_honorifics)) hon = llList2String(collar_trustee_honorifics, i);
+        out += (string)(i+1) + ". " + nm;
+        if (hon != "") out += " (" + hon + ")";
+        out += "\n";
     }
-    if (g_idx(collar_trustees, av) != -1) return 2;
-    return 5; // All others
+    if (out == "") out = "(none)\n";
+    return out;
 }
-list make_ok_only() { return ["OK"]; }
-list build_numbered_buttons(list items) {
+
+integer show_menu(key user) {
+    s_context = "menu";
+    g_user = user;
+
+    string owner_line = "(none)";
+    if (collar_owner != NULL_KEY) owner_line = name_or_key(collar_owner);
+
+    string body = "Trustee Management\n"
+                  + "Owner  : " + owner_line + "\n"
+                  + "Max    : " + (string)MAX_TRUSTEES + "\n"
+                  + "Current:\n" + trustee_list_text();
+
+    list btns = base_menu_buttons();
+    dialog_to(user, body, btns);
+    logd("Menu → " + (string)user);
+    return 0;
+}
+
+/* ---------- Builders ---------- */
+list build_number_buttons(integer count) {
     list out = [];
     integer i;
-    for (i = 0; i < llGetListLength(items); ++i) out += (string)(i+1);
-    while (llGetListLength(out) % 3 != 0) out += FILLER_BTN_LABEL;
+    for (i=0; i<count; ++i) out += (string)(i+1);
     return out;
-}
-string format_numbered_list(list items) {
-    string out = ""; integer i;
-    for (i = 0; i < llGetListLength(items); ++i)
-        out += (string)(i+1) + ". " + llList2String(items, i) + "\n";
-    return out;
-}
-string csv_from_list(list l) {
-    if (llGetListLength(l) == 0) return " ";
-    return llDumpList2String(l, ",");
-}
-integer persist_trustees() {
-    string set_trustees_msg = SETTINGS_SET_PREFIX + "trustees" + "|" + csv_from_list(collar_trustees);
-    string set_trusthonor_msg = SETTINGS_SET_PREFIX + "trustees_hon" + "|" + csv_from_list(collar_trustee_honorifics);
-    llMessageLinked(LINK_SET, SETTINGS_QUERY_NUM, set_trustees_msg, NULL_KEY);
-    llMessageLinked(LINK_SET, SETTINGS_QUERY_NUM, set_trusthonor_msg, NULL_KEY);
-    return TRUE;
-}
-integer cleanup_session() {
-    if (sess_listen != 0) {
-        llListenRemove(sess_listen);
-    }
-    sess_listen = 0;
-    sess_user = NULL_KEY;
-    sess_chan = 0;
-    sess_context = "";
-    sess_param1 = "";
-    sess_param2 = "";
-    sess_stepdata = "";
-    llSetTimerEvent(0.0);
-    return TRUE;
-}
-integer show_plugin_menu(key avatar) {
-    integer acl = get_acl(avatar);
-    if (acl != 1) return FALSE;
-
-    list btns = [];
-    if (llGetListLength(collar_trustees) < MAX_TRUSTEES) btns += TRUSTEE_ADD_LABEL;
-    else btns += FILLER_BTN_LABEL;
-    if (llGetListLength(collar_trustees) > 0) btns += TRUSTEE_REMOVE_LABEL;
-    else btns += FILLER_BTN_LABEL;
-    btns += BACK_BTN_LABEL;
-    while (llGetListLength(btns) % 3 != 0) btns += FILLER_BTN_LABEL;
-
-    if (sess_listen != 0) llListenRemove(sess_listen);
-    integer menu_chan = -(integer)llFrand(1000000.0) - 100000;
-    sess_listen = llListen(menu_chan, "", avatar, "");
-    sess_user = avatar;
-    sess_chan = menu_chan;
-    sess_context = "main";
-    sess_param1 = "";
-    sess_param2 = "";
-    sess_stepdata = "";
-    llDialog(avatar, "Trustee Management:", btns, menu_chan);
-    llSetTimerEvent((float)DIALOG_TIMEOUT);
-    return TRUE;
-}
-integer update_from_settings(list parts) {
-    if (llGetListLength(parts) < 8) return FALSE;
-    collar_owner = (key)llList2String(parts, 1);
-    string trust_csv = llList2String(parts, 3);
-    if (trust_csv == " ") collar_trustees = [];
-    else collar_trustees = llParseString2List(trust_csv, [","], []);
-    string hon_csv = llList2String(parts, 4);
-    if (hon_csv == " ") collar_trustee_honorifics = [];
-    else collar_trustee_honorifics = llParseString2List(hon_csv, [","], []);
-    return TRUE;
-}
-integer timeout_check() {
-    cleanup_session();
-    return TRUE;
 }
 
 /* =============================================================
-   MAIN EVENT LOOP
+   EVENTS
    ============================================================= */
-default
-{
+default {
     state_entry() {
-        PLUGIN_SN = 100000 + (integer)(llFrand(899999));
-        string reg_msg = REGISTER_MSG_START + "|" +
-                        (string)PLUGIN_SN + "|" + PLUGIN_LABEL + "|" +
-                        (string)PLUGIN_MIN_ACL + "|" + PLUGIN_CONTEXT + "|" +
-                        llGetScriptName();
-        llMessageLinked(LINK_SET, PLUGIN_REG_REPLY_NUM, reg_msg, NULL_KEY);
-        llSetTimerEvent(1.0);
+        PLUGIN_SN = (integer)(llFrand(1.0e9));
+        g_user = NULL_KEY;
+        g_acl_pending = FALSE;
+        g_acl_level = ACL_NOACCESS;
+        reset_listen();
+        llSetTimerEvent(0.0);
+
+        notify_soft_reset();
+        register_plugin();
+
+        /* Request current settings */
+        string q = llList2Json(JSON_OBJECT, []);
+        q = llJsonSetValue(q, ["type"],   CONS_SETTINGS_SYNC);
+        q = llJsonSetValue(q, ["ns"],     CONS_SETTINGS_NS_OWNER);
+        q = llJsonSetValue(q, ["action"], "get");
+        llMessageLinked(LINK_SET, K_SETTINGS_QUERY, q, NULL_KEY);
+
+        logd("Ready. SN=" + (string)PLUGIN_SN);
     }
-    link_message(integer sender, integer num, string str, key id)
-    {
-        if (num == SETTINGS_SYNC_NUM) {
-            list parts = llParseStringKeepNulls(str, ["|"], []);
-            if (llList2String(parts, 0) == SETTINGS_SYNC_MSG_START) {
-                update_from_settings(parts);
-            }
-            return;
-        }
-        if (num == UI_SHOW_MENU_NUM) {
-            list parts = llParseStringKeepNulls(str, ["|"], []);
-            if (llGetListLength(parts) >= 3) {
-                string ctx = llList2String(parts, 1);
-                key avatar = (key)llList2String(parts, 2);
-                if (ctx == PLUGIN_CONTEXT) {
-                    show_plugin_menu(avatar);
+
+    link_message(integer sender, integer num, string msg, key id) {
+        /* Heartbeat */
+        if (num == K_PLUGIN_PING) {
+            if (json_has(msg, ["type"]) && llJsonGetValue(msg, ["type"]) == CONS_TYPE_PLUGIN_PING) {
+                if (json_has(msg, ["context"]) && llJsonGetValue(msg, ["context"]) == PLUGIN_CONTEXT) {
+                    string pong = llList2Json(JSON_OBJECT, []);
+                    pong = llJsonSetValue(pong, ["type"],    CONS_TYPE_PLUGIN_PONG);
+                    pong = llJsonSetValue(pong, ["context"], PLUGIN_CONTEXT);
+                    llMessageLinked(LINK_SET, K_PLUGIN_PONG, pong, NULL_KEY);
                 }
             }
             return;
         }
-        if ((num == PLUGIN_REG_QUERY_NUM) && llSubStringIndex(str, REGISTER_NOW_MSG_START + "|") == 0) {
-            string script_req = llGetSubString(str, llStringLength(REGISTER_NOW_MSG_START) + 1, -1);
-            if (script_req == llGetScriptName()) {
-                string msg = REGISTER_MSG_START + "|" + (string)PLUGIN_SN + "|" + PLUGIN_LABEL + "|" + (string)PLUGIN_MIN_ACL + "|" + PLUGIN_CONTEXT + "|" + llGetScriptName();
-                llMessageLinked(LINK_SET, PLUGIN_REG_REPLY_NUM, msg, NULL_KEY);
+
+        /* Re-register request */
+        if (num == K_PLUGIN_REG_QUERY) {
+            if (json_has(msg, ["type"]) && llJsonGetValue(msg, ["type"]) == CONS_TYPE_REGISTER_NOW) {
+                if (json_has(msg, ["script"]) && llJsonGetValue(msg, ["script"]) == llGetScriptName()) {
+                    register_plugin();
+                }
+            }
+            return;
+        }
+
+        /* UI start → ACL check, then open */
+        if (num == K_PLUGIN_START) {
+            if (json_has(msg, ["type"]) && llJsonGetValue(msg, ["type"]) == CONS_TYPE_PLUGIN_START) {
+                if (json_has(msg, ["context"]) && llJsonGetValue(msg, ["context"]) == PLUGIN_CONTEXT) {
+                    g_user = id;
+                    request_acl(g_user);
+                }
+            }
+            return;
+        }
+
+        /* ACL result */
+        if (num == AUTH_RESULT_NUM) {
+            if (!g_acl_pending) return;
+            if (!json_has(msg, ["type"])) return;
+            if (llJsonGetValue(msg, ["type"]) != CONS_MSG_ACL_RESULT) return;
+            if (!json_has(msg, ["avatar"])) return;
+
+            key who = (key)llJsonGetValue(msg, ["avatar"]);
+            if (who != g_user) return;
+
+            if (!json_has(msg, ["level"])) return;
+            g_acl_level = (integer)llJsonGetValue(msg, ["level"]);
+            g_acl_pending = FALSE;
+
+            if (in_allowed_levels(g_acl_level)) {
+                show_menu(g_user);
+            } else {
+                llRegionSayTo(g_user, 0, "Access denied.");
+                ui_return_root(g_user);
+                g_user = NULL_KEY;
+                reset_listen();
+                llSetTimerEvent(0.0);
+            }
+            return;
+        }
+
+        /* Settings sync */
+        if (num == K_SETTINGS_SYNC) {
+            if (json_has(msg, ["type"]) && llJsonGetValue(msg, ["type"]) == CONS_SETTINGS_SYNC) {
+                ingest_settings(msg);
             }
             return;
         }
     }
-    listen(integer chan, string nm, key av, string msg) {
-        if (chan != sess_chan || av != sess_user) return;
 
-        if (sess_context == "main") {
-            if (msg == TRUSTEE_ADD_LABEL) {
-                llSensor("", NULL_KEY, AGENT, 20.0, PI * 2);
-                sess_context = "add_trustee";
-                sess_param1 = "";
-                sess_param2 = "";
-                sess_stepdata = "";
-                llSetTimerEvent((float)DIALOG_TIMEOUT);
+    /* ---------- Dialog / UI ---------- */
+    listen(integer chan, string name, key id, string message) {
+        if (chan != g_menu_chan) return;
+        if (id != g_user) return;
+
+        /* Root nav */
+        if (message == BTN_BACK) {
+            ui_return_root(id);
+            reset_listen();
+            g_user = NULL_KEY;
+            s_context = "";
+            s_param1 = s_param2 = s_data = "";
+            llSetTimerEvent(0.0);
+            return;
+        }
+
+        /* MENU */
+        if (s_context == "menu") {
+            if (message == BTN_TRUSTEE_ADD) {
+                if (llGetListLength(collar_trustees) >= MAX_TRUSTEES) { show_menu(g_user); return; }
+                s_context = "add_scan";
+                s_param1 = s_param2 = s_data = "";
+                llSensor("", NULL_KEY, AGENT, 20.0, PI * 2.0);
                 return;
             }
-            if (msg == TRUSTEE_REMOVE_LABEL) {
+            if (message == BTN_TRUSTEE_REMOVE) {
                 if (llGetListLength(collar_trustees) == 0) {
-                    llDialog(av, "There are no trustees to remove.", make_ok_only(), chan);
-                    cleanup_session();
+                    dialog_to(g_user, "There are no trustees to remove.", ["OK"]);
                     return;
                 }
+                /* Build numbered remove list */
                 list names = [];
                 integer i;
-                for (i = 0; i < llGetListLength(collar_trustees); ++i)
-                    names += llKey2Name(llList2Key(collar_trustees, i));
-                list buttons = build_numbered_buttons(names);
-                sess_context = "remove_trustee";
-                sess_param1 = llDumpList2String(collar_trustees, ",");
-                sess_param2 = "";
-                sess_stepdata = llDumpList2String(buttons, ",");
-                llDialog(av, "Select trustee to remove:\n" + format_numbered_list(names), buttons, chan);
-                llSetTimerEvent((float)DIALOG_TIMEOUT);
+                for (i=0; i<llGetListLength(collar_trustees); ++i) {
+                    names += name_or_key((key)llList2String(collar_trustees, i));
+                }
+                list btns = build_number_buttons(llGetListLength(names));
+                while (llGetListLength(btns) % 3) btns += " ";
+                s_context = "remove_pick";
+                s_data = llDumpList2String(collar_trustees, ","); // keys snapshot
+                dialog_to(g_user, "Select trustee to remove:\n" , btns);
+                /* Show the numbered list as chat for clarity */
+                integer ii;
+                string lines = "";
+                for (ii=0; ii<llGetListLength(names); ++ii) {
+                    lines += (string)(ii+1) + ". " + llList2String(names, ii) + "\n";
+                }
+                llRegionSayTo(g_user, 0, lines);
                 return;
             }
-            if (msg == BACK_BTN_LABEL) {
-                cleanup_session();
-                string menu_req = SHOW_MENU_MSG_START + "|" + ROOT_CONTEXT + "|" + (string)av + "|0";
-                llMessageLinked(LINK_SET, UI_SHOW_MENU_NUM, menu_req, NULL_KEY);
-                return;
-            }
+            /* default → redraw */
+            show_menu(g_user);
+            return;
         }
-        if (sess_context == "add_trustee_select") {
-            list keys = llParseString2List(sess_param1, [","], []);
-            integer index = (integer)msg - 1;
-            if (index >= 0 && index < llGetListLength(keys)) {
-                key selected = llList2Key(keys, index);
+
+        /* ADD: pick candidate from numbers */
+        if (s_context == "add_pick") {
+            list keys = llParseString2List(s_data, [","], []);
+            integer idx = (integer)message - 1;
+            if (idx >= 0 && idx < llGetListLength(keys)) {
+                key cand = (key)llList2String(keys, idx);
+                s_param1 = (string)cand;
+
+                /* Choose honorific (numbered) */
                 list honors = trustee_honorifics();
-                list buttons = build_numbered_buttons(honors);
-                sess_context = "add_trustee_honor";
-                sess_param1 = (string)selected;
-                sess_param2 = "";
-                sess_stepdata = llDumpList2String(buttons, ",");
-                llDialog(av, "Select an honorific for " + llKey2Name(selected) + ":\n" + format_numbered_list(honors), buttons, chan);
-                llSetTimerEvent((float)DIALOG_TIMEOUT);
-            }
-        }
-        if (sess_context == "add_trustee_honor") {
-            list honors = trustee_honorifics();
-            integer index = (integer)msg - 1;
-            if (index >= 0 && index < llGetListLength(honors)) {
-                key selected = (key)sess_param1;
-                string honor = llList2String(honors, index);
-                collar_trustees += selected;
-                collar_trustee_honorifics += honor;
-                llDialog(av, llKey2Name(selected) + " has been added as trustee (" + honor + ").", make_ok_only(), chan);
-                persist_trustees();
-                cleanup_session();
-            }
-        }
-        if (sess_context == "remove_trustee") {
-            list keys = llParseString2List(sess_param1, [","], []);
-            integer index = (integer)msg - 1;
-            if (index >= 0 && index < llGetListLength(keys)) {
-                collar_trustees = llDeleteSubList(collar_trustees, index, index);
-                collar_trustee_honorifics = llDeleteSubList(collar_trustee_honorifics, index, index);
-                llDialog(av, "Trustee removed.", make_ok_only(), chan);
-                persist_trustees();
-                cleanup_session();
-            }
-        }
-    }
-    sensor(integer n) {
-        if (sess_context == "add_trustee" && sess_user != NULL_KEY) {
-            list candidates = [];
-            integer j;
-            for (j = 0; j < n; ++j) {
-                key k = llDetectedKey(j);
-                if (k != sess_user && k != collar_owner && g_idx(collar_trustees, k) == -1) candidates += k;
-            }
-            if (llGetListLength(candidates) == 0) {
-                llDialog(sess_user, "No valid candidates nearby.", make_ok_only(), sess_chan);
-                cleanup_session();
+                list btns = build_number_buttons(llGetListLength(honors));
+                while (llGetListLength(btns) % 3) btns += " ";
+                s_context = "add_honor";
+                dialog_to(g_user, "Select an honorific for " + name_or_key(cand) + ":\n"
+                                  + "1. Sir\n2. Miss\n3. Milord\n4. Milady\n", btns);
                 return;
             }
-            list names = [];
-            for (j = 0; j < llGetListLength(candidates); ++j) names += llKey2Name(llList2Key(candidates, j));
-            list buttons = build_numbered_buttons(names);
-            sess_context = "add_trustee_select";
-            sess_param1 = llDumpList2String(candidates, ",");
-            sess_param2 = "";
-            sess_stepdata = llDumpList2String(buttons, ",");
-            llDialog(sess_user, "Select avatar to add as trustee:\n" + format_numbered_list(names), buttons, sess_chan);
-            llSetTimerEvent((float)DIALOG_TIMEOUT);
+            show_menu(g_user);
+            return;
         }
+
+        /* ADD: honorific chosen */
+        if (s_context == "add_honor") {
+            list honors = trustee_honorifics();
+            integer hidx = (integer)message - 1;
+            if (hidx >= 0 && hidx < llGetListLength(honors)) {
+                key    k   = (key)s_param1;
+                string hon = llList2String(honors, hidx);
+
+                /* Guard: capacity & duplicates */
+                if (llGetListLength(collar_trustees) >= MAX_TRUSTEES) {
+                    dialog_to(g_user, "Trustee list is full.", ["OK"]);
+                    s_context = "menu";
+                    show_menu(g_user);
+                    return;
+                }
+                if (llListFindList(collar_trustees, [(string)k]) != -1) {
+                    dialog_to(g_user, "That avatar is already a trustee.", ["OK"]);
+                    s_context = "menu";
+                    show_menu(g_user);
+                    return;
+                }
+
+                collar_trustees += (string)k;
+                collar_trustee_honorifics += hon;
+
+                push_trustees();
+                dialog_to(g_user, name_or_key(k) + " has been added as trustee (" + hon + ").", ["OK"]);
+                s_context = "menu";
+                show_menu(g_user);
+                return;
+            }
+            /* bad input → redraw */
+            show_menu(g_user);
+            return;
+        }
+
+        /* REMOVE: pick index */
+        if (s_context == "remove_pick") {
+            list keys = llParseString2List(s_data, [","], []);
+            integer idx = (integer)message - 1;
+            if (idx >= 0 && idx < llGetListLength(keys)) {
+                collar_trustees = llDeleteSubList(collar_trustees, idx, idx);
+                collar_trustee_honorifics = llDeleteSubList(collar_trustee_honorifics, idx, idx);
+                push_trustees();
+                dialog_to(g_user, "Trustee removed.", ["OK"]);
+                s_context = "menu";
+                show_menu(g_user);
+                return;
+            }
+            show_menu(g_user);
+            return;
+        }
+
+        /* fallback */
+        show_menu(g_user);
     }
+
+    /* ---------- Proximity scan for candidate selection ---------- */
+    sensor(integer n) {
+        if (s_context != "add_scan") return;
+
+        list candidates = [];
+        integer i;
+        for (i=0; i<n; ++i) {
+            key k = llDetectedKey(i);
+            if (k == g_user)       jump continue;
+            if (k == collar_owner) jump continue;
+            if (llListFindList(collar_trustees, [(string)k]) != -1) jump continue;
+            candidates += (string)k;
+            @continue;
+        }
+
+        if (llGetListLength(candidates) == 0) {
+            dialog_to(g_user, "No valid candidates nearby.", ["OK"]);
+            s_context = "menu";
+            show_menu(g_user);
+            return;
+        }
+
+        /* Build numbered chooser */
+        list names = [];
+        for (i=0; i<llGetListLength(candidates); ++i) names += name_or_key((key)llList2String(candidates, i));
+        list btns = build_number_buttons(llGetListLength(names));
+        while (llGetListLength(btns) % 3) btns += " ";
+
+        s_context = "add_pick";
+        s_data = llDumpList2String(candidates, ",");
+        dialog_to(g_user, "Select avatar to add as trustee:\n", btns);
+
+        /* show numbered list in chat for clarity */
+        integer ii; string lines = "";
+        for (ii=0; ii<llGetListLength(names); ++ii) lines += (string)(ii+1) + ". " + llList2String(names, ii) + "\n";
+        llRegionSayTo(g_user, 0, lines);
+    }
+
     no_sensor() {
-        if (sess_context == "add_trustee" && sess_user != NULL_KEY) {
-            llDialog(sess_user, "No one found nearby.", make_ok_only(), sess_chan);
-            cleanup_session();
+        if (s_context == "add_scan") {
+            dialog_to(g_user, "No one found nearby.", ["OK"]);
+            s_context = "menu";
+            show_menu(g_user);
         }
     }
-    timer() { timeout_check(); }
+
+    /* ---------- Housekeeping ---------- */
+    timer() {
+        reset_listen();
+        g_user = NULL_KEY;
+        s_context = "";
+        s_param1 = s_param2 = s_data = "";
+        llSetTimerEvent(0.0);
+    }
+
     changed(integer change) {
-        if (change & CHANGED_OWNER) llResetScript();
+        if (change & CHANGED_OWNER) {
+            llOwnerSay("Owner changed. Resetting plugin: " + PLUGIN_CONTEXT);
+            llResetScript();
+        }
     }
 }
