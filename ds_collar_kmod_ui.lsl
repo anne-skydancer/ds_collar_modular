@@ -8,6 +8,11 @@
               - Non-wearers    : always exclude "core_sos"
             + Proximity gate:
               - Only allow use within 5 meters of the wearer
+
+   PATCH SUMMARY (showstopper fix):
+   - Gate ACL results by avatar: only accept acl_result for the *current toucher* (gToucher).
+   - Close any open dialog when a *new* person touches to avoid cross-session confusion.
+   - Extra debug and safety guards; feature behavior unchanged otherwise.
    ============================================================= */
 
 integer DEBUG = TRUE;
@@ -25,10 +30,13 @@ string MSG_SETTINGS_GET   = "settings_get";
 string MSG_SETTINGS_SYNC  = "settings_sync";
 string KEY_TPE_MODE       = "tpe_mode";
 
+string MSG_ACL_RESULT     = "acl_result";
+
 string BTN_NAV_LEFT  = "<<";
 string BTN_NAV_GAP   = " ";
 string BTN_NAV_RIGHT = ">>";
 
+/* Link numbers (match kernel/auth/settings) */
 integer AUTH_QUERY_NUM        = 700;
 integer AUTH_RESULT_NUM       = 710;
 integer K_PLUGIN_LIST_NUM     = 600;
@@ -36,7 +44,6 @@ integer K_PLUGIN_LIST_REQUEST = 601;
 integer K_PLUGIN_START_NUM    = 900;
 integer K_PLUGIN_RETURN_NUM   = 901;
 
-/* Settings link numbers (consistent with your settings/auth modules) */
 integer SETTINGS_QUERY_NUM    = 800;
 integer SETTINGS_SYNC_NUM     = 870;
 
@@ -66,10 +73,13 @@ integer gTpeMode     = FALSE;   // 0/1 from settings
 integer gSettingsSeen= FALSE;
 
 // === Helper Functions ===
-logd(string message) { if (DEBUG) llOwnerSay("[DEBUG] " + message); }
+logd(string message) { if (DEBUG) llOwnerSay("[DEBUG][UI] " + message); }
 
 /* Context helper: true if context starts with "core_sos" */
-integer isSosContext(string ctx) { return (llSubStringIndex(ctx, "core_sos") == 0); }
+integer isSosContext(string ctx) {
+    if (llSubStringIndex(ctx, "core_sos") == 0) return TRUE;
+    return FALSE;
+}
 
 /* Proximity helper: is avatar within TOUCH_RANGE_M of wearer? */
 integer isWithinRange(key av) {
@@ -84,12 +94,12 @@ integer isWithinRange(key av) {
 
     /* If agent not in region, OBJECT_POS often returns ZERO_VECTOR; deny in that case */
     if (avPos == ZERO_VECTOR) {
-        if (DEBUG) llOwnerSay("[DEBUG] Proximity: avatar pos unknown → deny");
+        if (DEBUG) llOwnerSay("[DEBUG][UI] Proximity: avatar pos unknown → deny");
         return FALSE;
     }
 
     float dist = llVecDist(wearerPos, avPos);
-    if (DEBUG) llOwnerSay("[DEBUG] Proximity: dist=" + (string)dist);
+    if (DEBUG) llOwnerSay("[DEBUG][UI] Proximity: dist=" + (string)dist);
     if (dist <= TOUCH_RANGE_M) return TRUE;
     return FALSE;
 }
@@ -153,7 +163,7 @@ integer totalLabelCount() { return llGetListLength(g_plugins) / 2; }
 integer totalPagesForList() {
     integer totalLabels = totalLabelCount();
     integer pages = 0;
-    if (totalLabels % MAX_FUNC_BTNS == 0) pages = totalLabels / MAX_FUNC_BTNS;
+    if ((totalLabels % MAX_FUNC_BTNS) == 0) pages = totalLabels / MAX_FUNC_BTNS;
     else pages = (totalLabels / MAX_FUNC_BTNS) + 1;
     if (pages < 1) pages = 1;
     return pages;
@@ -291,7 +301,16 @@ default {
     }
 
     touch_start(integer tn) {
+        /* Close any prior dialog: new touch starts a new session */
+        if (dialogOpen) closeDialog();
+
         gToucher = llDetectedKey(0);
+        if (DEBUG) {
+            key wearer = llGetOwner();
+            string who = "non-wearer";
+            if (gToucher == wearer) who = "wearer";
+            llOwnerSay("[DEBUG][UI] Touch by " + (string)gToucher + " (" + who + ")");
+        }
 
         /* Proximity gate: require toucher within 5m of wearer */
         if (!isWithinRange(gToucher)) {
@@ -342,33 +361,65 @@ default {
             return;
         }
 
+        /* --- SHOWSTOPPER FIX: accept only ACL for the *current toucher* --- */
         if (num == AUTH_RESULT_NUM) {
-            if (llJsonValueType(msg, ["level"]) != JSON_INVALID) {
-                integer level = (integer)llJsonGetValue(msg, ["level"]);
-                if (level < -1 || level > 5 || level == -1) {
-                    llRegionSayTo(gToucher, 0, "Access denied.");
-                    return;
-                }
-                gAclLevel = level;
-                gAclReady = TRUE;
+            /* Must be a proper acl_result */
+            if (llJsonValueType(msg, ["type"]) == JSON_INVALID) {
+                logd("Ignored ACL result: missing 'type'");
+                return;
+            }
+            if (llJsonGetValue(msg, ["type"]) != MSG_ACL_RESULT) {
+                logd("Ignored ACL result: wrong 'type'");
+                return;
+            }
 
-                if (gAclReady && gListReady) {
-                    g_plugins = filterPluginsByAcl(gAclLevel);
-                    if (llGetListLength(g_plugins) == 0) {
-                        llRegionSayTo(gToucher, 0, "No plugins available.");
-                        gAclReady = FALSE;
-                        gListReady = FALSE;
-                        return;
-                    }
-                    showRootMenu(gToucher, 0);
+            /* Must target our current toucher */
+            if (llJsonValueType(msg, ["avatar"]) == JSON_INVALID) {
+                logd("Ignored ACL result: missing 'avatar'");
+                return;
+            }
+            key av = (key)llJsonGetValue(msg, ["avatar"]);
+            if (av == NULL_KEY) {
+                logd("Ignored ACL result: NULL_KEY avatar");
+                return;
+            }
+            if (av != gToucher) {
+                if (DEBUG) llOwnerSay("[DEBUG][UI] Ignored ACL for " + (string)av + " (current toucher is " + (string)gToucher + ")");
+                return;
+            }
+
+            /* Level must be present and valid */
+            if (llJsonValueType(msg, ["level"]) == JSON_INVALID) {
+                logd("Error: 'level' key not found.");
+                return;
+            }
+            integer level = (integer)llJsonGetValue(msg, ["level"]);
+            if (level < -1 || level > 5 || level == -1) {
+                llRegionSayTo(gToucher, 0, "Access denied.");
+                gAclReady = FALSE;
+                gListReady = FALSE;
+                return;
+            }
+
+            gAclLevel = level;
+            gAclReady = TRUE;
+
+            if (gAclReady && gListReady) {
+                g_plugins = filterPluginsByAcl(gAclLevel);
+                if (llGetListLength(g_plugins) == 0) {
+                    llRegionSayTo(gToucher, 0, "No plugins available.");
                     gAclReady = FALSE;
                     gListReady = FALSE;
+                    return;
                 }
-            } else {
-                logd("Error: 'level' key not found.");
+                showRootMenu(gToucher, 0);
+                gAclReady = FALSE;
+                gListReady = FALSE;
             }
+            return;
         }
-        else if (num == K_PLUGIN_LIST_NUM) {
+
+        if (num == K_PLUGIN_LIST_NUM) {
             if (llJsonValueType(msg, ["type"]) != JSON_INVALID) {
                 string type = llJsonGetValue(msg, ["type"]);
                 if (type == TYPE_PLUGIN_LIST) {
@@ -393,14 +444,18 @@ default {
             } else {
                 logd("Error: 'type' key not found in plugin list.");
             }
+            return;
         }
-        else if (num == K_PLUGIN_RETURN_NUM) {
+
+        if (num == K_PLUGIN_RETURN_NUM) {
             if (llJsonValueType(msg, ["context"]) != JSON_INVALID) {
                 string ctx = llJsonGetValue(msg, ["context"]);
                 if (ctx == ROOT_CONTEXT) {
+                    /* Return to root menu for the *current toucher* */
                     showRootMenu(gToucher, gPage);
                 }
             }
+            return;
         }
     }
 
@@ -414,7 +469,7 @@ default {
             return;
         }
 
-        // Close listen for current dialog
+        /* Close listen for current dialog before action */
         closeDialog();
 
         if (msg == BTN_NAV_LEFT) {
@@ -430,15 +485,15 @@ default {
             return;
         }
 
-        // Map label to context
+        /* Map label to context */
         integer idx = llListFindList(g_pageMap, [msg]);
         if (idx != -1) {
             string context = llList2String(g_pageMap, idx + 1);
-            startPlugin(context, id); // pass the toucher key here
+            startPlugin(context, id); /* pass the toucher key */
             return;
         }
 
-        // If unknown, just re-show current menu
+        /* If unknown, just re-show current menu */
         showRootMenu(id, gPage);
     }
 }
