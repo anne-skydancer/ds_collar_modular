@@ -27,7 +27,7 @@ integer AUTH_RESULT_NUM        = 710;
 /* ---------- RLV probe config ---------- */
 integer RLV_BLOCKS_STARTUP      = FALSE; /* TRUE = wait for RLV before finishing summary */
 integer RLV_PROBE_WINDOW_SEC    = 90;    /* total window (sec) */
-integer RLV_INITIAL_DELAY_SEC   = 1;    /* wait before first probe (sec) */
+integer RLV_INITIAL_DELAY_SEC   = 1;     /* wait before first probe (sec) */
 
 /* Probe which channels? (owner disabled per your authoritative version) */
 integer USE_OWNER_CHAN          = FALSE;
@@ -86,7 +86,8 @@ integer ACL_READY              = FALSE;
 
 integer LAST_LIST_TS           = 0;
 
-string  OWNER_KEY              = "";
+/* PATCH: treat owner as key, not string */
+key     OWNER_KEY              = NULL_KEY;
 string  OWNER_HON              = "";
 key     OWNER_NAME_REQ         = NULL_KEY;
 string  OWNER_NAME             = "";
@@ -190,9 +191,6 @@ integer buildAndSendRlvLine() {
     if (RLV_ACTIVE) {
         RLV_RESULT_LINE = "[BOOT] RLV update: active";
         if (RLV_VERSTR != "") RLV_RESULT_LINE += " (" + RLV_VERSTR + ")";
-        /* include channel if wanted:
-        RLV_RESULT_LINE += " [ch " + (string)RLV_RESP_CHAN + "]";
-        */
     } else {
         RLV_RESULT_LINE = "[BOOT] RLV update: inactive";
     }
@@ -245,7 +243,7 @@ integer startRlvProbe()
     RLV_WAIT_UNTIL   = now() + RLV_PROBE_WINDOW_SEC;   /* total window */
     RLV_SETTLE_UNTIL = 0;
     RLV_RETRIES      = 0;
-    RLV_NEXT_SEND_AT = now() + RLV_INITIAL_DELAY_SEC;  /* first send after 30s */
+    RLV_NEXT_SEND_AT = now() + RLV_INITIAL_DELAY_SEC;  /* first send after delay */
 
     RLV_EMITTED_FINAL = FALSE;
     RLV_READY  = FALSE;
@@ -268,17 +266,18 @@ integer askSettings()   { llMessageLinked(LINK_SET, K_SETTINGS_QUERY, "{\"type\"
 integer askACL()        { string j = llList2Json(JSON_OBJECT, ["type","acl_query","avatar",(string)wearer()]); llMessageLinked(LINK_SET, AUTH_QUERY_NUM, j, NULL_KEY); return TRUE; }
 integer askPluginList() { llMessageLinked(LINK_SET, K_PLUGIN_LIST_REQUEST, "", NULL_KEY); return TRUE; }
 
+/* PATCH: parse owner as key and compare to NULL_KEY */
 integer parseSettingsKv(string kv)
 {
     string v;
 
     v = llJsonGetValue(kv, [KEY_OWNER_KEY]);
-    if (v != JSON_INVALID) OWNER_KEY = v; else OWNER_KEY = "";
+    if (v != JSON_INVALID) OWNER_KEY = (key)v; else OWNER_KEY = NULL_KEY;
 
     v = llJsonGetValue(kv, [KEY_OWNER_HON]);
     if (v != JSON_INVALID) OWNER_HON = v; else OWNER_HON = "";
 
-    if (OWNER_KEY != "") OWNER_NAME_REQ = llRequestAgentData((key)OWNER_KEY, DATA_NAME);
+    if (OWNER_KEY != NULL_KEY) OWNER_NAME_REQ = llRequestAgentData(OWNER_KEY, DATA_NAME);
     return TRUE;
 }
 
@@ -317,6 +316,7 @@ integer emitRlvLine()
     return TRUE;
 }
 
+/* PATCH: ownership checks use OWNER_KEY != NULL_KEY */
 integer emitSummary(integer completed, integer timedOut)
 {
     string line1 = "Restart: ";
@@ -325,7 +325,7 @@ integer emitSummary(integer completed, integer timedOut)
     else line1 += "in progress";
 
     string line3 = "Ownership: ";
-    if (OWNER_KEY != "") {
+    if (OWNER_KEY != NULL_KEY) {
         if (OWNER_NAME != "") line3 += "owned by " + OWNER_NAME;
         else if (OWNER_HON != "") line3 += "owned (" + OWNER_HON + ")";
         else line3 += "owned";
@@ -356,7 +356,7 @@ integer startBootstrap()
     RLV_SETTLE_UNTIL = 0; RLV_WAIT_UNTIL = 0;
     RLV_RESP_CHAN = 0; RLV_PROBING = FALSE;
 
-    OWNER_KEY = ""; OWNER_HON = ""; OWNER_NAME = ""; OWNER_NAME_REQ = NULL_KEY;
+    OWNER_KEY = NULL_KEY; OWNER_HON = ""; OWNER_NAME = ""; OWNER_NAME_REQ = NULL_KEY;
 
     BOOT_ACTIVE = TRUE;
     BOOT_DEADLINE = now() + STARTUP_TIMEOUT_SEC;
