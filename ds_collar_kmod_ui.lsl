@@ -1,42 +1,27 @@
 /* =============================================================
-   MODULE:  ds_collar_kmod_ui.lsl
+   MODULE:  ds_collar_kmod_ui.lsl  (AUTH-DRIVEN)
    ROLE:    Root UI (context-based, paged, safe listeners)
-   NOTES:   ACL-filtered plugin list, waits for both ACL and plugins
-            + TPE gate by context (wearer-only):
-              - Wearer + TPE OFF: exclude contexts starting with "core_sos"
-              - Wearer + TPE ON : include only contexts starting with "core_sos"
-              - Non-wearers    : always exclude "core_sos"
-            + Proximity gate:
-              - Only allow use within 5 meters of the wearer
-
-   PATCH SUMMARY (showstopper fix):
-   - Gate ACL results by avatar: only accept acl_result for the *current toucher* (gToucher).
-   - Close any open dialog when a *new* person touches to avoid cross-session confusion.
-   - Extra debug and safety guards; feature behavior unchanged otherwise.
+   POLICY:  Defer to AUTH for access rules; UI only filters by:
+              - ACL level (bucketed)
+              - policy_public_only (non-wearers in public mode)
+              - policy_sos_only (wearer in TPE)
+              - is_wearer (product rule: non-wearers never see core_sos)
    ============================================================= */
 
-integer DEBUG = TRUE;
+integer DEBUG = FALSE;
 
-// === Global String Constants ===
-string TYPE_REGISTER      = "register";
-string TYPE_REGISTER_NOW  = "register_now";
+/* ---------- Strings ---------- */
 string TYPE_PLUGIN_LIST   = "plugin_list";
 string TYPE_PLUGIN_RETURN = "plugin_return";
 string TYPE_START_UI      = "plugin_start";
-string TYPE_ACL_QUERY     = "acl_query";
-
-/* Settings protocol */
-string MSG_SETTINGS_GET   = "settings_get";
-string MSG_SETTINGS_SYNC  = "settings_sync";
-string KEY_TPE_MODE       = "tpe_mode";
-
+string MSG_ACL_QUERY      = "acl_query";
 string MSG_ACL_RESULT     = "acl_result";
 
 string BTN_NAV_LEFT  = "<<";
 string BTN_NAV_GAP   = " ";
 string BTN_NAV_RIGHT = ">>";
 
-/* Link numbers (match kernel/auth/settings) */
+/* ---------- Link numbers ---------- */
 integer AUTH_QUERY_NUM        = 700;
 integer AUTH_RESULT_NUM       = 710;
 integer K_PLUGIN_LIST_NUM     = 600;
@@ -44,118 +29,149 @@ integer K_PLUGIN_LIST_REQUEST = 601;
 integer K_PLUGIN_START_NUM    = 900;
 integer K_PLUGIN_RETURN_NUM   = 901;
 
-integer SETTINGS_QUERY_NUM    = 800;
-integer SETTINGS_SYNC_NUM     = 870;
-
 string ROOT_CONTEXT = "core_root";
 
+/* ---------- UI layout ---------- */
 integer MAX_FUNC_BTNS = 9;
-
-/* --- Proximity (meters) --- */
 float   TOUCH_RANGE_M = 5.0;
 
-// === State variables ===
+/* ---------- State ---------- */
 list    g_pluginsAll = [];  // [label, context, min_acl, ...]
-list    g_plugins    = [];  // Filtered [label, context, ...]
-list    g_pageMap    = [];  // Current page [label, context, ...]
+list    g_plugins    = [];  // filtered [label, context, ...]
+list    g_pageMap    = [];
+
 key     gToucher     = NULL_KEY;
 integer gListen      = 0;
 integer gPage        = 0;
 integer gMenuChan    = 0;
-
-integer gAclLevel    = -1;
-integer gAclReady    = FALSE;
-integer gListReady   = FALSE;
 integer dialogOpen   = FALSE;
 
-/* Settings cache */
-integer gTpeMode     = FALSE;   // 0/1 from settings
-integer gSettingsSeen= FALSE;
+/* ACL + policy from AUTH */
+integer gAclLevel            = -1;
+integer gAclReady            = FALSE;
+integer gListReady           = FALSE;
+integer gIsWearer            = FALSE;
+integer gPolicySosOnly       = FALSE;
+integer gPolicyPublicOnly    = FALSE;
 
-// === Helper Functions ===
-logd(string message) { if (DEBUG) llOwnerSay("[DEBUG][UI] " + message); }
+integer logd(string m) { if (DEBUG) llOwnerSay("[DEBUG][UI] " + m); return 0; }
 
-/* Context helper: true if context starts with "core_sos" */
-integer isSosContext(string ctx) {
-    if (llSubStringIndex(ctx, "core_sos") == 0) return TRUE;
-    return FALSE;
-}
+/* ---------- Helpers ---------- */
+integer isSosContext(string ctx) { if (llSubStringIndex(ctx, "core_sos") == 0) return TRUE; return FALSE; }
 
-/* Proximity helper: is avatar within TOUCH_RANGE_M of wearer? */
 integer isWithinRange(key av) {
     if (av == NULL_KEY) return FALSE;
-
-    /* Wearer position: for attachments llGetPos() is the wearer's position */
     vector wearerPos = llGetPos();
-
-    /* Toucher (agent) position via llGetObjectDetails */
     list d = llGetObjectDetails(av, [OBJECT_POS]);
     vector avPos = llList2Vector(d, 0);
-
-    /* If agent not in region, OBJECT_POS often returns ZERO_VECTOR; deny in that case */
-    if (avPos == ZERO_VECTOR) {
-        if (DEBUG) llOwnerSay("[DEBUG][UI] Proximity: avatar pos unknown → deny");
-        return FALSE;
-    }
-
+    if (avPos == ZERO_VECTOR) return FALSE;
     float dist = llVecDist(wearerPos, avPos);
-    if (DEBUG) llOwnerSay("[DEBUG][UI] Proximity: dist=" + (string)dist);
+    if (DEBUG) llOwnerSay("[DEBUG][UI] Proximity: " + (string)dist);
     if (dist <= TOUCH_RANGE_M) return TRUE;
     return FALSE;
 }
 
+/* STRICT: require min_acl present and valid (0..5). Reject malformed rows. */
 parsePluginList(string jsonStr) {
     g_pluginsAll = [];
     integer i = 0;
     while (llJsonValueType(jsonStr, ["plugins", i]) != JSON_INVALID) {
         string label   = llJsonGetValue(jsonStr, ["plugins", i, "label"]);
         string context = llJsonGetValue(jsonStr, ["plugins", i, "context"]);
-        integer minAcl = (integer)llJsonGetValue(jsonStr, ["plugins", i, "min_acl"]);
-        if (label != "" && context != "") {
-            g_pluginsAll += [label, context, minAcl];
+        string mv      = llJsonGetValue(jsonStr, ["plugins", i, "min_acl"]);
+
+        if (label == "" || context == "") {
+            if (DEBUG) llOwnerSay("[DEBUG][UI] Skipping plugin row: empty label/context");
+        } else if (mv == JSON_INVALID) {
+            if (DEBUG) llOwnerSay("[DEBUG][UI] Skipping plugin row: missing min_acl");
+        } else {
+            integer minAcl = (integer)mv;
+            if (minAcl < 0 || minAcl > 5) {
+                if (DEBUG) llOwnerSay("[DEBUG][UI] Skipping plugin row: min_acl out of range (" + (string)minAcl + ")");
+            } else {
+                g_pluginsAll += [label, context, minAcl];
+            }
         }
         i = i + 1;
     }
 }
 
-/* ---------- ACL-based Filtering with wearer-only TPE gate ----------
-   - Always enforce ACL: include only if (acl >= min_acl)
-   - If toucher IS the wearer (llGetOwner()):
-       * TPE ON  : include ONLY contexts starting with "core_sos"
-       * TPE OFF : EXCLUDE contexts starting with "core_sos"
-   - If toucher is NOT the wearer:
-       * Always EXCLUDE "core_sos" (normal menu)
+/* ---------- Policy-driven, bucketed by ACL ----------
+   Buckets:
+     level -1 → nothing
+     level  0 → only plugins with min_acl == 0
+     level  1 → plugins with min_acl in {1}
+     level  2 → plugins with min_acl in {1,2}
+     level  3 → plugins with min_acl in {1,2,3}
+     level  4 → plugins with min_acl in {1,2,3,4}
+     level  5 → plugins with min_acl in {1,2,3,4,5}
+
+   Overrides:
+     - If policy_public_only == 1 AND toucher is not wearer → force min_acl == 1 only
+     - Core SOS (context starts with "core_sos"):
+         * If is_wearer == 1 and policy_sos_only == 1 → ONLY core_sos
+         * If is_wearer == 1 and policy_sos_only == 0 → EXCLUDE core_sos
+         * If is_wearer == 0 → EXCLUDE core_sos
 */
-list filterPluginsByAcl(integer acl) {
-    list filtered = [];
+list filterPlugins() {
+    list out = [];
     integer i = 0;
     integer n = llGetListLength(g_pluginsAll);
-
-    key wearer = llGetOwner();
-    integer isWearer = FALSE;
-    if (gToucher == wearer) isWearer = TRUE;
 
     while (i < n) {
         string  label   = llList2String (g_pluginsAll, i);
         string  context = llList2String (g_pluginsAll, i + 1);
         integer minAcl  = llList2Integer(g_pluginsAll, i + 2);
 
-        if (acl >= minAcl) {
-            integer sos = isSosContext(context);
+        integer include = FALSE;
 
-            if (isWearer) {
-                if (gTpeMode) {
-                    if (sos) filtered += [label, context];
-                } else {
-                    if (!sos) filtered += [label, context];
+        /* --- Base bucket by ACL level --- */
+        if (gAclLevel <= -1) {
+            include = FALSE;                  /* blacklist: nothing */
+        } else if (gAclLevel == 0) {
+            if (minAcl == 0) include = TRUE;  /* wearer in TPE: only min_acl 0 */
+        } else {
+            if (minAcl <= gAclLevel) include = TRUE; /* threshold include */
+        }
+
+        /* --- Public-mode override for non-wearers --- */
+        if (include) {
+            if (!gIsWearer) {
+                if (gPolicyPublicOnly) {
+                    if (minAcl == 1) {
+                        /* keep include */
+                    } else {
+                        include = FALSE;
+                    }
                 }
-            } else {
-                if (!sos) filtered += [label, context];
             }
         }
+
+        /* --- Core SOS gating --- */
+        if (include) {
+            integer sos = FALSE;
+            if (llSubStringIndex(context, "core_sos") == 0) sos = TRUE;
+
+            if (gIsWearer) {
+                if (gPolicySosOnly) {
+                    if (sos) {
+                        out += [label, context];     /* wearer in TPE → ONLY core_sos */
+                    }
+                } else {
+                    if (!sos) {
+                        out += [label, context];     /* wearer normal → exclude core_sos */
+                    }
+                }
+            } else {
+                if (!sos) {
+                    out += [label, context];         /* outsiders never see core_sos */
+                }
+            }
+        }
+
         i = i + 3;
     }
-    return filtered;
+    return out;
 }
 
 integer totalLabelCount() { return llGetListLength(g_plugins) / 2; }
@@ -254,7 +270,6 @@ navigatePage(key av, integer newPage) {
     openDialog(av, "• DS Collar •", body, buttons);
 }
 
-/* Pass the toucher key as the link_message id */
 startPlugin(string context, key av) {
     string msg = llList2Json(JSON_OBJECT, []);
     msg = llJsonSetValue(msg, ["type"], TYPE_START_UI);
@@ -265,16 +280,17 @@ startPlugin(string context, key av) {
 
 queryAclAsync(key user) {
     string msg = llList2Json(JSON_OBJECT, []);
-    msg = llJsonSetValue(msg, ["type"], TYPE_ACL_QUERY);
+    msg = llJsonSetValue(msg, ["type"], MSG_ACL_QUERY);
     msg = llJsonSetValue(msg, ["avatar"], (string)user);
     llMessageLinked(LINK_SET, AUTH_QUERY_NUM, msg, NULL_KEY);
 }
 
 fetchPluginListAsync() { llMessageLinked(LINK_SET, K_PLUGIN_LIST_REQUEST, "", NULL_KEY); }
 
-// === Events ===
+/* ==================== Events ==================== */
 default {
     state_entry() {
+        gToucher = NULL_KEY;
         gPage = 0;
         g_pluginsAll = [];
         g_plugins = [];
@@ -283,36 +299,19 @@ default {
         gAclReady = FALSE;
         gListReady = FALSE;
         dialogOpen = FALSE;
-        if (gListen != 0) {
-            llListenRemove(gListen);
-            gListen = 0;
-        }
 
-        /* Ask settings at boot so we learn TPE state */
-        string j0 = llList2Json(JSON_OBJECT, []);
-        j0 = llJsonSetValue(j0, ["type"], MSG_SETTINGS_GET);
-        llMessageLinked(LINK_SET, SETTINGS_QUERY_NUM, j0, NULL_KEY);
+        if (gListen != 0) { llListenRemove(gListen); gListen = 0; }
     }
 
     on_rez(integer sp) { llResetScript(); }
 
-    changed(integer change) {
-        if (change & CHANGED_OWNER) llResetScript();
-    }
+    changed(integer change) { if (change & CHANGED_OWNER) llResetScript(); }
 
     touch_start(integer tn) {
-        /* Close any prior dialog: new touch starts a new session */
         if (dialogOpen) closeDialog();
 
         gToucher = llDetectedKey(0);
-        if (DEBUG) {
-            key wearer = llGetOwner();
-            string who = "non-wearer";
-            if (gToucher == wearer) who = "wearer";
-            llOwnerSay("[DEBUG][UI] Touch by " + (string)gToucher + " (" + who + ")");
-        }
 
-        /* Proximity gate: require toucher within 5m of wearer */
         if (!isWithinRange(gToucher)) {
             llRegionSayTo(gToucher, 0, "You are too far from the wearer to use the collar (max 5 m).");
             return;
@@ -320,92 +319,52 @@ default {
 
         gAclReady = FALSE;
         gListReady = FALSE;
+        gAclLevel = -1;
+        gIsWearer = FALSE;
+        gPolicySosOnly = FALSE;
+        gPolicyPublicOnly = FALSE;
+
         queryAclAsync(gToucher);
         fetchPluginListAsync();
-
-        /* If settings not yet seen, request again (non-blocking) */
-        if (!gSettingsSeen) {
-            string js = llList2Json(JSON_OBJECT, []);
-            js = llJsonSetValue(js, ["type"], MSG_SETTINGS_GET);
-            llMessageLinked(LINK_SET, SETTINGS_QUERY_NUM, js, NULL_KEY);
-        }
     }
 
     link_message(integer src, integer num, string msg, key id) {
-        if (num == SETTINGS_SYNC_NUM) {
-            if (llJsonValueType(msg, ["type"]) != JSON_INVALID) {
-                if (llJsonGetValue(msg, ["type"]) == MSG_SETTINGS_SYNC) {
-                    if (llJsonValueType(msg, ["kv"]) != JSON_INVALID) {
-                        string kv = llJsonGetValue(msg, ["kv"]);
-                        if (llJsonValueType(kv, [KEY_TPE_MODE]) != JSON_INVALID) {
-                            gTpeMode = (integer)llJsonGetValue(kv, [KEY_TPE_MODE]);
-                            gSettingsSeen = TRUE;
-                            logd("Settings sync: tpe_mode=" + (string)gTpeMode);
-
-                            if (gAclReady && gListReady) {
-                                g_plugins = filterPluginsByAcl(gAclLevel);
-                                if (llGetListLength(g_plugins) == 0) {
-                                    llRegionSayTo(gToucher, 0, "No plugins available.");
-                                    gAclReady = FALSE;
-                                    gListReady = FALSE;
-                                    return;
-                                }
-                                showRootMenu(gToucher, 0);
-                                gAclReady = FALSE;
-                                gListReady = FALSE;
-                            }
-                        }
-                    }
-                }
-            }
-            return;
-        }
-
-        /* --- SHOWSTOPPER FIX: accept only ACL for the *current toucher* --- */
         if (num == AUTH_RESULT_NUM) {
-            /* Must be a proper acl_result */
-            if (llJsonValueType(msg, ["type"]) == JSON_INVALID) {
-                logd("Ignored ACL result: missing 'type'");
-                return;
-            }
-            if (llJsonGetValue(msg, ["type"]) != MSG_ACL_RESULT) {
-                logd("Ignored ACL result: wrong 'type'");
-                return;
-            }
+            if (llJsonValueType(msg, ["type"]) == JSON_INVALID) return;
+            if (llJsonGetValue(msg, ["type"]) != MSG_ACL_RESULT) return;
 
-            /* Must target our current toucher */
-            if (llJsonValueType(msg, ["avatar"]) == JSON_INVALID) {
-                logd("Ignored ACL result: missing 'avatar'");
-                return;
-            }
             key av = (key)llJsonGetValue(msg, ["avatar"]);
-            if (av == NULL_KEY) {
-                logd("Ignored ACL result: NULL_KEY avatar");
-                return;
-            }
+            if (av == NULL_KEY) return;
             if (av != gToucher) {
-                if (DEBUG) llOwnerSay("[DEBUG][UI] Ignored ACL for " + (string)av + " (current toucher is " + (string)gToucher + ")");
+                if (DEBUG) llOwnerSay("[DEBUG][UI] Ignored ACL for " + (string)av + " (current toucher " + (string)gToucher + ")");
                 return;
             }
 
-            /* Level must be present and valid */
-            if (llJsonValueType(msg, ["level"]) == JSON_INVALID) {
-                logd("Error: 'level' key not found.");
-                return;
-            }
-            integer level = (integer)llJsonGetValue(msg, ["level"]);
-            if (level < -1 || level > 5 || level == -1) {
+            if (llJsonValueType(msg, ["level"]) == JSON_INVALID) return;
+            gAclLevel = (integer)llJsonGetValue(msg, ["level"]);
+
+            /* policy flags (optional; default safe) */
+            gIsWearer = FALSE;
+            if (llJsonValueType(msg, ["is_wearer"]) != JSON_INVALID) gIsWearer = (integer)llJsonGetValue(msg, ["is_wearer"]);
+            gPolicySosOnly = FALSE;
+            if (llJsonValueType(msg, ["policy_sos_only"]) != JSON_INVALID) gPolicySosOnly = (integer)llJsonGetValue(msg, ["policy_sos_only"]);
+            gPolicyPublicOnly = FALSE;
+            if (llJsonValueType(msg, ["policy_public_only"]) != JSON_INVALID) gPolicyPublicOnly = (integer)llJsonGetValue(msg, ["policy_public_only"]);
+
+            /* hard denials: blacklist (-1) or wearer in TPE (0) */
+            if (gAclLevel <= 0) {
+                closeDialog();
                 llRegionSayTo(gToucher, 0, "Access denied.");
+                gToucher = NULL_KEY;
                 gAclReady = FALSE;
                 gListReady = FALSE;
                 return;
             }
 
-            gAclLevel = level;
             gAclReady = TRUE;
 
             if (gAclReady && gListReady) {
-                g_plugins = filterPluginsByAcl(gAclLevel);
+                g_plugins = filterPlugins();
                 if (llGetListLength(g_plugins) == 0) {
                     llRegionSayTo(gToucher, 0, "No plugins available.");
                     gAclReady = FALSE;
@@ -420,29 +379,23 @@ default {
         }
 
         if (num == K_PLUGIN_LIST_NUM) {
-            if (llJsonValueType(msg, ["type"]) != JSON_INVALID) {
-                string type = llJsonGetValue(msg, ["type"]);
-                if (type == TYPE_PLUGIN_LIST) {
-                    parsePluginList(msg);
-                    gListReady = TRUE;
+            if (llJsonValueType(msg, ["type"]) == JSON_INVALID) return;
+            if (llJsonGetValue(msg, ["type"]) != TYPE_PLUGIN_LIST) return;
 
-                    if (gAclReady && gListReady) {
-                        g_plugins = filterPluginsByAcl(gAclLevel);
-                        if (llGetListLength(g_plugins) == 0) {
-                            llRegionSayTo(gToucher, 0, "No plugins available.");
-                            gAclReady = FALSE;
-                            gListReady = FALSE;
-                            return;
-                        }
-                        showRootMenu(gToucher, 0);
-                        gAclReady = FALSE;
-                        gListReady = FALSE;
-                    }
-                } else {
-                    logd("Error: Plugin list type mismatch.");
+            parsePluginList(msg);
+            gListReady = TRUE;
+
+            if (gAclReady && gListReady) {
+                g_plugins = filterPlugins();
+                if (llGetListLength(g_plugins) == 0) {
+                    llRegionSayTo(gToucher, 0, "No plugins available.");
+                    gAclReady = FALSE;
+                    gListReady = FALSE;
+                    return;
                 }
-            } else {
-                logd("Error: 'type' key not found in plugin list.");
+                showRootMenu(gToucher, 0);
+                gAclReady = FALSE;
+                gListReady = FALSE;
             }
             return;
         }
@@ -450,50 +403,34 @@ default {
         if (num == K_PLUGIN_RETURN_NUM) {
             if (llJsonValueType(msg, ["context"]) != JSON_INVALID) {
                 string ctx = llJsonGetValue(msg, ["context"]);
-                if (ctx == ROOT_CONTEXT) {
-                    /* Return to root menu for the *current toucher* */
-                    showRootMenu(gToucher, gPage);
-                }
+                if (ctx == ROOT_CONTEXT) showRootMenu(gToucher, gPage);
             }
             return;
         }
     }
 
-    listen(integer chan, string name, key id, string msg) {
+    listen(integer chan, string name, key id, string b) {
         if (chan != gMenuChan) return;
 
-        /* Proximity re-check on every click */
         if (!isWithinRange(id)) {
             closeDialog();
             llRegionSayTo(id, 0, "You moved too far from the wearer to use the collar (max 5 m).");
             return;
         }
 
-        /* Close listen for current dialog before action */
         closeDialog();
 
-        if (msg == BTN_NAV_LEFT) {
-            navigatePage(id, gPage - 1);
-            return;
-        }
-        if (msg == BTN_NAV_RIGHT) {
-            navigatePage(id, gPage + 1);
-            return;
-        }
-        if (msg == BTN_NAV_GAP) {
-            showRootMenu(id, gPage);
-            return;
-        }
+        if (b == BTN_NAV_LEFT)  { navigatePage(id, gPage - 1); return; }
+        if (b == BTN_NAV_RIGHT) { navigatePage(id, gPage + 1); return; }
+        if (b == BTN_NAV_GAP)   { showRootMenu(id, gPage);     return; }
 
-        /* Map label to context */
-        integer idx = llListFindList(g_pageMap, [msg]);
+        integer idx = llListFindList(g_pageMap, [b]);
         if (idx != -1) {
             string context = llList2String(g_pageMap, idx + 1);
-            startPlugin(context, id); /* pass the toucher key */
+            startPlugin(context, id);
             return;
         }
 
-        /* If unknown, just re-show current menu */
         showRootMenu(id, gPage);
     }
 }
