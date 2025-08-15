@@ -3,19 +3,27 @@
    ROLE:    Settings authority (key/value + arrays), JSON-only
    ============================================================= */
 
-integer DEBUG = TRUE;
+integer DEBUG = FALSE;
+
+/* ---------- Global String Constants (Magic Words) ---------- */
+string TYPE_SETTINGS_GET       = "settings_get";
+string TYPE_SETTINGS_SYNC      = "settings_sync";
+string TYPE_SET                = "set";
+string TYPE_LIST_ADD           = "list_add";
+string TYPE_LIST_REMOVE        = "list_remove";
+
+string KEY_OWNER_KEY           = "owner_key";
+string KEY_OWNER_HON           = "owner_hon";
+string KEY_TRUSTEES            = "trustees";
+string KEY_TRUSTEE_HONS        = "trustee_honorifics";
+string KEY_BLACKLIST           = "blacklist";
+string KEY_PUBLIC_ACCESS       = "public_mode";
+string KEY_TPE_MODE            = "tpe_mode";
+string KEY_LOCKED              = "locked";            // ← NEW
 
 /* ---------- Link numbers ---------- */
-integer SETTINGS_QUERY_NUM = 800;  /* In : {"type":"settings_get"} | {"type":"set",...} | {"type":"list_add"/"list_remove",...} */
-integer SETTINGS_SYNC_NUM  = 870;  /* Out: {"type":"settings_sync","kv":{...}} */
-
-/* ---------- Whitelisted setting keys ---------- */
-string KEY_OWNER_KEY        = "owner_key";
-string KEY_OWNER_HON        = "owner_hon";
-string KEY_TRUSTEES         = "trustees";
-string KEY_TRUSTEE_HONS     = "trustee_honorifics";
-string KEY_BLACKLIST        = "blacklist";
-string KEY_PUBLIC_ACCESS    = "public_mode";
+integer SETTINGS_QUERY_NUM     = 800;  /* In : {"type":"settings_get"} | {"type":"set",...} | {"type":"list_add"/"list_remove",...} */
+integer SETTINGS_SYNC_NUM      = 870;  /* Out: {"type":"settings_sync","kv":{...}} */
 
 /* ---------- Internal JSON store ---------- */
 string kv_json = "{}";
@@ -113,7 +121,7 @@ integer kv_list_remove_all(string key_str, string elem) {
 
 integer broadcast_sync_once() {
     string j = llList2Json(JSON_OBJECT, []);
-    j = llJsonSetValue(j, ["type"], "settings_sync");
+    j = llJsonSetValue(j, ["type"], TYPE_SETTINGS_SYNC);
     j = llJsonSetValue(j, ["kv"],   kv_json);
     llMessageLinked(LINK_SET, SETTINGS_SYNC_NUM, j, NULL_KEY);
     logd("sync → " + j);
@@ -135,6 +143,8 @@ integer is_allowed_key(string k) {
     if (k == KEY_TRUSTEE_HONS)   return TRUE;
     if (k == KEY_BLACKLIST)      return TRUE;
     if (k == KEY_PUBLIC_ACCESS)  return TRUE;
+    if (k == KEY_TPE_MODE)       return TRUE;
+    if (k == KEY_LOCKED)         return TRUE;   // ← NEW
     return FALSE;
 }
 
@@ -152,12 +162,12 @@ default
 
         string t = llJsonGetValue(str, ["type"]);
 
-        if (t == "settings_get") {
+        if (t == TYPE_SETTINGS_GET) {
             maybe_broadcast_sync_on_get();
             return;
         }
 
-        if (t == "set") {
+        if (t == TYPE_SET) {
             if (!json_has(str, ["key"])) return;
             string key_str = llJsonGetValue(str, ["key"]);
             if (!is_allowed_key(key_str)) return;
@@ -174,7 +184,8 @@ default
             else if (json_has(str, ["value"])) {
                 string val = llJsonGetValue(str, ["value"]);
                 if (val != JSON_INVALID) {
-                    if (key_str == KEY_PUBLIC_ACCESS) {
+                    /* Normalize boolean-like scalars to "0"/"1" */
+                    if (key_str == KEY_PUBLIC_ACCESS || key_str == KEY_LOCKED) { // ← UPDATED
                         val = normalize_mode01(val);
                     }
                     did_change_set = kv_set_scalar(key_str, val);
@@ -187,7 +198,7 @@ default
             return;
         }
 
-        if (t == "list_add" || t == "list_remove") {
+        if (t == TYPE_LIST_ADD || t == TYPE_LIST_REMOVE) {
             if (!json_has(str, ["key"]))  return;
             if (!json_has(str, ["elem"])) return;
 
@@ -196,7 +207,7 @@ default
             if (!is_allowed_key(key_str)) return;
 
             integer did_change_list = FALSE;
-            if (t == "list_add") {
+            if (t == TYPE_LIST_ADD) {
                 did_change_list = kv_list_add_unique(key_str, elem);
             } else {
                 did_change_list = kv_list_remove_all(key_str, elem);
