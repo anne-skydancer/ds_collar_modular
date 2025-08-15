@@ -6,6 +6,14 @@
               - policy_public_only (non-wearers in public mode)
               - policy_sos_only (wearer in TPE)
               - is_wearer (product rule: non-wearers never see core_sos)
+
+   PATCH:
+   - When a plugin is chosen, close dialog and END the UI session:
+       gToucher = NULL_KEY; gAclReady = FALSE; gListReady = FALSE
+     → prevents menu from reopening due to late ACL/list broadcasts.
+   - While no active session (gToucher == NULL_KEY), ignore AUTH/LIST updates.
+   - On plugin_return to ROOT_CONTEXT, use the link_message 'id' as the
+     new session avatar, re-request ACL + PLUGIN LIST, then show when ready.
    ============================================================= */
 
 integer DEBUG = FALSE;
@@ -40,7 +48,7 @@ list    g_pluginsAll = [];  // [label, context, min_acl, ...]
 list    g_plugins    = [];  // filtered [label, context, ...]
 list    g_pageMap    = [];
 
-key     gToucher     = NULL_KEY;
+key     gToucher     = NULL_KEY;  /* NULL_KEY means: no active UI session */
 integer gListen      = 0;
 integer gPage        = 0;
 integer gMenuChan    = 0;
@@ -96,23 +104,7 @@ parsePluginList(string jsonStr) {
     }
 }
 
-/* ---------- Policy-driven, bucketed by ACL ----------
-   Buckets:
-     level -1 → nothing
-     level  0 → only plugins with min_acl == 0
-     level  1 → plugins with min_acl in {1}
-     level  2 → plugins with min_acl in {1,2}
-     level  3 → plugins with min_acl in {1,2,3}
-     level  4 → plugins with min_acl in {1,2,3,4}
-     level  5 → plugins with min_acl in {1,2,3,4,5}
-
-   Overrides:
-     - If policy_public_only == 1 AND toucher is not wearer → force min_acl == 1 only
-     - Core SOS (context starts with "core_sos"):
-         * If is_wearer == 1 and policy_sos_only == 1 → ONLY core_sos
-         * If is_wearer == 1 and policy_sos_only == 0 → EXCLUDE core_sos
-         * If is_wearer == 0 → EXCLUDE core_sos
-*/
+/* ---------- Policy-driven, bucketed by ACL ---------- */
 list filterPlugins() {
     list out = [];
     integer i = 0;
@@ -154,18 +146,12 @@ list filterPlugins() {
 
             if (gIsWearer) {
                 if (gPolicySosOnly) {
-                    if (sos) {
-                        out += [label, context];     /* wearer in TPE → ONLY core_sos */
-                    }
+                    if (sos) out += [label, context];     /* wearer in TPE → ONLY core_sos */
                 } else {
-                    if (!sos) {
-                        out += [label, context];     /* wearer normal → exclude core_sos */
-                    }
+                    if (!sos) out += [label, context];    /* wearer normal → exclude core_sos */
                 }
             } else {
-                if (!sos) {
-                    out += [label, context];         /* outsiders never see core_sos */
-                }
+                if (!sos) out += [label, context];        /* outsiders never see core_sos */
             }
         }
 
@@ -308,6 +294,7 @@ default {
     changed(integer change) { if (change & CHANGED_OWNER) llResetScript(); }
 
     touch_start(integer tn) {
+        /* New session: close any prior dialog */
         if (dialogOpen) closeDialog();
 
         gToucher = llDetectedKey(0);
@@ -317,6 +304,7 @@ default {
             return;
         }
 
+        /* reset readiness for this session */
         gAclReady = FALSE;
         gListReady = FALSE;
         gAclLevel = -1;
@@ -329,6 +317,11 @@ default {
     }
 
     link_message(integer src, integer num, string msg, key id) {
+        /* If no active session, ignore ACL/LIST updates to avoid reopening menus */
+        if (gToucher == NULL_KEY) {
+            if (num != K_PLUGIN_RETURN_NUM) return;
+        }
+
         if (num == AUTH_RESULT_NUM) {
             if (llJsonValueType(msg, ["type"]) == JSON_INVALID) return;
             if (llJsonGetValue(msg, ["type"]) != MSG_ACL_RESULT) return;
@@ -355,7 +348,7 @@ default {
             if (gAclLevel <= 0) {
                 closeDialog();
                 llRegionSayTo(gToucher, 0, "Access denied.");
-                gToucher = NULL_KEY;
+                gToucher = NULL_KEY;   /* end session */
                 gAclReady = FALSE;
                 gListReady = FALSE;
                 return;
@@ -400,10 +393,28 @@ default {
             return;
         }
 
+        /* Plugin finished → reopen root for that avatar */
         if (num == K_PLUGIN_RETURN_NUM) {
             if (llJsonValueType(msg, ["context"]) != JSON_INVALID) {
                 string ctx = llJsonGetValue(msg, ["context"]);
-                if (ctx == ROOT_CONTEXT) showRootMenu(gToucher, gPage);
+                if (ctx == ROOT_CONTEXT) {
+                    key target = id;        /* plugin should pass the user as 'id' */
+                    if (target == NULL_KEY) target = gToucher;
+                    if (target == NULL_KEY) return;
+
+                    if (!isWithinRange(target)) {
+                        llRegionSayTo(target, 0, "You are too far from the wearer to use the collar (max 5 m).");
+                        return;
+                    }
+
+                    /* Start a fresh session for this user and refetch state */
+                    gToucher = target;
+                    gAclReady = FALSE;
+                    gListReady = FALSE;
+
+                    queryAclAsync(gToucher);
+                    fetchPluginListAsync();
+                }
             }
             return;
         }
@@ -424,13 +435,23 @@ default {
         if (b == BTN_NAV_RIGHT) { navigatePage(id, gPage + 1); return; }
         if (b == BTN_NAV_GAP)   { showRootMenu(id, gPage);     return; }
 
+        /* Plugin chosen */
         integer idx = llListFindList(g_pageMap, [b]);
         if (idx != -1) {
             string context = llList2String(g_pageMap, idx + 1);
+
+            /* Fire plugin start */
             startPlugin(context, id);
+
+            /* END this UI session immediately, so late ACL/LIST cannot reopen menu */
+            gToucher  = NULL_KEY;
+            gAclReady = FALSE;
+            gListReady= FALSE;
+
             return;
         }
 
+        /* Unknown label: re-show current page */
         showRootMenu(id, gPage);
     }
 }
