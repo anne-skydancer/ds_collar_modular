@@ -104,7 +104,7 @@ parsePluginList(string jsonStr) {
     }
 }
 
-/* ---------- Policy-driven, bucketed by ACL ---------- */
+/* ---------- Policy-driven, bucketed by ACL (fixed public-mode gating) ---------- */
 list filterPlugins() {
     list out = [];
     integer i = 0;
@@ -126,15 +126,18 @@ list filterPlugins() {
             if (minAcl <= gAclLevel) include = TRUE; /* threshold include */
         }
 
-        /* --- Public-mode override for non-wearers --- */
+        /* --- Public-mode override ONLY for public users (ACL==1), non-wearers --- */
         if (include) {
             if (!gIsWearer) {
                 if (gPolicyPublicOnly) {
-                    if (minAcl == 1) {
-                        /* keep include */
-                    } else {
-                        include = FALSE;
+                    if (gAclLevel == 1) {            /* public user */
+                        if (minAcl == 1) {
+                            /* keep include */
+                        } else {
+                            include = FALSE;
+                        }
                     }
+                    /* If ACL >= 2 (owned/trustee/unowned/owner), do not restrict */
                 }
             }
         }
@@ -151,7 +154,7 @@ list filterPlugins() {
                     if (!sos) out += [label, context];    /* wearer normal → exclude core_sos */
                 }
             } else {
-                if (!sos) out += [label, context];        /* outsiders never see core_sos */
+                if (!sos) out += [label, context];        /* non-wearers never see core_sos */
             }
         }
 
