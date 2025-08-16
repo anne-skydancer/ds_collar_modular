@@ -1,19 +1,12 @@
 /* =============================================================
-   MODULE:  ds_collar_kmod_ui.lsl  (AUTH-DRIVEN)
+   MODULE:  ds_collar_kmod_ui.lsl  (AUTH-DRIVEN, exact ACL flow)
    ROLE:    Root UI (context-based, paged, safe listeners)
-   POLICY:  Defer to AUTH for access rules; UI only filters by:
-              - ACL level (bucketed)
-              - policy_public_only (non-wearers in public mode)
-              - policy_sos_only (wearer in TPE)
-              - is_wearer (product rule: non-wearers never see core_sos)
-
-   PATCH:
-   - When a plugin is chosen, close dialog and END the UI session:
-       gToucher = NULL_KEY; gAclReady = FALSE; gListReady = FALSE
-     → prevents menu from reopening due to late ACL/list broadcasts.
-   - While no active session (gToucher == NULL_KEY), ignore AUTH/LIST updates.
-   - On plugin_return to ROOT_CONTEXT, use the link_message 'id' as the
-     new session avatar, re-request ACL + PLUGIN LIST, then show when ready.
+   POLICY:  Defer to AUTH; UI filters by:
+            - Deny only ACL -1
+            - ACL 0 (wearer in TPE): only min_acl==0, SOS gated by policy_sos_only
+            - ACL 1: non-wearers only min_acl==1; wearer uses ACL 2 bucket
+            - ACL 2..5: normal bucket (≤ level)
+            - For ACL ≥1, SOS is always hidden
    ============================================================= */
 
 integer DEBUG = FALSE;
@@ -48,7 +41,7 @@ list    g_pluginsAll = [];  // [label, context, min_acl, ...]
 list    g_plugins    = [];  // filtered [label, context, ...]
 list    g_pageMap    = [];
 
-key     gToucher     = NULL_KEY;  /* NULL_KEY means: no active UI session */
+key     gToucher     = NULL_KEY;
 integer gListen      = 0;
 integer gPage        = 0;
 integer gMenuChan    = 0;
@@ -60,12 +53,16 @@ integer gAclReady            = FALSE;
 integer gListReady           = FALSE;
 integer gIsWearer            = FALSE;
 integer gPolicySosOnly       = FALSE;
+/* Kept for compatibility; not used in this exact policy */
 integer gPolicyPublicOnly    = FALSE;
 
 integer logd(string m) { if (DEBUG) llOwnerSay("[DEBUG][UI] " + m); return 0; }
 
 /* ---------- Helpers ---------- */
-integer isSosContext(string ctx) { if (llSubStringIndex(ctx, "core_sos") == 0) return TRUE; return FALSE; }
+integer isSosContext(string ctx) {
+    if (llSubStringIndex(ctx, "core_sos") == 0) return TRUE;
+    return FALSE;
+}
 
 integer isWithinRange(key av) {
     if (av == NULL_KEY) return FALSE;
@@ -79,7 +76,7 @@ integer isWithinRange(key av) {
     return FALSE;
 }
 
-/* STRICT: require min_acl present and valid (0..5). Reject malformed rows. */
+/* STRICT parsing: require min_acl 0..5 */
 parsePluginList(string jsonStr) {
     g_pluginsAll = [];
     integer i = 0;
@@ -104,7 +101,26 @@ parsePluginList(string jsonStr) {
     }
 }
 
-/* ---------- Policy-driven, bucketed by ACL (fixed public-mode gating) ---------- */
+/* ---------- Exact filtering policy ----------
+
+Deny only ACL -1 (done in link_message).
+
+ACL 0 (wearer in TPE):
+  - include only min_acl == 0
+  - SOS gating:
+      * wearer + policy_sos_only==1 → ONLY core_sos
+      * wearer + policy_sos_only==0 → EXCLUDE core_sos
+      * non-wearers → EXCLUDE core_sos
+
+ACL 1:
+  - non-wearers → ONLY min_acl == 1
+  - wearer      → ACL 2 bucket (min_acl <= 2)
+
+ACL 2..5:
+  - normal bucket (min_acl <= level)
+
+For ACL >= 1: SOS always hidden (non-wearers never see SOS anyway).
+*/
 list filterPlugins() {
     list out = [];
     integer i = 0;
@@ -117,49 +133,51 @@ list filterPlugins() {
 
         integer include = FALSE;
 
-        /* --- Base bucket by ACL level --- */
+        /* Base include by ACL level */
         if (gAclLevel <= -1) {
-            include = FALSE;                  /* blacklist: nothing */
+            include = FALSE; /* blacklist (already denied earlier) */
         } else if (gAclLevel == 0) {
-            if (minAcl == 0) include = TRUE;  /* wearer in TPE: only min_acl 0 */
-        } else {
-            if (minAcl <= gAclLevel) include = TRUE; /* threshold include */
-        }
-
-        /* --- Public-mode override ONLY for public users (ACL==1), non-wearers --- */
-        if (include) {
-            if (!gIsWearer) {
-                if (gPolicyPublicOnly) {
-                    if (gAclLevel == 1) {            /* public user */
-                        if (minAcl == 1) {
-                            /* keep include */
-                        } else {
-                            include = FALSE;
-                        }
-                    }
-                    /* If ACL >= 2 (owned/trustee/unowned/owner), do not restrict */
-                }
-            }
-        }
-
-        /* --- Core SOS gating --- */
-        if (include) {
-            integer sos = FALSE;
-            if (llSubStringIndex(context, "core_sos") == 0) sos = TRUE;
-
+            if (minAcl == 0) include = TRUE;
+        } else if (gAclLevel == 1) {
             if (gIsWearer) {
-                if (gPolicySosOnly) {
-                    if (sos) out += [label, context];     /* wearer in TPE → ONLY core_sos */
+                /* wearer at ACL 1 sees ACL 2 bucket */
+                if (minAcl <= 2) include = TRUE;
+            } else {
+                if (minAcl == 1) include = TRUE;
+            }
+        } else {
+            /* ACL 2..5 */
+            if (minAcl <= gAclLevel) include = TRUE;
+        }
+
+        if (include) {
+            /* SOS gating */
+            integer sos = isSosContext(context);
+
+            if (gAclLevel == 0) {
+                /* ACL 0: only case where SOS may be shown */
+                if (gIsWearer) {
+                    if (gPolicySosOnly) {
+                        if (!sos) include = FALSE;   /* ONLY core_sos */
+                    } else {
+                        if (sos) include = FALSE;    /* exclude SOS */
+                    }
                 } else {
-                    if (!sos) out += [label, context];    /* wearer normal → exclude core_sos */
+                    if (sos) include = FALSE;        /* outsiders never see SOS */
                 }
             } else {
-                if (!sos) out += [label, context];        /* non-wearers never see core_sos */
+                /* ACL >=1: SOS is always hidden */
+                if (sos) include = FALSE;
             }
+        }
+
+        if (include) {
+            out += [label, context];
         }
 
         i = i + 3;
     }
+
     return out;
 }
 
@@ -297,7 +315,6 @@ default {
     changed(integer change) { if (change & CHANGED_OWNER) llResetScript(); }
 
     touch_start(integer tn) {
-        /* New session: close any prior dialog */
         if (dialogOpen) closeDialog();
 
         gToucher = llDetectedKey(0);
@@ -307,7 +324,6 @@ default {
             return;
         }
 
-        /* reset readiness for this session */
         gAclReady = FALSE;
         gListReady = FALSE;
         gAclLevel = -1;
@@ -320,11 +336,6 @@ default {
     }
 
     link_message(integer src, integer num, string msg, key id) {
-        /* If no active session, ignore ACL/LIST updates to avoid reopening menus */
-        if (gToucher == NULL_KEY) {
-            if (num != K_PLUGIN_RETURN_NUM) return;
-        }
-
         if (num == AUTH_RESULT_NUM) {
             if (llJsonValueType(msg, ["type"]) == JSON_INVALID) return;
             if (llJsonGetValue(msg, ["type"]) != MSG_ACL_RESULT) return;
@@ -339,19 +350,19 @@ default {
             if (llJsonValueType(msg, ["level"]) == JSON_INVALID) return;
             gAclLevel = (integer)llJsonGetValue(msg, ["level"]);
 
-            /* policy flags (optional; default safe) */
+            /* optional policy flags from AUTH */
             gIsWearer = FALSE;
             if (llJsonValueType(msg, ["is_wearer"]) != JSON_INVALID) gIsWearer = (integer)llJsonGetValue(msg, ["is_wearer"]);
             gPolicySosOnly = FALSE;
             if (llJsonValueType(msg, ["policy_sos_only"]) != JSON_INVALID) gPolicySosOnly = (integer)llJsonGetValue(msg, ["policy_sos_only"]);
-            gPolicyPublicOnly = FALSE;
+            gPolicyPublicOnly = FALSE; /* kept for compatibility; not used here */
             if (llJsonValueType(msg, ["policy_public_only"]) != JSON_INVALID) gPolicyPublicOnly = (integer)llJsonGetValue(msg, ["policy_public_only"]);
 
-            /* hard denials: blacklist (-1) or wearer in TPE (0) */
-            if (gAclLevel <= 0) {
+            /* Hard deny ONLY for blacklist (-1). ACL 0 is allowed (gated in filter) */
+            if (gAclLevel < 0) {
                 closeDialog();
                 llRegionSayTo(gToucher, 0, "Access denied.");
-                gToucher = NULL_KEY;   /* end session */
+                gToucher = NULL_KEY;
                 gAclReady = FALSE;
                 gListReady = FALSE;
                 return;
@@ -396,28 +407,10 @@ default {
             return;
         }
 
-        /* Plugin finished → reopen root for that avatar */
         if (num == K_PLUGIN_RETURN_NUM) {
             if (llJsonValueType(msg, ["context"]) != JSON_INVALID) {
                 string ctx = llJsonGetValue(msg, ["context"]);
-                if (ctx == ROOT_CONTEXT) {
-                    key target = id;        /* plugin should pass the user as 'id' */
-                    if (target == NULL_KEY) target = gToucher;
-                    if (target == NULL_KEY) return;
-
-                    if (!isWithinRange(target)) {
-                        llRegionSayTo(target, 0, "You are too far from the wearer to use the collar (max 5 m).");
-                        return;
-                    }
-
-                    /* Start a fresh session for this user and refetch state */
-                    gToucher = target;
-                    gAclReady = FALSE;
-                    gListReady = FALSE;
-
-                    queryAclAsync(gToucher);
-                    fetchPluginListAsync();
-                }
+                if (ctx == ROOT_CONTEXT) showRootMenu(gToucher, gPage);
             }
             return;
         }
@@ -432,29 +425,20 @@ default {
             return;
         }
 
+        /* close the root dialog before acting so it doesn’t re-open */
         closeDialog();
 
         if (b == BTN_NAV_LEFT)  { navigatePage(id, gPage - 1); return; }
         if (b == BTN_NAV_RIGHT) { navigatePage(id, gPage + 1); return; }
         if (b == BTN_NAV_GAP)   { showRootMenu(id, gPage);     return; }
 
-        /* Plugin chosen */
         integer idx = llListFindList(g_pageMap, [b]);
         if (idx != -1) {
             string context = llList2String(g_pageMap, idx + 1);
-
-            /* Fire plugin start */
             startPlugin(context, id);
-
-            /* END this UI session immediately, so late ACL/LIST cannot reopen menu */
-            gToucher  = NULL_KEY;
-            gAclReady = FALSE;
-            gListReady= FALSE;
-
             return;
         }
 
-        /* Unknown label: re-show current page */
         showRootMenu(id, gPage);
     }
 }
