@@ -1,115 +1,126 @@
 /* =============================================================
-   MODULE:  ds_collar_kmod_bootstrap.lsl  (authoritative + light resync)
-   ROLE:    Coordinated startup on rez/attach/login
-            - IM "DS Collar starting up. Please wait"
-            - Kernel soft reset → plugins re-register
-            - Requests SETTINGS + ACL + PLUGIN LIST
-            - RLV status via @versionnew on channels:
+   MODULE: ds_collar_kmod_bootstrap.lsl (authoritative + light resync)
+   ROLE  : Coordinated startup on rez/attach/login
+           - IM "DS Collar starting up.\nPlease wait"
+           - Kernel soft reset → plugins re-register
+           - Requests SETTINGS + ACL + PLUGIN LIST
+           - RLV status via @versionnew on channels:
               * 4711
               * relay -1812221819 (and opposite sign)
-            - 30s initial delay, 90s total probe window, retries every 4s
-            - Accepts replies from wearer or NULL_KEY
-            - Follow-up "RLV update: ..." is DEBUG-ONLY (not sent to wearer)
-            - No full bootstrap on region/teleport; optional light resync available
+             - 30s initial delay, 90s total probe window, retries every 4s
+             - Accepts replies from wearer or NULL_KEY
+             - Follow-up "RLV update: ..." is DEBUG-ONLY (not sent to wearer)
+           - No full bootstrap on region/teleport; optional light resync available
+   PATCH : Ownership line mirrors Status plugin:
+           * Resolve PO name offline via dataserver:
+               - llRequestDisplayName(owner)
+               - Fallback: llRequestAgentData(owner, DATA_NAME)
+           * Follow-up Ownership line after name resolves (one-time)
    ============================================================= */
 
 integer DEBUG = TRUE;
 
 /* ---------- Kernel ABI (match your kernel) ---------- */
-integer K_SOFT_RESET           = 503;
-integer K_PLUGIN_LIST          = 600;
-integer K_PLUGIN_LIST_REQUEST  = 601;
-integer K_SETTINGS_QUERY       = 800;
-integer K_SETTINGS_SYNC        = 870;
-integer AUTH_QUERY_NUM         = 700;
-integer AUTH_RESULT_NUM        = 710;
+integer K_SOFT_RESET          = 503;
+integer K_PLUGIN_LIST         = 600;
+integer K_PLUGIN_LIST_REQUEST = 601;
+
+integer K_SETTINGS_QUERY      = 800;
+integer K_SETTINGS_SYNC       = 870;
+
+integer AUTH_QUERY_NUM        = 700;
+integer AUTH_RESULT_NUM       = 710;
 
 /* ---------- RLV probe config ---------- */
-integer RLV_BLOCKS_STARTUP      = FALSE; /* TRUE = wait for RLV before finishing summary */
-integer RLV_PROBE_WINDOW_SEC    = 90;    /* total window (sec) */
-integer RLV_INITIAL_DELAY_SEC   = 1;     /* wait before first probe (sec) */
+integer RLV_BLOCKS_STARTUP        = FALSE;  /* TRUE = wait for RLV before finishing summary */
+integer RLV_PROBE_WINDOW_SEC      = 90;     /* total window (sec) */
+integer RLV_INITIAL_DELAY_SEC     = 1;      /* wait before first probe (sec) */
 
 /* Probe which channels? (owner disabled per your authoritative version) */
-integer USE_OWNER_CHAN          = FALSE;
-integer USE_FIXED_4711          = TRUE;
-integer USE_RELAY_CHAN          = TRUE;
-integer RELAY_CHAN              = -1812221819; /* your relay channel */
-integer PROBE_RELAY_BOTH_SIGNS  = TRUE;        /* also probe +1812221819 */
+integer USE_OWNER_CHAN            = FALSE;
+integer USE_FIXED_4711            = TRUE;
+integer USE_RELAY_CHAN            = TRUE;
+integer RELAY_CHAN                = -1812221819;   /* your relay channel */
+integer PROBE_RELAY_BOTH_SIGNS    = TRUE;          /* also probe +1812221819 */
 
 /* ---------- Optional light resync on region change ---------- */
-integer RESYNC_ON_REGION_CHANGE = FALSE; /* set TRUE to enable light resync */
-integer RESYNC_GRACE_SEC        = 5;     /* wait this long after region hop */
-integer REGION_RESYNC_DUE       = 0;     /* timestamp when resync should run */
+integer RESYNC_ON_REGION_CHANGE   = FALSE; /* set TRUE to enable light resync */
+integer RESYNC_GRACE_SEC          = 5;     /* wait this long after region hop */
+integer REGION_RESYNC_DUE         = 0;     /* timestamp when resync should run */
 
 /* ---------- RLV probe state/results ---------- */
-integer RLV_READY        = FALSE;  /* resolved active/inactive */
-integer RLV_ACTIVE       = FALSE;  /* viewer replied */
-string  RLV_VERSTR       = "";     /* human-readable version from @versionnew */
-
-list    RLV_CHANS        = [];     /* ints */
-list    RLV_LISTENS      = [];     /* ints (listen handles) */
-
-integer RLV_WAIT_UNTIL   = 0;
-integer RLV_SETTLE_UNTIL = 0;      /* brief keep-open after first hit */
-float   RLV_SETTLE_SEC   = 1.0;
-
-integer RLV_MAX_RETRIES  = 8;      /* retries within window */
-integer RLV_RETRY_EVERY  = 4;      /* seconds between retries */
-integer RLV_RETRIES      = 0;
-integer RLV_NEXT_SEND_AT = 0;
-integer RLV_EMITTED_FINAL= FALSE;   /* final debug line already printed? */
-string  RLV_RESULT_LINE  = "";      /* cached debug line */
-integer RLV_RESP_CHAN    = 0;       /* which channel answered */
-integer RLV_PROBING      = FALSE;   /* guard against duplicate start */
+integer RLV_READY         = FALSE;   /* resolved active/inactive */
+integer RLV_ACTIVE        = FALSE;   /* viewer replied */
+string  RLV_VERSTR        = "";      /* human-readable version from @versionnew */
+list    RLV_CHANS         = [];      /* ints */
+list    RLV_LISTENS       = [];      /* ints (listen handles) */
+integer RLV_WAIT_UNTIL    = 0;
+integer RLV_SETTLE_UNTIL  = 0;       /* brief keep-open after first hit */
+float   RLV_SETTLE_SEC    = 1.0;
+integer RLV_MAX_RETRIES   = 8;       /* retries within window */
+integer RLV_RETRY_EVERY   = 4;       /* seconds between retries */
+integer RLV_RETRIES       = 0;
+integer RLV_NEXT_SEND_AT  = 0;
+integer RLV_EMITTED_FINAL = FALSE;   /* final debug line already printed? */
+string  RLV_RESULT_LINE   = "";      /* cached debug line */
+integer RLV_RESP_CHAN     = 0;       /* which channel answered */
+integer RLV_PROBING       = FALSE;   /* guard against duplicate start */
 
 /* ---------- Magic words ---------- */
-string  MSG_KERNEL_SOFT_RST    = "kernel_soft_reset";
-string  MSG_PLUGIN_LIST        = "plugin_list";
-string  MSG_SETTINGS_SYNC      = "settings_sync";
-string  MSG_ACL_RESULT         = "acl_result";
+string MSG_KERNEL_SOFT_RST = "kernel_soft_reset";
+string MSG_PLUGIN_LIST     = "plugin_list";
+string MSG_SETTINGS_SYNC   = "settings_sync";
+string MSG_ACL_RESULT      = "acl_result";
 
 /* ---------- Settings keys ---------- */
-string KEY_OWNER_KEY           = "owner_key";
-string KEY_OWNER_HON           = "owner_hon";
+string KEY_OWNER_KEY = "owner_key";
+string KEY_OWNER_HON = "owner_hon";
 
 /* ---------- Startup tuning ---------- */
-integer STARTUP_TIMEOUT_SEC    = 15;
-float   POLL_RETRY_SEC         = 0.6;
-integer QUIET_AFTER_LIST_SEC   = 1;
+integer STARTUP_TIMEOUT_SEC  = 15;
+float   POLL_RETRY_SEC       = 0.6;
+integer QUIET_AFTER_LIST_SEC = 1;
 
 /* ---------- State ---------- */
-integer BOOT_ACTIVE            = FALSE;
-integer BOOT_DEADLINE          = 0;
+integer BOOT_ACTIVE    = FALSE;
+integer BOOT_DEADLINE  = 0;
+integer SETTINGS_READY = FALSE;
+integer ACL_READY      = FALSE;
+integer LAST_LIST_TS   = 0;
 
-integer SETTINGS_READY         = FALSE;
-integer ACL_READY              = FALSE;
+/* ---------- Ownership (patched to mirror Status plugin) ---------- */
+/* Treat owner as key, not string */
+key     OWNER_KEY        = NULL_KEY;
+string  OWNER_HON        = "";
 
-integer LAST_LIST_TS           = 0;
+/* Name cache + requests (DisplayName preferred, legacy fallback) */
+string  OWNER_DISP       = "";        /* preferred display name */
+string  OWNER_LEGACY     = "";        /* legacy "First Last" */
+key     OWNER_DISP_REQ   = NULL_KEY;  /* llRequestDisplayName query id */
+key     OWNER_NAME_REQ   = NULL_KEY;  /* llRequestAgentData(DATA_NAME) query id */
 
-/* PATCH: treat owner as key, not string */
-key     OWNER_KEY              = NULL_KEY;
-string  OWNER_HON              = "";
-key     OWNER_NAME_REQ         = NULL_KEY;
-string  OWNER_NAME             = "";
+/* One-time ownership line follow-up after resolution */
+integer OWNERSHIP_SENT      = FALSE;  /* we already sent the summary line */
+integer OWNERSHIP_REFRESHED = FALSE;  /* we sent the improved one after name resolution */
 
 /* ===================== Helpers ===================== */
-integer now() { return llGetUnixTime(); }
-integer isAttached() { return (integer)llGetAttached() != 0; }
-key wearer() { return llGetOwner(); }
-string trim(string s) { return llStringTrim(s, STRING_TRIM); }
+integer now()         { return llGetUnixTime(); }
+integer isAttached()  { return (integer)llGetAttached() != 0; }
+key     wearer()      { return llGetOwner(); }
+string  trim(string s){ return llStringTrim(s, STRING_TRIM); }
 
-integer sendIM(string msg) {
+integer sendIM(string msg){
     key w = wearer();
-    if (w != NULL_KEY) {
+    if (w != NULL_KEY){
         if (msg != "") llInstantMessage(w, msg);
     }
     return TRUE;
 }
 
-string joinIntList(list xs, string sep) {
+string joinIntList(list xs, string sep){
     integer i = 0; integer n = llGetListLength(xs);
     string out = "";
-    while (i < n) {
+    while (i < n){
         if (i != 0) out += sep;
         out += (string)llList2Integer(xs, i);
         i = i + 1;
@@ -118,23 +129,20 @@ string joinIntList(list xs, string sep) {
 }
 
 /* OC-style owner channel kept here if you want to re-enable later */
-integer ocOwnerChannel()
-{
+integer ocOwnerChannel(){
     key w = wearer();
     string s = (string)w;
     integer ch = (integer)("0x" + llGetSubString(s, -8, -1));
-    ch = ch & 0x3FFFFFFF;    /* 30 bits */
+    ch = ch & 0x3FFFFFFF; /* 30 bits */
     if (ch == 0) ch = 0x100;
     ch = -ch;
     return ch;
 }
 
 /* add/open a probe channel (dedup safe) */
-integer addProbeChannel(integer ch)
-{
+integer addProbeChannel(integer ch){
     if (ch == 0) return FALSE;
     if (llListFindList(RLV_CHANS, [ch]) != -1) return FALSE;
-
     integer h = llListen(ch, "", NULL_KEY, ""); /* accept any sender; filter in handler */
     RLV_CHANS   = RLV_CHANS + [ch];
     RLV_LISTENS = RLV_LISTENS + [h];
@@ -143,41 +151,37 @@ integer addProbeChannel(integer ch)
 }
 
 /* clear all probe channels/listens */
-integer clearProbeChannels()
-{
-    integer i = 0;
-    integer n = llGetListLength(RLV_LISTENS);
-    while (i < n) {
+integer clearProbeChannels(){
+    integer i = 0; integer n = llGetListLength(RLV_LISTENS);
+    while (i < n){
         integer h = llList2Integer(RLV_LISTENS, i);
         if (h) llListenRemove(h);
         i = i + 1;
     }
-    RLV_CHANS   = [];
+    RLV_CHANS = [];
     RLV_LISTENS = [];
     return TRUE;
 }
 
-integer rlvPending() {
+integer rlvPending(){
     if (RLV_READY) return FALSE;
     if (llGetListLength(RLV_CHANS) > 0) return TRUE;
     if (RLV_WAIT_UNTIL != 0) return TRUE;
     return FALSE;
 }
 
-integer stopRlvProbe() {
+integer stopRlvProbe(){
     clearProbeChannels();
-    RLV_WAIT_UNTIL   = 0;
+    RLV_WAIT_UNTIL = 0;
     RLV_SETTLE_UNTIL = 0;
     RLV_NEXT_SEND_AT = 0;
-    RLV_PROBING      = FALSE;
+    RLV_PROBING = FALSE;
     return TRUE;
 }
 
-integer sendRlvQueries()
-{
-    integer i = 0;
-    integer n = llGetListLength(RLV_CHANS);
-    while (i < n) {
+integer sendRlvQueries(){
+    integer i = 0; integer n = llGetListLength(RLV_CHANS);
+    while (i < n){
         integer ch = llList2Integer(RLV_CHANS, i);
         llOwnerSay("@versionnew=" + (string)ch);
         i = i + 1;
@@ -187,14 +191,14 @@ integer sendRlvQueries()
 }
 
 /* DEBUG-only follow-up; wearer sees only the summary's "RLV: ..." line */
-integer buildAndSendRlvLine() {
-    if (RLV_ACTIVE) {
+integer buildAndSendRlvLine(){
+    if (RLV_ACTIVE){
         RLV_RESULT_LINE = "[BOOT] RLV update: active";
         if (RLV_VERSTR != "") RLV_RESULT_LINE += " (" + RLV_VERSTR + ")";
     } else {
         RLV_RESULT_LINE = "[BOOT] RLV update: inactive";
     }
-    if (!RLV_EMITTED_FINAL) {
+    if (!RLV_EMITTED_FINAL){
         if (DEBUG) llOwnerSay(RLV_RESULT_LINE); /* debug-only */
         RLV_EMITTED_FINAL = TRUE;
     }
@@ -202,55 +206,46 @@ integer buildAndSendRlvLine() {
 }
 
 /* ---------- RLV probe lifecycle ---------- */
-integer startRlvProbe()
-{
-    if (RLV_PROBING) {
+integer startRlvProbe(){
+    if (RLV_PROBING){
         if (DEBUG) llOwnerSay("[BOOT] RLV probe already active; skipping");
         return FALSE;
     }
-
-    if (!isAttached()) {
+    if (!isAttached()){
         /* rezzed: no viewer to talk to */
-        RLV_READY = TRUE;
-        RLV_ACTIVE = FALSE;
-        RLV_VERSTR = "";
-        RLV_RETRIES = 0;
-        RLV_NEXT_SEND_AT = 0;
-        RLV_EMITTED_FINAL = FALSE;
+        RLV_READY = TRUE; RLV_ACTIVE = FALSE; RLV_VERSTR = "";
+        RLV_RETRIES = 0; RLV_NEXT_SEND_AT = 0; RLV_EMITTED_FINAL = FALSE;
         return FALSE;
     }
 
-    RLV_PROBING   = TRUE;
-    RLV_RESP_CHAN = 0;
-
+    RLV_PROBING = TRUE; RLV_RESP_CHAN = 0;
     stopRlvProbe(); /* safety */
     clearProbeChannels();
 
     if (USE_OWNER_CHAN) addProbeChannel(ocOwnerChannel());
     if (USE_FIXED_4711) addProbeChannel(4711);
-    if (USE_RELAY_CHAN) {
-        if (RELAY_CHAN != 0) {
+    if (USE_RELAY_CHAN){
+        if (RELAY_CHAN != 0){
             addProbeChannel(RELAY_CHAN);
-            if (PROBE_RELAY_BOTH_SIGNS) {
+            if (PROBE_RELAY_BOTH_SIGNS){
                 integer alt = -RELAY_CHAN;
-                if (alt != 0) {
+                if (alt != 0){
                     if (alt != RELAY_CHAN) addProbeChannel(alt);
                 }
             }
         }
     }
 
-    RLV_WAIT_UNTIL   = now() + RLV_PROBE_WINDOW_SEC;   /* total window */
+    RLV_WAIT_UNTIL   = now() + RLV_PROBE_WINDOW_SEC; /* total window */
     RLV_SETTLE_UNTIL = 0;
     RLV_RETRIES      = 0;
-    RLV_NEXT_SEND_AT = now() + RLV_INITIAL_DELAY_SEC;  /* first send after delay */
+    RLV_NEXT_SEND_AT = now() + RLV_INITIAL_DELAY_SEC; /* first send after delay */
+    RLV_EMITTED_FINAL= FALSE;
+    RLV_READY        = FALSE;
+    RLV_ACTIVE       = FALSE;
+    RLV_VERSTR       = "";
 
-    RLV_EMITTED_FINAL = FALSE;
-    RLV_READY  = FALSE;
-    RLV_ACTIVE = FALSE;
-    RLV_VERSTR = "";
-
-    if (DEBUG) {
+    if (DEBUG){
         llOwnerSay("[BOOT] RLV probe channels → [" + joinIntList(RLV_CHANS, ", ") + "]");
         llOwnerSay("[BOOT] RLV first send after " + (string)RLV_INITIAL_DELAY_SEC + "s");
     }
@@ -258,40 +253,86 @@ integer startRlvProbe()
 }
 
 /* ---------- Kernel helpers ---------- */
-integer broadcastSoftReset() {
+integer broadcastSoftReset(){
     llMessageLinked(LINK_SET, K_SOFT_RESET, "{\"type\":\"kernel_soft_reset\"}", NULL_KEY);
     return TRUE;
 }
-integer askSettings()   { llMessageLinked(LINK_SET, K_SETTINGS_QUERY, "{\"type\":\"settings_get\"}", NULL_KEY); return TRUE; }
-integer askACL()        { string j = llList2Json(JSON_OBJECT, ["type","acl_query","avatar",(string)wearer()]); llMessageLinked(LINK_SET, AUTH_QUERY_NUM, j, NULL_KEY); return TRUE; }
-integer askPluginList() { llMessageLinked(LINK_SET, K_PLUGIN_LIST_REQUEST, "", NULL_KEY); return TRUE; }
-
-/* PATCH: parse owner as key and compare to NULL_KEY */
-integer parseSettingsKv(string kv)
-{
-    string v;
-
-    v = llJsonGetValue(kv, [KEY_OWNER_KEY]);
-    if (v != JSON_INVALID) OWNER_KEY = (key)v; else OWNER_KEY = NULL_KEY;
-
-    v = llJsonGetValue(kv, [KEY_OWNER_HON]);
-    if (v != JSON_INVALID) OWNER_HON = v; else OWNER_HON = "";
-
-    if (OWNER_KEY != NULL_KEY) OWNER_NAME_REQ = llRequestAgentData(OWNER_KEY, DATA_NAME);
+integer askSettings(){
+    llMessageLinked(LINK_SET, K_SETTINGS_QUERY, "{\"type\":\"settings_get\"}", NULL_KEY);
+    return TRUE;
+}
+integer askACL(){
+    string j = llList2Json(JSON_OBJECT, ["type","acl_query","avatar",(string)wearer()]);
+    llMessageLinked(LINK_SET, AUTH_QUERY_NUM, j, NULL_KEY);
+    return TRUE;
+}
+integer askPluginList(){
+    llMessageLinked(LINK_SET, K_PLUGIN_LIST_REQUEST, "", NULL_KEY);
     return TRUE;
 }
 
-integer readyEnough()
-{
+/* ---------- Owner name resolution (patched) ---------- */
+integer requestOwnerNames(){
+    if (OWNER_KEY == NULL_KEY) return FALSE;
+
+    /* clear old cache */
+    OWNER_DISP   = "";
+    OWNER_LEGACY = "";
+
+    /* Start both requests (Display Name preferred) */
+    OWNER_DISP_REQ = llRequestDisplayName(OWNER_KEY);
+    OWNER_NAME_REQ = llRequestAgentData(OWNER_KEY, DATA_NAME);
+    return TRUE;
+}
+
+/* Compose the PO label like Status plugin does */
+string ownerDisplayLabel(){
+    string nm = "";
+    if (OWNER_DISP != "") nm = OWNER_DISP;
+    else if (OWNER_LEGACY != "") nm = OWNER_LEGACY;
+    else nm = "(fetching…)";
+
+    string hon = OWNER_HON;
+    string out = "";
+    if (hon != ""){
+        out = hon + " " + nm;
+    } else {
+        out = nm;
+    }
+    return out;
+}
+
+/* Parse settings kv → mirror state + kick name lookups */
+integer parseSettingsKv(string kv){
+    string v;
+
+    v = llJsonGetValue(kv, [KEY_OWNER_KEY]);
+    if (v != JSON_INVALID) OWNER_KEY = (key)v;
+    else OWNER_KEY = NULL_KEY;
+
+    v = llJsonGetValue(kv, [KEY_OWNER_HON]);
+    if (v != JSON_INVALID) OWNER_HON = v;
+    else OWNER_HON = "";
+
+    if (OWNER_KEY != NULL_KEY){
+        requestOwnerNames();
+    } else {
+        OWNER_DISP = "";
+        OWNER_LEGACY = "";
+    }
+    return TRUE;
+}
+
+integer readyEnough(){
     integer haveSettings = SETTINGS_READY;
     integer haveACL      = ACL_READY;
     integer listQuiet    = FALSE;
 
-    if (LAST_LIST_TS != 0) {
+    if (LAST_LIST_TS != 0){
         if ((now() - LAST_LIST_TS) >= QUIET_AFTER_LIST_SEC) listQuiet = TRUE;
     }
 
-    if (RLV_BLOCKS_STARTUP) {
+    if (RLV_BLOCKS_STARTUP){
         if (!RLV_READY) return FALSE;
     }
 
@@ -299,11 +340,10 @@ integer readyEnough()
     return FALSE;
 }
 
-integer emitRlvLine()
-{
+integer emitRlvLine(){
     string line2 = "RLV: ";
-    if (RLV_READY) {
-        if (RLV_ACTIVE) {
+    if (RLV_READY){
+        if (RLV_ACTIVE){
             line2 += "active";
             if (RLV_VERSTR != "") line2 += " (" + RLV_VERSTR + ")";
         } else {
@@ -316,237 +356,249 @@ integer emitRlvLine()
     return TRUE;
 }
 
-/* PATCH: ownership checks use OWNER_KEY != NULL_KEY */
-integer emitSummary(integer completed, integer timedOut)
-{
+/* Build and send the Ownership line (mirrors Status plugin language) */
+integer sendOwnershipLine(){
+    string line3 = "Ownership: ";
+    if (OWNER_KEY != NULL_KEY){
+        string disp = ownerDisplayLabel();
+        line3 += "owned by " + disp;
+    } else {
+        line3 += "unowned";
+    }
+    sendIM(line3);
+    return TRUE;
+}
+
+/* Startup summary; remember if we already emitted ownership once */
+integer emitSummary(integer completed, integer timedOut){
     string line1 = "Restart: ";
     if (completed) line1 += "completed";
     else if (timedOut) line1 += "timed out (some modules may still be loading)";
     else line1 += "in progress";
 
-    string line3 = "Ownership: ";
-    if (OWNER_KEY != NULL_KEY) {
-        if (OWNER_NAME != "") line3 += "owned by " + OWNER_NAME;
-        else if (OWNER_HON != "") line3 += "owned (" + OWNER_HON + ")";
-        else line3 += "owned";
-    } else {
-        line3 += "unowned";
-    }
-
     sendIM(line1);
-    emitRlvLine();  /* wearer sees: "RLV: active (...)" or "RLV: inactive" */
-    sendIM(line3);
+    emitRlvLine();
+    sendOwnershipLine();
+    OWNERSHIP_SENT = TRUE;
+
     sendIM("Collar startup complete.");
     return TRUE;
 }
 
-integer startBootstrap()
-{
+/* ---------- Bootstrap lifecycle ---------- */
+integer startBootstrap(){
     if (BOOT_ACTIVE) return FALSE; /* debounce */
 
     /* reset local state */
     SETTINGS_READY = FALSE;
-    ACL_READY = FALSE;
-    LAST_LIST_TS = 0;
+    ACL_READY      = FALSE;
+    LAST_LIST_TS   = 0;
 
-    RLV_READY = FALSE;
-    RLV_ACTIVE = FALSE;
-    RLV_VERSTR = "";
+    RLV_READY = FALSE; RLV_ACTIVE = FALSE; RLV_VERSTR = "";
     RLV_RETRIES = 0; RLV_NEXT_SEND_AT = 0; RLV_EMITTED_FINAL = FALSE;
-    RLV_SETTLE_UNTIL = 0; RLV_WAIT_UNTIL = 0;
-    RLV_RESP_CHAN = 0; RLV_PROBING = FALSE;
+    RLV_SETTLE_UNTIL = 0; RLV_WAIT_UNTIL = 0; RLV_RESP_CHAN = 0; RLV_PROBING = FALSE;
 
-    OWNER_KEY = NULL_KEY; OWNER_HON = ""; OWNER_NAME = ""; OWNER_NAME_REQ = NULL_KEY;
+    OWNER_KEY = NULL_KEY;
+    OWNER_HON = "";
+    OWNER_DISP = "";
+    OWNER_LEGACY = "";
+    OWNER_DISP_REQ = NULL_KEY;
+    OWNER_NAME_REQ = NULL_KEY;
+    OWNERSHIP_SENT = FALSE;
+    OWNERSHIP_REFRESHED = FALSE;
 
-    BOOT_ACTIVE = TRUE;
-    BOOT_DEADLINE = now() + STARTUP_TIMEOUT_SEC;
+    BOOT_ACTIVE  = TRUE;
+    BOOT_DEADLINE= now() + STARTUP_TIMEOUT_SEC;
 
     /* announce + kick sequence */
-    sendIM("DS Collar starting up. Please wait");
-    broadcastSoftReset();
+    sendIM("DS Collar starting up.\nPlease wait");
+
+    broadcastSoftReset(); /* plugins re-register */
     askSettings();
     askACL();
     askPluginList();
 
-    /* RLV probe (multi-channel) */
+    /* kick off RLV probe (non-blocking unless RLV_BLOCKS_STARTUP) */
     startRlvProbe();
 
+    /* schedule poll */
     llSetTimerEvent(POLL_RETRY_SEC);
-    if (DEBUG) llOwnerSay("[BOOT] sequence started");
     return TRUE;
 }
 
-/* ======================= LSL events ======================= */
-default
-{
-    state_entry()      { startBootstrap(); }
-    on_rez(integer p)  { startBootstrap(); }
-    attach(key id)     { if (id) startBootstrap(); }
+/* =========================== EVENTS =========================== */
+default{
+    state_entry(){
+        startBootstrap();
+    }
 
-    changed(integer c)
-    {
+    on_rez(integer sp){ llResetScript(); }
+    attach(key id){ if (id) llResetScript(); }
+
+    /* Region change → optional light resync */
+    changed(integer c){
         if (c & CHANGED_OWNER) llResetScript();
-
-        /* Optional: lightweight resync after region/teleport (no soft reset, no RLV) */
-        if (RESYNC_ON_REGION_CHANGE) {
-            if (c & (CHANGED_REGION | CHANGED_REGION_START | CHANGED_TELEPORT)) {
-                REGION_RESYNC_DUE = now() + RESYNC_GRACE_SEC;
-                if (DEBUG) llOwnerSay("[BOOT] region change detected → scheduling light resync");
-                /* ensure timer is ticking even if bootstrap finished */
-                llSetTimerEvent(POLL_RETRY_SEC);
-            }
+        if ((c & CHANGED_REGION) && RESYNC_ON_REGION_CHANGE){
+            REGION_RESYNC_DUE = now() + RESYNC_GRACE_SEC;
         }
     }
 
-    link_message(integer sender, integer num, string str, key id)
-    {
-        /* Settings snapshot */
-        if (num == K_SETTINGS_SYNC) {
-            if (llJsonGetValue(str, ["type"]) == MSG_SETTINGS_SYNC) {
-                string kv = llJsonGetValue(str, ["kv"]);
-                if (kv != JSON_INVALID) parseSettingsKv(kv);
-                SETTINGS_READY = TRUE;
-                if (DEBUG) llOwnerSay("[BOOT] SETTINGS_READY");
-            }
+    /* RLV replies + guard channels */
+    listen(integer chan, string name, key id, string text){
+        /* accept from wearer or NULL_KEY (per design) */
+        integer ok = FALSE;
+        if (id == wearer()) ok = TRUE;
+        else if (id == NULL_KEY) ok = TRUE;
+
+        if (!ok) return;
+        if (!rlvPending()) return;
+
+        RLV_ACTIVE = TRUE;
+        RLV_READY  = TRUE;
+        RLV_RESP_CHAN = chan;
+
+        if (text != "") RLV_VERSTR = trim(text);
+
+        /* keep channels open briefly to catch other viewers then close */
+        RLV_SETTLE_UNTIL = now() + (integer)RLV_SETTLE_SEC;
+
+        buildAndSendRlvLine();
+    }
+
+    /* LINK: settings, acl, plugin list, soft reset query */
+    link_message(integer sender, integer num, string str, key id){
+        /* plugin list “quiet” marker */
+        if (num == K_PLUGIN_LIST){
+            LAST_LIST_TS = now();
             return;
         }
 
-        /* ACL result (for wearer) */
-        if (num == AUTH_RESULT_NUM) {
-            if (llJsonGetValue(str, ["type"]) == MSG_ACL_RESULT) {
-                key av = (key)llJsonGetValue(str, ["avatar"]);
-                if (av == wearer()) {
-                    ACL_READY = TRUE;
-                    if (DEBUG) {
-                        integer lvl = (integer)llJsonGetValue(str, ["level"]);
-                        llOwnerSay("[BOOT] ACL_READY (level " + (string)lvl + ")");
+        /* inbound settings sync */
+        if (num == K_SETTINGS_SYNC){
+            /* Expect {"type":"settings_sync","kv":{...}} or the kernel variant that carries kv */
+            string t = llJsonGetValue(str, ["type"]);
+            if (t != JSON_INVALID){
+                if (t == MSG_SETTINGS_SYNC){
+                    string kv = llJsonGetValue(str, ["kv"]);
+                    if (kv != JSON_INVALID){
+                        parseSettingsKv(kv);
+                        SETTINGS_READY = TRUE;
                     }
                 }
             }
             return;
         }
 
-        /* Kernel plugin list broadcasts */
-        if (num == K_PLUGIN_LIST) {
-            if (llJsonGetValue(str, ["type"]) == MSG_PLUGIN_LIST) {
-                LAST_LIST_TS = now();
-                if (DEBUG) llOwnerSay("[BOOT] plugin_list received");
+        /* inbound ACL result */
+        if (num == AUTH_RESULT_NUM){
+            string t2 = llJsonGetValue(str, ["type"]);
+            if (t2 != JSON_INVALID){
+                if (t2 == MSG_ACL_RESULT){
+                    ACL_READY = TRUE;
+                }
             }
+            return;
+        }
+
+        /* soft re-register request (kernel asks) */
+        if (num == K_SOFT_RESET){
+            /* No action here; we already broadcast soft reset on startBootstrap */
             return;
         }
     }
 
-    /* RLV reply from the viewer (@versionnew) */
-    listen(integer channel, string name, key id, string message)
-    {
-        /* Only our probe channels */
-        if (llListFindList(RLV_CHANS, [channel]) == -1) return;
+    /* dataserver: owner name resolution (DisplayName -> Legacy fallback) */
+    dataserver(key query_id, string data){
+        integer changedName = FALSE;
 
-        /* Accept wearer or system/NULL replies (some viewers use NULL_KEY) */
-        if (id != wearer()) {
-            if (id != NULL_KEY) return;
-        }
-
-        /* Any reply on our channel(s) => RLV active */
-        RLV_ACTIVE    = TRUE;
-        RLV_READY     = TRUE;
-        RLV_RESP_CHAN = channel;
-
-        RLV_VERSTR = trim(message);
-        if (DEBUG) llOwnerSay("[BOOT] RLV reply on " + (string)channel + " from " + (string)id + " → " + RLV_VERSTR);
-
-        /* keep the listen a tad longer; close in timer() */
-        RLV_SETTLE_UNTIL = now() + (integer)RLV_SETTLE_SEC;
-    }
-
-    dataserver(key rq, string data)
-    {
-        if (rq == OWNER_NAME_REQ) {
-            OWNER_NAME = data;
+        if (query_id == OWNER_DISP_REQ){
+            OWNER_DISP_REQ = NULL_KEY;
+            if (data != "" && data != "???"){
+                OWNER_DISP = data;
+                changedName = TRUE;
+            }
+        } else if (query_id == OWNER_NAME_REQ){
             OWNER_NAME_REQ = NULL_KEY;
+            if (OWNER_DISP == ""){
+                if (data != ""){
+                    OWNER_LEGACY = data;
+                    changedName = TRUE;
+                }
+            }
+        } else {
+            return;
+        }
+
+        /* If we've already printed the ownership line and haven’t refreshed it yet,
+           send a one-time improved line with the resolved name. */
+        if (changedName){
+            if (OWNERSHIP_SENT){
+                if (!OWNERSHIP_REFRESHED){
+                    if (OWNER_KEY != NULL_KEY){
+                        sendOwnershipLine();
+                        OWNERSHIP_REFRESHED = TRUE;
+                    }
+                }
+            }
         }
     }
 
-    timer()
-    {
-        /* Light resync after region change (no soft reset, no RLV) */
-        if (REGION_RESYNC_DUE != 0) {
-            if (now() >= REGION_RESYNC_DUE) {
-                REGION_RESYNC_DUE = 0;
-                askSettings();
-                askPluginList();
-                /* If you ever want to refresh ACL too, uncomment the next line */
-                // askACL();
-                if (DEBUG) llOwnerSay("[BOOT] light resync complete");
+    /* Timer: poll bootstrap readiness + RLV probe scheduling + optional resync */
+    timer(){
+        /* Optional region resync */
+        if (RESYNC_ON_REGION_CHANGE){
+            if (REGION_RESYNC_DUE != 0){
+                if (now() >= REGION_RESYNC_DUE){
+                    REGION_RESYNC_DUE = 0;
+                    /* light resync: ask settings + list again */
+                    askSettings();
+                    askPluginList();
+                }
             }
         }
 
-        /* Handle delayed first send + retries while probing */
-        if (llGetListLength(RLV_CHANS) > 0 && !RLV_READY) {
-            if (RLV_NEXT_SEND_AT != 0) {
-                if (now() >= RLV_NEXT_SEND_AT) {
+        /* RLV probe scheduler */
+        if (rlvPending()){
+            if (now() >= RLV_NEXT_SEND_AT){
+                if (RLV_RETRIES < RLV_MAX_RETRIES){
                     sendRlvQueries();
                     RLV_RETRIES = RLV_RETRIES + 1;
-                    if (RLV_RETRIES < RLV_MAX_RETRIES) {
-                        RLV_NEXT_SEND_AT = now() + RLV_RETRY_EVERY;
-                    } else {
-                        RLV_NEXT_SEND_AT = 0; /* no more retries; wait for timeout */
-                    }
+                    RLV_NEXT_SEND_AT = now() + RLV_RETRY_EVERY;
                 }
             }
-        }
-
-        /* Close listeners after settle window if reply received */
-        if (RLV_READY) {
-            if (RLV_SETTLE_UNTIL != 0) {
-                if (now() >= RLV_SETTLE_UNTIL) {
+            if (RLV_SETTLE_UNTIL != 0){
+                if (now() >= RLV_SETTLE_UNTIL){
                     stopRlvProbe();
-                    buildAndSendRlvLine(); /* DEBUG-only follow-up */
-                    if (DEBUG) llOwnerSay("[BOOT] RLV settle complete");
+                    RLV_READY = TRUE;
                 }
             }
-        }
-
-        /* Timeout: treat as inactive but READY, then DEBUG-only follow-up */
-        if (!RLV_READY) {
-            if (RLV_WAIT_UNTIL != 0) {
-                if (now() >= RLV_WAIT_UNTIL) {
-                    RLV_ACTIVE = FALSE;
-                    RLV_READY  = TRUE;
-                    RLV_VERSTR = "";
+            if (RLV_WAIT_UNTIL != 0){
+                if (now() >= RLV_WAIT_UNTIL){
                     stopRlvProbe();
-                    buildAndSendRlvLine(); /* DEBUG-only follow-up */
-                    if (DEBUG) llOwnerSay("[BOOT] RLV probe timed out → treating as inactive");
+                    RLV_READY = TRUE; /* finalize as inactive if nothing replied */
                 }
             }
         }
 
-        /* Main startup coordinator */
-        if (!BOOT_ACTIVE) {
-            /* keep ticking if RLV still probing OR a region resync is pending */
-            if (!rlvPending() && REGION_RESYNC_DUE == 0) llSetTimerEvent(0.0);
-            return;
-        }
+        /* Bootstrap readiness / timeout */
+        if (BOOT_ACTIVE){
+            integer timedOut = FALSE;
+            integer completed = FALSE;
 
-        if (readyEnough()) {
-            BOOT_ACTIVE = FALSE;
-            emitSummary(TRUE, FALSE);     /* wearer sees the single "RLV: ..." line */
-            if (!rlvPending() && REGION_RESYNC_DUE == 0) llSetTimerEvent(0.0);
-            if (DEBUG) llOwnerSay("[BOOT] completed");
-            return;
-        }
+            if (readyEnough()){
+                completed = TRUE;
+            } else {
+                if (now() >= BOOT_DEADLINE){
+                    timedOut = TRUE;
+                }
+            }
 
-        if (now() >= BOOT_DEADLINE) {
-            BOOT_ACTIVE = FALSE;
-            emitSummary(FALSE, TRUE);
-            if (!rlvPending() && REGION_RESYNC_DUE == 0) llSetTimerEvent(0.0);
-            if (DEBUG) llOwnerSay("[BOOT] timeout");
-            return;
+            if (completed || timedOut){
+                BOOT_ACTIVE = FALSE;
+                emitSummary(completed, timedOut);
+                llSetTimerEvent(0.0);
+                return;
+            }
         }
-
-        /* gentle retries while waiting */
-        if (!SETTINGS_READY) askSettings();
-        if (!ACL_READY)      askACL();
-        if (LAST_LIST_TS == 0) askPluginList();
     }
 }
