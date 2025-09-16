@@ -1,14 +1,13 @@
 /* =============================================================
    PLUGIN: ds_collar_plugin_leash.lsl
    ROLE  : Leashing & Movement Restraint (AVATAR-ONLY)
-   NOTES :
-     - "Clip to…" opens avatar scan directly (no object anchors).
-     - Handshake with worn holder; fallback to avatar center on timeout.
-     - Immediate Set Length effect; pulls to boundary.
-     - Off-sim/offline: grace → auto-unclip; auto-reclip when back.
-     - AUTH gate; proper Back handling to main UI.
-     - Heartbeat: replies to kernel PING; re-registers on silence.
-     - Safe listeners; JSON-only link protocol.
+   NOTES : - "Clip to…" opens avatar scan directly (no object anchors).
+           - Handshake with worn holder; fallback to avatar center on timeout.
+           - Immediate Set Length effect; pulls to boundary.
+           - Off-sim/offline: grace → auto-unclip; auto-reclip when back.
+           - AUTH gate; proper Back handling to main UI.
+           - Heartbeat: replies to kernel PING; re-registers on silence.
+           - Safe listeners; JSON-only link protocol.
    ============================================================= */
 
 integer DEBUG = FALSE;
@@ -43,38 +42,38 @@ string MSG_ACL_RESULT          = "acl_result";
 string  PLUGIN_CONTEXT   = "core_leash";
 string  ROOT_CONTEXT     = "core_root";
 string  PLUGIN_LABEL     = "Leashing";
-integer PLUGIN_MIN_ACL   = 1;              /* wearer+public and up */
-integer REG_HAS_TPE      = FALSE;          /* no TPE dual display */
+integer PLUGIN_MIN_ACL   = 1;        /* wearer+public and up */
+
+integer REG_HAS_TPE      = FALSE;    /* no TPE dual display */
 integer REG_TPE_MIN_ACL  = 0;
 string  REG_LABEL_TPE    = "";
 string  REG_AUDIENCE     = "all";
 
 /* ---------- ACL levels ---------- */
-integer ACL_BLACKLIST        = -1;
-integer ACL_NOACCESS         = 0;
-integer ACL_PUBLIC           = 1;
-integer ACL_OWNED            = 2;
-integer ACL_TRUSTEE          = 3;
-integer ACL_UNOWNED          = 4;
-integer ACL_PRIMARY_OWNER    = 5;
+integer ACL_BLACKLIST = -1;
+integer ACL_NOACCESS  = 0;
+integer ACL_PUBLIC    = 1;
+integer ACL_OWNED     = 2;
+integer ACL_TRUSTEE   = 3;
+integer ACL_UNOWNED   = 4;
+integer ACL_PRIMARY_OWNER = 5;
 
 /* Allowed ACLs for opening UI (1..5) */
-list    ALLOWED_ACL_LEVELS   = [ACL_PUBLIC, ACL_OWNED, ACL_TRUSTEE, ACL_UNOWNED, ACL_PRIMARY_OWNER];
+list ALLOWED_ACL_LEVELS  = [ACL_PUBLIC, ACL_OWNED, ACL_TRUSTEE, ACL_UNOWNED, ACL_PRIMARY_OWNER];
 
 /* Specific action gating (preserved) */
-list    ALLOWED_GIVEH_LEVELS = [ACL_PUBLIC, ACL_TRUSTEE, ACL_PRIMARY_OWNER];
-list    ALLOWED_SETLEN_LEVELS= [ACL_PUBLIC, ACL_TRUSTEE, ACL_PRIMARY_OWNER];
+list ALLOWED_GIVEH_LEVELS = [ACL_PUBLIC, ACL_TRUSTEE, ACL_PRIMARY_OWNER];
+list ALLOWED_SETLEN_LEVELS= [ACL_PUBLIC, ACL_TRUSTEE, ACL_PRIMARY_OWNER];
 
 /* ---------- UI (dialog + scanning) ---------- */
-integer DIALOG_TIMEOUT    = 180;
-integer SCAN_TIMEOUT      = 30;
-float   FOLLOW_TICK       = 0.5;    /* physics tick */
+integer DIALOG_TIMEOUT = 180;
+integer SCAN_TIMEOUT   = 30;
+float   FOLLOW_TICK    = 0.5;   /* physics tick */
 
 /* Commands (neutral labels→cmd mapping) */
 string CMD_BACK   = "back";
-string CMD_CLIP   = "clip";      /* now goes straight to avatar scan */
-string CMD_PICK   = "pick";      /* pick:<absIndex> */
-
+string CMD_CLIP   = "clip";     /* now goes straight to avatar scan */
+string CMD_PICK   = "pick";     /* pick: */
 string CMD_UNCLIP = "unclip";
 string CMD_SETLEN = "setlen";
 string CMD_SETVAL = "setval";
@@ -82,21 +81,21 @@ string CMD_TURN   = "turn";
 string CMD_GIVEH  = "giveholder";
 
 /* ---------- Scan (avatars only) ---------- */
-float   SCAN_RADIUS      = 5.0;
-float   SCAN_ARC         = TWO_PI;
-integer MAX_PAGE_ITEMS   = 9;
-integer g_page_idx       = 0;
+float  SCAN_RADIUS = 5.0;
+float  SCAN_ARC    = TWO_PI;
+
+integer MAX_PAGE_ITEMS = 9;
+integer g_page_idx     = 0;
 
 /* ---------- UI session ---------- */
-key     g_user           = NULL_KEY;
-integer g_listen         = 0;
-integer g_menu_chan      = 0;
-integer g_acl_pending    = FALSE;
-integer g_last_acl_level = ACL_NOACCESS;
-integer g_dialog_expires = 0;
-
+key     g_user            = NULL_KEY;
+integer g_listen          = 0;
+integer g_menu_chan       = 0;
+integer g_acl_pending     = FALSE;
+integer g_last_acl_level  = ACL_NOACCESS;
+integer g_dialog_expires  = 0;
 /* compact mapping for current dialog: [label,cmd,label,cmd,...] */
-list    g_pairs          = [];
+list    g_pairs           = [];
 
 /* ---------- Scan state (avatars only) ---------- */
 list    g_scan_keys      = [];
@@ -104,49 +103,48 @@ integer g_scan_expires   = 0;
 
 /* ---------- Leash state ---------- */
 integer g_leashed        = FALSE;
-key     g_leasher        = NULL_KEY;   /* avatar or worn-holder prim target */
+key     g_leasher        = NULL_KEY;      /* avatar or worn-holder prim target */
 integer g_leash_length   = 2;
 integer g_turn_to        = FALSE;
 integer g_controls_ok    = FALSE;
 
 /* ---------- Particles ---------- */
-string  g_chain_texture   = "4d3b6c6f-52e2-da9d-f7be-cccb1e535aca";
-integer g_psys_on         = FALSE;
-key     g_psys_target     = NULL_KEY;
-vector  g_last_target     = ZERO_VECTOR;
-float   g_last_dist       = -1.0;
-float   g_move_hyst       = 0.20;
-float   g_max_len_margin  = 0.98;
+string  g_chain_texture  = "4d3b6c6f-52e2-da9d-f7be-cccb1e535aca";
+integer g_psys_on        = FALSE;
+key     g_psys_target    = NULL_KEY;
+vector  g_last_target    = ZERO_VECTOR;
+float   g_last_dist      = -1.0;
+float   g_move_hyst      = 0.20;
+float   g_max_len_margin = 0.98;
 
 /* ---------- Holder handshake (JSON) ---------- */
 integer LEASH_HOLDER_CHAN     = -192837465;
 integer HOLDER_REPLY_WAIT_SEC = 2;
 
 /* Worn holder (controller’s attachment) */
-integer g_holderListen    = 0;
-integer g_worn_waiting    = FALSE;
-integer g_worn_session    = 0;
-key     g_worn_controller = NULL_KEY;  /* avatar key we asked */
-integer g_worn_deadline   = 0;
+integer g_holderListen     = 0;
+integer g_worn_waiting     = FALSE;
+integer g_worn_session     = 0;
+key     g_worn_controller  = NULL_KEY;  /* avatar key we asked */
+integer g_worn_deadline    = 0;
 
 /* ---------- Presence/persistence (auto-reclip) ---------- */
-integer g_offsimFlag       = FALSE;
-integer g_offsimStartEpoch = 0;
-float   OFFSIM_GRACE_SEC   = 6.0;
+integer g_offsimFlag        = FALSE;
+integer g_offsimStartEpoch  = 0;
+float   OFFSIM_GRACE_SEC    = 6.0;
 
 /* Remember last controller to auto-reclip */
-key     g_last_controller  = NULL_KEY;
-integer g_reclip_next_epoch= 0;
+key     g_last_controller    = NULL_KEY;
+integer g_reclip_next_epoch  = 0;
 
 /* ---------- Heartbeat ---------- */
-integer HB_TICK_SEC        = 10;   /* base tick; we override to FOLLOW_TICK after init */
-integer HB_SILENCE_SEC     = 60;   /* if no ping this long → re-register */
-integer g_lastPingEpoch    = 0;
+integer HB_TICK_SEC     = 10;   /* base tick; we override to FOLLOW_TICK after init */
+integer HB_SILENCE_SEC  = 60;   /* if no ping this long → re-register */
+integer g_lastPingEpoch = 0;
 
 /* ---------- Misc ---------- */
 integer logd(string s){ if (DEBUG) llOwnerSay("[LEASH] " + s); return 0; }
 integer now(){ return llGetUnixTime(); }
-
 integer json_has(string j, list path){ if (llJsonGetValue(j, path) != JSON_INVALID) return TRUE; return FALSE; }
 
 /* ---------- Listener helpers ---------- */
@@ -156,7 +154,10 @@ integer reset_listen(){
     return 0;
 }
 integer close_holder_listen(){
-    if (g_holderListen){ llListenRemove(g_holderListen); g_holderListen = 0; }
+    if (g_holderListen){
+        llListenRemove(g_holderListen);
+        g_holderListen = 0;
+    }
     return TRUE;
 }
 
@@ -235,7 +236,7 @@ integer in_allowed_levels(integer lvl){
     return FALSE;
 }
 integer allow_open(){
-    if (g_last_acl_level < 0) return FALSE;          /* blacklist */
+    if (g_last_acl_level < 0) return FALSE; /* blacklist */
     return TRUE;
 }
 
@@ -243,8 +244,7 @@ integer allow_open(){
    Particles & Follow
    ============================================================= */
 vector leash_ring_world(){
-    integer n = llGetNumberOfPrims();
-    integer i = 2;
+    integer n = llGetNumberOfPrims(); integer i = 2;
     while (i <= n){
         string nm = llGetLinkName(i);
         string desc = llList2String(llGetLinkPrimitiveParams(i,[PRIM_DESC]),0);
@@ -256,9 +256,13 @@ vector leash_ring_world(){
     }
     return llGetRootPosition();
 }
+
 integer draw_leash_particles(key to){
     if (to == NULL_KEY){
-        if (g_psys_on){ llParticleSystem([]); g_psys_on = FALSE; }
+        if (g_psys_on){
+            llParticleSystem([]);
+            g_psys_on = FALSE;
+        }
         g_psys_target = NULL_KEY;
         return 0;
     }
@@ -270,29 +274,35 @@ integer draw_leash_particles(key to){
             PSYS_SRC_BURST_RATE, 0.00,
             PSYS_SRC_BURST_PART_COUNT, 1,
             PSYS_PART_START_ALPHA, 1.0,
-            PSYS_PART_END_ALPHA, 1.0,
-            PSYS_PART_MAX_AGE, 2.6,
+            PSYS_PART_END_ALPHA,   1.0,
+            PSYS_PART_MAX_AGE,     2.6,
             PSYS_PART_START_SCALE, <0.07,0.07,0>,
             PSYS_PART_END_SCALE,   <0.07,0.07,0>,
             PSYS_PART_START_COLOR, <1,1,1>,
             PSYS_PART_END_COLOR,   <1,1,1>,
-            PSYS_SRC_ACCEL, <0,0,-1.25>,
+            PSYS_SRC_ACCEL,        <0,0,-1.25>,
             PSYS_PART_FLAGS, PSYS_PART_INTERP_COLOR_MASK
-                            |PSYS_PART_FOLLOW_SRC_MASK
-                            |PSYS_PART_TARGET_POS_MASK
-                            |PSYS_PART_FOLLOW_VELOCITY_MASK
-                            |PSYS_PART_RIBBON_MASK,
+                              | PSYS_PART_FOLLOW_SRC_MASK
+                              | PSYS_PART_TARGET_POS_MASK
+                              | PSYS_PART_FOLLOW_VELOCITY_MASK
+                              | PSYS_PART_RIBBON_MASK,
             PSYS_SRC_TARGET_KEY, to
         ]);
         g_psys_on = TRUE;
     }
     return 0;
 }
+
+/* *** PATCHED: stop across the entire linkset for reliable undraw *** */
 integer stop_leash_particles(){
-    if (g_psys_on){ llParticleSystem([]); g_psys_on = FALSE; }
+    /* Stop any emitters regardless of how they were started */
+    llParticleSystem([]);
+    llLinkParticleSystem(LINK_SET, []);   /* added: hard-stop on all child prims too */
+    g_psys_on = FALSE;
     g_psys_target = NULL_KEY;
     return 0;
 }
+
 integer turn_to_leasher(key leasher){
     if (leasher == NULL_KEY) return 0;
     list det = llGetObjectDetails(leasher,[OBJECT_POS]);
@@ -316,7 +326,7 @@ integer leash_follow_logic(){
 
     vector wearer = llGetRootPosition();
     vector offset = wearer - leash_pt;
-    float  dist   = llVecMag(offset);
+    float dist = llVecMag(offset);
 
     if (g_controls_ok){
         if (dist > (float)g_leash_length){
@@ -335,6 +345,7 @@ integer leash_follow_logic(){
             }
         }
     }
+
     g_last_dist = dist;
     draw_leash_particles(g_leasher);
     return 0;
@@ -347,20 +358,19 @@ integer begin_worn_holder_handshake(key controller){
     close_holder_listen();
     g_holderListen = llListen(LEASH_HOLDER_CHAN,"",NULL_KEY,"");
 
-    g_worn_session    = (integer)llFrand(2147483000.0);
-    g_worn_controller = controller;
-    g_worn_waiting    = TRUE;
-    g_worn_deadline   = now() + HOLDER_REPLY_WAIT_SEC;
+    g_worn_session   = (integer)llFrand(2147483000.0);
+    g_worn_controller= controller;
+    g_worn_waiting   = TRUE;
+    g_worn_deadline  = now() + HOLDER_REPLY_WAIT_SEC;
 
-    g_last_controller = controller;   /* remember for auto-reclip */
+    g_last_controller = controller; /* remember for auto-reclip */
 
     string req = llList2Json(JSON_OBJECT,[]);
-    req = llJsonSetValue(req,["type"],"leash_req");
-    req = llJsonSetValue(req,["wearer"],(string)llGetOwner());
-    req = llJsonSetValue(req,["collar"],(string)llGetKey());
+    req = llJsonSetValue(req,["type"],      "leash_req");
+    req = llJsonSetValue(req,["wearer"],    (string)llGetOwner());
+    req = llJsonSetValue(req,["collar"],    (string)llGetKey());
     req = llJsonSetValue(req,["controller"],(string)controller);
-    req = llJsonSetValue(req,["session"],(string)g_worn_session);
-
+    req = llJsonSetValue(req,["session"],   (string)g_worn_session);
     llRegionSay(LEASH_HOLDER_CHAN,req);
     return TRUE;
 }
@@ -370,58 +380,80 @@ integer begin_worn_holder_handshake(key controller){
    ============================================================= */
 integer begin_dialog_ctx(key user, string body, list pairs){
     reset_listen();
-    g_user = user;
+    g_user  = user;
     g_pairs = pairs;
-
     list labels = pairs_to_labels(pairs);
     g_menu_chan = -100000 - (integer)llFrand(1000000.0);
-    g_listen = llListen(g_menu_chan,"",g_user,"");
+    g_listen    = llListen(g_menu_chan,"",g_user,"");
     llDialog(g_user, body, labels, g_menu_chan);
     g_dialog_expires = now() + DIALOG_TIMEOUT;
     return TRUE;
 }
+
 list make_menu_pairs(integer acl){
     list pairs = [];
     if (acl == ACL_PUBLIC){
-        pairs += ["Clip to…", CMD_CLIP, "Unclip", CMD_UNCLIP, "Give holder", CMD_GIVEH];
+        pairs += ["Clip to…", CMD_CLIP,
+                  "Unclip",  CMD_UNCLIP,
+                  "Give holder", CMD_GIVEH];
     } else if (acl == ACL_OWNED){
         pairs += ["Clip to…", CMD_CLIP];
     } else if (acl == ACL_TRUSTEE){
-        pairs += ["Clip to…", CMD_CLIP, "Unclip", CMD_UNCLIP, "Set Length", CMD_SETLEN, "Turn", CMD_TURN, "Give holder", CMD_GIVEH];
+        pairs += ["Clip to…", CMD_CLIP,
+                  "Unclip",  CMD_UNCLIP,
+                  "Set Length", CMD_SETLEN,
+                  "Turn", CMD_TURN,
+                  "Give holder", CMD_GIVEH];
     } else if (acl == ACL_UNOWNED){
-        pairs += ["Clip to…", CMD_CLIP, "Unclip", CMD_UNCLIP];
+        pairs += ["Clip to…", CMD_CLIP,
+                  "Unclip",  CMD_UNCLIP];
     } else { /* primary owner */
-        pairs += ["Clip to…", CMD_CLIP, "Unclip", CMD_UNCLIP, "Set Length", CMD_SETLEN, "Turn", CMD_TURN, "Give holder", CMD_GIVEH];
+        pairs += ["Clip to…", CMD_CLIP,
+                  "Unclip",  CMD_UNCLIP,
+                  "Set Length", CMD_SETLEN,
+                  "Turn", CMD_TURN,
+                  "Give holder", CMD_GIVEH];
     }
     pairs += ["Back", CMD_BACK];
     return pairs;
 }
+
 integer show_main_menu(key user, integer acl){
     string menu = "Leash:\n";
     if (g_leashed) menu += "Leashed to: " + llKey2Name(g_leasher) + "\n";
-    else menu += "Not leashed\n";
+    else           menu += "Not leashed\n";
+
     menu += "Length: " + (string)g_leash_length + " m";
-    if (g_turn_to) menu += "\nTurn: ON"; else menu += "\nTurn: OFF";
+    if (g_turn_to) menu += "\nTurn: ON";
+    else           menu += "\nTurn: OFF";
+
     return begin_dialog_ctx(user, menu, make_menu_pairs(acl));
 }
 
 /* Set length picker */
 integer do_set_len(integer m){
-    if (m < 1) m = 1;
+    if (m < 1)  m = 1;
     if (m > 30) m = 30;
     g_leash_length = m;
 
     /* Immediate response to length change */
     g_last_target = ZERO_VECTOR;
     g_last_dist   = -1.0;
-    if (g_leashed){ leash_follow_logic(); }
+    if (g_leashed){
+        leash_follow_logic();
+    }
     return TRUE;
 }
+
 integer show_length_menu(){
     list labels = ["1","2","3","5","8","10","12","15","20"];
     list pairs = [];
     integer i = 0; integer L = llGetListLength(labels);
-    while (i < L){ string lab = llList2String(labels,i); pairs += [lab, CMD_SETVAL]; i = i + 1; }
+    while (i < L){
+        string lab = llList2String(labels,i);
+        pairs += [lab, CMD_SETVAL];
+        i = i + 1;
+    }
     pairs += ["Back", CMD_BACK];
     return begin_dialog_ctx(g_user,"Pick leash length (m)",pairs);
 }
@@ -438,18 +470,26 @@ integer ui_return_root(key toUser){
 /* Core actions */
 integer do_leash(key who){
     if (who == NULL_KEY) return FALSE;
-    g_leasher = who; g_leashed = TRUE; g_offsimFlag = FALSE; g_offsimStartEpoch = 0;
+    g_leasher = who;
+    g_leashed = TRUE;
+    g_offsimFlag = FALSE;
+    g_offsimStartEpoch = 0;
     draw_leash_particles(g_leasher);
     return TRUE;
 }
 integer do_unclip(){
-    g_leashed = FALSE; g_leasher = NULL_KEY;
-    llStopMoveToTarget(); g_last_target = ZERO_VECTOR; stop_leash_particles();
-    g_offsimFlag = FALSE; g_offsimStartEpoch = 0;
+    g_leashed = FALSE;
+    g_leasher = NULL_KEY;
+    llStopMoveToTarget();
+    g_last_target = ZERO_VECTOR;
+    stop_leash_particles();          /* <-- patched stop (now linkset-wide) */
+    g_offsimFlag = FALSE;
+    g_offsimStartEpoch = 0;
     return TRUE;
 }
 integer do_toggle_turn(){
-    if (g_turn_to) g_turn_to = FALSE; else g_turn_to = TRUE;
+    if (g_turn_to) g_turn_to = FALSE;
+    else g_turn_to = TRUE;
     if (!g_turn_to) clear_turn();
     return TRUE;
 }
@@ -459,7 +499,7 @@ integer do_toggle_turn(){
    ============================================================= */
 integer start_avatar_scan(){
     g_scan_keys = [];
-    g_page_idx = 0;
+    g_page_idx  = 0;
     g_scan_expires = now() + SCAN_TIMEOUT;
     llSensor("",NULL_KEY,AGENT,SCAN_RADIUS,SCAN_ARC);
     return TRUE;
@@ -472,19 +512,19 @@ integer show_scan_page(){
         return FALSE;
     }
 
-    integer per   = MAX_PAGE_ITEMS;
+    integer per = MAX_PAGE_ITEMS;
     integer start = g_page_idx * per;
-    integer end   = start + per - 1;
+    integer end = start + per - 1;
     if (end >= total) end = total - 1;
 
     string head = "Select person (" + (string)(start+1) + "-" + (string)(end+1) + "/" + (string)total + "):\n";
-
     list pairs = [];
     if (g_page_idx > 0) pairs += ["<<", "prev"];
     pairs += ["Back", CMD_BACK];
     if ((end + 1) < total) pairs += [">>", "next"];
 
-    integer i = start; integer lineNo = 1;
+    integer i = start;
+    integer lineNo = 1;
     while (i <= end){
         key k = llList2Key(g_scan_keys, i);
         string nm = llKey2Name(k); if (nm == "") nm = (string)k;
@@ -492,7 +532,6 @@ integer show_scan_page(){
         pairs += [(string)lineNo, CMD_PICK + ":" + (string)i];
         i = i + 1; lineNo = lineNo + 1;
     }
-
     return begin_dialog_ctx(g_user, head, pairs);
 }
 
@@ -508,14 +547,13 @@ default{
         g_user = NULL_KEY;
         reset_listen();
         close_holder_listen();
-
         g_acl_pending = FALSE;
         g_last_acl_level = ACL_NOACCESS;
 
         notify_soft_reset();
         register_self();
-        hb_init();                       /* enable heartbeat */
-        llSetTimerEvent(FOLLOW_TICK);    /* tighten timer for follow physics */
+        hb_init();                          /* enable heartbeat */
+        llSetTimerEvent(FOLLOW_TICK);       /* tighten timer for follow physics */
 
         /* Controls (for move-to-target restraint) */
         llRequestPermissions(llGetOwner(), PERMISSION_TAKE_CONTROLS);
@@ -539,7 +577,9 @@ default{
                     string c = llJsonGetValue(msg,["context"]);
                     if (!(c == "all" || c == "*" || c == PLUGIN_CONTEXT)) doClear = FALSE;
                 }
-                if (doClear){ do_unclip(); }
+                if (doClear){
+                    do_unclip();
+                }
             }
             return;
         }
@@ -645,15 +685,22 @@ default{
 
                 integer ok2 = 0;
                 if (json_has(text,["ok"])) ok2 = (integer)llJsonGetValue(text,["ok"]);
+
                 if (ok2 == 1 && json_has(text,["holder"])){
                     key prim2 = (key)llJsonGetValue(text,["holder"]);
-                    if (prim2 != NULL_KEY){ do_leash(prim2); }
+                    if (prim2 != NULL_KEY){
+                        do_leash(prim2);
+                    }
                 } else {
                     /* Fallback: leash to avatar center if reply says not ok */
                     do_leash(g_worn_controller);
                 }
-                g_worn_waiting = FALSE; g_worn_deadline=0; g_worn_session=0;
+
+                g_worn_waiting = FALSE;
+                g_worn_deadline= 0;
+                g_worn_session = 0;
                 close_holder_listen();
+
                 if (g_user != NULL_KEY) show_main_menu(g_user,g_last_acl_level);
                 return;
             }
@@ -669,27 +716,38 @@ default{
         }
 
         if (cmd == CMD_BACK){
-            ui_return_root(g_user);   /* plugin root → main UI */
+            ui_return_root(g_user);          /* plugin root → main UI */
             g_user = NULL_KEY;
             reset_listen();
             return;
         }
 
-        if (cmd == CMD_CLIP){ start_avatar_scan(); return; }
+        if (cmd == CMD_CLIP){
+            start_avatar_scan();
+            return;
+        }
 
-        if (cmd == CMD_UNCLIP){ do_unclip(); show_main_menu(g_user,g_last_acl_level); return; }
+        if (cmd == CMD_UNCLIP){
+            do_unclip();
+            show_main_menu(g_user,g_last_acl_level);
+            return;
+        }
 
         if (cmd == CMD_SETLEN){
             if (llListFindList(ALLOWED_SETLEN_LEVELS,[g_last_acl_level]) == -1){
                 llRegionSayTo(g_user,0,"You do not have permission to set leash length.");
-                show_main_menu(g_user,g_last_acl_level); return;
+                show_main_menu(g_user,g_last_acl_level);
+                return;
             }
-            show_length_menu(); return;
+            show_length_menu();
+            return;
         }
+
         if (cmd == CMD_SETVAL){
             if (llListFindList(ALLOWED_SETLEN_LEVELS,[g_last_acl_level]) == -1){
                 llRegionSayTo(g_user,0,"You do not have permission to set leash length.");
-                show_main_menu(g_user,g_last_acl_level); return;
+                show_main_menu(g_user,g_last_acl_level);
+                return;
             }
             integer meters = (integer)text; /* label carries value */
             do_set_len(meters);
@@ -697,12 +755,17 @@ default{
             return;
         }
 
-        if (cmd == CMD_TURN){ do_toggle_turn(); show_main_menu(g_user,g_last_acl_level); return; }
+        if (cmd == CMD_TURN){
+            do_toggle_turn();
+            show_main_menu(g_user,g_last_acl_level);
+            return;
+        }
 
         if (cmd == CMD_GIVEH){
             if (llListFindList(ALLOWED_GIVEH_LEVELS,[g_last_acl_level]) == -1){
                 llRegionSayTo(g_user,0,"You do not have permission to use that.");
-                show_main_menu(g_user,g_last_acl_level); return;
+                show_main_menu(g_user,g_last_acl_level);
+                return;
             }
             string ITEM = "DS Collar leash holder";
             integer t = llGetInventoryType(ITEM);
@@ -710,13 +773,13 @@ default{
                 llRegionSayTo(g_user,0,"The ‘Leash Holder’ object is missing from the collar inventory.");
             } else {
                 llGiveInventory(g_user, ITEM);
-                llRegionSayTo(g_user,0,"Leash holder sent. Wear or rez it to use as a leash target.");
+                llRegionSayTo(g_user,0,"Leash holder sent.\nWear or rez it to use as a leash target.");
             }
-            show_main_menu(g_user,g_last_acl_level); return;
+            show_main_menu(g_user,g_last_acl_level);
+            return;
         }
 
-        if (llSubStringIndex(cmd,":") != -1){
-            /* pick:<absIndex> */
+        if (llSubStringIndex(cmd,":") != -1){ /* pick: */
             integer p = llSubStringIndex(cmd,":");
             string head = llGetSubString(cmd,0,p-1);
             if (head == CMD_PICK){
@@ -731,13 +794,16 @@ default{
 
         if (cmd == "prev"){
             if (g_page_idx > 0) g_page_idx = g_page_idx - 1;
-            show_scan_page(); return;
+            show_scan_page();
+            return;
         }
         if (cmd == "next"){
             integer total = llGetListLength(g_scan_keys);
-            integer maxPage = 0; if (total > 0) maxPage = (total - 1) / MAX_PAGE_ITEMS;
+            integer maxPage = 0;
+            if (total > 0) maxPage = (total - 1) / MAX_PAGE_ITEMS;
             if (g_page_idx < maxPage) g_page_idx = g_page_idx + 1;
-            show_scan_page(); return;
+            show_scan_page();
+            return;
         }
 
         show_main_menu(g_user,g_last_acl_level);
@@ -761,7 +827,9 @@ default{
 
         /* Scan timeout */
         if (g_scan_keys != []){
-            if (now() >= g_scan_expires){ g_scan_keys=[]; g_page_idx=0; }
+            if (now() >= g_scan_expires){
+                g_scan_keys=[]; g_page_idx=0;
+            }
         }
 
         /* Holder handshake timeout → fallback to avatar center */
@@ -777,7 +845,6 @@ default{
         /* Presence / auto-release + auto-reclip */
         if (g_leashed){
             integer present = FALSE;
-
             if (g_last_controller != NULL_KEY){
                 integer ai = llGetAgentInfo(g_last_controller);
                 if (ai != 0) present = TRUE;
@@ -787,9 +854,15 @@ default{
             }
 
             if (!present){
-                if (!g_offsimFlag){ g_offsimFlag = TRUE; g_offsimStartEpoch = now(); }
+                if (!g_offsimFlag){
+                    g_offsimFlag = TRUE;
+                    g_offsimStartEpoch = now();
+                }
             } else {
-                if (g_offsimFlag){ g_offsimFlag = FALSE; g_offsimStartEpoch = 0; }
+                if (g_offsimFlag){
+                    g_offsimFlag = FALSE;
+                    g_offsimStartEpoch = 0;
+                }
             }
 
             if (g_offsimFlag){
@@ -805,7 +878,9 @@ default{
                 g_reclip_next_epoch = now() + 2; /* throttle */
                 if (g_last_controller != NULL_KEY){
                     integer ai2 = llGetAgentInfo(g_last_controller);
-                    if (ai2 != 0){ begin_worn_holder_handshake(g_last_controller); }
+                    if (ai2 != 0){
+                        begin_worn_holder_handshake(g_last_controller);
+                    }
                 }
             }
         }
