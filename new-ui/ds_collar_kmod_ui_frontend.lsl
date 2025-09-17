@@ -4,6 +4,7 @@
    - Sanitizes button labels ("" → " ")
    - Returns clicks to Core (K_VIEW_CLICK), id = avatar key
    - Manages confirmations (tickets, timeouts) and replies to plugins
+   - May not use ternary syntax (unsupported by LSL)
    ============================================================= */
 
 integer DEBUG = FALSE;
