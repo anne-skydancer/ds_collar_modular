@@ -5,6 +5,7 @@
    - Persistent multi-entry schema cache per (context, ACL)
    - Invalidate on plugin_soft_reset or schema rev change
    - Reserved indices: 0=Prev, 1=Next, 2=Back, 3=Primary
+   - Touch is handled by VIEW; Core starts session on K_VIEW_TOUCHED
    ============================================================= */
 
 integer DEBUG = FALSE;
@@ -16,7 +17,7 @@ integer K_PLUGIN_LIST_NUM      = 600;
 integer K_PLUGIN_LIST_REQUEST  = 601;
 
 integer K_UI_QUERY             = 620;  /* core → plugin: {"t":"uiq","ctx":...} */
-integer K_UI_SCHEMA            = 621;  /* plugin → core: {"t":"uis","ctx":...,"r":mask,"rev":"...", "buttons":[...] } */
+integer K_UI_SCHEMA            = 621;  /* plugin → core:  {"t":"uis","ctx":...,"r":mask,"rev":"...","buttons":[...] } */
 integer K_UI_ACTION            = 922;  /* core → plugin: {"t":"uia","ctx":...,"id":...,"lvl":<acl>,"ts":...} */
 
 integer K_UI_CONFIRM           = 930;  /* plugin → core: {"t":"uic",...} (forward to view) */
@@ -36,11 +37,12 @@ integer K_PLUGIN_SOFT_RESET    = 504;
 string  TYPE_PLUGIN_SOFT_RESET = "plugin_soft_reset";
 
 /* ---------- Core↔View ABI ---------- */
-integer K_VIEW_SHOW            = 960;  /* core → view: {"t":"show","to":<key>,"title":...,"body":...,"btn":[ "A","B",... ]} */
+integer K_VIEW_SHOW            = 960;  /* core → view: {"t":"show","to":<key>,"title":...,"body":...,"btn":[...]} */
 integer K_VIEW_CLOSE           = 961;  /* core → view: {"t":"close"} */
 integer K_VIEW_CLICK           = 962;  /* view → core: {"t":"click","label":"..."} (id carries avatar key) */
+integer K_VIEW_TOUCHED         = 963;  /* view → core: {"t":"touch","who":<key>} */
 
-integer K_VIEW_CONFIRM_OPEN    = 970;  /* core → view: {"t":"c_open","tok":...,"to":<key>,"prompt":...,"buttons":[[id,label],...],"ttl":20,"plug":<key>} */
+integer K_VIEW_CONFIRM_OPEN    = 970;  /* core → view: {"t":"c_open", ... } */
 integer K_VIEW_CONFIRM_CANCEL  = 971;  /* core → view: {"t":"c_cancel","tok":...} */
 
 /* ---------- UI constants ---------- */
@@ -64,12 +66,7 @@ integer ROOT_CONTENT_CAP          = 9;    /* root labels per page (Prev/Next are
 integer BTN_CAP_PER_PLUGIN        = 36;   /* max accepted buttons from a plugin schema */
 integer AUTO_REFRESH_AFTER_ACTION = FALSE;/* hub re-opens after action if TRUE */
 
-/* ---- Persistent schema cache (LRU) ----
-   We store per (context|acl):
-   - quadsJson:   '[[label,id,ord,flags], ...]' (trimmed, ACL-filtered)
-   - rev:         plugin-provided rev or MD5 of buttons JSON
-   - ts:          for LRU eviction
-*/
+/* ---- Persistent schema cache (LRU) ---- */
 list   gSC_keys     = [];  /* "ctx|acl" */
 list   gSC_quadsJS  = [];  /* JSON string */
 list   gSC_rev      = [];  /* string */
@@ -95,7 +92,7 @@ integer pol_primary_owner  = FALSE;
 /* Registry cache (flattened):
    [label,context,min_acl,has_tpe,label_tpe,tpe_min_acl,audience,...] */
 list    g_all  = [];
-/* Filtered view for current user: [label,context,...] */
+/* Filtered view: [label,context,...] */
 list    g_view = [];
 /* Current root page & map (for that page only) */
 integer gPage = 0;
@@ -131,9 +128,7 @@ integer acl_mask_allows(integer mask, integer lvl){
 
 /* ---------- Cache helpers ---------- */
 string sc_key(string ctx, integer acl){ return ctx + "|" + (string)acl; }
-integer sc_index(string kstr){
-    return llListFindList(gSC_keys, [kstr]);
-}
+integer sc_index(string kstr){ return llListFindList(gSC_keys, [kstr]); }
 integer sc_put(string kstr, string quadsJS, string rev){
     integer idx = sc_index(kstr);
     integer now = llGetUnixTime();
@@ -143,9 +138,7 @@ integer sc_put(string kstr, string quadsJS, string rev){
         gSC_ts      = llListReplaceList(gSC_ts,      [now],     idx, idx);
         return 1;
     }
-    /* LRU evict if needed */
     if (llGetListLength(gSC_keys) >= SC_MAX){
-        /* find oldest ts */
         integer i = 0; integer n = llGetListLength(gSC_ts);
         integer minIdx = 0; integer minTs = llList2Integer(gSC_ts, 0);
         i = 1;
@@ -175,7 +168,6 @@ integer sc_touch(string kstr){
     return 1;
 }
 integer sc_invalidate_ctx(string ctx){
-    /* delete all entries where key starts with ctx + "|" */
     integer i = 0;
     while (i < llGetListLength(gSC_keys)){
         string k = llList2String(gSC_keys, i);
@@ -381,7 +373,6 @@ list buttonsForRootPage(integer page){
 }
 
 /* ---------- Plugin schema parsing + layout ---------- */
-/* Build QUADS [Label,Id,Ord,Flags,...] from JSON "buttons" (id,label,mask,ord?,flags?) */
 list buildBtnQuadsFromJSON(string uisMsg, integer viewerAcl){
     list out = [];
     integer i = 0;
@@ -408,7 +399,7 @@ list buildBtnQuadsFromJSON(string uisMsg, integer viewerAcl){
     return out;
 }
 
-/* Pull the first PRIMARY, keep others in plugin-declared order */
+/* Pull the first PRIMARY, keep others in plugin order */
 list splitPrimary(list quads){
     string primaryLabel = "";
     string primaryId    = "";
@@ -441,7 +432,7 @@ list pluginButtonsForPage(integer page){
     integer hasPrimary = FALSE;
     if (primaryLabel != "") hasPrimary = TRUE;
 
-    /* reserved buttons: Back + maybe Prev/Next + maybe Primary */
+    /* reserved: Back + maybe Prev/Next + maybe Primary */
     integer reservedAssume = 1; /* Back */
     reservedAssume = reservedAssume + 1; /* Prev? assume space */
     reservedAssume = reservedAssume + 1; /* Next? assume space */
@@ -517,7 +508,6 @@ integer view_show(key to, string title, string body, list buttons){
     j = llJsonSetValue(j, ["title"], title);
     j = llJsonSetValue(j, ["body"], body);
 
-    /* array-of-strings (cheap) */
     string arr = "[]";
     integer i = 0; integer n = llGetListLength(buttons);
     while (i < n){
@@ -534,6 +524,29 @@ integer view_close(){
     j = llJsonSetValue(j, ["t"], "close");
     llMessageLinked(LINK_SET, K_VIEW_CLOSE, j, NULL_KEY);
     return 0;
+}
+
+/* ---------- Session start (called by View touch) ---------- */
+integer begin_session(key who){
+    view_close(); /* close any previous dialog */
+
+    gUser = who;
+    if (!withinRange(gUser)){
+        llRegionSayTo(gUser, 0, "You are too far from the wearer (max 5 m).");
+        return 0;
+    }
+
+    /* reset per-session state */
+    gAclReady = FALSE; gListReady = FALSE;
+    gAcl = -1; gIsWearer = FALSE; gOwnerSet = FALSE;
+
+    pol_tpe = FALSE; pol_public_only = FALSE; pol_owned_only = FALSE;
+    pol_trustee_access = FALSE; pol_wearer_unowned = FALSE; pol_primary_owner = FALSE;
+
+    /* kick off flow */
+    queryAcl(gUser);
+    fetchRegistry();
+    return 1;
 }
 
 /* ---------- High-level flows ---------- */
@@ -579,7 +592,6 @@ integer requestPluginSchema(string context, key opener){
 
     string keySC = sc_key(context, gAcl);
     if (sc_has(keySC)){
-        /* fast path: decode cached quads into g_btnMap */
         g_btnMap = quads_decode_json(sc_get_quadsJS(keySC));
         sc_touch(keySC);
         showPluginPage(opener);
@@ -638,24 +650,18 @@ default{
     on_rez(integer sp){ llResetScript(); }
     changed(integer c){ if (c & CHANGED_OWNER) llResetScript(); }
 
-    touch_start(integer n){
-        view_close();
-        gUser = llDetectedKey(0);
-        if (!withinRange(gUser)){
-            llRegionSayTo(gUser, 0, "You are too far from the wearer (max 5 m).");
-            return;
-        }
-        gAclReady = FALSE; gListReady = FALSE;
-        gAcl = -1; gIsWearer = FALSE; gOwnerSet = FALSE;
-
-        pol_tpe = FALSE; pol_public_only = FALSE; pol_owned_only = FALSE;
-        pol_trustee_access = FALSE; pol_wearer_unowned = FALSE; pol_primary_owner = FALSE;
-
-        queryAcl(gUser);
-        fetchRegistry();
-    }
+    /* NOTE: No touch_start here — View owns touch and forwards it. */
 
     link_message(integer src, integer num, string msg, key id){
+        /* View forwarded a touch → begin session */
+        if (num == K_VIEW_TOUCHED){
+            /* prefer id (avatar key) which View sets; fallback to JSON if needed */
+            key who = id;
+            if (who == NULL_KEY && json_has(msg, ["who"])) who = (key)llJsonGetValue(msg, ["who"]);
+            if (who != NULL_KEY) begin_session(who);
+            return;
+        }
+
         /* ACL reply */
         if (num == K_ACLF_REPLY){
             if (!json_has(msg, ["t"])) return;
@@ -730,15 +736,12 @@ default{
                 return;
             }
 
-            /* compute/normalize rev */
             string rev = "";
             if (json_has(msg, ["rev"])) rev = llJsonGetValue(msg, ["rev"]);
             else if (json_has(msg, ["buttons"])) rev = llMD5String(llJsonGetValue(msg, ["buttons"]), 0);
 
-            /* build filtered quads */
             g_btnMap = buildBtnQuadsFromJSON(msg, gAcl);
 
-            /* cache under (ctx|acl); if unchanged rev, just touch */
             string kstr = sc_key(g_curCtx, gAcl);
             if (sc_has(kstr)){
                 string haveRev = sc_get_rev(kstr);
