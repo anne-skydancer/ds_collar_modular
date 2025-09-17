@@ -1,5 +1,5 @@
 /* =============================================================
-   ds_collar_kmod_ui_core.lsl — UI Controller (no llDialog here)
+   ds_collar_kmod_ui_logic.lsl — UI Controller (no llDialog here)
    - ACL + registry filter, paging, plugin schema parsing
    - Sends compact render requests to the View
    - Receives clicks from the View and routes actions
