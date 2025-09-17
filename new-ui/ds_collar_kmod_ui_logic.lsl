@@ -1,9 +1,9 @@
 /* =============================================================
-   ds_collar_kmod_ui_logic.lsl — UI Controller (no llDialog)
+   ds_collar_kmod_ui_core.lsl — UI Controller (no llDialog)
    - ACL + registry filter, paging, plugin schema parsing
-   - Sends compact render requests to the View
-   - Receives clicks from the View and routes actions
-   - Forwards confirmations to the View
+   - Compact Core→View payload (array of strings)
+   - Persistent multi-entry schema cache per (context, ACL)
+   - Invalidate on plugin_soft_reset or schema rev change
    - Reserved indices: 0=Prev, 1=Next, 2=Back, 3=Primary
    ============================================================= */
 
@@ -16,7 +16,7 @@ integer K_PLUGIN_LIST_NUM      = 600;
 integer K_PLUGIN_LIST_REQUEST  = 601;
 
 integer K_UI_QUERY             = 620;  /* core → plugin: {"t":"uiq","ctx":...} */
-integer K_UI_SCHEMA            = 621;  /* plugin → core: {"t":"uis","ctx":...,"r":mask,"buttons":[...] } */
+integer K_UI_SCHEMA            = 621;  /* plugin → core: {"t":"uis","ctx":...,"r":mask,"rev":"...", "buttons":[...] } */
 integer K_UI_ACTION            = 922;  /* core → plugin: {"t":"uia","ctx":...,"id":...,"lvl":<acl>,"ts":...} */
 
 integer K_UI_CONFIRM           = 930;  /* plugin → core: {"t":"uic",...} (forward to view) */
@@ -27,9 +27,13 @@ integer K_UI_CANCEL            = 932;  /* plugin → core: {"t":"uix","tok":...}
 integer K_ACLF_QUERY           = 640;  /* core → ACLF: {"t":"aclq","av":<key>} */
 integer K_ACLF_REPLY           = 641;  /* ACLF → core: {"t":"aclr","av":<key>,"lvl":...,...} */
 
-/* Legacy return for older kernels (optional) */
+/* Legacy/notify */
 integer K_PLUGIN_RETURN_NUM    = 901;
 string  ROOT_CONTEXT           = "core_root";
+
+/* NEW: plugin soft-reset → invalidate caches */
+integer K_PLUGIN_SOFT_RESET    = 504;
+string  TYPE_PLUGIN_SOFT_RESET = "plugin_soft_reset";
 
 /* ---------- Core↔View ABI ---------- */
 integer K_VIEW_SHOW            = 960;  /* core → view: {"t":"show","to":<key>,"title":...,"body":...,"btn":[ "A","B",... ]} */
@@ -56,18 +60,23 @@ integer ACL_PRIMARY_OWNER = 5;
 integer BTN_FLAG_PRIMARY = 1;
 
 /* Limits and behavior toggles */
-integer ROOT_CONTENT_CAP        = 9;    /* root labels per page (Prev/Next are extra) */
-integer BTN_CAP_PER_PLUGIN      = 36;   /* max accepted buttons from a plugin schema */
-integer AUTO_REFRESH_AFTER_ACTION = FALSE; /* hub re-opens after action if TRUE */
+integer ROOT_CONTENT_CAP          = 9;    /* root labels per page (Prev/Next are extra) */
+integer BTN_CAP_PER_PLUGIN        = 36;   /* max accepted buttons from a plugin schema */
+integer AUTO_REFRESH_AFTER_ACTION = FALSE;/* hub re-opens after action if TRUE */
 
-/* ---- Schema cache (per context, per ACL) ---- */
-string  gCacheCtx  = "";
-list    gCacheQuads= [];   /* QUADS [Label,Id,Ord,Flags,...] */
-integer gCacheAcl  = -999;
-integer gCacheTs   = 0;
-integer SCHEMA_TTL_SEC = 5; /* reuse schema for up to 5 seconds */
+/* ---- Persistent schema cache (LRU) ----
+   We store per (context|acl):
+   - quadsJson:   '[[label,id,ord,flags], ...]' (trimmed, ACL-filtered)
+   - rev:         plugin-provided rev or MD5 of buttons JSON
+   - ts:          for LRU eviction
+*/
+list   gSC_keys     = [];  /* "ctx|acl" */
+list   gSC_quadsJS  = [];  /* JSON string */
+list   gSC_rev      = [];  /* string */
+list   gSC_ts       = [];  /* integer timestamps */
+integer SC_MAX      = 8;   /* max cached schemas */
 
-/* ---------- State ---------- */
+/* ---------- Session/UI state ---------- */
 key     gUser      = NULL_KEY;
 
 integer gAcl           = -1;
@@ -120,22 +129,100 @@ integer acl_mask_allows(integer mask, integer lvl){
     return FALSE;
 }
 
-/* ---------- Schema cache helpers ---------- */
-integer cache_has(string ctx, integer acl){
-    if (ctx == gCacheCtx){
-        if (acl == gCacheAcl){
-            integer age = llGetUnixTime() - gCacheTs;
-            if (age <= SCHEMA_TTL_SEC) return TRUE;
+/* ---------- Cache helpers ---------- */
+string sc_key(string ctx, integer acl){ return ctx + "|" + (string)acl; }
+integer sc_index(string kstr){
+    return llListFindList(gSC_keys, [kstr]);
+}
+integer sc_put(string kstr, string quadsJS, string rev){
+    integer idx = sc_index(kstr);
+    integer now = llGetUnixTime();
+    if (idx != -1){
+        gSC_quadsJS = llListReplaceList(gSC_quadsJS, [quadsJS], idx, idx);
+        gSC_rev     = llListReplaceList(gSC_rev,     [rev],     idx, idx);
+        gSC_ts      = llListReplaceList(gSC_ts,      [now],     idx, idx);
+        return 1;
+    }
+    /* LRU evict if needed */
+    if (llGetListLength(gSC_keys) >= SC_MAX){
+        /* find oldest ts */
+        integer i = 0; integer n = llGetListLength(gSC_ts);
+        integer minIdx = 0; integer minTs = llList2Integer(gSC_ts, 0);
+        i = 1;
+        while (i < n){
+            integer t = llList2Integer(gSC_ts, i);
+            if (t < minTs){ minTs = t; minIdx = i; }
+            i = i + 1;
+        }
+        gSC_keys    = llDeleteSubList(gSC_keys,    minIdx, minIdx);
+        gSC_quadsJS = llDeleteSubList(gSC_quadsJS, minIdx, minIdx);
+        gSC_rev     = llDeleteSubList(gSC_rev,     minIdx, minIdx);
+        gSC_ts      = llDeleteSubList(gSC_ts,      minIdx, minIdx);
+    }
+    gSC_keys    += kstr;
+    gSC_quadsJS += quadsJS;
+    gSC_rev     += rev;
+    gSC_ts      += now;
+    return 1;
+}
+integer sc_has(string kstr){ if (sc_index(kstr) != -1) return TRUE; return FALSE; }
+string  sc_get_quadsJS(string kstr){ return llList2String(gSC_quadsJS, sc_index(kstr)); }
+string  sc_get_rev(string kstr){     return llList2String(gSC_rev,     sc_index(kstr)); }
+integer sc_touch(string kstr){
+    integer idx = sc_index(kstr);
+    if (idx == -1) return 0;
+    gSC_ts = llListReplaceList(gSC_ts, [llGetUnixTime()], idx, idx);
+    return 1;
+}
+integer sc_invalidate_ctx(string ctx){
+    /* delete all entries where key starts with ctx + "|" */
+    integer i = 0;
+    while (i < llGetListLength(gSC_keys)){
+        string k = llList2String(gSC_keys, i);
+        if (llSubStringIndex(k, ctx + "|") == 0){
+            gSC_keys    = llDeleteSubList(gSC_keys,    i, i);
+            gSC_quadsJS = llDeleteSubList(gSC_quadsJS, i, i);
+            gSC_rev     = llDeleteSubList(gSC_rev,     i, i);
+            gSC_ts      = llDeleteSubList(gSC_ts,      i, i);
+        } else {
+            i = i + 1;
         }
     }
-    return FALSE;
+    return 1;
 }
-integer cache_store(string ctx, integer acl, list quads){
-    gCacheCtx   = ctx;
-    gCacheAcl   = acl;
-    gCacheQuads = quads;
-    gCacheTs    = llGetUnixTime();
-    return 0;
+
+/* encode/decode QUADS to/from JSON for cache */
+string quads_encode_json(list quads){
+    string arr = "[]";
+    integer i = 0; integer n = llGetListLength(quads);
+    integer row = 0;
+    while (i + 3 < n){
+        string lab = llList2String(quads, i);
+        string id  = llList2String(quads, i+1);
+        string ord = llList2String(quads, i+2);
+        string flg = llList2String(quads, i+3);
+        arr = llJsonSetValue(arr, [row, 0], lab);
+        arr = llJsonSetValue(arr, [row, 1], id);
+        arr = llJsonSetValue(arr, [row, 2], ord);
+        arr = llJsonSetValue(arr, [row, 3], flg);
+        row = row + 1;
+        i = i + 4;
+    }
+    return arr;
+}
+list quads_decode_json(string arr){
+    list out = [];
+    integer i = 0;
+    while (llJsonValueType(arr, [i]) != JSON_INVALID){
+        string lab = ""; string id = ""; string ord = "9999"; string flg = "0";
+        if (llJsonValueType(arr, [i,0]) != JSON_INVALID) lab = llJsonGetValue(arr, [i,0]);
+        if (llJsonValueType(arr, [i,1]) != JSON_INVALID) id  = llJsonGetValue(arr, [i,1]);
+        if (llJsonValueType(arr, [i,2]) != JSON_INVALID) ord = llJsonGetValue(arr, [i,2]);
+        if (llJsonValueType(arr, [i,3]) != JSON_INVALID) flg = llJsonGetValue(arr, [i,3]);
+        if (lab != "" && id != "") out += [lab, id, ord, flg];
+        i = i + 1;
+    }
+    return out;
 }
 
 /* ---------- Registry parsing ---------- */
@@ -302,7 +389,7 @@ list buildBtnQuadsFromJSON(string uisMsg, integer viewerAcl){
         string  id    = "";
         string  lab   = "";
         integer mask  = 0;
-        integer ord   = 9999; /* not sorted globally; kept for plugins that care */
+        integer ord   = 9999; /* optional */
         integer flags = 0;
 
         if (llJsonValueType(uisMsg, ["buttons", i, 0]) != JSON_INVALID) id   = llJsonGetValue(uisMsg, ["buttons", i, 0]);
@@ -388,7 +475,7 @@ list pluginButtonsForPage(integer page){
     integer remaining = totalOthers - (start + taken);
     integer hasNext = FALSE; if (remaining > 0) hasNext = TRUE;
 
-    /* If no Next, try to backfill additional slots (without exceeding 12) */
+    /* If no Next, try to backfill additional slots (≤12 total) */
     if (!hasNext){
         integer reservedNoNext = 1; /* Back */
         if (hasPrev) reservedNoNext = reservedNoNext + 1;
@@ -430,7 +517,7 @@ integer view_show(key to, string title, string body, list buttons){
     j = llJsonSetValue(j, ["title"], title);
     j = llJsonSetValue(j, ["body"], body);
 
-    /* Cheaper payload: simple array-of-strings */
+    /* array-of-strings (cheap) */
     string arr = "[]";
     integer i = 0; integer n = llGetListLength(buttons);
     while (i < n){
@@ -483,19 +570,23 @@ integer navigateRoot(key who, integer newPage){
     view_show(who, "• DS Collar •", body, b);
     return 0;
 }
+
+/* Use cache if available; otherwise query plugin */
 integer requestPluginSchema(string context, key opener){
     g_curCtx   = context;
     g_inPlugin = TRUE;
     g_subPage  = 0;
 
-    /* Fast path: reuse recent schema for this context+ACL */
-    if (cache_has(context, gAcl)){
-        g_btnMap = gCacheQuads;
+    string keySC = sc_key(context, gAcl);
+    if (sc_has(keySC)){
+        /* fast path: decode cached quads into g_btnMap */
+        g_btnMap = quads_decode_json(sc_get_quadsJS(keySC));
+        sc_touch(keySC);
         showPluginPage(opener);
         return 0;
     }
 
-    g_btnMap   = [];
+    g_btnMap = [];
     string j = llList2Json(JSON_OBJECT,[]);
     j = llJsonSetValue(j, ["t"], "uiq");
     j = llJsonSetValue(j, ["ctx"], context);
@@ -639,8 +730,27 @@ default{
                 return;
             }
 
+            /* compute/normalize rev */
+            string rev = "";
+            if (json_has(msg, ["rev"])) rev = llJsonGetValue(msg, ["rev"]);
+            else if (json_has(msg, ["buttons"])) rev = llMD5String(llJsonGetValue(msg, ["buttons"]), 0);
+
+            /* build filtered quads */
             g_btnMap = buildBtnQuadsFromJSON(msg, gAcl);
-            cache_store(g_curCtx, gAcl, g_btnMap);
+
+            /* cache under (ctx|acl); if unchanged rev, just touch */
+            string kstr = sc_key(g_curCtx, gAcl);
+            if (sc_has(kstr)){
+                string haveRev = sc_get_rev(kstr);
+                if (rev != "" && haveRev != "" && haveRev == rev){
+                    sc_touch(kstr);
+                } else {
+                    sc_put(kstr, quads_encode_json(g_btnMap), rev);
+                }
+            } else {
+                sc_put(kstr, quads_encode_json(g_btnMap), rev);
+            }
+
             showPluginPage(gUser);
             return;
         }
@@ -717,6 +827,20 @@ default{
             v2 = llJsonSetValue(v2, ["t"], "c_cancel");
             v2 = llJsonSetValue(v2, ["tok"], llJsonGetValue(msg,["tok"]));
             llMessageLinked(LINK_SET, K_VIEW_CONFIRM_CANCEL, v2, NULL_KEY);
+            return;
+        }
+
+        /* Invalidate caches on soft-reset from plugin */
+        if (num == K_PLUGIN_SOFT_RESET){
+            if (json_has(msg, ["type"])){
+                if (llJsonGetValue(msg, ["type"]) == TYPE_PLUGIN_SOFT_RESET){
+                    if (json_has(msg, ["context"])){
+                        string ctx = llJsonGetValue(msg, ["context"]);
+                        sc_invalidate_ctx(ctx);
+                        logd("Cache invalidated for context: " + ctx);
+                    }
+                }
+            }
             return;
         }
     }
