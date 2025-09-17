@@ -1,5 +1,5 @@
 /* =============================================================
-   ds_collar_kmod_ui_core.lsl — UI Controller (no llDialog)
+   ds_collar_kmod_ui_frontend.lsl — UI Controller (no llDialog)
    - ACL + registry filter, paging, plugin schema parsing
    - Compact Core→View payload (array of strings)
    - Persistent multi-entry schema cache per (context, ACL)
