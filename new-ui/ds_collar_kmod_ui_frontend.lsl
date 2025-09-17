@@ -1,5 +1,5 @@
 /* =============================================================
-   ds_collar_kmod_ui_view.lsl — UI Renderer (owns llDialog)
+   ds_collar_kmod_ui_frontend.lsl — UI Renderer (owns llDialog)
    - Shows dialogs for root & plugin pages
    - Sanitizes button labels ("" → " ")
    - Returns clicks to Core (K_VIEW_CLICK), id = avatar key
