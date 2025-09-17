@@ -6,6 +6,9 @@
               - tpe_min_acl (int)
               - label_tpe (string)
               - audience: "all"|"wearer_only"|"non_wearer_only"
+   LAYOUT:  No padding. Priority order within llDialog button list:
+              0: Prev   1: Next   2: Back   3: Primary   4..: others
+            (Back omitted on root page)
    NOTE  :  JSON-only messaging. No ternary syntax anywhere.
    ============================================================= */
 
@@ -16,8 +19,6 @@ integer logd(string s){ if (DEBUG) llOwnerSay("[UI] " + s); return 0; }
 string TYPE_PLUGIN_LIST   = "plugin_list";
 string TYPE_PLUGIN_RETURN = "plugin_return";
 string TYPE_PLUGIN_START  = "plugin_start"; /* kept for back-compat (unused here) */
-string MSG_ACL_QUERY      = "acl_query";    /* (only used by ACLF module) */
-string MSG_ACL_RESULT     = "acl_result";   /* (only used by ACLF module) */
 
 /* ---------- Link numbers (align with your kernel) ---------- */
 /* AUTH numbers may still exist elsewhere; UI talks to ACLF instead */
@@ -29,29 +30,28 @@ integer K_PLUGIN_LIST_REQUEST = 601;
 integer K_PLUGIN_START_NUM    = 900; /* not used by hub in schema mode */
 integer K_PLUGIN_RETURN_NUM   = 901;
 
-/* NEW: ACLF bridge */
+/* ACL Filter bridge */
 integer K_ACLF_QUERY          = 640;  /* UI → ACLF: {"t":"aclq","av":"<key>"} */
 integer K_ACLF_REPLY          = 641;  /* ACLF → UI: {"t":"aclr","av":"<key>","lvl":...,...} */
 
-/* NEW: schema-driven UI + actions */
+/* Schema-driven UI + actions */
 integer K_UI_QUERY            = 620;  /* hub → plugin: {"t":"uiq","ctx":"..."} */
-integer K_UI_SCHEMA           = 621;  /* plugin → hub: {"t":"uis","v":1,"ctx":"...","r":126,"buttons":[[id,label,mask,slot],...]} */
+integer K_UI_SCHEMA           = 621;  /* plugin → hub: {"t":"uis","v":1,"ctx":"...","r":126,"buttons":[[id,label,mask,ord,flags],...]} */
 integer K_UI_ACTION           = 922;  /* hub → plugin: {"t":"uia","ctx":"...","id":"...","lvl":2,"ts":...} */
 
-/* NEW: multi-user confirmation (JSON-only) */
-integer K_UI_CONFIRM          = 930;  /* plugin → hub: {"t":"uic","ctx":"...","tok":"abc","to":"<key>","prompt":"...","buttons":[[id,label],[...]],"ttl":20} */
+/* Multi-user confirmation (JSON-only) */
+integer K_UI_CONFIRM          = 930;  /* plugin → hub: {"t":"uic","ctx":"...","tok":"abc","to":"<key>","prompt":"...","mode":"modal|confirm" OR "buttons":[[id,label],...],"ttl":20} */
 integer K_UI_CONFIRM_RESULT   = 931;  /* hub → plugin: {"t":"uicr","ctx":"...","tok":"abc","from":"<key>","id":"idY","label":"Yes","why":"ok|timeout"} */
 integer K_UI_CANCEL           = 932;  /* plugin → hub: {"t":"uix","tok":"abc"} */
 
-/* ---------- UI ---------- */
-string ROOT_CONTEXT      = "core_root";
-integer MAX_FUNC_BTNS    = 9;     /* content capacity per plugin page (above bottom nav row) */
-float   TOUCH_RANGE_M    = 5.0;
+/* ---------- UI / Dialog ---------- */
+integer DIALOG_MAX_BTNS = 12; /* Second Life llDialog max buttons */
+string  ROOT_CONTEXT     = "core_root";
 
-string BTN_NAV_LEFT  = "<<";
-string BTN_NAV_GAP   = " ";
-string BTN_NAV_RIGHT = ">>";
-string BTN_BACK      = "Back";
+/* Reserved labels in our priority order */
+string BTN_NAV_LEFT  = "<<";   /* index 0 if present */
+string BTN_NAV_RIGHT = ">>";   /* index 1 if present */
+string BTN_BACK      = "Back"; /* index 2 on plugin pages */
 
 /* ---------- ACL constants (must match AUTH) ---------- */
 integer ACL_BLACKLIST     = -1;
@@ -65,6 +65,9 @@ integer ACL_PRIMARY_OWNER = 5;
 /* Wearer TPE bucket (dual-display) — usually 0 */
 integer gTpeMinAcl = 0;
 
+/* ---------- Optional per-button flags (bitmask) ---------- */
+integer BTN_FLAG_PRIMARY = 1; /* bit 0 = primary */
+
 /* ---------- State: registry / filtering ---------- */
 /* Flattened registry: [label,context,min_acl,has_tpe,label_tpe,tpe_min_acl,audience,...] */
 list    g_all = [];
@@ -74,17 +77,22 @@ list    g_view = [];
 list    g_pageMap = [];
 
 /* Current plugin subpage (schema) */
-string  g_curCtx     = "";
-/* For JSON buttons we store triples: [Label,Id,Slot, Label,Id,Slot, ...] */
-list    g_btnMap     = [];
-integer g_inPlugin   = FALSE;
-integer g_subPage    = 0;
+string  g_curCtx   = "";
+/* For JSON buttons we store QUADS: [Label,Id,Ord,Flags, Label,Id,Ord,Flags, ...] */
+list    g_btnMap   = [];
+integer g_inPlugin = FALSE;
+integer g_subPage  = 0;
+
+/* Root pagination */
+integer gPage = 0;
+/* Root page content capacity (labels only, excluding Prev/Next). Keep 9 to mimic classic pages.
+   With Prev+Next this yields up to 11 buttons, under 12 limit. */
+integer ROOT_CONTENT_CAP = 9;
 
 /* Session */
 key     gUser      = NULL_KEY;
 integer gListen    = 0;      /* root/plugin dialog channel */
 integer gChan      = 0;
-integer gPage      = 0;
 integer dialogOpen = FALSE;
 
 /* ACL + policy from ACLF */
@@ -118,7 +126,7 @@ integer withinRange(key av){
     vector pos = llList2Vector(d,0);
     if (pos == ZERO_VECTOR) return FALSE;
     float dist = llVecDist(llGetPos(), pos);
-    if (dist <= TOUCH_RANGE_M) return TRUE;
+    if (dist <= 5.0) return TRUE;
     return FALSE;
 }
 integer json_has(string j, list p){
@@ -273,30 +281,39 @@ list filterForViewer(){
     return out;
 }
 
-integer pageCount(){
+/* ---------- Root page (no padding; no Back) ---------- */
+integer rootPageCount(){
     integer total = llGetListLength(g_view) / 2;
     integer pages = 0;
-    if (total <= 0) {
-        pages = 1;
-    } else {
-        if ((total % MAX_FUNC_BTNS) == 0) pages = total / MAX_FUNC_BTNS;
-        else pages = (total / MAX_FUNC_BTNS) + 1;
+    if (total <= 0) pages = 1;
+    else{
+        if ((total % ROOT_CONTENT_CAP) == 0) pages = total / ROOT_CONTENT_CAP;
+        else pages = (total / ROOT_CONTENT_CAP) + 1;
         if (pages < 1) pages = 1;
     }
     return pages;
 }
-
-list buttonsForPage(integer page){
+list buttonsForRootPage(integer page){
     g_pageMap = [];
     list btns = [];
 
     integer totalPairs = llGetListLength(g_view) / 2;
-    integer pages = pageCount();
+    integer pages = rootPageCount();
+
     if (page < 0) page = 0;
     if (page >= pages) page = pages - 1;
+    gPage = page;
 
-    integer startPair = page * MAX_FUNC_BTNS;
-    integer endPair   = startPair + MAX_FUNC_BTNS - 1;
+    integer hasPrev = FALSE; if (page > 0) hasPrev = TRUE;
+    integer hasNext = FALSE; if (page < pages - 1) hasNext = TRUE;
+
+    if (hasPrev) btns += BTN_NAV_LEFT;   /* index 0 */
+    if (hasNext) btns += BTN_NAV_RIGHT;  /* index 1 */
+    /* no Back on root (index 2 reserved only on plugin pages) */
+
+    /* slice root content */
+    integer startPair = page * ROOT_CONTENT_CAP;
+    integer endPair   = startPair + ROOT_CONTENT_CAP - 1;
     if (endPair >= totalPairs) endPair = totalPairs - 1;
 
     integer idx = startPair * 2;
@@ -310,18 +327,7 @@ list buttonsForPage(integer page){
         idx = idx + 2;
     }
 
-    /* Put nav at the front so it lands on the bottom row (llDialog bottom→top) */
-    string L = BTN_NAV_GAP;
-    string R = BTN_NAV_GAP;
-    if (pages > 1){
-        if (page > 0) L = BTN_NAV_LEFT;
-        if (page < pages - 1) R = BTN_NAV_RIGHT;
-    }
-    btns = [L, BTN_NAV_GAP, R] + btns;
-
-    /* Pad to multiple of 3 */
-    while ((llGetListLength(btns) % 3) != 0) btns += " ";
-    return btns;
+    return btns; /* no padding */
 }
 
 /* ---------- Dialog helpers ---------- */
@@ -354,50 +360,50 @@ integer showRoot(key who, integer page){
         llRegionSayTo(who, 0, "No plugins available.");
         return 0;
     }
-    integer pages = pageCount();
+    integer pages = rootPageCount();
     if (page < 0) page = 0;
     if (page >= pages) page = pages - 1;
     gPage = page;
 
-    list b = buttonsForPage(gPage);
+    list b = buttonsForRootPage(gPage);
     string body = "Select a function (Page " + (string)(gPage + 1) + "/" + (string)pages + ")";
     openDialog(who, "• DS Collar •", body, b);
     return 0;
 }
-integer navigate(key who, integer newPage){
-    integer pages = pageCount();
+integer navigateRoot(key who, integer newPage){
+    integer pages = rootPageCount();
     if (pages <= 0) pages = 1;
     if (newPage < 0) newPage = pages - 1;
     if (newPage >= pages) newPage = 0;
     gPage = newPage;
 
-    list b = buttonsForPage(gPage);
+    list b = buttonsForRootPage(gPage);
     string body = "Select a function (Page " + (string)(gPage + 1) + "/" + (string)pages + ")";
     openDialog(who, "• DS Collar •", body, b);
     return 0;
 }
 
 /* ---------- JSON schema parsing (plugin page) ---------- */
-/* Build [Label,Id,Slot,...] from JSON "buttons" */
-list buildBtnTriplesFromJSON(string uisMsg, integer viewerAcl){
+/* Build QUADS [Label,Id,Ord,Flags,...] from JSON "buttons" (id,label,mask,ord?,flags?) */
+list buildBtnQuadsFromJSON(string uisMsg, integer viewerAcl){
     list out = [];
     integer i = 0;
     while (llJsonValueType(uisMsg, ["buttons", i]) != JSON_INVALID){
         string  id    = "";
         string  lab   = "";
         integer mask  = 0;
-        integer slot  = 0;
+        integer ord   = 9999; /* default at end */
+        integer flags = 0;
 
         if (llJsonValueType(uisMsg, ["buttons", i, 0]) != JSON_INVALID) id   = llJsonGetValue(uisMsg, ["buttons", i, 0]);
         if (llJsonValueType(uisMsg, ["buttons", i, 1]) != JSON_INVALID) lab  = llJsonGetValue(uisMsg, ["buttons", i, 1]);
         if (llJsonValueType(uisMsg, ["buttons", i, 2]) != JSON_INVALID) mask = (integer)llJsonGetValue(uisMsg, ["buttons", i, 2]);
-        if (llJsonValueType(uisMsg, ["buttons", i, 3]) != JSON_INVALID) slot = (integer)llJsonGetValue(uisMsg, ["buttons", i, 3]);
+        if (llJsonValueType(uisMsg, ["buttons", i, 3]) != JSON_INVALID) ord  = (integer)llJsonGetValue(uisMsg, ["buttons", i, 3]);
+        if (llJsonValueType(uisMsg, ["buttons", i, 4]) != JSON_INVALID) flags= (integer)llJsonGetValue(uisMsg, ["buttons", i, 4]);
 
         if (lab != "" && id != ""){
             if (acl_mask_allows(mask, viewerAcl)){
-                if (slot < 0) slot = 0;
-                if (slot > 8) slot = 8;
-                out += [lab, id, (string)slot];
+                out += [lab, id, (string)ord, (string)flags];
             }
         }
         i = i + 1;
@@ -405,22 +411,91 @@ list buildBtnTriplesFromJSON(string uisMsg, integer viewerAcl){
     return out;
 }
 
-/* Render plugin subpage as COMPACT (packed) with bottom nav row (<<,Back,>>) */
-list pluginButtonsForPage(integer page){
-    list labels = [];
-    integer i = 0;
-    integer n = llGetListLength(g_btnMap);
-    while (i + 2 < n){
-        labels += llList2String(g_btnMap, i);
-        i = i + 3;
+/* split quads into primary + others (sorted by ord asc, then label)
+   INPUT quads: [Label,Id,Ord,Flags, Label,Id,Ord,Flags, ...]
+   RETURNS: [ primaryLabel, primaryId, otherLabel, otherId, ... ]
+*/
+list splitPrimaryAndSort(list quads){
+    string primaryLabel = "";
+    string primaryId    = "";
+    integer primaryTaken = FALSE;
+
+    /* Build sortable strides as [sortKey, label, id, flags, ...]
+       sortKey = zero-padded ord + '|' + lowercase(label)
+    */
+    list tmp = [];
+    integer i = 0; integer n = llGetListLength(quads);
+    while (i + 3 < n){
+        string  lab  = llList2String(quads, i);
+        string  id   = llList2String(quads, i + 1);
+        integer ord  = (integer)llList2String(quads, i + 2);
+        integer flg  = (integer)llList2String(quads, i + 3);
+
+        if (ord < 0) ord = 0;
+        string ordStr = (string)ord;
+        while (llStringLength(ordStr) < 6) ordStr = "0" + ordStr;
+
+        string sortKey = ordStr + "|" + llToLower(lab);
+        tmp += [ sortKey, lab, id, (string)flg ];
+        i = i + 4;
     }
 
-    integer total = llGetListLength(labels);
-    integer pages = 0;
-    if (total <= 0) pages = 1;
-    else{
-        if ((total % MAX_FUNC_BTNS) == 0) pages = total / MAX_FUNC_BTNS;
-        else pages = (total / MAX_FUNC_BTNS) + 1;
+    /* Sort by sortKey (stride 4, ascending) */
+    tmp = llListSort(tmp, 4, TRUE);
+
+    /* Walk sorted list, pick first PRIMARY, append the rest */
+    list pairs = [];
+    i = 0; n = llGetListLength(tmp);
+    while (i + 3 < n){
+        integer flg = (integer)llList2String(tmp, i + 3);
+        string  lab = llList2String(tmp, i + 1);
+        string  id2 = llList2String(tmp, i + 2);
+
+        if (!primaryTaken && (flg & BTN_FLAG_PRIMARY)){
+            primaryLabel = lab;
+            primaryId    = id2;
+            primaryTaken = TRUE;
+        } else {
+            pairs += [lab, id2];
+        }
+        i = i + 4;
+    }
+
+    return [primaryLabel, primaryId] + pairs;
+}
+
+/* Build the plugin page with your index priorities, no padding */
+list pluginButtonsForPage(integer page){
+    /* split current quads */
+    list split = splitPrimaryAndSort(g_btnMap);
+
+    string primaryLabel = llList2String(split, 0);
+    string primaryId    = llList2String(split, 1);
+
+    /* Remaining actions (pairs) */
+    list others = llList2List(split, 2, -1); /* [lab,id,lab,id,...] */
+    integer totalOthers = llGetListLength(others) / 2;
+
+    integer hasPrimary = FALSE; if (primaryLabel != "") hasPrimary = TRUE;
+
+    /* Provisional: assume both Prev and Next exist for capacity */
+    integer hasPrev = FALSE; if (page > 0) hasPrev = TRUE;
+    integer assumeNext = TRUE;
+
+    /* reserved count: Prev? + Next(assumed) + Back(always) + Primary? */
+    integer reserved = 1; /* Back always present on plugin pages */
+    if (hasPrev) reserved = reserved + 1;
+    reserved = reserved + 1; /* assume Next */
+    if (hasPrimary) reserved = reserved + 1;
+
+    integer capacity = DIALOG_MAX_BTNS - reserved;
+    if (capacity < 0) capacity = 0;
+
+    /* Clamp page using provisional capacity */
+    integer pages = 1;
+    if (capacity > 0){
+        if ((totalOthers % capacity) == 0) pages = totalOthers / capacity;
+        else pages = (totalOthers / capacity) + 1;
         if (pages < 1) pages = 1;
     }
 
@@ -428,31 +503,57 @@ list pluginButtonsForPage(integer page){
     if (page >= pages) page = pages - 1;
     g_subPage = page;
 
-    integer start = page * MAX_FUNC_BTNS;
-    integer end   = start + MAX_FUNC_BTNS - 1;
-    if (end >= total) end = total - 1;
-
-    list pageLabels = [];
-    integer idx = start;
-    while (idx <= end){
-        pageLabels += llList2String(labels, idx);
-        idx = idx + 1;
+    /* Slice */
+    integer start = page * capacity;
+    integer taken = 0;
+    list pagePairs = [];
+    integer i = start * 2;
+    integer stop = i + (capacity * 2) - 1;
+    integer maxIdx = (totalOthers * 2) - 1;
+    if (stop > maxIdx) stop = maxIdx;
+    while (i <= stop && i >= 0){
+        pagePairs += [ llList2String(others, i), llList2String(others, i + 1) ];
+        taken = taken + 1;
+        i = i + 2;
     }
 
-    /* bottom row nav */
-    string L = " ";
-    string M = BTN_BACK;
-    string R = " ";
-    if (pages > 1){
-        if (page > 0) L = BTN_NAV_LEFT;
-        if (page < pages - 1) R = BTN_NAV_RIGHT;
+    /* Determine if Next is actually needed */
+    integer remaining = totalOthers - (start + taken);
+    integer hasNext = FALSE;
+    if (remaining > 0) hasNext = TRUE;
+
+    /* If Next not needed, we may have spare room: add more if capacity increased by 1 */
+    if (!hasNext){
+        integer reservedNoNext = 1; /* Back */
+        if (hasPrev) reservedNoNext = reservedNoNext + 1;
+        /* no Next */
+        if (hasPrimary) reservedNoNext = reservedNoNext + 1;
+        integer cap2 = DIALOG_MAX_BTNS - reservedNoNext;
+        if (cap2 < 0) cap2 = 0;
+        integer canAdd = cap2 - taken;
+        while (canAdd > 0 && (start + taken) < totalOthers){
+            integer k = (start + taken) * 2;
+            pagePairs += [ llList2String(others, k), llList2String(others, k + 1) ];
+            taken = taken + 1;
+            canAdd = canAdd - 1;
+        }
     }
 
-    list btns = [L, M, R] + pageLabels;
+    /* Compose final list: Prev, Next, Back, Primary, others... (no padding) */
+    list btns = [];
+    if (hasPrev) btns += BTN_NAV_LEFT;   /* index 0 if present */
+    if (hasNext) btns += BTN_NAV_RIGHT;  /* index 1 if present */
+    btns += BTN_BACK;                    /* index 2 always on plugin pages */
+    if (hasPrimary) btns += primaryLabel;/* index 3 if present */
 
-    /* pad to multiple of 3 */
-    while ((llGetListLength(btns) % 3) != 0) btns += " ";
-    return btns;
+    /* append remaining actions (labels only) */
+    i = 0; integer m = llGetListLength(pagePairs);
+    while (i + 1 < m){
+        btns += llList2String(pagePairs, i);
+        i = i + 2;
+    }
+
+    return btns; /* no padding; length ≤ 12 */
 }
 integer showPluginPage(key who){
     list b = pluginButtonsForPage(g_subPage);
@@ -480,7 +581,7 @@ integer sendPluginAction(string label, key opener){
     integer idx = llListFindList(g_btnMap, [label]);
     if (idx == -1) return FALSE;
 
-    /* idx is label; id is next cell in triples */
+    /* idx is label; id is next cell in QUADS */
     string id = llList2String(g_btnMap, idx + 1);
 
     string j = llList2Json(JSON_OBJECT,[]);
@@ -543,29 +644,16 @@ integer conf_add(string tok, key to, string ctx, string buttonsJSON, string prom
     }
     return 1;
 }
-list conf_labels_from_buttons(string buttonsJSON){
+integer conf_show(key to, string prompt, string buttonsJSON){
     list labels = [];
     integer i = 0;
-    while (llJsonValueType(buttonsJSON, [ (string)i ]) != JSON_INVALID){
+    while (llJsonValueType(buttonsJSON, [ i ]) != JSON_INVALID){
         string lab = "";
-        if (llJsonValueType(buttonsJSON, [ (string)i, (string)1 ]) != JSON_INVALID){
-            lab = llJsonGetValue(buttonsJSON, [ (string)i, (string)1 ]);
-        } else {
-            /* try numeric indexing */
-            if (llJsonValueType(buttonsJSON, [ i, 1 ]) != JSON_INVALID){
-                lab = llJsonGetValue(buttonsJSON, [ i, 1 ]);
-            }
-        }
+        if (llJsonValueType(buttonsJSON, [ i, 1 ]) != JSON_INVALID) lab = llJsonGetValue(buttonsJSON, [ i, 1 ]);
         if (lab != "") labels += lab;
         i = i + 1;
     }
-    /* pad to multiple of 3 */
-    while ((llGetListLength(labels) % 3) != 0) labels += " ";
-    return labels;
-}
-integer conf_show(key to, string prompt, string buttonsJSON){
-    list buttons = conf_labels_from_buttons(buttonsJSON);
-    llDialog(to, prompt, buttons, CH_CONFIRM);
+    llDialog(to, prompt, labels, CH_CONFIRM);
     return TRUE;
 }
 integer conf_sweep_timeouts(){
@@ -589,12 +677,9 @@ integer conf_sweep_timeouts(){
             llMessageLinked(LINK_SET, K_UI_CONFIRM_RESULT, r, plugin);
 
             g_conf_rows = llDeleteSubList(g_conf_rows, i, i);
-            /* also remove from index */
             key to = (key)llList2String(row,1);
             integer j = conf_find_by_av(to);
             if (j != -1) g_conf_by_av = llDeleteSubList(g_conf_by_av, j, j);
-
-            /* do not i++ here; list shrank */
         } else {
             i = i + 1;
         }
@@ -745,10 +830,10 @@ default{
                 return;
             }
 
-            /* Parse JSON buttons → triples [Label,Id,Slot,...] filtered by viewer ACL */
-            g_btnMap = buildBtnTriplesFromJSON(msg, gAcl);
+            /* Parse JSON buttons → QUADS [Label,Id,Ord,Flags,...] filtered by viewer ACL */
+            g_btnMap = buildBtnQuadsFromJSON(msg, gAcl);
 
-            /* Render subpage (compact packing with bottom nav row) */
+            /* Render subpage (no padding; Prev, Next, Back, Primary, others...) */
             showPluginPage(gUser);
             return;
         }
@@ -762,8 +847,21 @@ default{
             key to     = (key)llJsonGetValue(msg, ["to"]);
             string ctx = llJsonGetValue(msg, ["ctx"]);
             string pr  = llJsonGetValue(msg, ["prompt"]);
+
+            /* Allow shorthand via "mode": "modal" or "confirm" */
             string btn = "[]";
-            if (json_has(msg, ["buttons"])) btn = llJsonGetValue(msg, ["buttons"]);
+            if (json_has(msg, ["mode"])){
+                string mode = llJsonGetValue(msg, ["mode"]);
+                if (mode == "modal"){
+                    btn = llJsonSetValue(btn, ["0"], llList2Json(JSON_ARRAY, ["ok", "OK"]));
+                } else if (mode == "confirm"){
+                    btn = llJsonSetValue(btn, ["0"], llList2Json(JSON_ARRAY, ["ok",     "OK"]));
+                    btn = llJsonSetValue(btn, ["1"], llList2Json(JSON_ARRAY, ["cancel", "Cancel"]));
+                }
+            } else if (json_has(msg, ["buttons"])) {
+                btn = llJsonGetValue(msg, ["buttons"]);
+            }
+
             if (btn == "") btn = "[]";
 
             integer ttl= 20;
@@ -857,9 +955,8 @@ default{
 
         /* Root page navigation */
         if (!g_inPlugin){
-            if (b == BTN_NAV_LEFT){  navigate(id, gPage - 1); return; }
-            if (b == BTN_NAV_RIGHT){ navigate(id, gPage + 1); return; }
-            if (b == BTN_NAV_GAP){   showRoot(id, gPage);     return; }
+            if (b == BTN_NAV_LEFT){  navigateRoot(id, gPage - 1); return; }
+            if (b == BTN_NAV_RIGHT){ navigateRoot(id, gPage + 1); return; }
 
             integer idx = llListFindList(g_pageMap, [b]);
             if (idx != -1){
@@ -877,10 +974,9 @@ default{
             /* Back to root */
             if (b == BTN_BACK){ showRoot(id, gPage); return; }
 
-            /* Subpage arrows at bottom row */
+            /* Prev / Next paging for plugin */
             if (b == BTN_NAV_LEFT){  g_subPage = g_subPage - 1; showPluginPage(id); return; }
             if (b == BTN_NAV_RIGHT){ g_subPage = g_subPage + 1; showPluginPage(id); return; }
-            if (b == BTN_NAV_GAP){   showPluginPage(id);        return; }
 
             /* Dispatch action (if label allowed) */
             integer ok = sendPluginAction(b, id);
