@@ -4,6 +4,7 @@
    - Sends compact render requests to the View
    - Receives clicks from the View and routes actions
    - No confirmation manager here (moved to View)
+   - May not use ternary syntax (unsupported in LSL)
    ============================================================= */
 
 integer DEBUG = FALSE;
