@@ -1,8 +1,8 @@
 /* =============================================================
    MODULE: ds_collar_kmod_bootstrap.lsl  (HEADLESS, API-BASED)
    ROLE  : Bootstrapper w/ RLV probe + owner IM summary
-           • On boot: publish runtime info, subscribe to owner/trustees
-           • Every 30s: update core.runtime.heartbeat
+           • On boot: publish runtime info (NO periodic settings writes)
+           • Subscribe to owner/trustees changes
            • Resolve owner display name (DisplayName → legacy fallback)
            • IM on boot (and one-time follow-up once owner name resolves)
            • RLV probe (@versionnew) on channels 4711 and ±1812221819
@@ -13,7 +13,7 @@
      • All inter-script messages go via API (L_API)
    ============================================================= */
 
-integer DEBUG = FALSE;
+integer DEBUG = TRUE;
 integer logd(string s){ if (DEBUG) llOwnerSay("[BOOT] " + s); return 0; }
 
 /* ---------- ABI ---------- */
@@ -32,7 +32,6 @@ string TYPE_SETTINGS_SYNC       = "settings_sync";
 string TYPE_DISPLAY_NAME_UPDATE = "display_name_update";
 
 /* ---------- Runtime ---------- */
-float   HEARTBEAT_SEC  = 30.0;
 string  RuntimeVersion = "1.0.0";
 
 /* ---------- Settings paths ---------- */
@@ -41,7 +40,6 @@ string PATH_OWNER_HON = "core.owner.hon";
 
 /* ---------- State ---------- */
 string  BootId;
-integer LastHeartbeatTs;
 
 /* Owner state + name resolution */
 key    OwnerKey;
@@ -102,11 +100,11 @@ string json_array_push(string arr, string obj){
 }
 
 /* ---------- API helpers ---------- */
-integer api_to_settings(string type, list kv){
+integer api_send(string toMod, string type, list kv){
     string j = llList2Json(JSON_OBJECT, []);
     j = llJsonSetValue(j, ["type"], type);
     j = llJsonSetValue(j, ["from"], "bootstrap");
-    j = llJsonSetValue(j, ["to"], "settings");
+    j = llJsonSetValue(j, ["to"], toMod);
     j = llJsonSetValue(j, ["req_id"], (string)now());
 
     integer i = 0;
@@ -120,9 +118,8 @@ integer api_to_settings(string type, list kv){
     llMessageLinked(LINK_SET, L_API, j, NULL_KEY);
     return TRUE;
 }
-
 integer settings_put(string path, string vtype, string valueJson){
-    return api_to_settings(TYPE_SETTINGS_PUT, ["path", path, "vtype", vtype, "value", valueJson]);
+    return api_send("settings", "settings_put", ["path", path, "vtype", vtype, "value", valueJson]);
 }
 integer settings_batch(list ops){
     string arr = llList2Json(JSON_ARRAY, []);
@@ -137,17 +134,10 @@ integer settings_batch(list ops){
         arr = json_array_push(arr, one);
         i += 4;
     }
-    string j = llList2Json(JSON_OBJECT, []);
-    j = llJsonSetValue(j, ["type"], TYPE_SETTINGS_BATCH);
-    j = llJsonSetValue(j, ["from"], "bootstrap");
-    j = llJsonSetValue(j, ["to"], "settings");
-    j = llJsonSetValue(j, ["req_id"], (string)now());
-    j = llJsonSetValue(j, ["ops"], arr);
-    llMessageLinked(LINK_SET, L_API, j, NULL_KEY);
-    return TRUE;
+    return api_send("settings", "settings_batch", ["ops", arr]);
 }
 integer settings_sub_prefix(string prefix){
-    return api_to_settings(TYPE_SETTINGS_SUB, ["prefix", prefix]);
+    return api_send("settings", "settings_sub", ["prefix", prefix]);
 }
 
 /* ---------- Display name handling ---------- */
@@ -177,21 +167,16 @@ integer store_display_name(string uuid, string name){
     return TRUE;
 }
 
-/* ---------- Boot publishing ---------- */
+/* ---------- Boot publishing (one-shot; NO periodic writes) ---------- */
 integer publish_boot_runtime(){
     key wearer = llGetOwner();
     list ops = [
-        "put", "core.runtime.boot_id",      "string", "\"" + BootId + "\"",
-        "put", "core.runtime.version",      "string", "\"" + RuntimeVersion + "\"",
-        "put", "core.wearer.key",           "uuid",   "\"" + llToLower((string)wearer) + "\"",
-        "put", "core.runtime.heartbeat",    "int",    (string)now(),
-        "put", "core.bootstrap.im_on_boot", "int",    "1"
+        "put", "core.runtime.boot_id", "string", "\"" + BootId + "\"",
+        "put", "core.runtime.version", "string", "\"" + RuntimeVersion + "\"",
+        "put", "core.wearer.key",      "uuid",   "\"" + llToLower((string)wearer) + "\""
+        /* intentionally NO heartbeat key here */
     ];
     settings_batch(ops);
-    return TRUE;
-}
-integer publish_heartbeat(){
-    settings_put("core.runtime.heartbeat", "int", (string)now());
     return TRUE;
 }
 
@@ -212,7 +197,6 @@ string owner_label(){
         if (OwnerLegacy != "") nm = OwnerLegacy;
         else nm = "(fetching…)";
     }
-
     string hon = OwnerHon;
     string out = "";
     if (hon != "") out = hon + " " + nm;
@@ -382,7 +366,6 @@ default{
     state_entry(){
         PendingNames = [];
         BootId = mk_boot_id();
-        LastHeartbeatTs = 0;
 
         publish_boot_runtime();
 
@@ -395,8 +378,8 @@ default{
         OwnershipLineSent = TRUE;
 
         rlv_start();
-        llSetTimerEvent(1.0);
-        logd("Bootstrap online; heartbeat every " + (string)HEARTBEAT_SEC + "s");
+        llSetTimerEvent(1.0); /* timer ONLY for RLV probe settle/retry logic */
+        logd("Bootstrap online (no periodic settings writes).");
     }
 
     on_rez(integer sp){ llResetScript(); }
@@ -472,11 +455,8 @@ default{
     }
 
     timer(){
+        /* No heartbeat writes here. Timer only drives RLV probing/settle. */
         integer tnow = now();
-        if ((tnow - LastHeartbeatTs) >= (integer)HEARTBEAT_SEC){
-            publish_heartbeat();
-            LastHeartbeatTs = tnow;
-        }
 
         if (RLV_PROBING){
             if (RLV_READY){
