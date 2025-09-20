@@ -1,10 +1,14 @@
 /* =============================================================
    MODULE: ds_collar_kmod_settings.lsl
    ROLE  : Generalized settings persister with subscriptions
+           • Accepts calls via L_API ("to":"settings") or L_SETTINGS_IN
+           • No-op guard (ACK only if unchanged)
+           • Coalesced settings_sync to subscribers + broadcast
+           • "Volatile" keys (e.g., core.runtime.heartbeat) → ACK only
    NOTE  : No soft-reset handler (per project decision)
    ============================================================= */
 
-integer DEBUG = FALSE;
+integer DEBUG = TRUE;
 integer logd(string s){ if (DEBUG) llOwnerSay("[SETTINGS] " + s); return 0; }
 
 /* === DS Collar ABI & Lanes (CANONICAL) === */
@@ -53,10 +57,13 @@ integer SUBS_STRIDE  = 2; /* [moduleId,prefix]* */
 
 /* Limits */
 integer MAX_KEYS=128;
-integer MAX_BATCH_OPS=6; 
-integer MAX_SUBS_TOTAL=24; 
-integer MAX_SUBS_PER_CALLER=4; 
+integer MAX_BATCH_OPS=6;
+integer MAX_SUBS_TOTAL=24;
+integer MAX_SUBS_PER_CALLER=4;
 integer MAX_VALUE_CHARS=400;
+
+/* Volatile keys (ACK only; do NOT emit settings_sync) */
+list VolatilePaths = ["core.runtime.heartbeat"];
 
 /* Helpers */
 integer now(){ return llGetUnixTime(); }
@@ -65,8 +72,7 @@ string  json_gets(string j, list p, string d){ string v=llJsonGetValue(j,p); if 
 integer json_geti(string j, list p, integer d){ string v=llJsonGetValue(j,p); if (v==JSON_INVALID||v=="") return d; return (integer)v; }
 string  lc(string s){ return llToLower(s); }
 
-/* Path helpers */
-integer starts_with(string s,string pre){ integer n=llStringLength(pre); if (llGetSubString(s,0,n-1)==pre) return TRUE; return FALSE; }
+integer starts_with(string s,string pre){ integer n=llStringLength(pre); if (n==0) return TRUE; if (llGetSubString(s,0,n-1)==pre) return TRUE; return FALSE; }
 integer is_core_path(string path){ if (llSubStringIndex(path,"core.")==0) return TRUE; return FALSE; }
 integer is_mod_path(string path){
     if (llSubStringIndex(path,"mod.")!=0) return FALSE;
@@ -85,27 +91,48 @@ integer is_plugin_path(string path){
     return TRUE;
 }
 
+/* Volatile check */
+integer is_volatile_path(string path){
+    integer i=0; integer n=llGetListLength(VolatilePaths);
+    while(i<n){
+        if (llList2String(VolatilePaths,i) == path) return TRUE;
+        i+=1;
+    }
+    return FALSE;
+}
+
 /* Store ops */
 integer store_index(string path){
     integer i=0; integer n=llGetListLength(Store);
-    while (i<n){ if (llList2String(Store,i)==path) return i; i+=STORE_STRIDE; }
+    while (i<n){
+        if (llList2String(Store,i)==path) return i;
+        i+=STORE_STRIDE;
+    }
     return -1;
 }
-list store_get_tuple(string path){ integer i=store_index(path); if (i==-1) return []; return llList2List(Store,i,i+4); }
+list store_get_tuple(string path){
+    integer i=store_index(path);
+    if (i==-1) return [];
+    return llList2List(Store,i,i+4);
+}
 integer store_put(string path,string vtype,string json_value){
     integer i=store_index(path); integer t=now();
     if (i==-1){
         integer keys = llGetListLength(Store)/STORE_STRIDE;
         if (keys>=MAX_KEYS) return -1;
-        Store += [path,vtype,json_value,1,t]; return 1;
+        Store += [path,vtype,json_value,1,t];
+        return 1;
     }else{
         string old_json=llList2String(Store,i+2);
         string old_type=llList2String(Store,i+1);
         integer rev=llList2Integer(Store,i+3);
         if (old_json!=json_value || old_type!=vtype){
-            Store=llListReplaceList(Store,[path,vtype,json_value,rev+1,t],i,i+4); return 1;
+            Store=llListReplaceList(Store,[path,vtype,json_value,rev+1,t],i,i+4);
+            return 1;
         }
-        Store=llListReplaceList(Store,[path,old_type,old_json,rev,t],i,i+4); return 0;
+        /* No change; still refresh ts */
+        Store=llListReplaceList(Store,[path,old_type,old_json,rev,t],i,i+4);
+        return 0;
     }
 }
 integer store_del(string path){
@@ -117,22 +144,38 @@ integer store_del(string path){
 list validate_value(string vtype,string rawJson){
     if (llStringLength(rawJson)>MAX_VALUE_CHARS) return [FALSE,"","value too large"];
     if (vtype==VTYPE_NULL)   return [TRUE,JSON_NULL,""];
-    if (vtype==VTYPE_INT)    return [TRUE,(string)((integer)rawJson),""];
-    if (vtype==VTYPE_STRING){ string j = llList2Json(JSON_OBJECT,[]); j=llJsonSetValue(j,["v"], rawJson); return [TRUE,llJsonGetValue(j,["v"]), ""]; }
+    if (vtype==VTYPE_INT)    return [TRUE,(string)((integer)rawJson),""]; /* store as numeric string */
+    if (vtype==VTYPE_STRING){
+        string j = llList2Json(JSON_OBJECT,[]);
+        j=llJsonSetValue(j,["v"], rawJson);
+        return [TRUE,llJsonGetValue(j,["v"]), ""];
+    }
     if (vtype==VTYPE_UUID){
         string s=rawJson;
         if (llGetSubString(s,0,0)=="\"" && llGetSubString(s,-1,-1)=="\"") s=llGetSubString(s,1,llStringLength(s)-2);
         s=lc(s);
         if (!(llStringLength(s)==36 && llSubStringIndex(s,"-")!=-1)) return [FALSE,"","invalid uuid"];
-        string j2 = llList2Json(JSON_OBJECT,[]); j2=llJsonSetValue(j2,["v"], s); return [TRUE,llJsonGetValue(j2,["v"]),""]; 
+        string j2 = llList2Json(JSON_OBJECT,[]);
+        j2=llJsonSetValue(j2,["v"], s);
+        return [TRUE,llJsonGetValue(j2,["v"]),""]; 
     }
-    if (vtype==VTYPE_LIST_STR){ if (llGetSubString(rawJson,0,0)!="[") return [FALSE,"","list_string must be JSON array"]; return [TRUE,rawJson,""]; }
-    if (vtype==VTYPE_MAP){ if (llGetSubString(rawJson,0,0)!="{") return [FALSE,"","map must be JSON object"]; return [TRUE,rawJson,""]; }
+    if (vtype==VTYPE_LIST_STR){
+        if (llGetSubString(rawJson,0,0)!="[") return [FALSE,"","list_string must be JSON array"];
+        return [TRUE,rawJson,""];
+    }
+    if (vtype==VTYPE_MAP){
+        if (llGetSubString(rawJson,0,0)!="{") return [FALSE,"","map must be JSON object"];
+        return [TRUE,rawJson,""];
+    }
     return [FALSE,"","unknown vtype"];
 }
 
 /* Access control */
-integer list_has(list L,string needle){ integer i=0; integer n=llGetListLength(L); while(i<n){ if (llList2String(L,i)==needle) return TRUE; i+=1; } return FALSE; }
+integer list_has(list L,string needle){
+    integer i=0; integer n=llGetListLength(L);
+    while(i<n){ if (llList2String(L,i)==needle) return TRUE; i+=1; }
+    return FALSE;
+}
 integer can_write_path(string fromMod,string path){
     if (is_core_path(path)) return list_has(CoreWriters, fromMod);
     if (is_mod_path(path)){
@@ -140,7 +183,8 @@ integer can_write_path(string fromMod,string path){
         string rest = llGetSubString(path, dot+1, -1);
         integer next = llSubStringIndex(rest,".");
         string owner = llGetSubString(rest, 0, next-1);
-        if (fromMod == owner) return TRUE; return FALSE;
+        if (fromMod == owner) return TRUE;
+        return FALSE;
     }
     if (is_plugin_path(path)){
         integer dot = llSubStringIndex(path,".");
@@ -161,7 +205,7 @@ integer can_subscribe_prefix(string fromMod,string prefix){
 /* Outbound */
 integer send_ack(string toMod,string reqId,string keyOrPath,integer ok,integer didChange,integer rev){
     string j=llList2Json(JSON_OBJECT,[]);
-    j=llJsonSetValue(j,["type"],"settings_ack");
+    j=llJsonSetValue(j,["type"],TYPE_SETTINGS_ACK);
     j=llJsonSetValue(j,["from"],"settings");
     j=llJsonSetValue(j,["to"],toMod);
     j=llJsonSetValue(j,["req_id"],reqId);
@@ -170,18 +214,20 @@ integer send_ack(string toMod,string reqId,string keyOrPath,integer ok,integer d
     j=llJsonSetValue(j,["changed"],(string)didChange);
     if (keyOrPath!="") j=llJsonSetValue(j,["key"],keyOrPath);
     if (rev>0) j=llJsonSetValue(j,["rev"],(string)rev);
-    llMessageLinked(LINK_SET,L_API,j,NULL_KEY); return TRUE;
+    llMessageLinked(LINK_SET,L_API,j,NULL_KEY);
+    return TRUE;
 }
 integer send_error(string toMod,string reqId,string code,string message){
     string j=llList2Json(JSON_OBJECT,[]);
-    j=llJsonSetValue(j,["type"],"error");
+    j=llJsonSetValue(j,["type"],TYPE_ERROR);
     j=llJsonSetValue(j,["from"],"settings");
     j=llJsonSetValue(j,["to"],toMod);
     j=llJsonSetValue(j,["req_id"],reqId);
     j=llJsonSetValue(j,["abi"],(string)ABI_VERSION);
     j=llJsonSetValue(j,["code"],code);
     j=llJsonSetValue(j,["message"],message);
-    llMessageLinked(LINK_SET,L_API,j,NULL_KEY); return TRUE;
+    llMessageLinked(LINK_SET,L_API,j,NULL_KEY);
+    return TRUE;
 }
 integer send_snapshot(string toMod,string reqId,list paths){
     string obj=llList2Json(JSON_OBJECT,[]);
@@ -203,22 +249,24 @@ integer send_snapshot(string toMod,string reqId,list paths){
         i+=1;
     }
     string j=llList2Json(JSON_OBJECT,[]);
-    j=llJsonSetValue(j,["type"],"settings_snapshot");
+    j=llJsonSetValue(j,["type"],TYPE_SETTINGS_SNAPSHOT);
     j=llJsonSetValue(j,["from"],"settings");
     j=llJsonSetValue(j,["to"],toMod);
     j=llJsonSetValue(j,["req_id"],reqId);
     j=llJsonSetValue(j,["abi"],(string)ABI_VERSION);
     j=llJsonSetValue(j,["values"],obj);
-    llMessageLinked(LINK_SET,L_API,j,NULL_KEY); return TRUE;
+    llMessageLinked(LINK_SET,L_API,j,NULL_KEY);
+    return TRUE;
 }
 integer send_sync_to(string toMod,string changedObj){
     string j=llList2Json(JSON_OBJECT,[]);
-    j=llJsonSetValue(j,["type"],"settings_sync");
+    j=llJsonSetValue(j,["type"],TYPE_SETTINGS_SYNC);
     j=llJsonSetValue(j,["from"],"settings");
     j=llJsonSetValue(j,["to"],toMod);
     j=llJsonSetValue(j,["abi"],(string)ABI_VERSION);
     j=llJsonSetValue(j,["changed"],changedObj);
-    llMessageLinked(LINK_SET,L_API,j,NULL_KEY); return TRUE;
+    llMessageLinked(LINK_SET,L_API,j,NULL_KEY);
+    return TRUE;
 }
 
 /* Subs */
@@ -238,6 +286,7 @@ integer deliver_sync_coalesced(list changedPaths){
         else changedObj=llJsonSetValue(changedObj,[p], JSON_NULL);
         i+=1;
     }
+    /* Per-subscriber filtering */
     integer si=0; integer sn=llGetListLength(Subs);
     while (si<sn){
         string mod=llList2String(Subs,si);
@@ -257,8 +306,9 @@ integer deliver_sync_coalesced(list changedPaths){
         if (any) send_sync_to(mod, subObj);
         si+=SUBS_STRIDE;
     }
+    /* Broadcast to 'any' */
     string j=llList2Json(JSON_OBJECT,[]);
-    j=llJsonSetValue(j,["type"],"settings_sync");
+    j=llJsonSetValue(j,["type"],TYPE_SETTINGS_SYNC);
     j=llJsonSetValue(j,["from"],"settings");
     j=llJsonSetValue(j,["to"],"any");
     j=llJsonSetValue(j,["abi"],(string)ABI_VERSION);
@@ -276,10 +326,14 @@ integer seed_defaults(){
         "core.restricted.mode",      VTYPE_INT,  "0",
         "core.locked",               VTYPE_INT,  "0",
         "core.rlv.enabled",          VTYPE_INT,  "0",
-        "core.rlv.accepttp.enabled", VTYPE_INT,  "1"
+        "core.rlv.accepttp.enabled", VTYPE_INT,  "1",
+        "core.runtime.heartbeat",    VTYPE_INT,  (string)now()
     ];
     integer i=0; integer n=llGetListLength(defaults);
-    while (i<n){ store_put(llList2String(defaults,i), llList2String(defaults,i+1), llList2String(defaults,i+2)); i+=3; }
+    while (i<n){
+        store_put(llList2String(defaults,i), llList2String(defaults,i+1), llList2String(defaults,i+2));
+        i+=3;
+    }
     return TRUE;
 }
 
@@ -291,17 +345,30 @@ integer handle_put(string fromMod,string reqId,string pathIn,string vtype,string
 
     list vv=validate_value(vtype,rawValue);
     if (!llList2Integer(vv,0)){ send_error(fromMod,reqId,"E_TYPE", llList2String(vv,2)); return FALSE; }
+
     if (ifRevPresent){
         integer idx0=store_index(path);
         if (idx0==-1){ send_error(fromMod,reqId,"E_CONFLICT","rev mismatch (missing key)"); return FALSE; }
         integer curRev0=llList2Integer(Store,idx0+3);
         if (curRev0!=ifRev){ send_error(fromMod,reqId,"E_CONFLICT","rev mismatch"); return FALSE; }
     }
-    integer rc=store_put(path,vtype,llList2String(vv,1)); if (rc==-1){ send_error(fromMod,reqId,"E_LIMIT","store full"); return FALSE; }
+
+    integer rc=store_put(path,vtype,llList2String(vv,1));
+    if (rc==-1){ send_error(fromMod,reqId,"E_LIMIT","store full"); return FALSE; }
     integer idx=store_index(path); integer rev=0; if (idx!=-1) rev=llList2Integer(Store,idx+3);
+
+    /* ACK always */
     integer changed_val = (rc==1);
     send_ack(fromMod,reqId,path,TRUE,changed_val,rev);
-    if (changed_val) deliver_sync_coalesced([path]);
+
+    /* If changed and NOT volatile → deliver sync; else suppress */
+    if (changed_val){
+        if (!is_volatile_path(path)){
+            deliver_sync_coalesced([path]);
+        } else {
+            if (DEBUG) llOwnerSay("[SETTINGS] volatile change (no sync): " + path);
+        }
+    }
     return TRUE;
 }
 integer handle_del(string fromMod,string reqId,string pathIn,integer ifRevPresent,integer ifRev){
@@ -316,7 +383,9 @@ integer handle_del(string fromMod,string reqId,string pathIn,integer ifRevPresen
     }
     integer didChange=store_del(path);
     send_ack(fromMod,reqId,path,TRUE,didChange,0);
-    if (didChange) deliver_sync_coalesced([path]);
+    if (didChange){
+        if (!is_volatile_path(path)) deliver_sync_coalesced([path]);
+    }
     return TRUE;
 }
 list gather_paths_from_prefix(string prefix){
@@ -329,94 +398,184 @@ list gather_paths_from_prefix(string prefix){
 default{
     state_entry(){
         Store=[]; Subs=[]; seed_defaults();
-        /* Register minimal presence for kernel if needed */
+        /* Register minimal presence (optional) */
         string j=llList2Json(JSON_OBJECT,[]);
-        j=llJsonSetValue(j,["type"],"register");
+        j=llJsonSetValue(j,["type"],TYPE_REGISTER);
         j=llJsonSetValue(j,["from"],"settings");
         j=llJsonSetValue(j,["abi"],(string)ABI_VERSION);
         j=llJsonSetValue(j,["module_ver"],"1.0.0");
-        llMessageLinked(LINK_SET, -1100, j, NULL_KEY); /* optional */
+        llMessageLinked(LINK_SET, -1100, j, NULL_KEY);
         logd("Settings ready.");
     }
     on_rez(integer sp){ llResetScript(); }
     changed(integer c){ if (c & CHANGED_OWNER) llResetScript(); }
 
     link_message(integer s, integer num, string msg, key id){
-        if (num != L_SETTINGS_IN) return;
-        string t = llJsonGetValue(msg, ["type"]);
-        string fromMod = llJsonGetValue(msg, ["from"]);
-        string reqId = llJsonGetValue(msg, ["req_id"]);
+        /* Accept via API (preferred) */
+        if (num == L_API){
+            string toMod = llJsonGetValue(msg, ["to"]);
+            if (toMod != "settings") return;
 
-        if (t == "settings_put"){
-            string path = llJsonGetValue(msg, ["path"]);
-            string vtype= llJsonGetValue(msg, ["vtype"]);
-            string raw  = llJsonGetValue(msg, ["value"]);
-            integer ifp = FALSE; integer ifrev=0;
-            string ir = llJsonGetValue(msg, ["if_rev"]); if (ir != JSON_INVALID && ir != ""){ ifp=TRUE; ifrev=(integer)ir; }
-            handle_put(fromMod,reqId,path,vtype,raw,ifp,ifrev); return;
-        }
-        if (t == "settings_get"){
-            list outPaths=[]; integer hasPrefix=FALSE;
-            string prefix = llJsonGetValue(msg, ["prefix"]);
-            if (prefix != JSON_INVALID && prefix != ""){ hasPrefix=TRUE; if (llGetSubString(prefix,-1,-1)!=".") prefix+="."; }
-            string arr = llJsonGetValue(msg, ["paths"]);
-            if (arr != JSON_INVALID){
-                integer i=0; integer done=FALSE;
-                while(!done){
-                    string p=llJsonGetValue(arr,[(string)i]);
-                    if (p==JSON_INVALID) done=TRUE; else { outPaths+=lc(p); i+=1; }
-                }
-            } else if (hasPrefix){
-                outPaths=gather_paths_from_prefix(lc(prefix));
-            } else {
-                integer i2=0; integer n2=llGetListLength(Store);
-                while(i2<n2){ outPaths+=llList2String(Store,i2); i2+=STORE_STRIDE; }
+            string t = llJsonGetValue(msg, ["type"]);
+            string fromMod = llJsonGetValue(msg, ["from"]);
+            string reqId = llJsonGetValue(msg, ["req_id"]);
+
+            if (t == TYPE_SETTINGS_PUT){
+                string path = llJsonGetValue(msg, ["path"]);
+                string vtype= llJsonGetValue(msg, ["vtype"]);
+                string raw  = llJsonGetValue(msg, ["value"]);
+                integer ifp = FALSE; integer ifrev=0;
+                string ir = llJsonGetValue(msg, ["if_rev"]);
+                if (ir != JSON_INVALID && ir != ""){ ifp=TRUE; ifrev=(integer)ir; }
+                handle_put(fromMod,reqId,path,vtype,raw,ifp,ifrev); return;
             }
-            send_snapshot(fromMod,reqId,outPaths); return;
-        }
-        if (t == "settings_del"){
-            string path=llJsonGetValue(msg,["path"]);
-            integer ifp=FALSE; integer ifrev=0;
-            string ir2=llJsonGetValue(msg,["if_rev"]); if (ir2!=JSON_INVALID && ir2!=""){ ifp=TRUE; ifrev=(integer)ir2; }
-            handle_del(fromMod,reqId,path,ifp,ifrev); return;
-        }
-        if (t == "settings_batch"){
-            integer i3=0; integer count=0; integer done2=FALSE;
-            while(!done2){
-                string op = llJsonGetValue(msg, ["ops",(string)i3,"op"]);
-                if (op == JSON_INVALID){ done2=TRUE; }
-                else {
-                    count+=1; if (count>MAX_BATCH_OPS){ send_error(fromMod,reqId,"E_LIMIT","too many ops"); return; }
-                    string path = llJsonGetValue(msg, ["ops",(string)i3,"path"]);
-                    string vtype= llJsonGetValue(msg, ["ops",(string)i3,"vtype"]);
-                    string raw  = llJsonGetValue(msg, ["ops",(string)i3,"value"]);
-                    integer ifp=FALSE; integer ifrev=0;
-                    string ir3=llJsonGetValue(msg,["ops",(string)i3,"if_rev"]); if (ir3!=JSON_INVALID && ir3!=""){ ifp=TRUE; ifrev=(integer)ir3; }
-                    if (op == "put") handle_put(fromMod,reqId,path,vtype,raw,ifp,ifrev);
-                    else if (op == "del") handle_del(fromMod,reqId,path,ifp,ifrev);
-                    else { send_error(fromMod,reqId,"E_BADREQ","unknown op"); return; }
-                    i3+=1;
+            if (t == TYPE_SETTINGS_GET){
+                list outPaths=[]; integer hasPrefix=FALSE;
+                string prefix = llJsonGetValue(msg, ["prefix"]);
+                if (prefix != JSON_INVALID && prefix != ""){
+                    hasPrefix=TRUE;
+                    if (llGetSubString(prefix,-1,-1)!=".") prefix+=".";
                 }
+                string arr = llJsonGetValue(msg, ["paths"]);
+                if (arr != JSON_INVALID){
+                    integer i=0; integer done=FALSE;
+                    while(!done){
+                        string p=llJsonGetValue(arr,[(string)i]);
+                        if (p==JSON_INVALID) done=TRUE; else { outPaths+=lc(p); i+=1; }
+                    }
+                } else if (hasPrefix){
+                    outPaths=gather_paths_from_prefix(lc(prefix));
+                } else {
+                    integer i2=0; integer n2=llGetListLength(Store);
+                    while(i2<n2){ outPaths+=llList2String(Store,i2); i2+=STORE_STRIDE; }
+                }
+                send_snapshot(fromMod,reqId,outPaths); return;
             }
-            send_ack(fromMod,reqId,"batch",TRUE,1,0); return;
+            if (t == TYPE_SETTINGS_DEL){
+                string path=llJsonGetValue(msg,["path"]);
+                integer ifp=FALSE; integer ifrev=0;
+                string ir2=llJsonGetValue(msg,["if_rev"]); if (ir2!=JSON_INVALID && ir2!=""){ ifp=TRUE; ifrev=(integer)ir2; }
+                handle_del(fromMod,reqId,path,ifp,ifrev); return;
+            }
+            if (t == TYPE_SETTINGS_BATCH){
+                integer i3=0; integer count=0; integer done2=FALSE;
+                while(!done2){
+                    string op = llJsonGetValue(msg, ["ops",(string)i3,"op"]);
+                    if (op == JSON_INVALID){ done2=TRUE; }
+                    else {
+                        count+=1; if (count>MAX_BATCH_OPS){ send_error(fromMod,reqId,"E_LIMIT","too many ops"); return; }
+                        string path = llJsonGetValue(msg, ["ops",(string)i3,"path"]);
+                        string vtype= llJsonGetValue(msg, ["ops",(string)i3,"vtype"]);
+                        string raw  = llJsonGetValue(msg, ["ops",(string)i3,"value"]);
+                        integer ifp=FALSE; integer ifrev=0;
+                        string ir3=llJsonGetValue(msg,["ops",(string)i3,"if_rev"]); if (ir3!=JSON_INVALID && ir3!=""){ ifp=TRUE; ifrev=(integer)ir3; }
+                        if (op == "put") handle_put(fromMod,reqId,path,vtype,raw,ifp,ifrev);
+                        else if (op == "del") handle_del(fromMod,reqId,path,ifp,ifrev);
+                        else { send_error(fromMod,reqId,"E_BADREQ","unknown op"); return; }
+                        i3+=1;
+                    }
+                }
+                send_ack(fromMod,reqId,"batch",TRUE,1,0); return;
+            }
+            if (t == TYPE_SETTINGS_SUB){
+                string prefix = llJsonGetValue(msg, ["prefix"]);
+                if (prefix == JSON_INVALID || prefix == ""){ send_error(fromMod,reqId,"E_BADREQ","missing prefix"); return; }
+                if (llGetSubString(prefix,-1,-1)!=".") prefix+=".";
+                if (!can_subscribe_prefix(fromMod, prefix)){ send_error(fromMod,reqId,"E_DENIED","subscription not permitted"); return; }
+                if (subs_has(fromMod,prefix)){ send_ack(fromMod,reqId,"sub",TRUE,0,0); return; }
+                if (subs_count_for(fromMod)>=MAX_SUBS_PER_CALLER){ send_error(fromMod,reqId,"E_LIMIT","per-caller subscription cap"); return; }
+                if ((llGetListLength(Subs)/SUBS_STRIDE)>=MAX_SUBS_TOTAL){ send_error(fromMod,reqId,"E_LIMIT","global subscription cap"); return; }
+                subs_add(fromMod,prefix); send_ack(fromMod,reqId,"sub",TRUE,1,0); logd("Sub "+fromMod+" ← "+prefix); return;
+            }
+            if (t == TYPE_SETTINGS_UNSUB){
+                string prefix = llJsonGetValue(msg, ["prefix"]);
+                if (prefix == JSON_INVALID || prefix == ""){ send_error(fromMod,reqId,"E_BADREQ","missing prefix"); return; }
+                if (llGetSubString(prefix,-1,-1)!=".") prefix+=".";
+                integer had=subs_has(fromMod,prefix);
+                if (had) subs_remove(fromMod,prefix);
+                send_ack(fromMod,reqId,"unsub",TRUE,had,0); logd("Unsub "+fromMod+" ← "+prefix); return;
+            }
+            return;
         }
-        if (t == "settings_sub"){
-            string prefix = llJsonGetValue(msg, ["prefix"]);
-            if (prefix == JSON_INVALID || prefix == ""){ send_error(fromMod,reqId,"E_BADREQ","missing prefix"); return; }
-            if (llGetSubString(prefix,-1,-1)!=".") prefix+=".";
-            if (!can_subscribe_prefix(fromMod, prefix)){ send_error(fromMod,reqId,"E_DENIED","subscription not permitted"); return; }
-            if (subs_has(fromMod,prefix)){ send_ack(fromMod,reqId,"sub",TRUE,0,0); return; }
-            if (subs_count_for(fromMod)>=MAX_SUBS_PER_CALLER){ send_error(fromMod,reqId,"E_LIMIT","per-caller subscription cap"); return; }
-            if ((llGetListLength(Subs)/SUBS_STRIDE)>=MAX_SUBS_TOTAL){ send_error(fromMod,reqId,"E_LIMIT","global subscription cap"); return; }
-            subs_add(fromMod,prefix); send_ack(fromMod,reqId,"sub",TRUE,1,0); logd("Sub "+fromMod+" ← "+prefix); return;
-        }
-        if (t == "settings_unsub"){
-            string prefix = llJsonGetValue(msg, ["prefix"]);
-            if (prefix == JSON_INVALID || prefix == ""){ send_error(fromMod,reqId,"E_BADREQ","missing prefix"); return; }
-            if (llGetSubString(prefix,-1,-1)!=".") prefix+=".";
-            integer had=subs_has(fromMod,prefix);
-            if (had) subs_remove(fromMod,prefix);
-            send_ack(fromMod,reqId,"unsub",TRUE,had,0); logd("Unsub "+fromMod+" ← "+prefix); return;
+
+        /* Also accept legacy direct lane (optional) */
+        if (num == L_SETTINGS_IN){
+            string t = llJsonGetValue(msg, ["type"]);
+            string fromMod = llJsonGetValue(msg, ["from"]);
+            string reqId = llJsonGetValue(msg, ["req_id"]);
+
+            if (t == TYPE_SETTINGS_PUT){
+                string path = llJsonGetValue(msg, ["path"]);
+                string vtype= llJsonGetValue(msg, ["vtype"]);
+                string raw  = llJsonGetValue(msg, ["value"]);
+                integer ifp = FALSE; integer ifrev=0;
+                string ir = llJsonGetValue(msg, ["if_rev"]); if (ir != JSON_INVALID && ir != ""){ ifp=TRUE; ifrev=(integer)ir; }
+                handle_put(fromMod,reqId,path,vtype,raw,ifp,ifrev); return;
+            }
+            if (t == TYPE_SETTINGS_GET){
+                list outPaths=[]; integer hasPrefix=FALSE;
+                string prefix = llJsonGetValue(msg, ["prefix"]);
+                if (prefix != JSON_INVALID && prefix != ""){ hasPrefix=TRUE; if (llGetSubString(prefix,-1,-1)!=".") prefix+="."; }
+                string arr = llJsonGetValue(msg, ["paths"]);
+                if (arr != JSON_INVALID){
+                    integer i=0; integer done=FALSE;
+                    while(!done){
+                        string p=llJsonGetValue(arr,[(string)i]);
+                        if (p==JSON_INVALID) done=TRUE; else { outPaths+=lc(p); i+=1; }
+                    }
+                } else if (hasPrefix){
+                    outPaths=gather_paths_from_prefix(lc(prefix));
+                } else {
+                    integer i2=0; integer n2=llGetListLength(Store);
+                    while(i2<n2){ outPaths+=llList2String(Store,i2); i2+=STORE_STRIDE; }
+                }
+                send_snapshot(fromMod,reqId,outPaths); return;
+            }
+            if (t == TYPE_SETTINGS_DEL){
+                string path=llJsonGetValue(msg,["path"]);
+                integer ifp=FALSE; integer ifrev=0;
+                string ir2=llJsonGetValue(msg,["if_rev"]); if (ir2!=JSON_INVALID && ir2!=""){ ifp=TRUE; ifrev=(integer)ir2; }
+                handle_del(fromMod,reqId,path,ifp,ifrev); return;
+            }
+            if (t == TYPE_SETTINGS_BATCH){
+                integer i3=0; integer count=0; integer done2=FALSE;
+                while(!done2){
+                    string op = llJsonGetValue(msg, ["ops",(string)i3,"op"]);
+                    if (op == JSON_INVALID){ done2=TRUE; }
+                    else {
+                        count+=1; if (count>MAX_BATCH_OPS){ send_error(fromMod,reqId,"E_LIMIT","too many ops"); return; }
+                        string path = llJsonGetValue(msg, ["ops",(string)i3,"path"]);
+                        string vtype= llJsonGetValue(msg, ["ops",(string)i3,"vtype"]);
+                        string raw  = llJsonGetValue(msg, ["ops",(string)i3,"value"]);
+                        integer ifp=FALSE; integer ifrev=0;
+                        string ir3=llJsonGetValue(msg,["ops",(string)i3,"if_rev"]); if (ir3!=JSON_INVALID && ir3!=""){ ifp=TRUE; ifrev=(integer)ir3; }
+                        if (op == "put") handle_put(fromMod,reqId,path,vtype,raw,ifp,ifrev);
+                        else if (op == "del") handle_del(fromMod,reqId,path,ifp,ifrev);
+                        else { send_error(fromMod,reqId,"E_BADREQ","unknown op"); return; }
+                        i3+=1;
+                    }
+                }
+                send_ack(fromMod,reqId,"batch",TRUE,1,0); return;
+            }
+            if (t == TYPE_SETTINGS_SUB){
+                string prefix = llJsonGetValue(msg, ["prefix"]);
+                if (prefix == JSON_INVALID || prefix == ""){ send_error(fromMod,reqId,"E_BADREQ","missing prefix"); return; }
+                if (llGetSubString(prefix,-1,-1)!=".") prefix+=".";
+                if (!can_subscribe_prefix(fromMod, prefix)){ send_error(fromMod,reqId,"E_DENIED","subscription not permitted"); return; }
+                if (subs_has(fromMod,prefix)){ send_ack(fromMod,reqId,"sub",TRUE,0,0); return; }
+                if (subs_count_for(fromMod)>=MAX_SUBS_PER_CALLER){ send_error(fromMod,reqId,"E_LIMIT","per-caller subscription cap"); return; }
+                if ((llGetListLength(Subs)/SUBS_STRIDE)>=MAX_SUBS_TOTAL){ send_error(fromMod,reqId,"E_LIMIT","global subscription cap"); return; }
+                subs_add(fromMod,prefix); send_ack(fromMod,reqId,"sub",TRUE,1,0); logd("Sub "+fromMod+" ← "+prefix); return;
+            }
+            if (t == TYPE_SETTINGS_UNSUB){
+                string prefix = llJsonGetValue(msg, ["prefix"]);
+                if (prefix == JSON_INVALID || prefix == ""){ send_error(fromMod,reqId,"E_BADREQ","missing prefix"); return; }
+                if (llGetSubString(prefix,-1,-1)!=".") prefix+=".";
+                integer had=subs_has(fromMod,prefix);
+                if (had) subs_remove(fromMod,prefix);
+                send_ack(fromMod,reqId,"unsub",TRUE,had,0); logd("Unsub "+fromMod+" ← "+prefix); return;
+            }
+            return;
         }
     }
 }
