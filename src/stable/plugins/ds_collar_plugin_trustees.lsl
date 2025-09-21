@@ -39,6 +39,8 @@ string CONS_MSG_ACL_RESULT         = "acl_result";
 /* Settings protocol (JSON) */
 string CONS_SETTINGS_SYNC          = "settings_sync";  // in/out
 string CONS_SETTINGS_NS_OWNER      = "owner";          // same NS as Owner plugin
+string KEY_OWNER_KEY               = "owner_key";
+string KEY_OWNER_LEGACY            = "owner";
 
 /* ---------- Identity ---------- */
 string  PLUGIN_CONTEXT   = "core_trustees";
@@ -141,7 +143,8 @@ integer request_acl(key av) {
 integer ingest_settings(string j) {
     if (json_has(j, ["ns"]) && llJsonGetValue(j, ["ns"]) != CONS_SETTINGS_NS_OWNER) return 0;
 
-    if (json_has(j, ["owner"]))        collar_owner = (key)llJsonGetValue(j, ["owner"]);
+    if (json_has(j, [KEY_OWNER_KEY]))   collar_owner = (key)llJsonGetValue(j, [KEY_OWNER_KEY]);
+    else if (json_has(j, [KEY_OWNER_LEGACY])) collar_owner = (key)llJsonGetValue(j, [KEY_OWNER_LEGACY]);
     if (json_has(j, ["trustees"]))     collar_trustees = llJson2List(llJsonGetValue(j, ["trustees"]));
     if (json_has(j, ["trustees_hon"])) collar_trustee_honorifics = llJson2List(llJsonGetValue(j, ["trustees_hon"]));
 
