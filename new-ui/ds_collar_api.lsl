@@ -3,7 +3,7 @@
    ROLE  : Canonical link-message router (ABI v1)
    ============================================================= */
 
-integer DEBUG = FALSE;
+integer DEBUG = TRUE;
 integer logd(string s){ if (DEBUG) llOwnerSay("[API] " + s); return 0; }
 
 /* === DS Collar ABI & Lanes (CANONICAL) === */
