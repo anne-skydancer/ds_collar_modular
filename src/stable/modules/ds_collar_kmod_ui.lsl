@@ -159,45 +159,14 @@ list filterForViewer(){
                 /* Non-TPE paths */
                 if (!gIsWearer){
                     /* Touchers */
-                    if (pol_public_only){
+                    if (pol_public_only && gAcl <= 1){
                         if (minAcl == 1){
                             /* ok */
                         } else {
                             include = FALSE;
                         }
-                    } else if (pol_trustee_access){
-                        if (gAcl == 3){
-                            if (minAcl == 3){
-                                /* ok */
-                            } else {
-                                include = FALSE;
-                            }
-                        } else {
-                            /* if not trustee, fall through to normal ACL */
-                            if (minAcl <= gAcl){
-                                /* ok */
-                            } else {
-                                include = FALSE;
-                            }
-                        }
-                    } else if (pol_primary_owner){
-                        /* strict owner view: only min_acl==5 */
-                        if (gAcl == 5){
-                            if (minAcl == 5){
-                                /* ok */
-                            } else {
-                                include = FALSE;
-                            }
-                        } else {
-                            /* not owner: normal ACL */
-                            if (minAcl <= gAcl){
-                                /* ok */
-                            } else {
-                                include = FALSE;
-                            }
-                        }
                     } else {
-                        /* default toucher mapping: <= ACL */
+                        /* Trustee / owner levels retain full <= ACL visibility */
                         if (minAcl <= gAcl){
                             /* ok */
                         } else {
