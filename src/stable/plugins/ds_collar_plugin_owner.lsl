@@ -43,6 +43,8 @@ string CONS_MSG_ACL_RESULT         = "acl_result";
 /* Settings protocol (JSON) */
 string CONS_SETTINGS_SYNC          = "settings_sync";   // inbound/outbound
 string CONS_SETTINGS_NS_OWNER      = "owner";           // namespace/key for this module
+string KEY_OWNER_KEY               = "owner_key";
+string KEY_OWNER_LEGACY            = "owner";
 
 /* ---------- Identity ---------- */
 string  PLUGIN_CONTEXT   = "core_owner";
@@ -175,9 +177,13 @@ integer request_acl(key av) {
 /* Push our mirror to kernel */
 integer push_settings() {
     string j = llList2Json(JSON_OBJECT, []);
+    string owner_str = (string)collar_owner;
+
     j = llJsonSetValue(j, ["type"],   CONS_SETTINGS_SYNC);
     j = llJsonSetValue(j, ["ns"],     CONS_SETTINGS_NS_OWNER);
-    j = llJsonSetValue(j, ["owner"],  (string)collar_owner);
+    j = llJsonSetValue(j, [KEY_OWNER_KEY], owner_str);
+    /* Legacy mirror for older cores/plugins */
+    j = llJsonSetValue(j, [KEY_OWNER_LEGACY], owner_str);
 
     string hon = collar_owner_honorific;
     if (hon == "") hon = " ";
@@ -204,7 +210,8 @@ integer ingest_settings(string j) {
 
     key prev_owner = collar_owner;
 
-    if (json_has(j, ["owner"]))       collar_owner           = (key)llJsonGetValue(j, ["owner"]);
+    if (json_has(j, [KEY_OWNER_KEY]))  collar_owner           = (key)llJsonGetValue(j, [KEY_OWNER_KEY]);
+    else if (json_has(j, [KEY_OWNER_LEGACY])) collar_owner     = (key)llJsonGetValue(j, [KEY_OWNER_LEGACY]);
     if (json_has(j, ["owner_hon"]))   collar_owner_honorific = llJsonGetValue(j, ["owner_hon"]);
     if (json_has(j, ["trustees"])) {
         list arr = llJson2List(llJsonGetValue(j, ["trustees"]));
