@@ -16,7 +16,7 @@
      • LSL reserved identifiers not used as variable names
    ============================================================= */
 
-integer DEBUG = FALSE;
+integer DEBUG = TRUE;
 integer logd(string s){ if (DEBUG) llOwnerSay("[KERNEL] " + s); return 0; }
 
 /* ---------- ABI version ---------- */
