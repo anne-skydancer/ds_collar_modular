@@ -66,6 +66,7 @@ integer g_deregistering = FALSE;
 
 integer g_last_ping_unix      = 0;
 integer g_last_inv_sweep_unix = 0;
+key     g_last_owner          = NULL_KEY;
 
 /* ---------- JSON helpers ---------- */
 integer json_has(string j, list path) {
@@ -74,6 +75,18 @@ integer json_has(string j, list path) {
 
 /* ---------- Debug helper ---------- */
 logd(string s) { if (DEBUG) llOwnerSay("[KERNEL] " + s); }
+
+/* ---------- Owner handling ---------- */
+integer reset_if_owner_changed() {
+    key owner = llGetOwner();
+    if (owner == NULL_KEY) return FALSE;
+    if (owner != g_last_owner) {
+        g_last_owner = owner;
+        llResetScript();
+        return TRUE;
+    }
+    return FALSE;
+}
 
 /* ---------- Map helpers ---------- */
 integer map_stride() { return 7; }
@@ -264,6 +277,7 @@ solicit_plugin_register() {
    ============================================================= */
 default {
     state_entry() {
+        g_last_owner = llGetOwner();
         g_plugin_map   = [];
         g_add_queue    = [];
         g_dereg_queue  = [];
@@ -272,6 +286,15 @@ default {
         g_last_inv_sweep_unix = g_last_ping_unix;
         llSetTimerEvent(0.2);
         solicit_plugin_register();
+    }
+
+    on_rez(integer param) {
+        reset_if_owner_changed();
+    }
+
+    attach(key id) {
+        if (id == NULL_KEY) return;
+        reset_if_owner_changed();
     }
 
     link_message(integer sender, integer num, string str, key id) {
@@ -370,7 +393,7 @@ default {
             solicit_plugin_register();
         }
         if (change & CHANGED_OWNER) {
-            llResetScript();
+            reset_if_owner_changed();
         }
     }
 }
