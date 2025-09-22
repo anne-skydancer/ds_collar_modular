@@ -42,9 +42,15 @@ string CONS_MSG_ACL_RESULT         = "acl_result";
 
 /* Settings protocol (JSON) */
 string CONS_SETTINGS_SYNC          = "settings_sync";   // inbound/outbound
+string CONS_SETTINGS_SET           = "set";
 string CONS_SETTINGS_NS_OWNER      = "owner";           // namespace/key for this module
 string KEY_OWNER_KEY               = "owner_key";
 string KEY_OWNER_LEGACY            = "owner";
+string KEY_OWNER_HON               = "owner_hon";
+string KEY_TRUSTEES                = "trustees";
+string KEY_TRUSTEE_HONS            = "trustee_honorifics";
+string KEY_PUBLIC_MODE             = "public_mode";
+string KEY_LOCKED_FLAG             = "locked";
 
 /* ---------- Identity ---------- */
 string  PLUGIN_CONTEXT   = "core_owner";
@@ -174,64 +180,108 @@ integer request_acl(key av) {
 }
 
 /* ---------- Settings sync ---------- */
+integer settings_set_scalar(string key_str, string val) {
+    string j = llList2Json(JSON_OBJECT, []);
+    j = llJsonSetValue(j, ["type"],  CONS_SETTINGS_SET);
+    j = llJsonSetValue(j, ["key"],   key_str);
+    j = llJsonSetValue(j, ["value"], val);
+    llMessageLinked(LINK_SET, K_SETTINGS_QUERY, j, NULL_KEY);
+    return 0;
+}
+
+integer settings_set_list(string key_str, list values) {
+    string j = llList2Json(JSON_OBJECT, []);
+    j = llJsonSetValue(j, ["type"],   CONS_SETTINGS_SET);
+    j = llJsonSetValue(j, ["key"],    key_str);
+    j = llJsonSetValue(j, ["values"], llList2Json(JSON_ARRAY, values));
+    llMessageLinked(LINK_SET, K_SETTINGS_QUERY, j, NULL_KEY);
+    return 0;
+}
+
 /* Push our mirror to kernel */
 integer push_settings() {
-    string j = llList2Json(JSON_OBJECT, []);
     string owner_str = (string)collar_owner;
-
-    j = llJsonSetValue(j, ["type"],   CONS_SETTINGS_SYNC);
-    j = llJsonSetValue(j, ["ns"],     CONS_SETTINGS_NS_OWNER);
-    j = llJsonSetValue(j, [KEY_OWNER_KEY], owner_str);
-    /* Legacy mirror for older cores/plugins */
-    j = llJsonSetValue(j, [KEY_OWNER_LEGACY], owner_str);
+    settings_set_scalar(KEY_OWNER_KEY, owner_str);
 
     string hon = collar_owner_honorific;
     if (hon == "") hon = " ";
-    j = llJsonSetValue(j, ["owner_hon"], hon);
+    settings_set_scalar(KEY_OWNER_HON, hon);
 
-    j = llJsonSetValue(j, ["trustees"],     llList2Json(JSON_ARRAY, collar_trustees));
-    j = llJsonSetValue(j, ["trustees_hon"], llList2Json(JSON_ARRAY, collar_trustee_honorifics));
+    settings_set_list(KEY_TRUSTEES, collar_trustees);
+    settings_set_list(KEY_TRUSTEE_HONS, collar_trustee_honorifics);
 
     string pub = "0"; if (collar_public_access) pub = "1";
     string lck = "0"; if (collar_locked)        lck = "1";
-    j = llJsonSetValue(j, ["public_access"], pub);
-    j = llJsonSetValue(j, ["locked"],        lck);
+    settings_set_scalar(KEY_PUBLIC_MODE, pub);
+    settings_set_scalar(KEY_LOCKED_FLAG, lck);
 
-    llMessageLinked(LINK_SET, K_SETTINGS_SYNC, j, NULL_KEY);
-    logd("Settings pushed.");
+    logd("Settings pushed via kernel set operations.");
+    return 0;
+}
+
+integer apply_owner_settings_payload(string payload) {
+    key prev_owner = collar_owner;
+
+    if (json_has(payload, [KEY_OWNER_KEY]))  collar_owner = (key)llJsonGetValue(payload, [KEY_OWNER_KEY]);
+    else if (json_has(payload, [KEY_OWNER_LEGACY])) collar_owner = (key)llJsonGetValue(payload, [KEY_OWNER_LEGACY]);
+
+    if (json_has(payload, [KEY_OWNER_HON]))  collar_owner_honorific = llJsonGetValue(payload, [KEY_OWNER_HON]);
+    else if (json_has(payload, ["owner_hon"])) collar_owner_honorific = llJsonGetValue(payload, ["owner_hon"]);
+
+    if (json_has(payload, [KEY_TRUSTEES])) {
+        string arr = llJsonGetValue(payload, [KEY_TRUSTEES]);
+        if (llGetSubString(arr, 0, 0) == "[") collar_trustees = llJson2List(arr);
+    } else if (json_has(payload, ["trustees"])) {
+        string arrLegacy = llJsonGetValue(payload, ["trustees"]);
+        if (llGetSubString(arrLegacy, 0, 0) == "[") collar_trustees = llJson2List(arrLegacy);
+    }
+
+    if (json_has(payload, [KEY_TRUSTEE_HONS])) {
+        string arrh = llJsonGetValue(payload, [KEY_TRUSTEE_HONS]);
+        if (llGetSubString(arrh, 0, 0) == "[") collar_trustee_honorifics = llJson2List(arrh);
+    } else if (json_has(payload, ["trustees_hon"])) {
+        string arrhLegacy = llJsonGetValue(payload, ["trustees_hon"]);
+        if (llGetSubString(arrhLegacy, 0, 0) == "[") collar_trustee_honorifics = llJson2List(arrhLegacy);
+    }
+
+    if (json_has(payload, [KEY_PUBLIC_MODE])) collar_public_access = ((integer)llJsonGetValue(payload, [KEY_PUBLIC_MODE])) != 0;
+    else if (json_has(payload, ["public_access"])) collar_public_access = ((integer)llJsonGetValue(payload, ["public_access"])) != 0;
+
+    if (json_has(payload, [KEY_LOCKED_FLAG])) collar_locked = ((integer)llJsonGetValue(payload, [KEY_LOCKED_FLAG])) != 0;
+    else if (json_has(payload, ["locked"]))        collar_locked = ((integer)llJsonGetValue(payload, ["locked"])) != 0;
+
+    if (collar_owner != prev_owner) {
+        rlv_accepttp_reconcile(collar_owner);
+    } else {
+        rlv_accepttp_reconcile(collar_owner);
+    }
     return 0;
 }
 
 /* Pull values from inbound settings JSON (kernel → plugins) */
 integer ingest_settings(string j) {
-    if (json_has(j, ["ns"])) {
-        if (llJsonGetValue(j, ["ns"]) != CONS_SETTINGS_NS_OWNER) return 0;
+    string payload = "";
+    integer have_payload = FALSE;
+
+    if (json_has(j, ["kv"])) {
+        string kv = llJsonGetValue(j, ["kv"]);
+        if (llGetSubString(kv, 0, 0) == "{") {
+            payload = kv;
+            have_payload = TRUE;
+        }
     }
 
-    key prev_owner = collar_owner;
+    if (!have_payload) {
+        if (json_has(j, ["ns"])) {
+            if (llJsonGetValue(j, ["ns"]) != CONS_SETTINGS_NS_OWNER) return 0;
+        }
+        payload = j;
+        have_payload = TRUE;
+    }
 
-    if (json_has(j, [KEY_OWNER_KEY]))  collar_owner           = (key)llJsonGetValue(j, [KEY_OWNER_KEY]);
-    else if (json_has(j, [KEY_OWNER_LEGACY])) collar_owner     = (key)llJsonGetValue(j, [KEY_OWNER_LEGACY]);
-    if (json_has(j, ["owner_hon"]))   collar_owner_honorific = llJsonGetValue(j, ["owner_hon"]);
-    if (json_has(j, ["trustees"])) {
-        list arr = llJson2List(llJsonGetValue(j, ["trustees"]));
-        collar_trustees = arr;
-    }
-    if (json_has(j, ["trustees_hon"])) {
-        list arrh = llJson2List(llJsonGetValue(j, ["trustees_hon"]));
-        collar_trustee_honorifics = arrh;
-    }
-    if (json_has(j, ["public_access"])) collar_public_access = ((integer)llJsonGetValue(j, ["public_access"])) != 0;
-    if (json_has(j, ["locked"]))        collar_locked        = ((integer)llJsonGetValue(j, ["locked"])) != 0;
+    if (!have_payload) return 0;
 
-    /* Keep RLVa in sync with whatever the settings say the owner is */
-    if (collar_owner != prev_owner) {
-        rlv_accepttp_reconcile(collar_owner);
-    } else {
-        /* Even if not changed, ensure rule exists (heals after relog) */
-        rlv_accepttp_reconcile(collar_owner);
-    }
-    return 0;
+    return apply_owner_settings_payload(payload);
 }
 
 /* ---------- UI plumbing ---------- */
