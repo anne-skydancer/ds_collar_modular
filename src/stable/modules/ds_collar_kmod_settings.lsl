@@ -7,6 +7,8 @@
 integer DEBUG = FALSE;
 
 /* ---------- Global String Constants (Magic Words) ---------- */
+key g_last_owner = NULL_KEY;
+
 string TYPE_SETTINGS_GET       = "settings_get";
 string TYPE_SETTINGS_SYNC      = "settings_sync";
 string TYPE_SET                = "set";
@@ -231,7 +233,7 @@ integer maybe_broadcast_sync_on_get() {
 integer apply_owner_set_guard(string new_owner_str) {
     /* When setting owner:
        - Remove from trustees
-       - Remove from blacklist
+        - Remove from blacklist
     */
     if (new_owner_str == "" || new_owner_str == (string)NULL_KEY) return FALSE;
 
@@ -298,8 +300,37 @@ integer apply_blacklist_add_guard(string who) {
 default
 {
     state_entry() {
+        g_last_owner = llGetOwner();
         /* Initial broadcast of (possibly empty) kv_json */
         broadcast_sync_once();
+    }
+
+    on_rez(integer start_param) {
+        key current_owner = llGetOwner();
+        if (current_owner != g_last_owner) {
+            g_last_owner = current_owner;
+            llResetScript();
+        }
+    }
+
+    attach(key id) {
+        if (id == NULL_KEY) return;
+
+        key current_owner = llGetOwner();
+        if (current_owner != g_last_owner) {
+            g_last_owner = current_owner;
+            llResetScript();
+        }
+    }
+
+    changed(integer change) {
+        if (change & CHANGED_OWNER) {
+            key current_owner = llGetOwner();
+            if (current_owner != g_last_owner) {
+                g_last_owner = current_owner;
+                llResetScript();
+            }
+        }
     }
 
     link_message(integer sender, integer num, string str, key id)
