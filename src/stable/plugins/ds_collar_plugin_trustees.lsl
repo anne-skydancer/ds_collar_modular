@@ -38,9 +38,12 @@ string CONS_MSG_ACL_RESULT         = "acl_result";
 
 /* Settings protocol (JSON) */
 string CONS_SETTINGS_SYNC          = "settings_sync";  // in/out
+string CONS_SETTINGS_SET           = "set";
 string CONS_SETTINGS_NS_OWNER      = "owner";          // same NS as Owner plugin
 string KEY_OWNER_KEY               = "owner_key";
 string KEY_OWNER_LEGACY            = "owner";
+string KEY_TRUSTEES                = "trustees";
+string KEY_TRUSTEE_HONS            = "trustee_honorifics";
 
 /* ---------- Identity ---------- */
 string  PLUGIN_CONTEXT   = "core_trustees";
@@ -140,25 +143,69 @@ integer request_acl(key av) {
 
 /* ---------- Settings ---------- */
 /* Pull values from inbound settings JSON (kernel → plugins) */
-integer ingest_settings(string j) {
-    if (json_has(j, ["ns"]) && llJsonGetValue(j, ["ns"]) != CONS_SETTINGS_NS_OWNER) return 0;
+integer apply_trustee_settings_payload(string payload) {
+    if (json_has(payload, [KEY_OWNER_KEY]))   collar_owner = (key)llJsonGetValue(payload, [KEY_OWNER_KEY]);
+    else if (json_has(payload, [KEY_OWNER_LEGACY])) collar_owner = (key)llJsonGetValue(payload, [KEY_OWNER_LEGACY]);
 
-    if (json_has(j, [KEY_OWNER_KEY]))   collar_owner = (key)llJsonGetValue(j, [KEY_OWNER_KEY]);
-    else if (json_has(j, [KEY_OWNER_LEGACY])) collar_owner = (key)llJsonGetValue(j, [KEY_OWNER_LEGACY]);
-    if (json_has(j, ["trustees"]))     collar_trustees = llJson2List(llJsonGetValue(j, ["trustees"]));
-    if (json_has(j, ["trustees_hon"])) collar_trustee_honorifics = llJson2List(llJsonGetValue(j, ["trustees_hon"]));
+    if (json_has(payload, [KEY_TRUSTEES])) {
+        string arr = llJsonGetValue(payload, [KEY_TRUSTEES]);
+        if (llGetSubString(arr, 0, 0) == "[") collar_trustees = llJson2List(arr);
+    } else if (json_has(payload, ["trustees"])) {
+        string arrLegacy = llJsonGetValue(payload, ["trustees"]);
+        if (llGetSubString(arrLegacy, 0, 0) == "[") collar_trustees = llJson2List(arrLegacy);
+    }
+
+    if (json_has(payload, [KEY_TRUSTEE_HONS])) {
+        string arrh = llJsonGetValue(payload, [KEY_TRUSTEE_HONS]);
+        if (llGetSubString(arrh, 0, 0) == "[") collar_trustee_honorifics = llJson2List(arrh);
+    } else if (json_has(payload, ["trustees_hon"])) {
+        string arrhLegacy = llJsonGetValue(payload, ["trustees_hon"]);
+        if (llGetSubString(arrhLegacy, 0, 0) == "[") collar_trustee_honorifics = llJson2List(arrhLegacy);
+    }
 
     return 0;
 }
 
+integer ingest_settings(string j) {
+    string payload = "";
+    integer have_payload = FALSE;
+
+    if (json_has(j, ["kv"])) {
+        string kv = llJsonGetValue(j, ["kv"]);
+        if (llGetSubString(kv, 0, 0) == "{") {
+            payload = kv;
+            have_payload = TRUE;
+        }
+    }
+
+    if (!have_payload) {
+        if (json_has(j, ["ns"]) && llJsonGetValue(j, ["ns"]) != CONS_SETTINGS_NS_OWNER) return 0;
+        payload = j;
+        have_payload = TRUE;
+    }
+
+    if (!have_payload) return 0;
+
+    return apply_trustee_settings_payload(payload);
+}
+
 /* Push trustees only (kernel should merge per-key within NS) */
 integer push_trustees() {
+    string arr_trustees = llList2Json(JSON_ARRAY, collar_trustees);
+    string arr_hons     = llList2Json(JSON_ARRAY, collar_trustee_honorifics);
+
     string j = llList2Json(JSON_OBJECT, []);
-    j = llJsonSetValue(j, ["type"],          CONS_SETTINGS_SYNC);
-    j = llJsonSetValue(j, ["ns"],            CONS_SETTINGS_NS_OWNER);
-    j = llJsonSetValue(j, ["trustees"],      llList2Json(JSON_ARRAY, collar_trustees));
-    j = llJsonSetValue(j, ["trustees_hon"],  llList2Json(JSON_ARRAY, collar_trustee_honorifics));
-    llMessageLinked(LINK_SET, K_SETTINGS_SYNC, j, NULL_KEY);
+    j = llJsonSetValue(j, ["type"],   CONS_SETTINGS_SET);
+    j = llJsonSetValue(j, ["key"],    KEY_TRUSTEES);
+    j = llJsonSetValue(j, ["values"], arr_trustees);
+    llMessageLinked(LINK_SET, K_SETTINGS_QUERY, j, NULL_KEY);
+
+    j = llList2Json(JSON_OBJECT, []);
+    j = llJsonSetValue(j, ["type"],   CONS_SETTINGS_SET);
+    j = llJsonSetValue(j, ["key"],    KEY_TRUSTEE_HONS);
+    j = llJsonSetValue(j, ["values"], arr_hons);
+    llMessageLinked(LINK_SET, K_SETTINGS_QUERY, j, NULL_KEY);
+
     logd("Trustees saved (" + (string)llGetListLength(collar_trustees) + ").");
     return 0;
 }
