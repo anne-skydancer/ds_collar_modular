@@ -75,7 +75,7 @@ integer withinRange(key av){
 }
 
 /* Registry parser: tolerant defaults, compact storage */
-parseRegistry(string j){
+integer parseRegistry(string j){
     g_all = [];
     integer i = 0;
     while (llJsonValueType(j, ["plugins", i]) != JSON_INVALID){
@@ -114,6 +114,7 @@ parseRegistry(string j){
             i = i + 1;
         }
     }
+    return llGetListLength(g_all) / 7;
 }
 
 /* Build filtered view for the current user under AUTH flags */
@@ -270,27 +271,29 @@ list buttonsForPage(integer page){
     return btns;
 }
 
-openDialog(key to, string title, string body, list buttons){
+integer openDialog(key to, string title, string body, list buttons){
     if (gListen) llListenRemove(gListen);
     dialogOpen = TRUE;
     gChan   = -100000 - (integer)llFrand(1000000.0);
     gListen = llListen(gChan, "", to, "");
     llDialog(to, title + "\n" + body, buttons, gChan);
+    return TRUE;
 }
 
-closeDialog(){
+integer closeDialog(){
     if (gListen){
         llListenRemove(gListen);
         gListen = 0;
     }
     dialogOpen = FALSE;
+    return TRUE;
 }
 
-showRoot(key who, integer page){
+integer showRoot(key who, integer page){
     integer total = llGetListLength(g_view) / 2;
     if (total <= 0){
         llRegionSayTo(who, 0, "No plugins available.");
-        return;
+        return FALSE;
     }
     integer pages = pageCount();
     if (page < 0) page = 0;
@@ -300,9 +303,10 @@ showRoot(key who, integer page){
     list b = buttonsForPage(gPage);
     string body = "Select a function (Page " + (string)(gPage + 1) + "/" + (string)pages + ")";
     openDialog(who, "• DS Collar •", body, b);
+    return TRUE;
 }
 
-navigate(key who, integer newPage){
+integer navigate(key who, integer newPage){
     integer pages = pageCount();
     if (pages <= 0) pages = 1;
     if (newPage < 0) newPage = pages - 1;
@@ -312,23 +316,26 @@ navigate(key who, integer newPage){
     list b = buttonsForPage(gPage);
     string body = "Select a function (Page " + (string)(gPage + 1) + "/" + (string)pages + ")";
     openDialog(who, "• DS Collar •", body, b);
+    return TRUE;
 }
 
-startPlugin(string context, key who){
+integer startPlugin(string context, key who){
     string j = llList2Json(JSON_OBJECT,[]);
     j = llJsonSetValue(j,["type"], TYPE_PLUGIN_START);
     j = llJsonSetValue(j,["context"], context);
     llMessageLinked(LINK_SET, K_PLUGIN_START_NUM, j, who);
+    return TRUE;
 }
 
 /* ---------- Async calls ---------- */
-queryAcl(key user){
+integer queryAcl(key user){
     string j = llList2Json(JSON_OBJECT,[]);
     j = llJsonSetValue(j,["type"], MSG_ACL_QUERY);
     j = llJsonSetValue(j,["avatar"], (string)user);
     llMessageLinked(LINK_SET, AUTH_QUERY_NUM, j, NULL_KEY);
+    return TRUE;
 }
-fetchRegistry(){ llMessageLinked(LINK_SET, K_PLUGIN_LIST_REQUEST, "", NULL_KEY); }
+integer fetchRegistry(){ llMessageLinked(LINK_SET, K_PLUGIN_LIST_REQUEST, "", NULL_KEY); return TRUE; }
 
 /* ==================== Events ==================== */
 default{
