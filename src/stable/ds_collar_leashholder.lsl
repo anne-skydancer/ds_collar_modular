@@ -2,8 +2,10 @@
 integer DEBUG = FALSE;
 integer CHAN  = -192837465;  // must match collar
 
+// Emits leash holder debug chatter when enabled.
 integer logd(string s){ if (DEBUG) llOwnerSay("[HOLDER] " + s); return TRUE; }
 
+// Returns the link key of the leash target prim, falling back to this prim.
 key leashPrimKey(){
     integer n = llGetNumberOfPrims();
     integer i = 2;
@@ -15,11 +17,13 @@ key leashPrimKey(){
 }
 
 default{
+    // Opens the fixed listen channel and reports readiness.
     state_entry(){
         llListen(CHAN,"",NULL_KEY,"");
         logd("listening on " + (string)CHAN);
     }
 
+    // Answers leash_req messages with this prim's leash target data.
     listen(integer ch, string name, key src, string msg){
         if (ch != CHAN) return;
         if (llJsonGetValue(msg,["type"]) != "leash_req") return;

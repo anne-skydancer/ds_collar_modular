@@ -36,9 +36,11 @@ list    Blacklist;         // [key, key, ...]
 list    CandidateKeys;    // For add menu context
 
 // --- Session helpers ---
+// Returns the index of the avatar's session block or -1 if none exists.
 integer s_idx(key av) { return llListFindList(Sessions, [av]); }
+// Stores session metadata for the avatar, replacing any existing session and wiring the listen.
 integer s_set(key av, integer page, string csv, float expiry, string ctx, string param, string step, string menucsv, integer chan)
-{
+{ 
     integer i = s_idx(av);
     if (~i) {
         integer old = llList2Integer(Sessions, i+9);
@@ -49,8 +51,9 @@ integer s_set(key av, integer page, string csv, float expiry, string ctx, string
     Sessions += [av, page, csv, expiry, ctx, param, step, menucsv, chan, lh];
     return TRUE;
 }
+// Removes a tracked session for the avatar and closes its listen handle.
 integer s_clear(key av)
-{
+{ 
     integer i = s_idx(av);
     if (~i) {
         integer old = llList2Integer(Sessions, i+9);
@@ -59,14 +62,16 @@ integer s_clear(key av)
     }
     return TRUE;
 }
+// Retrieves the stored session tuple for the avatar.
 list s_get(key av)
-{
+{ 
     integer i = s_idx(av);
     if (~i) return llList2List(Sessions, i, i+9);
     return [];
 }
 
 // --- Helper: Update and sort name list for display ---
+// Resolves blacklist keys to display names for menu output.
 list get_blacklist_names() {
     list out = [];
     integer i;
@@ -77,8 +82,9 @@ list get_blacklist_names() {
 
 // --- Main Menus ---
 
+// Presents the root blacklist menu to the user with add/remove options.
 show_blacklist_menu(key user)
-{
+{ 
     list names = get_blacklist_names();
     string msg = "Blacklisted users:\n";
     integer i;
@@ -99,8 +105,9 @@ show_blacklist_menu(key user)
     if (DEBUG) llOwnerSay("[BLACKLIST] Main menu → " + (string)user + " chan=" + (string)menu_chan);
 }
 
+// Builds a numbered dialog for removing an avatar from the blacklist.
 show_remove_menu(key user)
-{
+{ 
     list names = get_blacklist_names();
     if (llGetListLength(Blacklist) == 0) {
         show_blacklist_menu(user);
@@ -122,8 +129,9 @@ show_remove_menu(key user)
     if (DEBUG) llOwnerSay("[BLACKLIST] Remove menu → " + (string)user + " chan=" + (string)menu_chan);
 }
 
+// Offers a numbered dialog of nearby avatars to add to the blacklist.
 show_add_candidates(key user, list candidates)
-{
+{ 
     if (llGetListLength(candidates) == 0) {
         list btns = ["~", "Back", "~"];
         integer menu_chan = (integer)(-1000000.0 * llFrand(1.0) - 1.0);
@@ -150,8 +158,9 @@ show_add_candidates(key user, list candidates)
 }
 
 // --- State Sync ---
+// Broadcasts the legacy state_sync payload for downstream consumers.
 send_state_sync()
-{
+{ 
     string bl_csv = llDumpList2String(Blacklist, ",");
     // Send only via legacy channel 520 for now (settings module will soon replace this)
     llMessageLinked(LINK_SET, 520, "state_sync|||||" + bl_csv + "||", NULL_KEY);
@@ -161,6 +170,7 @@ send_state_sync()
 // --- MAIN EVENT LOOP ---
 default
 {
+    // Registers with the kernel and requests initial settings on load.
     state_entry()
     {
         PLUGIN_SN = (integer)(llFrand(1.0e5));
@@ -173,6 +183,7 @@ default
         if (DEBUG) llOwnerSay("[BLACKLIST] Ready, SN=" + (string)PLUGIN_SN);
     }
 
+    // Handles registration pings, settings/state sync, and menu open requests.
     link_message(integer sender, integer num, string str, key id)
     {
         if ((num == PLUGIN_REG_QUERY_NUM) && llSubStringIndex(str, REGISTER_NOW_MSG_START + "|") == 0)
@@ -241,6 +252,7 @@ default
         }
     }
 
+    // Routes dialog responses according to the caller's active session context.
     listen(integer chan, string name, key id, string msg)
     {
         list sess = s_get(id);
@@ -295,6 +307,7 @@ default
         }
     }
 
+    // Collects sensor hits to build the add-blacklist candidate list.
     sensor(integer num_detected)
     {
         // Build candidate list for adding
@@ -321,6 +334,7 @@ default
         }
     }
 
+    // Notifies the user when no avatars were found during the add flow.
     no_sensor()
     {
         if (Sessions != []) {
@@ -342,6 +356,7 @@ default
         }
     }
 
+    // Resets the plugin if collar ownership changes hands.
     changed(integer change)
     {
         if (change & CHANGED_OWNER)

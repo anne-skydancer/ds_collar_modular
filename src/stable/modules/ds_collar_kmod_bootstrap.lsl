@@ -104,11 +104,16 @@ integer OWNERSHIP_SENT      = FALSE;  /* we already sent the summary line */
 integer OWNERSHIP_REFRESHED = FALSE;  /* we sent the improved one after name resolution */
 
 /* ===================== Helpers ===================== */
+// Returns the current Unix time (seconds).
 integer now()         { return llGetUnixTime(); }
+// Indicates whether the collar is currently attached.
 integer isAttached()  { return (integer)llGetAttached() != 0; }
+// Returns the current wearer/owner key.
 key     wearer()      { return llGetOwner(); }
+// Trims whitespace from both ends of the provided string.
 string  trim(string s){ return llStringTrim(s, STRING_TRIM); }
 
+// Sends an IM to the wearer when available.
 integer sendIM(string msg){
     key w = wearer();
     if (w != NULL_KEY){
@@ -117,6 +122,7 @@ integer sendIM(string msg){
     return TRUE;
 }
 
+// Joins a list of integers with the provided separator string.
 string joinIntList(list xs, string sep){
     integer i = 0; integer n = llGetListLength(xs);
     string out = "";
@@ -129,6 +135,7 @@ string joinIntList(list xs, string sep){
 }
 
 /* OC-style owner channel kept here if you want to re-enable later */
+// Computes the classic OpenCollar owner channel from the wearer key.
 integer ocOwnerChannel(){
     key w = wearer();
     string s = (string)w;
@@ -140,6 +147,7 @@ integer ocOwnerChannel(){
 }
 
 /* add/open a probe channel (dedup safe) */
+// Adds an RLV probe channel listener if it is not already tracked.
 integer addProbeChannel(integer ch){
     if (ch == 0) return FALSE;
     if (llListFindList(RLV_CHANS, [ch]) != -1) return FALSE;
@@ -151,6 +159,7 @@ integer addProbeChannel(integer ch){
 }
 
 /* clear all probe channels/listens */
+// Removes all active RLV probe listens and clears the channel list.
 integer clearProbeChannels(){
     integer i = 0; integer n = llGetListLength(RLV_LISTENS);
     while (i < n){
@@ -163,6 +172,7 @@ integer clearProbeChannels(){
     return TRUE;
 }
 
+// Returns TRUE while an RLV probe is still awaiting completion.
 integer rlvPending(){
     if (RLV_READY) return FALSE;
     if (llGetListLength(RLV_CHANS) > 0) return TRUE;
@@ -170,6 +180,7 @@ integer rlvPending(){
     return FALSE;
 }
 
+// Stops the current RLV probe and clears scheduling state.
 integer stopRlvProbe(){
     clearProbeChannels();
     RLV_WAIT_UNTIL = 0;
@@ -179,6 +190,7 @@ integer stopRlvProbe(){
     return TRUE;
 }
 
+// Issues @versionnew queries on all registered probe channels.
 integer sendRlvQueries(){
     integer i = 0; integer n = llGetListLength(RLV_CHANS);
     while (i < n){
@@ -191,6 +203,7 @@ integer sendRlvQueries(){
 }
 
 /* DEBUG-only follow-up; wearer sees only the summary's "RLV: ..." line */
+// Builds the debug RLV status line and caches it for optional output.
 integer buildAndSendRlvLine(){
     if (RLV_ACTIVE){
         RLV_RESULT_LINE = "[BOOT] RLV update: active";
@@ -206,6 +219,7 @@ integer buildAndSendRlvLine(){
 }
 
 /* ---------- RLV probe lifecycle ---------- */
+// Begins the RLV capability probe, opening channels and scheduling retries.
 integer startRlvProbe(){
     if (RLV_PROBING){
         if (DEBUG) llOwnerSay("[BOOT] RLV probe already active; skipping");
@@ -253,25 +267,30 @@ integer startRlvProbe(){
 }
 
 /* ---------- Kernel helpers ---------- */
+// Broadcasts a kernel_soft_reset to prompt plugin re-registration.
 integer broadcastSoftReset(){
     llMessageLinked(LINK_SET, K_SOFT_RESET, "{\"type\":\"kernel_soft_reset\"}", NULL_KEY);
     return TRUE;
 }
+// Requests the latest settings snapshot from the settings module.
 integer askSettings(){
     llMessageLinked(LINK_SET, K_SETTINGS_QUERY, "{\"type\":\"settings_get\"}", NULL_KEY);
     return TRUE;
 }
+// Queries the auth module for the wearer's ACL level.
 integer askACL(){
     string j = llList2Json(JSON_OBJECT, ["type","acl_query","avatar",(string)wearer()]);
     llMessageLinked(LINK_SET, AUTH_QUERY_NUM, j, NULL_KEY);
     return TRUE;
 }
+// Requests the current plugin list from the kernel.
 integer askPluginList(){
     llMessageLinked(LINK_SET, K_PLUGIN_LIST_REQUEST, "", NULL_KEY);
     return TRUE;
 }
 
 /* ---------- Owner name resolution (patched) ---------- */
+// Issues display name and legacy name lookups for the cached owner key.
 integer requestOwnerNames(){
     if (OWNER_KEY == NULL_KEY) return FALSE;
 
@@ -286,6 +305,7 @@ integer requestOwnerNames(){
 }
 
 /* Compose the PO label like Status plugin does */
+// Builds the display label for the primary owner using honorifics when present.
 string ownerDisplayLabel(){
     string nm = "";
     if (OWNER_DISP != "") nm = OWNER_DISP;
@@ -303,6 +323,7 @@ string ownerDisplayLabel(){
 }
 
 /* Parse settings kv → mirror state + kick name lookups */
+// Applies settings_sync data to local owner state and triggers name lookups.
 integer parseSettingsKv(string kv){
     string v;
 
@@ -323,6 +344,7 @@ integer parseSettingsKv(string kv){
     return TRUE;
 }
 
+// Determines whether all required bootstrap inputs have arrived.
 integer readyEnough(){
     integer haveSettings = SETTINGS_READY;
     integer haveACL      = ACL_READY;
@@ -340,6 +362,7 @@ integer readyEnough(){
     return FALSE;
 }
 
+// Sends the RLV status summary line to the wearer.
 integer emitRlvLine(){
     string line2 = "RLV: ";
     if (RLV_READY){
@@ -357,6 +380,7 @@ integer emitRlvLine(){
 }
 
 /* Build and send the Ownership line (mirrors Status plugin language) */
+// Emits the ownership status line in the startup summary.
 integer sendOwnershipLine(){
     string line3 = "Ownership: ";
     if (OWNER_KEY != NULL_KEY){
@@ -370,6 +394,7 @@ integer sendOwnershipLine(){
 }
 
 /* Startup summary; remember if we already emitted ownership once */
+// Sends the three-line startup summary along with completion status flags.
 integer emitSummary(integer completed, integer timedOut){
     string line1 = "Restart: ";
     if (completed) line1 += "completed";
@@ -386,6 +411,7 @@ integer emitSummary(integer completed, integer timedOut){
 }
 
 /* ---------- Bootstrap lifecycle ---------- */
+// Resets bootstrap state and kicks off the startup handshake sequence.
 integer startBootstrap(){
     if (BOOT_ACTIVE) return FALSE; /* debounce */
 
@@ -428,14 +454,18 @@ integer startBootstrap(){
 
 /* =========================== EVENTS =========================== */
 default{
+    // Kick off the bootstrap sequence when the module starts.
     state_entry(){
         startBootstrap();
     }
 
+    // Reset on rez to re-run the bootstrap from a clean state.
     on_rez(integer sp){ llResetScript(); }
+    // Reset on attach so wearer changes retrigger initialization.
     attach(key id){ if (id) llResetScript(); }
 
     /* Region change → optional light resync */
+    // Handles ownership changes and schedules optional region resyncs.
     changed(integer c){
         if (c & CHANGED_OWNER) llResetScript();
         if ((c & CHANGED_REGION) && RESYNC_ON_REGION_CHANGE){
@@ -444,6 +474,7 @@ default{
     }
 
     /* RLV replies + guard channels */
+    // Consumes RLV @versionnew replies from the wearer or controller.
     listen(integer chan, string name, key id, string text){
         /* accept from wearer or NULL_KEY (per design) */
         integer ok = FALSE;
@@ -466,6 +497,7 @@ default{
     }
 
     /* LINK: settings, acl, plugin list, soft reset query */
+    // Handles inbound settings, ACL, and plugin list updates during bootstrap.
     link_message(integer sender, integer num, string str, key id){
         /* plugin list “quiet” marker */
         if (num == K_PLUGIN_LIST){
@@ -508,6 +540,7 @@ default{
     }
 
     /* dataserver: owner name resolution (DisplayName -> Legacy fallback) */
+    // Reconciles owner name lookups and refreshes the ownership line once resolved.
     dataserver(key query_id, string data){
         integer changedName = FALSE;
 
@@ -544,6 +577,7 @@ default{
     }
 
     /* Timer: poll bootstrap readiness + RLV probe scheduling + optional resync */
+    // Drives optional resyncs, RLV probing, and bootstrap completion polling.
     timer(){
         /* Optional region resync */
         if (RESYNC_ON_REGION_CHANGE){

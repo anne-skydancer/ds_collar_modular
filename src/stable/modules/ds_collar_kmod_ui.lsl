@@ -8,6 +8,7 @@
    ============================================================= */
 
 integer DEBUG = FALSE;
+// Emits UI debug output when enabled.
 integer logd(string s){ if (DEBUG) llOwnerSay("[UI] " + s); return 0; }
 
 /* ---------- Protocol strings ---------- */
@@ -63,6 +64,7 @@ integer PolWearerUnowned = FALSE;
 integer PolPrimaryOwner  = FALSE;
 
 /* ---------- Helpers ---------- */
+// Ensures the avatar is within touch range of the collar.
 integer withinRange(key av){
     if (av == NULL_KEY) return FALSE;
     list d = llGetObjectDetails(av,[OBJECT_POS]);
@@ -75,6 +77,7 @@ integer withinRange(key av){
 }
 
 /* Registry parser: tolerant defaults, compact storage */
+// Flattens the plugin registry JSON into the All list with policy metadata.
 integer parseRegistry(string j){
     All = [];
     integer i = 0;
@@ -118,6 +121,7 @@ integer parseRegistry(string j){
 }
 
 /* Build filtered view for the current user under AUTH flags */
+// Applies AUTH policies to produce the list of visible plugins for the current user.
 list filterForViewer(){
     list out = [];
     integer i = 0;
@@ -225,6 +229,7 @@ list filterForViewer(){
     return out;
 }
 
+// Calculates the total number of dialog pages required for the filtered view.
 integer pageCount(){
     integer total = llGetListLength(View) / 2;
     integer pages = 0;
@@ -237,6 +242,7 @@ integer pageCount(){
     return pages;
 }
 
+// Builds dialog buttons for the requested page and refreshes the PageMap.
 list buttonsForPage(integer page){
     PageMap = [];
     list btns = [];
@@ -271,6 +277,7 @@ list buttonsForPage(integer page){
     return btns;
 }
 
+// Opens a scoped dialog for the avatar and tracks the listen handle.
 integer openDialog(key to, string title, string body, list buttons){
     if (Listen) llListenRemove(Listen);
     DialogOpen = TRUE;
@@ -280,6 +287,7 @@ integer openDialog(key to, string title, string body, list buttons){
     return TRUE;
 }
 
+// Closes any active dialog listen and clears dialog state.
 integer closeDialog(){
     if (Listen){
         llListenRemove(Listen);
@@ -289,6 +297,7 @@ integer closeDialog(){
     return TRUE;
 }
 
+// Presents the root plugin menu at the specified page index.
 integer showRoot(key who, integer page){
     integer total = llGetListLength(View) / 2;
     if (total <= 0){
@@ -306,6 +315,7 @@ integer showRoot(key who, integer page){
     return TRUE;
 }
 
+// Navigates to the requested page, wrapping within the page count bounds.
 integer navigate(key who, integer newPage){
     integer pages = pageCount();
     if (pages <= 0) pages = 1;
@@ -319,6 +329,7 @@ integer navigate(key who, integer newPage){
     return TRUE;
 }
 
+// Sends a plugin_start request for the selected context on behalf of the user.
 integer startPlugin(string context, key who){
     string j = llList2Json(JSON_OBJECT,[]);
     j = llJsonSetValue(j,["type"], TYPE_PLUGIN_START);
@@ -328,6 +339,7 @@ integer startPlugin(string context, key who){
 }
 
 /* ---------- Async calls ---------- */
+// Requests an ACL decision for the avatar via the auth module.
 integer queryAcl(key user){
     string j = llList2Json(JSON_OBJECT,[]);
     j = llJsonSetValue(j,["type"], MSG_ACL_QUERY);
@@ -335,10 +347,12 @@ integer queryAcl(key user){
     llMessageLinked(LINK_SET, AUTH_QUERY_NUM, j, NULL_KEY);
     return TRUE;
 }
+// Triggers a plugin list refresh from the kernel.
 integer fetchRegistry(){ llMessageLinked(LINK_SET, K_PLUGIN_LIST_REQUEST, "", NULL_KEY); return TRUE; }
 
 /* ==================== Events ==================== */
 default{
+    // Resets dialog state when the UI module starts.
     state_entry(){
         User      = NULL_KEY;
         Listen    = 0;
@@ -357,9 +371,12 @@ default{
         PolTrusteeAccess = FALSE; PolWearerUnowned = FALSE; PolPrimaryOwner = FALSE;
     }
 
+    // Reset on rez to rebuild the UI cache.
     on_rez(integer sp){ llResetScript(); }
+    // Reset when ownership changes to avoid stale ACL state.
     changed(integer c){ if (c & CHANGED_OWNER) llResetScript(); }
 
+    // Handles wearer/toucher interactions and kicks off ACL/registry queries.
     touch_start(integer n){
         if (DialogOpen) closeDialog();
 
@@ -379,6 +396,7 @@ default{
         fetchRegistry();
     }
 
+    // Consumes auth, plugin list, and plugin return messages that drive the UI.
     link_message(integer src, integer num, string msg, key id){
         if (num == AUTH_RESULT_NUM){
             if (llJsonValueType(msg,["type"]) == JSON_INVALID) return;
@@ -451,6 +469,7 @@ default{
         }
     }
 
+    // Routes dialog button presses and launches selected plugins.
     listen(integer chan, string name, key id, string b){
         if (chan != Chan) return;
 
