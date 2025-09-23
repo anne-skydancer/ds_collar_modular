@@ -435,6 +435,16 @@ integer add_entry(string id, string label, integer acl){ reg += [id, label, acl]
 
 **This file is for the `stable/` directory. Do not mix with Experimental/New‑UI ABI.**
 
+Conventions:
+* PascalCase global variables
+* ALLCAP constants
+* snake_case local variables
+
+Comments:
+* Briefly comment each function for maintainability and readability.
+* Additionally, comment each script at the top with a brief dewcription of its intended functionality. 
+* Comment patches with a //PATCH comment including the reason for the patch.
+
 ## 22.1 Canonical Link Numbers (Stable)
 
 - `K_PLUGIN_REG_QUERY = 500`
@@ -493,3 +503,4 @@ Required JSON on startup and on demanded re‑register:
 - Listener scope & cleanup demonstrated.
 - Heartbeat used **only** for liveness.
 - No public chat control; negative channels only.
+
