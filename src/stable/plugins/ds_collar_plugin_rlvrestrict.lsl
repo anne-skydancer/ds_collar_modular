@@ -48,11 +48,11 @@ list ALLOWED_ACL_LEVELS = [ACL_TRUSTEE, ACL_WEARER, ACL_OWNED, ACL_PRIMARY_OWNER
 
 /* ---------- UI/session ---------- */
 integer DIALOG_TIMEOUT_SEC = 180;
-key     g_user      = NULL_KEY;
-integer g_listen    = 0;
-integer g_menu_chan = 0;
-integer g_acl_pending = FALSE;
-integer g_acl_level   = ACL_TRUSTEE;
+key     User      = NULL_KEY;
+integer Listen    = 0;
+integer MenuChan = 0;
+integer AclPending = FALSE;
+integer AclLevel   = ACL_TRUSTEE;
 
 /* ---------- RLV restriction state ---------- */
 integer MAX_RESTRICTIONS = 32;
@@ -65,7 +65,7 @@ string NEXT_BTN_LABEL   = ">>";
 string SAFEWORD_LABEL   = "Safeword";
 string EXCEPTIONS_LABEL = "Exceptions";
 
-list g_restrictions = [];
+list Restrictions = [];
 
 /* ---------- Categories ---------- */
 list CAT_INV    = [ "@detachall", "@addoutfit", "@remoutfit", "@remattach", "@addattach", "@attachall", "@showinv", "@viewnote", "@viewscript" ];
@@ -79,8 +79,8 @@ list LABEL_TRAVEL = [ "Map TP:", "Loc. TP:", "TP:" ];
 list LABEL_OTHER  = [ "Edit:", "Rez:", "Touch:", "Touch Wld:", "OK TP:", "Names:", "Sit:", "Unsit:", "Stand:" ];
 
 /* ---------- Context ---------- */
-string g_menu_ctx_name = "";
-integer g_menu_ctx_page = 0;
+string MenuCtxName = "";
+integer MenuCtxPage = 0;
 
 /* ---------- Helpers ---------- */
 integer json_has(string j, list path) {
@@ -120,31 +120,31 @@ integer request_acl(key av) {
     j = llJsonSetValue(j, ["type"],   CONS_MSG_ACL_QUERY);
     j = llJsonSetValue(j, ["avatar"], (string)av);
     llMessageLinked(LINK_SET, AUTH_QUERY_NUM, j, NULL_KEY);
-    g_acl_pending = TRUE;
+    AclPending = TRUE;
     return 0;
 }
 
 integer reset_listen() {
-    if (g_listen) llListenRemove(g_listen);
-    g_listen = 0;
-    g_menu_chan = 0;
+    if (Listen) llListenRemove(Listen);
+    Listen = 0;
+    MenuChan = 0;
     return 0;
 }
 
 integer begin_dialog(key user, string body, list buttons) {
     reset_listen();
-    g_user = user;
+    User = user;
     while ((llGetListLength(buttons) % 3) != 0) buttons += " ";
-    g_menu_chan = -100000 - (integer)llFrand(1000000.0);
-    g_listen    = llListen(g_menu_chan, "", g_user, "");
-    llDialog(g_user, body, buttons, g_menu_chan);
+    MenuChan = -100000 - (integer)llFrand(1000000.0);
+    Listen    = llListen(MenuChan, "", User, "");
+    llDialog(User, body, buttons, MenuChan);
     llSetTimerEvent((float)DIALOG_TIMEOUT_SEC);
     return 0;
 }
 
 /* ---------- Restriction helpers ---------- */
 integer restriction_idx(string restr_cmd) {
-    return llListFindList(g_restrictions, [restr_cmd]);
+    return llListFindList(Restrictions, [restr_cmd]);
 }
 
 string get_label_for_command(string cmd, list cat_cmds, list cat_labels) {
@@ -208,16 +208,16 @@ list make_category_buttons(list cat_cmds, list cat_labels, integer page) {
 toggle_restriction(string restr_cmd) {
     integer ridx = restriction_idx(restr_cmd);
     if (ridx != -1) {
-        g_restrictions = llDeleteSubList(g_restrictions, ridx, ridx);
+        Restrictions = llDeleteSubList(Restrictions, ridx, ridx);
         llOwnerSay(restr_cmd + "=y");
-    } else if (llGetListLength(g_restrictions) < MAX_RESTRICTIONS) {
-        g_restrictions += restr_cmd;
+    } else if (llGetListLength(Restrictions) < MAX_RESTRICTIONS) {
+        Restrictions += restr_cmd;
         llOwnerSay(restr_cmd + "=n");
     }
 }
 
 clear_all_restrictions() {
-    g_restrictions = [];
+    Restrictions = [];
     llOwnerSay("@clear");
 }
 
@@ -245,8 +245,8 @@ integer show_category_menu(key user, string catname, integer page) {
     list btns = [prev, BACK_BTN_LABEL, next];
     btns += make_category_buttons(catlist, catlabels, page);
 
-    g_menu_ctx_name = catname;
-    g_menu_ctx_page = page;
+    MenuCtxName = catname;
+    MenuCtxPage = page;
 
     begin_dialog(user, catname + " Restrictions:\nClick to toggle.", btns);
     return 0;
@@ -276,24 +276,24 @@ default {
         }
         if (num == K_PLUGIN_START && json_has(msg, ["type"]) && llJsonGetValue(msg, ["type"]) == CONS_TYPE_PLUGIN_START
             && json_has(msg, ["context"]) && llJsonGetValue(msg, ["context"]) == PLUGIN_CONTEXT) {
-            g_user = id;
-            request_acl(g_user);
+            User = id;
+            request_acl(User);
             return;
         }
-        if (num == AUTH_RESULT_NUM && g_acl_pending && json_has(msg, ["type"]) && llJsonGetValue(msg, ["type"]) == CONS_MSG_ACL_RESULT
-            && json_has(msg, ["avatar"]) && (key)llJsonGetValue(msg, ["avatar"]) == g_user
+        if (num == AUTH_RESULT_NUM && AclPending && json_has(msg, ["type"]) && llJsonGetValue(msg, ["type"]) == CONS_MSG_ACL_RESULT
+            && json_has(msg, ["avatar"]) && (key)llJsonGetValue(msg, ["avatar"]) == User
             && json_has(msg, ["level"])) {
-            g_acl_level = (integer)llJsonGetValue(msg, ["level"]);
-            g_acl_pending = FALSE;
-            if (in_allowed_levels(g_acl_level)) {
-                show_menu(g_user);
+            AclLevel = (integer)llJsonGetValue(msg, ["level"]);
+            AclPending = FALSE;
+            if (in_allowed_levels(AclLevel)) {
+                show_menu(User);
             } else {
-                llRegionSayTo(g_user, 0, "Access denied.");
+                llRegionSayTo(User, 0, "Access denied.");
                 string r = llList2Json(JSON_OBJECT, []);
                 r = llJsonSetValue(r, ["type"], CONS_TYPE_PLUGIN_RETURN);
                 r = llJsonSetValue(r, ["context"], ROOT_CONTEXT);
-                llMessageLinked(LINK_SET, K_PLUGIN_RETURN_NUM, r, g_user);
-                g_user = NULL_KEY;
+                llMessageLinked(LINK_SET, K_PLUGIN_RETURN_NUM, r, User);
+                User = NULL_KEY;
                 reset_listen();
                 llSetTimerEvent(0.0);
             }
@@ -302,28 +302,28 @@ default {
     }
 
     listen(integer chan, string name, key id, string msg) {
-        if (chan != g_menu_chan || id != g_user) return;
+        if (chan != MenuChan || id != User) return;
         if (msg == BACK_BTN_LABEL) {
-            if (g_menu_ctx_name != "") {
-                g_menu_ctx_name = "";
-                g_menu_ctx_page = 0;
+            if (MenuCtxName != "") {
+                MenuCtxName = "";
+                MenuCtxPage = 0;
                 show_menu(id);
             } else {
                 string r = llList2Json(JSON_OBJECT, []);
                 r = llJsonSetValue(r, ["type"], CONS_TYPE_PLUGIN_RETURN);
                 r = llJsonSetValue(r, ["context"], ROOT_CONTEXT);
-                llMessageLinked(LINK_SET, K_PLUGIN_RETURN_NUM, r, g_user);
+                llMessageLinked(LINK_SET, K_PLUGIN_RETURN_NUM, r, User);
                 reset_listen();
-                g_user = NULL_KEY;
+                User = NULL_KEY;
                 llSetTimerEvent(0.0);
             }
             return;
         }
-        if (g_menu_ctx_name == "") {
+        if (MenuCtxName == "") {
             if (msg == "Inventory" || msg == "Speech" || msg == "Travel" || msg == "Other") {
-                g_menu_ctx_name = msg;
-                g_menu_ctx_page = 0;
-                show_category_menu(id, g_menu_ctx_name, 0);
+                MenuCtxName = msg;
+                MenuCtxPage = 0;
+                show_category_menu(id, MenuCtxName, 0);
                 return;
             }
             if (msg == SAFEWORD_LABEL) {
@@ -338,28 +338,28 @@ default {
                 return;
             }
         } else {
-            if (msg == PREV_BTN_LABEL && g_menu_ctx_page > 0) {
-                show_category_menu(id, g_menu_ctx_name, g_menu_ctx_page - 1);
+            if (msg == PREV_BTN_LABEL && MenuCtxPage > 0) {
+                show_category_menu(id, MenuCtxName, MenuCtxPage - 1);
                 return;
             }
             integer max_page = 0;
-            integer num_items = llGetListLength(get_category_list(g_menu_ctx_name));
+            integer num_items = llGetListLength(get_category_list(MenuCtxName));
             if (num_items > 0) max_page = (num_items - 1) / DIALOG_PAGE_SIZE;
-            if (msg == NEXT_BTN_LABEL && g_menu_ctx_page < max_page) {
-                show_category_menu(id, g_menu_ctx_name, g_menu_ctx_page + 1);
+            if (msg == NEXT_BTN_LABEL && MenuCtxPage < max_page) {
+                show_category_menu(id, MenuCtxName, MenuCtxPage + 1);
                 return;
             }
-            string cmd = label_to_command(msg, get_category_list(g_menu_ctx_name), get_category_labels(g_menu_ctx_name));
-            if (cmd != "" && in_allowed_levels(g_acl_level)) {
+            string cmd = label_to_command(msg, get_category_list(MenuCtxName), get_category_labels(MenuCtxName));
+            if (cmd != "" && in_allowed_levels(AclLevel)) {
                 toggle_restriction(cmd);
-                show_category_menu(id, g_menu_ctx_name, g_menu_ctx_page);
+                show_category_menu(id, MenuCtxName, MenuCtxPage);
             }
         }
     }
 
     timer() {
         reset_listen();
-        g_user = NULL_KEY;
+        User = NULL_KEY;
         llSetTimerEvent(0.0);
     }
 

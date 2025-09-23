@@ -75,9 +75,9 @@ key     q_owner_legacy   = NULL_KEY;  // query id for llRequestAgentData(DATA_NA
 key     last_owner_key   = NULL_KEY;  // track changes to re-fetch names
 
 /* ---------- Session state ---------- */
-key     g_user           = NULL_KEY;
-integer g_chan           = 0;
-integer g_listen         = 0;
+key     User           = NULL_KEY;
+integer Chan           = 0;
+integer Listen         = 0;
 
 /* ========================== Helpers ========================== */
 integer json_has(string j, list path){
@@ -185,20 +185,20 @@ update_from_settings(string kv_json){
 
 /* ---------- UI plumbing ---------- */
 cleanup_session(){
-    if (g_listen != 0) llListenRemove(g_listen);
-    g_listen = 0;
-    g_user   = NULL_KEY;
-    g_chan   = 0;
+    if (Listen != 0) llListenRemove(Listen);
+    Listen = 0;
+    User   = NULL_KEY;
+    Chan   = 0;
     llSetTimerEvent(0.0);
 }
 integer open_dialog(key avatar, string body, list buttons){
     /* pad to multiples of 3 for llDialog */
     while ((llGetListLength(buttons) % 3) != 0) buttons += " ";
-    if (g_listen != 0) llListenRemove(g_listen);
-    g_chan   = -100000 - (integer)llFrand(1000000.0);
-    g_listen = llListen(g_chan, "", avatar, "");
-    g_user   = avatar;
-    llDialog(avatar, body, buttons, g_chan);
+    if (Listen != 0) llListenRemove(Listen);
+    Chan   = -100000 - (integer)llFrand(1000000.0);
+    Listen = llListen(Chan, "", avatar, "");
+    User   = avatar;
+    llDialog(avatar, body, buttons, Chan);
     llSetTimerEvent((float)DIALOG_TIMEOUT);
     return TRUE;
 }
@@ -246,7 +246,7 @@ show_menu(key avatar){
     string report = build_status_report();
     list buttons = [BTN_FILL, BTN_BACK, BTN_FILL];
     open_dialog(avatar, report, buttons);
-    logd("Menu → " + (string)avatar + " chan=" + (string)g_chan);
+    logd("Menu → " + (string)avatar + " chan=" + (string)Chan);
 }
 
 /* =========================== EVENTS =========================== */
@@ -335,14 +335,14 @@ default{
         }
 
         // If a user has the menu open, refresh it with the resolved name
-        if (g_user != NULL_KEY && g_listen != 0){
-            show_menu(g_user);
+        if (User != NULL_KEY && Listen != 0){
+            show_menu(User);
         }
     }
 
     listen(integer channel, string name, key id, string msg){
-        if (channel != g_chan) return;
-        if (id != g_user) return;
+        if (channel != Chan) return;
+        if (id != User) return;
 
         if (msg == BTN_BACK){
             string j = llList2Json(JSON_OBJECT, []);

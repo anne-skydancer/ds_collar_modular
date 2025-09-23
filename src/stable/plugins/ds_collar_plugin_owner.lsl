@@ -72,13 +72,13 @@ list ALLOWED_ACL_LEVELS = [ACL_OWNED, ACL_UNOWNED, ACL_PRIMARY_OWNER];
 
 /* ---------- UI/session ---------- */
 integer DIALOG_TIMEOUT_SEC = 180;
-key     g_user             = NULL_KEY;  // who opened plugin
-integer g_listen           = 0;
-integer g_menu_chan        = 0;
+key     User             = NULL_KEY;  // who opened plugin
+integer Listen           = 0;
+integer MenuChan        = 0;
 
 /* Gate state */
-integer g_acl_pending = FALSE;
-integer g_acl_level   = ACL_NOACCESS;
+integer AclPending = FALSE;
+integer AclLevel   = ACL_NOACCESS;
 
 /* ---------- Owner/state mirror ---------- */
 key     collar_owner            = NULL_KEY;
@@ -89,7 +89,7 @@ list    collar_trustees         = [];
 list    collar_trustee_honorifics = [];
 
 /* ---------- RLVa auto-accept TP state ---------- */
-key g_rlv_accepttp_owner = NULL_KEY;
+key RlvAccepttpOwner = NULL_KEY;
 
 /* ---------- Flow/session state ---------- */
 string s_context = "";  // "", "menu", "add_owner_select", "add_owner_hon", "add_owner_cand_ok", "add_owner_wearer_ok", "transfer_select", "transfer_hon", "transfer_confirm", "release_owner_confirm", "release_wearer_confirm", "runaway_confirm"
@@ -117,27 +117,27 @@ string owner_display_name() { return candidate_display_name(collar_owner); }
 integer rlv_accepttp_add(key k){
     if (k == NULL_KEY) return FALSE;
     llOwnerSay("@accepttp:" + (string)k + "=add");
-    g_rlv_accepttp_owner = k;
+    RlvAccepttpOwner = k;
     logd("RLVa accepttp add → " + (string)k);
     return TRUE;
 }
 integer rlv_accepttp_rem(key k){
     if (k == NULL_KEY) return FALSE;
     llOwnerSay("@accepttp:" + (string)k + "=rem");
-    if (g_rlv_accepttp_owner == k) g_rlv_accepttp_owner = NULL_KEY;
+    if (RlvAccepttpOwner == k) RlvAccepttpOwner = NULL_KEY;
     logd("RLVa accepttp rem → " + (string)k);
     return TRUE;
 }
 integer rlv_accepttp_reconcile(key newOwner){
     /* remove stale rule if bound to different avatar */
-    if (g_rlv_accepttp_owner != NULL_KEY){
-        if (g_rlv_accepttp_owner != newOwner){
-            rlv_accepttp_rem(g_rlv_accepttp_owner);
+    if (RlvAccepttpOwner != NULL_KEY){
+        if (RlvAccepttpOwner != newOwner){
+            rlv_accepttp_rem(RlvAccepttpOwner);
         }
     }
     /* ensure rule exists for current owner */
     if (newOwner != NULL_KEY){
-        if (g_rlv_accepttp_owner != newOwner){
+        if (RlvAccepttpOwner != newOwner){
             rlv_accepttp_add(newOwner);
         }
     }
@@ -174,7 +174,7 @@ integer request_acl(key av) {
     j = llJsonSetValue(j, ["type"],   CONS_MSG_ACL_QUERY);
     j = llJsonSetValue(j, ["avatar"], (string)av);
     llMessageLinked(LINK_SET, AUTH_QUERY_NUM, j, NULL_KEY);
-    g_acl_pending = TRUE;
+    AclPending = TRUE;
     logd("ACL query → " + (string)av);
     return 0;
 }
@@ -286,8 +286,8 @@ integer ingest_settings(string j) {
 
 /* ---------- UI plumbing ---------- */
 integer reset_listen() {
-    if (g_listen) llListenRemove(g_listen);
-    g_listen = 0; g_menu_chan = 0;
+    if (Listen) llListenRemove(Listen);
+    Listen = 0; MenuChan = 0;
     llSetTimerEvent(0.0);
     return 0;
 }
@@ -296,9 +296,9 @@ integer reset_listen() {
 integer dialog_to(key who, string body, list buttons) {
     reset_listen();
     while ((llGetListLength(buttons) % 3) != 0) buttons += " ";
-    g_menu_chan = -100000 - (integer)llFrand(1000000.0);
-    g_listen = llListen(g_menu_chan, "", who, "");
-    llDialog(who, body, buttons, g_menu_chan);
+    MenuChan = -100000 - (integer)llFrand(1000000.0);
+    Listen = llListen(MenuChan, "", who, "");
+    llDialog(who, body, buttons, MenuChan);
     llSetTimerEvent((float)DIALOG_TIMEOUT_SEC);
     return 0;
 }
@@ -320,12 +320,12 @@ list base_menu_buttons() {
     integer show_release   = FALSE;
     integer show_runaway   = FALSE;
 
-    if (collar_owner == NULL_KEY && g_acl_level == ACL_UNOWNED) show_add_owner = TRUE;
-    if (collar_owner != NULL_KEY && g_acl_level == ACL_PRIMARY_OWNER) {
+    if (collar_owner == NULL_KEY && AclLevel == ACL_UNOWNED) show_add_owner = TRUE;
+    if (collar_owner != NULL_KEY && AclLevel == ACL_PRIMARY_OWNER) {
         show_transfer = TRUE;
         show_release  = TRUE;
     }
-    if (collar_owner != NULL_KEY && g_acl_level == ACL_OWNED) show_runaway = TRUE;
+    if (collar_owner != NULL_KEY && AclLevel == ACL_OWNED) show_runaway = TRUE;
 
     if (show_add_owner) btns += ["Add Owner"];
     if (show_transfer)  btns += ["Transfer Sub"];
@@ -338,7 +338,7 @@ list base_menu_buttons() {
 
 integer show_menu(key user) {
     s_context = "menu";
-    g_user = user;
+    User = user;
 
     string owner_line = "(none)";
     if (collar_owner != NULL_KEY) {
@@ -370,7 +370,7 @@ integer begin_pick_candidate(string next_context) {
 
 integer dialog_candidates_select(list candidates) {
     if (llGetListLength(candidates) == 0) {
-        dialog_to(g_user, "No valid candidates found within 20m.", ["Back"]);
+        dialog_to(User, "No valid candidates found within 20m.", ["Back"]);
         s_context = "menu";
         return FALSE;
     }
@@ -389,7 +389,7 @@ integer dialog_candidates_select(list candidates) {
     }
 
     if (llGetListLength(keys) == 0){
-        dialog_to(g_user, "No valid candidates found within 20m.", ["Back"]);
+        dialog_to(User, "No valid candidates found within 20m.", ["Back"]);
         s_context = "menu";
         return FALSE;
     }
@@ -406,7 +406,7 @@ integer dialog_candidates_select(list candidates) {
         b = b + 1;
     }
     buttons += ["Back"];
-    dialog_to(g_user, body, buttons);
+    dialog_to(User, body, buttons);
     return TRUE;
 }
 
@@ -415,8 +415,8 @@ default{
     state_entry(){
         reset_listen();
         s_context = "";
-        g_acl_pending = FALSE;
-        g_acl_level = ACL_NOACCESS;
+        AclPending = FALSE;
+        AclLevel = ACL_NOACCESS;
 
         PLUGIN_SN = (integer)llFrand(2147480000.0);
         notify_soft_reset();
@@ -478,8 +478,8 @@ default{
         if (num == K_PLUGIN_START){
             if (json_has(str, ["type"]) && llJsonGetValue(str, ["type"]) == CONS_TYPE_PLUGIN_START){
                 if (json_has(str, ["context"]) && llJsonGetValue(str, ["context"]) == PLUGIN_CONTEXT){
-                    g_user = id;
-                    request_acl(g_user);
+                    User = id;
+                    request_acl(User);
                     return;
                 }
             }
@@ -493,21 +493,21 @@ default{
             if (!json_has(str, ["avatar"])) return;
 
             key av = (key)llJsonGetValue(str, ["avatar"]);
-            if (av != g_user) return;
+            if (av != User) return;
 
             if (!json_has(str, ["level"])) return;
-            g_acl_level = (integer)llJsonGetValue(str, ["level"]);
-            g_acl_pending = FALSE;
+            AclLevel = (integer)llJsonGetValue(str, ["level"]);
+            AclPending = FALSE;
 
-            if (!in_allowed_levels(g_acl_level)){
-                llRegionSayTo(g_user, 0, "Access denied.");
-                ui_return_root(g_user);
-                g_user = NULL_KEY;
+            if (!in_allowed_levels(AclLevel)){
+                llRegionSayTo(User, 0, "Access denied.");
+                ui_return_root(User);
+                User = NULL_KEY;
                 reset_listen();
                 return;
             }
 
-            show_menu(g_user);
+            show_menu(User);
             return;
         }
     }
@@ -539,18 +539,18 @@ default{
     }
 
     listen(integer chan, string name, key id, string message){
-        if (chan != g_menu_chan) return;
+        if (chan != MenuChan) return;
 
         /* root navigation */
         if (message == "Back"){
             if (s_context == "menu"){
                 ui_return_root(id);
-                g_user = NULL_KEY;
+                User = NULL_KEY;
                 reset_listen();
                 return;
             }
             /* From any sub-context back to main menu */
-            show_menu(g_user);
+            show_menu(User);
             return;
         }
 
@@ -575,7 +575,7 @@ default{
                 return;
             }
             /* unknown → redraw */
-            show_menu(g_user);
+            show_menu(User);
             return;
         }
 
@@ -593,7 +593,7 @@ default{
                 dialog_to(cand, body, honors);
                 return;
             }
-            show_menu(g_user);
+            show_menu(User);
             return;
         }
         if (s_context == "add_owner_hon"){
@@ -616,7 +616,7 @@ default{
                 dialog_to(llGetOwner(), body, ["Yes","No","Cancel"]);
                 return;
             }
-            show_menu(g_user);
+            show_menu(User);
             return;
         }
         if (s_context == "add_owner_wearer_ok"){
@@ -633,10 +633,10 @@ default{
                 dialog_to(newOwner, wearer_display_name() + " has submitted to you as their \"" + hon + "\".", ["OK"]);
                 dialog_to(llGetOwner(), "You have submitted to " + candidate_display_name(newOwner) + " as your " + hon + ".", ["OK"]);
                 s_context = "menu";
-                show_menu(g_user);
+                show_menu(User);
                 return;
             }
-            show_menu(g_user);
+            show_menu(User);
             return;
         }
 
@@ -654,7 +654,7 @@ default{
                 dialog_to(newOwner, body, honors);
                 return;
             }
-            show_menu(g_user);
+            show_menu(User);
             return;
         }
         if (s_context == "transfer_hon"){
@@ -686,10 +686,10 @@ default{
                 dialog_to(oldOwner, "You have transferred your sub " + wearer_display_name() + " to " + candidate_display_name(newOwner) + " as their " + hon + ".", ["OK"]);
                 dialog_to(newOwner, "You are now the owner of " + wearer_display_name() + " as their " + hon + ".", ["OK"]);
                 s_context = "menu";
-                show_menu(g_user);
+                show_menu(User);
                 return;
             }
-            show_menu(g_user);
+            show_menu(User);
             return;
         }
 
@@ -701,7 +701,7 @@ default{
                 dialog_to(llGetOwner(), body, ["Yes","No","Cancel"]);
                 return;
             }
-            show_menu(g_user);
+            show_menu(User);
             return;
         }
         if (s_context == "release_wearer_confirm"){
@@ -719,10 +719,10 @@ default{
                 dialog_to(old, wearer_display_name() + " is now free.", ["OK"]);
                 dialog_to(llGetOwner(), "You have been released as " + oldHon + " " + candidate_display_name(old) + "'s submissive.\nYou are now free.", ["OK"]);
                 s_context = "menu";
-                show_menu(g_user);
+                show_menu(User);
                 return;
             }
-            show_menu(g_user);
+            show_menu(User);
             return;
         }
 
@@ -737,22 +737,22 @@ default{
                 push_settings();
                 dialog_to(id, "You have run away and are now unowned.", ["OK"]);
                 s_context = "menu";
-                show_menu(g_user);
+                show_menu(User);
                 return;
             }
-            show_menu(g_user);
+            show_menu(User);
             return;
         }
 
         /* Fallback → redraw */
-        show_menu(g_user);
+        show_menu(User);
     }
 
     /* Timer: dialog timeout */
     timer(){
         reset_listen();
-        if (g_user != NULL_KEY && s_context != ""){
-            /* optional: quietly return to menu for g_user */
+        if (User != NULL_KEY && s_context != ""){
+            /* optional: quietly return to menu for User */
         }
     }
 }

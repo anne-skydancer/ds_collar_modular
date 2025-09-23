@@ -36,31 +36,31 @@ string BTN_NAV_RIGHT = ">>";
 
 /* ---------- State ---------- */
 /* Flattened registry: [label,context,min_acl,has_tpe,label_tpe,tpe_min_acl,audience,...] */
-list    g_all = [];
+list    All = [];
 /* Filtered for current viewer: [label,context,...] */
-list    g_view = [];
+list    View = [];
 /* Map label→context for current page */
-list    g_pageMap = [];
+list    PageMap = [];
 
-key     gUser      = NULL_KEY;
-integer gListen    = 0;
-integer gChan      = 0;
-integer gPage      = 0;
-integer dialogOpen = FALSE;
+key     User      = NULL_KEY;
+integer Listen    = 0;
+integer Chan      = 0;
+integer Page      = 0;
+integer DialogOpen = FALSE;
 
 /* ACL + policy from AUTH */
-integer gAcl           = -1;
-integer gAclReady      = FALSE;
-integer gListReady     = FALSE;
-integer gIsWearer      = FALSE;
-integer gOwnerSet      = FALSE;
+integer Acl           = -1;
+integer AclReady      = FALSE;
+integer ListReady     = FALSE;
+integer IsWearer      = FALSE;
+integer OwnerSet      = FALSE;
 
-integer pol_tpe            = FALSE;
-integer pol_public_only    = FALSE;
-integer pol_owned_only     = FALSE;
-integer pol_trustee_access = FALSE;
-integer pol_wearer_unowned = FALSE;
-integer pol_primary_owner  = FALSE;
+integer PolTpe            = FALSE;
+integer PolPublicOnly    = FALSE;
+integer PolOwnedOnly     = FALSE;
+integer PolTrusteeAccess = FALSE;
+integer PolWearerUnowned = FALSE;
+integer PolPrimaryOwner  = FALSE;
 
 /* ---------- Helpers ---------- */
 integer withinRange(key av){
@@ -76,7 +76,7 @@ integer withinRange(key av){
 
 /* Registry parser: tolerant defaults, compact storage */
 integer parseRegistry(string j){
-    g_all = [];
+    All = [];
     integer i = 0;
     while (llJsonValueType(j, ["plugins", i]) != JSON_INVALID){
         string label   = llJsonGetValue(j, ["plugins", i, "label"]);
@@ -110,44 +110,44 @@ integer parseRegistry(string j){
                 if (a == "wearer_only" || a == "non_wearer_only" || a == "all") audience = a;
             }
 
-            g_all += [label, context, min_acl, has_tpe, label_tpe, tpe_min, audience];
+            All += [label, context, min_acl, has_tpe, label_tpe, tpe_min, audience];
             i = i + 1;
         }
     }
-    return llGetListLength(g_all) / 7;
+    return llGetListLength(All) / 7;
 }
 
 /* Build filtered view for the current user under AUTH flags */
 list filterForViewer(){
     list out = [];
     integer i = 0;
-    integer n = llGetListLength(g_all);
+    integer n = llGetListLength(All);
 
     while (i + 6 < n){
-        string  label    = llList2String (g_all, i);
-        string  context  = llList2String (g_all, i + 1);
-        integer minAcl   = llList2Integer(g_all, i + 2);
-        integer hasTpe   = llList2Integer(g_all, i + 3);
-        string  labelTpe = llList2String (g_all, i + 4);
-        integer tpeMin   = llList2Integer(g_all, i + 5);
-        string  audience = llList2String (g_all, i + 6);
+        string  label    = llList2String (All, i);
+        string  context  = llList2String (All, i + 1);
+        integer minAcl   = llList2Integer(All, i + 2);
+        integer hasTpe   = llList2Integer(All, i + 3);
+        string  labelTpe = llList2String (All, i + 4);
+        integer tpeMin   = llList2Integer(All, i + 5);
+        string  audience = llList2String (All, i + 6);
 
         integer include = TRUE;
         integer isCoreOwner = (context == "core_owner");
 
         /* audience gate */
-        if (gIsWearer){
+        if (IsWearer){
             if (audience == "non_wearer_only") include = FALSE;
         } else {
             if (audience == "wearer_only") include = FALSE;
         }
 
         /* ACL -1 is handled by caller; still guard */
-        if (gAcl < 0) include = FALSE;
+        if (Acl < 0) include = FALSE;
 
         if (isCoreOwner){
-            if (gIsWearer){
-                if (gOwnerSet){
+            if (IsWearer){
+                if (OwnerSet){
                     include = TRUE;
                 } else {
                     include = FALSE;
@@ -157,7 +157,7 @@ list filterForViewer(){
 
         if (include){
             /* Wearer under TPE: only items that explicitly opt in with tpe_min_acl==0 */
-            if (gIsWearer && pol_tpe){
+            if (IsWearer && PolTpe){
                 if (hasTpe){
                     if (tpeMin == 0){
                         /* ok */
@@ -169,9 +169,9 @@ list filterForViewer(){
                 }
             } else {
                 /* Non-TPE paths */
-                if (!gIsWearer){
+                if (!IsWearer){
                     /* Touchers */
-                    if (pol_public_only && gAcl <= 1){
+                    if (PolPublicOnly && Acl <= 1){
                         if (minAcl == 1){
                             /* ok */
                         } else {
@@ -179,7 +179,7 @@ list filterForViewer(){
                         }
                     } else {
                         /* Trustee / owner levels retain full <= ACL visibility */
-                        if (minAcl <= gAcl){
+                        if (minAcl <= Acl){
                             /* ok */
                         } else {
                             include = FALSE;
@@ -187,13 +187,13 @@ list filterForViewer(){
                     }
                 } else {
                     /* Wearer, not TPE */
-                    if (pol_owned_only){
+                    if (PolOwnedOnly){
                         if (minAcl <= 2){
                             /* ok */
                         } else {
                             include = FALSE;
                         }
-                    } else if (pol_wearer_unowned){
+                    } else if (PolWearerUnowned){
                         if (minAcl <= 4){
                             /* ok */
                         } else {
@@ -201,7 +201,7 @@ list filterForViewer(){
                         }
                     } else {
                         /* safety fallback for wearer when no policy flags set */
-                        if (minAcl <= gAcl){
+                        if (minAcl <= Acl){
                             /* ok */
                         } else {
                             include = FALSE;
@@ -213,7 +213,7 @@ list filterForViewer(){
 
         if (include){
             string shown = label;
-            if (gIsWearer && pol_tpe){
+            if (IsWearer && PolTpe){
                 if (labelTpe != "") shown = labelTpe;
             }
             out += [shown, context];
@@ -226,7 +226,7 @@ list filterForViewer(){
 }
 
 integer pageCount(){
-    integer total = llGetListLength(g_view) / 2;
+    integer total = llGetListLength(View) / 2;
     integer pages = 0;
     if (total <= 0) pages = 1;
     else {
@@ -238,10 +238,10 @@ integer pageCount(){
 }
 
 list buttonsForPage(integer page){
-    g_pageMap = [];
+    PageMap = [];
     list btns = [];
 
-    integer totalPairs = llGetListLength(g_view) / 2;
+    integer totalPairs = llGetListLength(View) / 2;
     integer pages = pageCount();
     if (page < 0) page = 0;
     if (page >= pages) page = pages - 1;
@@ -254,10 +254,10 @@ list buttonsForPage(integer page){
     integer end = (endPair * 2) + 1;
 
     while (idx <= end){
-        string label = llList2String(g_view, idx);
-        string ctx   = llList2String(g_view, idx + 1);
+        string label = llList2String(View, idx);
+        string ctx   = llList2String(View, idx + 1);
         btns += [label];
-        g_pageMap += [label, ctx];
+        PageMap += [label, ctx];
         idx = idx + 2;
     }
 
@@ -272,25 +272,25 @@ list buttonsForPage(integer page){
 }
 
 integer openDialog(key to, string title, string body, list buttons){
-    if (gListen) llListenRemove(gListen);
-    dialogOpen = TRUE;
-    gChan   = -100000 - (integer)llFrand(1000000.0);
-    gListen = llListen(gChan, "", to, "");
-    llDialog(to, title + "\n" + body, buttons, gChan);
+    if (Listen) llListenRemove(Listen);
+    DialogOpen = TRUE;
+    Chan   = -100000 - (integer)llFrand(1000000.0);
+    Listen = llListen(Chan, "", to, "");
+    llDialog(to, title + "\n" + body, buttons, Chan);
     return TRUE;
 }
 
 integer closeDialog(){
-    if (gListen){
-        llListenRemove(gListen);
-        gListen = 0;
+    if (Listen){
+        llListenRemove(Listen);
+        Listen = 0;
     }
-    dialogOpen = FALSE;
+    DialogOpen = FALSE;
     return TRUE;
 }
 
 integer showRoot(key who, integer page){
-    integer total = llGetListLength(g_view) / 2;
+    integer total = llGetListLength(View) / 2;
     if (total <= 0){
         llRegionSayTo(who, 0, "No plugins available.");
         return FALSE;
@@ -298,10 +298,10 @@ integer showRoot(key who, integer page){
     integer pages = pageCount();
     if (page < 0) page = 0;
     if (page >= pages) page = pages - 1;
-    gPage = page;
+    Page = page;
 
-    list b = buttonsForPage(gPage);
-    string body = "Select a function (Page " + (string)(gPage + 1) + "/" + (string)pages + ")";
+    list b = buttonsForPage(Page);
+    string body = "Select a function (Page " + (string)(Page + 1) + "/" + (string)pages + ")";
     openDialog(who, "• DS Collar •", body, b);
     return TRUE;
 }
@@ -311,10 +311,10 @@ integer navigate(key who, integer newPage){
     if (pages <= 0) pages = 1;
     if (newPage < 0) newPage = pages - 1;
     if (newPage >= pages) newPage = 0;
-    gPage = newPage;
+    Page = newPage;
 
-    list b = buttonsForPage(gPage);
-    string body = "Select a function (Page " + (string)(gPage + 1) + "/" + (string)pages + ")";
+    list b = buttonsForPage(Page);
+    string body = "Select a function (Page " + (string)(Page + 1) + "/" + (string)pages + ")";
     openDialog(who, "• DS Collar •", body, b);
     return TRUE;
 }
@@ -340,42 +340,42 @@ integer fetchRegistry(){ llMessageLinked(LINK_SET, K_PLUGIN_LIST_REQUEST, "", NU
 /* ==================== Events ==================== */
 default{
     state_entry(){
-        gUser      = NULL_KEY;
-        gListen    = 0;
-        gChan      = 0;
-        gPage      = 0;
-        dialogOpen = FALSE;
+        User      = NULL_KEY;
+        Listen    = 0;
+        Chan      = 0;
+        Page      = 0;
+        DialogOpen = FALSE;
 
-        g_all  = [];
-        g_view = [];
-        g_pageMap = [];
+        All  = [];
+        View = [];
+        PageMap = [];
 
-        gAcl = -1; gAclReady = FALSE; gListReady = FALSE;
-        gIsWearer = FALSE; gOwnerSet = FALSE;
+        Acl = -1; AclReady = FALSE; ListReady = FALSE;
+        IsWearer = FALSE; OwnerSet = FALSE;
 
-        pol_tpe = FALSE; pol_public_only = FALSE; pol_owned_only = FALSE;
-        pol_trustee_access = FALSE; pol_wearer_unowned = FALSE; pol_primary_owner = FALSE;
+        PolTpe = FALSE; PolPublicOnly = FALSE; PolOwnedOnly = FALSE;
+        PolTrusteeAccess = FALSE; PolWearerUnowned = FALSE; PolPrimaryOwner = FALSE;
     }
 
     on_rez(integer sp){ llResetScript(); }
     changed(integer c){ if (c & CHANGED_OWNER) llResetScript(); }
 
     touch_start(integer n){
-        if (dialogOpen) closeDialog();
+        if (DialogOpen) closeDialog();
 
-        gUser = llDetectedKey(0);
-        if (!withinRange(gUser)){
-            llRegionSayTo(gUser, 0, "You are too far from the wearer (max 5 m).");
+        User = llDetectedKey(0);
+        if (!withinRange(User)){
+            llRegionSayTo(User, 0, "You are too far from the wearer (max 5 m).");
             return;
         }
 
         /* reset session */
-        gAclReady = FALSE; gListReady = FALSE;
-        gAcl = -1; gIsWearer = FALSE; gOwnerSet = FALSE;
-        pol_tpe = FALSE; pol_public_only = FALSE; pol_owned_only = FALSE;
-        pol_trustee_access = FALSE; pol_wearer_unowned = FALSE; pol_primary_owner = FALSE;
+        AclReady = FALSE; ListReady = FALSE;
+        Acl = -1; IsWearer = FALSE; OwnerSet = FALSE;
+        PolTpe = FALSE; PolPublicOnly = FALSE; PolOwnedOnly = FALSE;
+        PolTrusteeAccess = FALSE; PolWearerUnowned = FALSE; PolPrimaryOwner = FALSE;
 
-        queryAcl(gUser);
+        queryAcl(User);
         fetchRegistry();
     }
 
@@ -386,38 +386,38 @@ default{
 
             key av = (key)llJsonGetValue(msg,["avatar"]);
             if (av == NULL_KEY) return;
-            if (av != gUser) return;
+            if (av != User) return;
 
-            gAcl = (integer)llJsonGetValue(msg,["level"]);
-            if (gAcl < 0){
-                llRegionSayTo(gUser, 0, "Access denied.");
-                gUser = NULL_KEY;
+            Acl = (integer)llJsonGetValue(msg,["level"]);
+            if (Acl < 0){
+                llRegionSayTo(User, 0, "Access denied.");
+                User = NULL_KEY;
                 return;
             }
 
-            gIsWearer = FALSE;
-            if (llJsonValueType(msg,["is_wearer"]) != JSON_INVALID) gIsWearer = (integer)llJsonGetValue(msg,["is_wearer"]);
-            gOwnerSet = FALSE;
-            if (llJsonValueType(msg,["owner_set"]) != JSON_INVALID) gOwnerSet = (integer)llJsonGetValue(msg,["owner_set"]);
+            IsWearer = FALSE;
+            if (llJsonValueType(msg,["is_wearer"]) != JSON_INVALID) IsWearer = (integer)llJsonGetValue(msg,["is_wearer"]);
+            OwnerSet = FALSE;
+            if (llJsonValueType(msg,["owner_set"]) != JSON_INVALID) OwnerSet = (integer)llJsonGetValue(msg,["owner_set"]);
 
-            pol_tpe            = FALSE; if (llJsonValueType(msg,["policy_tpe"])            != JSON_INVALID) pol_tpe            = (integer)llJsonGetValue(msg,["policy_tpe"]);
-            pol_public_only    = FALSE; if (llJsonValueType(msg,["policy_public_only"])    != JSON_INVALID) pol_public_only    = (integer)llJsonGetValue(msg,["policy_public_only"]);
-            pol_owned_only     = FALSE; if (llJsonValueType(msg,["policy_owned_only"])     != JSON_INVALID) pol_owned_only     = (integer)llJsonGetValue(msg,["policy_owned_only"]);
-            pol_trustee_access = FALSE; if (llJsonValueType(msg,["policy_trustee_access"]) != JSON_INVALID) pol_trustee_access = (integer)llJsonGetValue(msg,["policy_trustee_access"]);
-            pol_wearer_unowned = FALSE; if (llJsonValueType(msg,["policy_wearer_unowned"]) != JSON_INVALID) pol_wearer_unowned = (integer)llJsonGetValue(msg,["policy_wearer_unowned"]);
-            pol_primary_owner  = FALSE; if (llJsonValueType(msg,["policy_primary_owner"])  != JSON_INVALID) pol_primary_owner  = (integer)llJsonGetValue(msg,["policy_primary_owner"]);
+            PolTpe            = FALSE; if (llJsonValueType(msg,["policy_tpe"])            != JSON_INVALID) PolTpe            = (integer)llJsonGetValue(msg,["policy_tpe"]);
+            PolPublicOnly    = FALSE; if (llJsonValueType(msg,["policy_public_only"])    != JSON_INVALID) PolPublicOnly    = (integer)llJsonGetValue(msg,["policy_public_only"]);
+            PolOwnedOnly     = FALSE; if (llJsonValueType(msg,["policy_owned_only"])     != JSON_INVALID) PolOwnedOnly     = (integer)llJsonGetValue(msg,["policy_owned_only"]);
+            PolTrusteeAccess = FALSE; if (llJsonValueType(msg,["policy_trustee_access"]) != JSON_INVALID) PolTrusteeAccess = (integer)llJsonGetValue(msg,["policy_trustee_access"]);
+            PolWearerUnowned = FALSE; if (llJsonValueType(msg,["policy_wearer_unowned"]) != JSON_INVALID) PolWearerUnowned = (integer)llJsonGetValue(msg,["policy_wearer_unowned"]);
+            PolPrimaryOwner  = FALSE; if (llJsonValueType(msg,["policy_primary_owner"])  != JSON_INVALID) PolPrimaryOwner  = (integer)llJsonGetValue(msg,["policy_primary_owner"]);
 
-            gAclReady = TRUE;
+            AclReady = TRUE;
 
-            if (gAclReady && gListReady){
-                g_view = filterForViewer();
-                if (llGetListLength(g_view) == 0){
-                    llRegionSayTo(gUser, 0, "No plugins available.");
-                    gUser = NULL_KEY;
+            if (AclReady && ListReady){
+                View = filterForViewer();
+                if (llGetListLength(View) == 0){
+                    llRegionSayTo(User, 0, "No plugins available.");
+                    User = NULL_KEY;
                     return;
                 }
-                showRoot(gUser, 0);
-                gAclReady = FALSE; gListReady = FALSE;
+                showRoot(User, 0);
+                AclReady = FALSE; ListReady = FALSE;
             }
             return;
         }
@@ -427,17 +427,17 @@ default{
             if (llJsonGetValue(msg,["type"]) != TYPE_PLUGIN_LIST) return;
 
             parseRegistry(msg);
-            gListReady = TRUE;
+            ListReady = TRUE;
 
-            if (gAclReady && gListReady){
-                g_view = filterForViewer();
-                if (llGetListLength(g_view) == 0){
-                    llRegionSayTo(gUser, 0, "No plugins available.");
-                    gUser = NULL_KEY;
+            if (AclReady && ListReady){
+                View = filterForViewer();
+                if (llGetListLength(View) == 0){
+                    llRegionSayTo(User, 0, "No plugins available.");
+                    User = NULL_KEY;
                     return;
                 }
-                showRoot(gUser, 0);
-                gAclReady = FALSE; gListReady = FALSE;
+                showRoot(User, 0);
+                AclReady = FALSE; ListReady = FALSE;
             }
             return;
         }
@@ -445,14 +445,14 @@ default{
         if (num == K_PLUGIN_RETURN_NUM){
             if (llJsonValueType(msg,["context"]) != JSON_INVALID){
                 string ctx = llJsonGetValue(msg,["context"]);
-                if (ctx == ROOT_CONTEXT) showRoot(gUser, gPage);
+                if (ctx == ROOT_CONTEXT) showRoot(User, Page);
             }
             return;
         }
     }
 
     listen(integer chan, string name, key id, string b){
-        if (chan != gChan) return;
+        if (chan != Chan) return;
 
         if (!withinRange(id)){
             closeDialog();
@@ -463,17 +463,17 @@ default{
         /* close first to avoid double dialogs */
         closeDialog();
 
-        if (b == BTN_NAV_LEFT){  navigate(id, gPage - 1); return; }
-        if (b == BTN_NAV_RIGHT){ navigate(id, gPage + 1); return; }
-        if (b == BTN_NAV_GAP){   showRoot(id, gPage);     return; }
+        if (b == BTN_NAV_LEFT){  navigate(id, Page - 1); return; }
+        if (b == BTN_NAV_RIGHT){ navigate(id, Page + 1); return; }
+        if (b == BTN_NAV_GAP){   showRoot(id, Page);     return; }
 
-        integer idx = llListFindList(g_pageMap, [b]);
+        integer idx = llListFindList(PageMap, [b]);
         if (idx != -1){
-            string ctx = llList2String(g_pageMap, idx + 1);
+            string ctx = llList2String(PageMap, idx + 1);
             startPlugin(ctx, id);
             return;
         }
 
-        showRoot(id, gPage);
+        showRoot(id, Page);
     }
 }

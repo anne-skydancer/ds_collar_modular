@@ -68,26 +68,26 @@ string KEY_OWNER_KEY  = "owner_key";
 string KEY_OWNER_HON  = "owner_hon";
 
 integer tpe_mode      = FALSE;
-key     g_owner_key   = NULL_KEY;
-string  g_owner_hon   = "";
+key     OwnerKey   = NULL_KEY;
+string  OwnerHon   = "";
 
 /* ---------- UI/session state ---------- */
 integer DIALOG_TIMEOUT_SEC = 180;
-key     g_user        = NULL_KEY; // current active dialog recipient
-key     g_initiator   = NULL_KEY; // who opened the plugin (primary owner)
-integer g_listen      = 0;
-integer g_menu_chan   = 0;
-/* g_ctx:
+key     User        = NULL_KEY; // current active dialog recipient
+key     Initiator   = NULL_KEY; // who opened the plugin (primary owner)
+integer Listen      = 0;
+integer MenuChan   = 0;
+/* Ctx:
    "main"             owner main menu
    "confirm_owner"    owner enable confirm
    "confirm_wearer"   wearer enable confirm
    "confirm_disable"  owner disable confirm
    "final_ack"        terminal OK (wearer on enable; owner on disable)
 */
-string  g_ctx         = "";
+string  Ctx         = "";
 
-integer g_acl_pending = FALSE;
-integer g_acl_level   = ACL_NOACCESS;
+integer AclPending = FALSE;
+integer AclLevel   = ACL_NOACCESS;
 
 /* ========================== Helpers ========================== */
 integer json_has(string j, list path) {
@@ -101,8 +101,8 @@ integer in_allowed_levels(integer lvl) {
 }
 
 string owner_display_name() {
-    string nm = llKey2Name(g_owner_key);
-    if (nm == "") nm = (string)g_owner_key;
+    string nm = llKey2Name(OwnerKey);
+    if (nm == "") nm = (string)OwnerKey;
     return nm;
 }
 
@@ -150,34 +150,34 @@ integer request_acl(key av) {
     j = llJsonSetValue(j, ["type"],   CONS_MSG_ACL_QUERY);
     j = llJsonSetValue(j, ["avatar"], (string)av);
     llMessageLinked(LINK_SET, AUTH_QUERY_NUM, j, NULL_KEY);
-    g_acl_pending = TRUE;
+    AclPending = TRUE;
     return 0;
 }
 
 integer reset_listen() {
-    if (g_listen) llListenRemove(g_listen);
-    g_listen = 0;
-    g_menu_chan = 0;
+    if (Listen) llListenRemove(Listen);
+    Listen = 0;
+    MenuChan = 0;
     return 0;
 }
 
 integer begin_dialog(key user, string ctx, string body, list buttons) {
     reset_listen();
-    g_user = user;
-    g_ctx  = ctx;
-    g_menu_chan = -100000 - (integer)llFrand(1000000.0);
-    g_listen    = llListen(g_menu_chan, "", g_user, "");
+    User = user;
+    Ctx  = ctx;
+    MenuChan = -100000 - (integer)llFrand(1000000.0);
+    Listen    = llListen(MenuChan, "", User, "");
     while ((llGetListLength(buttons) % 3) != 0) buttons += " ";
-    llDialog(g_user, body, buttons, g_menu_chan);
+    llDialog(User, body, buttons, MenuChan);
     llSetTimerEvent((float)DIALOG_TIMEOUT_SEC);
     return 0;
 }
 
 integer end_session() {
     reset_listen();
-    g_user = NULL_KEY;
-    g_initiator = NULL_KEY;
-    g_ctx = "";
+    User = NULL_KEY;
+    Initiator = NULL_KEY;
+    Ctx = "";
     llSetTimerEvent(0.0);
     return 0;
 }
@@ -225,11 +225,11 @@ default {
         request_settings_get();
 
         tpe_mode = FALSE;
-        g_user = NULL_KEY;
-        g_initiator = NULL_KEY;
+        User = NULL_KEY;
+        Initiator = NULL_KEY;
         reset_listen();
-        g_ctx = "";
-        g_acl_pending = FALSE;
+        Ctx = "";
+        AclPending = FALSE;
         llSetTimerEvent(0.0);
     }
 
@@ -263,8 +263,8 @@ default {
                 if (json_has(msg, ["kv"])) {
                     string kv = llJsonGetValue(msg, ["kv"]);
                     if (json_has(kv, [KEY_TPE_MODE]))  tpe_mode  = (integer)llJsonGetValue(kv, [KEY_TPE_MODE]);
-                    if (json_has(kv, [KEY_OWNER_KEY])) g_owner_key = (key)llJsonGetValue(kv, [KEY_OWNER_KEY]);
-                    if (json_has(kv, [KEY_OWNER_HON])) g_owner_hon = llJsonGetValue(kv, [KEY_OWNER_HON]);
+                    if (json_has(kv, [KEY_OWNER_KEY])) OwnerKey = (key)llJsonGetValue(kv, [KEY_OWNER_KEY]);
+                    if (json_has(kv, [KEY_OWNER_HON])) OwnerHon = llJsonGetValue(kv, [KEY_OWNER_HON]);
                 }
             }
             return;
@@ -274,8 +274,8 @@ default {
         if (num == K_PLUGIN_START) {
             if (json_has(msg, ["type"]) && llJsonGetValue(msg, ["type"]) == TYPE_PLUGIN_START) {
                 if (json_has(msg, ["context"]) && llJsonGetValue(msg, ["context"]) == PLUGIN_CONTEXT) {
-                    g_initiator = id;
-                    request_acl(g_initiator);
+                    Initiator = id;
+                    request_acl(Initiator);
                 }
             }
             return;
@@ -283,26 +283,26 @@ default {
 
         /* ACL result for initiator */
         if (num == AUTH_RESULT_NUM) {
-            if (!g_acl_pending) return;
+            if (!AclPending) return;
             if (!json_has(msg, ["type"])) return;
             if (llJsonGetValue(msg, ["type"]) != CONS_MSG_ACL_RESULT) return;
             if (!json_has(msg, ["avatar"])) return;
             key who = (key)llJsonGetValue(msg, ["avatar"]);
-            if (who != g_initiator) return;
+            if (who != Initiator) return;
             if (!json_has(msg, ["level"])) return;
 
-            g_acl_level = (integer)llJsonGetValue(msg, ["level"]);
-            g_acl_pending = FALSE;
+            AclLevel = (integer)llJsonGetValue(msg, ["level"]);
+            AclPending = FALSE;
 
-            if (in_allowed_levels(g_acl_level)) {
-                show_main_menu(g_initiator);
+            if (in_allowed_levels(AclLevel)) {
+                show_main_menu(Initiator);
             } else {
-                llRegionSayTo(g_initiator, 0, "Access denied.");
+                llRegionSayTo(Initiator, 0, "Access denied.");
                 /* Return to root (owner) */
                 string r = llList2Json(JSON_OBJECT, []);
                 r = llJsonSetValue(r, ["type"], TYPE_PLUGIN_RETURN);
                 r = llJsonSetValue(r, ["context"], ROOT_CONTEXT);
-                llMessageLinked(LINK_SET, K_PLUGIN_RETURN_NUM, r, g_initiator);
+                llMessageLinked(LINK_SET, K_PLUGIN_RETURN_NUM, r, Initiator);
                 end_session();
             }
             return;
@@ -310,48 +310,48 @@ default {
     }
 
     listen(integer chan, string name, key id, string message) {
-        if (chan != g_menu_chan) return;
+        if (chan != MenuChan) return;
 
         /* MAIN (owner) */
-        if (g_ctx == "main") {
+        if (Ctx == "main") {
             if (message == "Back") {
                 string r = llList2Json(JSON_OBJECT, []);
                 r = llJsonSetValue(r, ["type"], TYPE_PLUGIN_RETURN);
                 r = llJsonSetValue(r, ["context"], ROOT_CONTEXT);
-                llMessageLinked(LINK_SET, K_PLUGIN_RETURN_NUM, r, g_initiator);
+                llMessageLinked(LINK_SET, K_PLUGIN_RETURN_NUM, r, Initiator);
                 end_session();
                 return;
             }
             if (message == "Enable") {
-                show_owner_confirm(g_initiator);
+                show_owner_confirm(Initiator);
                 return;
             }
             if (message == "Disable") {
-                show_owner_disable_confirm(g_initiator);
+                show_owner_disable_confirm(Initiator);
                 return;
             }
         }
 
         /* OWNER CONFIRM (enable) */
-        else if (g_ctx == "confirm_owner") {
+        else if (Ctx == "confirm_owner") {
             if (message == "Yes") {
                 show_wearer_confirm();
                 return;
             } else {
-                show_main_menu(g_initiator);
+                show_main_menu(Initiator);
                 return;
             }
         }
 
         /* WEARER CONFIRM (enable) */
-        else if (g_ctx == "confirm_wearer") {
+        else if (Ctx == "confirm_wearer") {
             if (message == "Yes") {
                 /* Persist and notify Public plugin */
                 persist_tpe(TRUE);
                 llMessageLinked(LINK_SET, K_TPE_PUBLIC_CTRL, TPE_PUBLIC_ENABLE, NULL_KEY);
 
                 /* Only the WEARER gets the informational dialog, then end */
-                string hon = g_owner_hon;
+                string hon = OwnerHon;
                 string nm  = owner_display_name();
                 string line = "You are now the totally power-exchanged servant of ";
                 if (hon != "") line += hon + " ";
@@ -360,27 +360,27 @@ default {
                 return;
             } else {
                 /* Wearer declined → simply return owner to main */
-                show_main_menu(g_initiator);
+                show_main_menu(Initiator);
                 return;
             }
         }
 
         /* OWNER CONFIRM (disable) */
-        else if (g_ctx == "confirm_disable") {
+        else if (Ctx == "confirm_disable") {
             if (message == "Yes") {
                 persist_tpe(FALSE);
                 llMessageLinked(LINK_SET, K_TPE_PUBLIC_CTRL, TPE_PUBLIC_DISABLE, NULL_KEY);
                 /* Owner gets a single OK, then end */
-                begin_dialog(g_initiator, "final_ack", "TPE Mode has been disabled.", ["OK"]);
+                begin_dialog(Initiator, "final_ack", "TPE Mode has been disabled.", ["OK"]);
                 return;
             } else {
-                show_main_menu(g_initiator);
+                show_main_menu(Initiator);
                 return;
             }
         }
 
         /* TERMINAL ACK (wearer after enable OR owner after disable) */
-        else if (g_ctx == "final_ack") {
+        else if (Ctx == "final_ack") {
             if (message == "OK") {
                 end_session(); /* Do NOT reopen any menu */
                 return;

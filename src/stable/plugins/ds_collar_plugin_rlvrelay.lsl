@@ -76,27 +76,27 @@ integer MODE_OFF         = 0;
 integer MODE_ON          = 1;
 integer MODE_HARDCORE    = 2;
 
-integer g_mode     = MODE_ON;
-integer g_hardcore = FALSE;
+integer Mode     = MODE_ON;
+integer Hardcore = FALSE;
 
 /* ---------------- Relay State ---------------- */
-/* g_relays: [obj_key, obj_name, session_chan, restrictions_csv] * N */
-list    g_relays         = [];
+/* Relays: [obj_key, obj_name, session_chan, restrictions_csv] * N */
+list    Relays         = [];
 
 /* ---------------- Session Menus ---------------- */
 integer DIALOG_TIMEOUT_SEC = 180;
-key     g_user = NULL_KEY;
-integer g_menu_chan = 0;
-integer g_listen = 0;
+key     User = NULL_KEY;
+integer MenuChan = 0;
+integer Listen = 0;
 
-integer g_acl_level   = ACL_NOACCESS;
+integer AclLevel   = ACL_NOACCESS;
 
 /* For building label→context mapping */
-list    g_menu_labels = [];
-list    g_menu_contexts = [];
+list    MenuLabels = [];
+list    MenuContexts = [];
 
 /* Owner tracking from SETTINGS to force Hardcore OFF on owner change/removal */
-key     g_owner_key_cached = NULL_KEY;
+key     OwnerKeyCached = NULL_KEY;
 
 /* =========================================================================
    HELPERS
@@ -105,24 +105,24 @@ integer json_has(string j, list path) { return (llJsonGetValue(j, path) != JSON_
 integer logd(string m) { if (DEBUG) llOwnerSay("[RELAY] " + m); return 0; }
 
 integer begin_context_dialog(key user, string body, list labels, list contexts) {
-    g_menu_labels   = labels;
-    g_menu_contexts = contexts;
-    while ((llGetListLength(g_menu_labels) % 3) != 0) {
-        g_menu_labels   += " ";
-        g_menu_contexts += " ";
+    MenuLabels   = labels;
+    MenuContexts = contexts;
+    while ((llGetListLength(MenuLabels) % 3) != 0) {
+        MenuLabels   += " ";
+        MenuContexts += " ";
     }
-    if (g_listen) llListenRemove(g_listen);
-    g_user      = user;
-    g_menu_chan = -100000 - (integer)llFrand(1000000.0);
-    g_listen    = llListen(g_menu_chan, "", g_user, "");
-    llDialog(g_user, body, g_menu_labels, g_menu_chan);
+    if (Listen) llListenRemove(Listen);
+    User      = user;
+    MenuChan = -100000 - (integer)llFrand(1000000.0);
+    Listen    = llListen(MenuChan, "", User, "");
+    llDialog(User, body, MenuLabels, MenuChan);
     llSetTimerEvent((float)DIALOG_TIMEOUT_SEC);
     return TRUE;
 }
 
 string get_context_from_label(string label) {
-    integer idx = llListFindList(g_menu_labels, [label]);
-    if (idx != -1) return llList2String(g_menu_contexts, idx);
+    integer idx = llListFindList(MenuLabels, [label]);
+    if (idx != -1) return llList2String(MenuContexts, idx);
     return "";
 }
 
@@ -140,9 +140,9 @@ integer request_acl(key av) {
    ========================================================================= */
 integer relay_idx(key obj) {
     integer i = 0;
-    integer n = llGetListLength(g_relays);
+    integer n = llGetListLength(Relays);
     while (i < n) {
-        if (llList2Key(g_relays, i) == obj) return i;
+        if (llList2Key(Relays, i) == obj) return i;
         i = i + 4;
     }
     return -1;
@@ -150,39 +150,39 @@ integer relay_idx(key obj) {
 
 integer add_relay(key obj, string name, integer chan) {
     if (relay_idx(obj) != -1) return 0;
-    if ((llGetListLength(g_relays) / 4) >= MAX_RELAYS) return 0;
-    g_relays += [obj, name, chan, ""];
+    if ((llGetListLength(Relays) / 4) >= MAX_RELAYS) return 0;
+    Relays += [obj, name, chan, ""];
     return 0;
 }
 
 integer remove_relay(key obj) {
     integer i = relay_idx(obj);
-    if (i != -1) g_relays = llDeleteSubList(g_relays, i, i + 3);
+    if (i != -1) Relays = llDeleteSubList(Relays, i, i + 3);
     return 0;
 }
 
 integer store_restriction(key obj, string cmd) {
     integer i = relay_idx(obj);
     if (i == -1) return 0;
-    string r = llList2String(g_relays, i + 3);
+    string r = llList2String(Relays, i + 3);
     if (r != "") r = r + "," + cmd;
     else r = cmd;
-    g_relays = llListReplaceList(g_relays, [r], i + 3, i + 3);
+    Relays = llListReplaceList(Relays, [r], i + 3, i + 3);
     return 0;
 }
 
 integer clear_restrictions(key obj) {
     integer i = relay_idx(obj);
-    if (i != -1) g_relays = llListReplaceList(g_relays, [""], i + 3, i + 3);
+    if (i != -1) Relays = llListReplaceList(Relays, [""], i + 3, i + 3);
     return 0;
 }
 
 /* Bound if any relay has a non-empty restriction list */
 integer is_bound() {
     integer i = 0;
-    integer n = llGetListLength(g_relays);
+    integer n = llGetListLength(Relays);
     while (i < n) {
-        string r = llList2String(g_relays, i + 3);
+        string r = llList2String(Relays, i + 3);
         if (r != "") return TRUE;
         i = i + 4;
     }
@@ -194,16 +194,16 @@ integer safeword_clear_all()
 {
     llOwnerSay("@clear");
     llOwnerSay("@unsit=force");
-    g_relays = [];
+    Relays = [];
     if (DEBUG) llOwnerSay("[RELAY] Safeword issued: @clear (+ @unsit=force).");
     return 0;
 }
 
 /* Force Hardcore OFF (used on owner change/removal) */
 integer force_hardcore_off(string reason) {
-    if (g_hardcore) {
-        g_hardcore = FALSE;
-        g_mode = MODE_ON;
+    if (Hardcore) {
+        Hardcore = FALSE;
+        Mode = MODE_ON;
         if (reason != "") llOwnerSay("[RELAY] Hardcore disabled: " + reason);
         else llOwnerSay("[RELAY] Hardcore disabled.");
     }
@@ -214,7 +214,7 @@ integer force_hardcore_off(string reason) {
    UI MENUS
    ========================================================================= */
 integer show_main_menu(key user) {
-    if (!in_allowed_levels(g_acl_level)) return 0;
+    if (!in_allowed_levels(AclLevel)) return 0;
 
     /* Dynamic release button (only if currently bound) */
     string btn3 = " ";
@@ -222,17 +222,17 @@ integer show_main_menu(key user) {
     integer bound = is_bound();
 
     if (bound) {
-        if (g_hardcore) {
+        if (Hardcore) {
             /* Hardcore ON + bound:
                  - ACL 3/5 → Unbind
                  - ACL 2   → no release
                  - ACL 4   → Safeword
             */
-            if (g_acl_level == ACL_TRUSTEE || g_acl_level == ACL_PRIMARY_OWNER) {
+            if (AclLevel == ACL_TRUSTEE || AclLevel == ACL_PRIMARY_OWNER) {
                 btn3 = "Unbind";
                 ctx3 = "unbind";
             } else {
-                if (g_acl_level == ACL_UNOWNED) {
+                if (AclLevel == ACL_UNOWNED) {
                     btn3 = "Safeword";
                     ctx3 = "safeword";
                 }
@@ -242,11 +242,11 @@ integer show_main_menu(key user) {
                  - ACL 2/4 → Safeword
                  - ACL 3/5 → Unbind
             */
-            if (g_acl_level == ACL_OWNED || g_acl_level == ACL_UNOWNED) {
+            if (AclLevel == ACL_OWNED || AclLevel == ACL_UNOWNED) {
                 btn3 = "Safeword";
                 ctx3 = "safeword";
             } else {
-                if (g_acl_level == ACL_TRUSTEE || g_acl_level == ACL_PRIMARY_OWNER) {
+                if (AclLevel == ACL_TRUSTEE || AclLevel == ACL_PRIMARY_OWNER) {
                     btn3 = "Unbind";
                     ctx3 = "unbind";
                 }
@@ -258,11 +258,11 @@ integer show_main_menu(key user) {
     list contexts = [ " ", "back", " ", "mode", "objects", ctx3 ];
 
     string mode_str = "OFF";
-    if (g_mode == MODE_ON) mode_str = "ON";
-    else if (g_mode == MODE_HARDCORE) mode_str = "HARDCORE";
+    if (Mode == MODE_ON) mode_str = "ON";
+    else if (Mode == MODE_HARDCORE) mode_str = "HARDCORE";
 
     string hc_str = "DISABLED";
-    if (g_hardcore) hc_str = "ENABLED";
+    if (Hardcore) hc_str = "ENABLED";
 
     string bound_str = "Not bound";
     if (bound) bound_str = "Bound";
@@ -278,12 +278,12 @@ integer show_main_menu(key user) {
 integer show_mode_menu(key user) {
     /* ACL 3/5 may toggle Hardcore; ACL 2/4 cannot (hidden) */
     integer allow_hc = FALSE;
-    if (g_acl_level == ACL_TRUSTEE || g_acl_level == ACL_PRIMARY_OWNER) allow_hc = TRUE;
+    if (AclLevel == ACL_TRUSTEE || AclLevel == ACL_PRIMARY_OWNER) allow_hc = TRUE;
 
     string hc_label = " ";
     string hc_ctx   = " ";
     if (allow_hc) {
-        if (g_hardcore) {
+        if (Hardcore) {
             hc_label = "Hardcore OFF";
             hc_ctx   = "hardcore_off";
         } else {
@@ -296,11 +296,11 @@ integer show_mode_menu(key user) {
     list contexts = [ " ", "cancel", " ", "set_off", "set_on", hc_ctx ];
 
     string mode_str = "OFF";
-    if (g_mode == MODE_ON) mode_str = "ON";
-    else if (g_mode == MODE_HARDCORE) mode_str = "HARDCORE";
+    if (Mode == MODE_ON) mode_str = "ON";
+    else if (Mode == MODE_HARDCORE) mode_str = "HARDCORE";
 
     string hc_str = "DISABLED";
-    if (g_hardcore) hc_str = "ENABLED";
+    if (Hardcore) hc_str = "ENABLED";
 
     return begin_context_dialog(user,
         "Change relay mode\n"
@@ -311,13 +311,13 @@ integer show_mode_menu(key user) {
 
 integer show_object_list(key user) {
     string summary = "";
-    integer n = llGetListLength(g_relays);
+    integer n = llGetListLength(Relays);
     if (n == 0) summary = "No active objects.";
     else {
         integer i = 0;
         while (i < n) {
             integer idx = (i / 4) + 1;
-            summary += (string)idx + ". " + llList2String(g_relays, i + 1) + "\n";
+            summary += (string)idx + ". " + llList2String(Relays, i + 1) + "\n";
             i = i + 4;
         }
     }
@@ -332,12 +332,12 @@ integer show_object_list(key user) {
 default {
     state_entry() {
         PLUGIN_SN = (integer)llFrand(1.0e9);
-        g_user = NULL_KEY;
-        g_acl_level = ACL_NOACCESS;
+        User = NULL_KEY;
+        AclLevel = ACL_NOACCESS;
 
-        if (g_listen) llListenRemove(g_listen);
-        g_listen = 0;
-        g_menu_chan = 0;
+        if (Listen) llListenRemove(Listen);
+        Listen = 0;
+        MenuChan = 0;
 
         /* Listen to incoming relay messages from devices */
         llListen(RELAY_CHANNEL, "", NULL_KEY, "");
@@ -391,9 +391,9 @@ default {
         if (num == K_PLUGIN_START && json_has(msg, ["type"])) {
             if (llJsonGetValue(msg, ["type"]) == CONS_TYPE_PLUGIN_START &&
                 llJsonGetValue(msg, ["context"]) == PLUGIN_CONTEXT) {
-                g_user = id;
-                g_acl_level = ACL_NOACCESS;
-                request_acl(g_user);
+                User = id;
+                AclLevel = ACL_NOACCESS;
+                request_acl(User);
             }
             return;
         }
@@ -403,23 +403,23 @@ default {
             if (llJsonGetValue(msg, ["type"]) == "acl_result") {
                 if (!json_has(msg, ["avatar"])) return;
                 key av = (key)llJsonGetValue(msg, ["avatar"]);
-                if (av != g_user) return;
+                if (av != User) return;
 
                 if (!json_has(msg, ["level"])) return;
-                g_acl_level = (integer)llJsonGetValue(msg, ["level"]);
+                AclLevel = (integer)llJsonGetValue(msg, ["level"]);
 
-                if (g_acl_level <= 0 || !in_allowed_levels(g_acl_level)) {
-                    llRegionSayTo(g_user, 0, "Access denied.");
+                if (AclLevel <= 0 || !in_allowed_levels(AclLevel)) {
+                    llRegionSayTo(User, 0, "Access denied.");
                     string r = llList2Json(JSON_OBJECT, []);
                     r = llJsonSetValue(r, ["type"], CONS_TYPE_PLUGIN_RETURN);
                     r = llJsonSetValue(r, ["context"], ROOT_CONTEXT);
-                    llMessageLinked(LINK_SET, K_PLUGIN_RETURN_NUM, r, g_user);
-                    g_user = NULL_KEY;
-                    if (g_listen) { llListenRemove(g_listen); g_listen = 0; }
+                    llMessageLinked(LINK_SET, K_PLUGIN_RETURN_NUM, r, User);
+                    User = NULL_KEY;
+                    if (Listen) { llListenRemove(Listen); Listen = 0; }
                     return;
                 }
 
-                show_main_menu(g_user);
+                show_main_menu(User);
             }
             return;
         }
@@ -431,17 +431,17 @@ default {
                     string kv = llJsonGetValue(msg, ["kv"]);
                     if (json_has(kv, [KEY_OWNER_KEY])) {
                         key newOwner = (key)llJsonGetValue(kv, [KEY_OWNER_KEY]);
-                        if (newOwner != g_owner_key_cached) {
+                        if (newOwner != OwnerKeyCached) {
                             string reason = "owner changed";
                             if (newOwner == NULL_KEY) reason = "owner removed";
                             force_hardcore_off(reason);
-                            g_owner_key_cached = newOwner;
+                            OwnerKeyCached = newOwner;
                         }
                     } else {
                         /* key missing → treat as removal */
-                        if (g_owner_key_cached != NULL_KEY) {
+                        if (OwnerKeyCached != NULL_KEY) {
                             force_hardcore_off("owner removed");
-                            g_owner_key_cached = NULL_KEY;
+                            OwnerKeyCached = NULL_KEY;
                         }
                     }
                 }
@@ -490,7 +490,7 @@ default {
             }
 
             if (llSubStringIndex(command, "@") == 0) {
-                if (g_mode == MODE_OFF) {
+                if (Mode == MODE_OFF) {
                     string ko = "RLV," + (string)llGetKey() + "," + command + ",ko";
                     llRegionSayTo(id, sess, ko);
                     return;
@@ -510,7 +510,7 @@ default {
         }
 
         /* Plugin UI */
-        if (chan != g_menu_chan || id != g_user) return;
+        if (chan != MenuChan || id != User) return;
 
         string ctx = get_context_from_label(msg);
 
@@ -518,9 +518,9 @@ default {
             string r = llList2Json(JSON_OBJECT, []);
             r = llJsonSetValue(r, ["type"], CONS_TYPE_PLUGIN_RETURN);
             r = llJsonSetValue(r, ["context"], ROOT_CONTEXT);
-            llMessageLinked(LINK_SET, K_PLUGIN_RETURN_NUM, r, g_user);
-            g_user = NULL_KEY;
-            if (g_listen) { llListenRemove(g_listen); g_listen = 0; }
+            llMessageLinked(LINK_SET, K_PLUGIN_RETURN_NUM, r, User);
+            User = NULL_KEY;
+            if (Listen) { llListenRemove(Listen); Listen = 0; }
             llSetTimerEvent(0.0);
             return;
         }
@@ -530,11 +530,11 @@ default {
 
         if (ctx == "unbind") {
             /* Only ACL 3/5 may unbind in any mode */
-            if (g_acl_level == ACL_TRUSTEE || g_acl_level == ACL_PRIMARY_OWNER) {
+            if (AclLevel == ACL_TRUSTEE || AclLevel == ACL_PRIMARY_OWNER) {
                 safeword_clear_all();
                 show_main_menu(id);
             } else {
-                llRegionSayTo(g_user, 0, "You do not have permission to use that.");
+                llRegionSayTo(User, 0, "You do not have permission to use that.");
             }
             return;
         }
@@ -542,15 +542,15 @@ default {
         if (ctx == "safeword") {
             /* In Hardcore, only ACL 4 gets Safeword; ACL 2 is blocked. In normal, 2/4 allowed. */
             integer allow = FALSE;
-            if (g_hardcore) {
-                if (g_acl_level == ACL_UNOWNED) allow = TRUE; /* ACL 4 */
+            if (Hardcore) {
+                if (AclLevel == ACL_UNOWNED) allow = TRUE; /* ACL 4 */
             } else {
-                if (g_acl_level == ACL_OWNED || g_acl_level == ACL_UNOWNED) allow = TRUE;
+                if (AclLevel == ACL_OWNED || AclLevel == ACL_UNOWNED) allow = TRUE;
             }
             if (allow) {
                 safeword_clear_all();
             } else {
-                llRegionSayTo(g_user, 0, "Safeword is not available.");
+                llRegionSayTo(User, 0, "Safeword is not available.");
             }
             show_main_menu(id);
             return;
@@ -558,37 +558,37 @@ default {
 
         /* Mode changes (always allowed) */
         if (ctx == "set_off") {
-            g_mode = MODE_OFF;
-            g_hardcore = FALSE; /* turning mode OFF also clears Hardcore flag */
+            Mode = MODE_OFF;
+            Hardcore = FALSE; /* turning mode OFF also clears Hardcore flag */
             show_main_menu(id);
             return;
         }
         if (ctx == "set_on") {
-            g_mode = MODE_ON;
-            /* leave g_hardcore as-is (it only has effect when MODE_HARDCORE) */
+            Mode = MODE_ON;
+            /* leave Hardcore as-is (it only has effect when MODE_HARDCORE) */
             show_main_menu(id);
             return;
         }
 
         /* Hardcore toggles — ONLY ACL 3/5 allowed; ACL 2/4 blocked even if they click an old dialog */
         if (ctx == "hardcore_on") {
-            if (g_acl_level == ACL_TRUSTEE || g_acl_level == ACL_PRIMARY_OWNER) {
-                g_hardcore = TRUE;
-                g_mode = MODE_HARDCORE;
+            if (AclLevel == ACL_TRUSTEE || AclLevel == ACL_PRIMARY_OWNER) {
+                Hardcore = TRUE;
+                Mode = MODE_HARDCORE;
                 show_main_menu(id);
             } else {
-                llRegionSayTo(g_user, 0, "You do not have permission to change Hardcore.");
+                llRegionSayTo(User, 0, "You do not have permission to change Hardcore.");
                 show_mode_menu(id);
             }
             return;
         }
         if (ctx == "hardcore_off") {
-            if (g_acl_level == ACL_TRUSTEE || g_acl_level == ACL_PRIMARY_OWNER) {
-                g_hardcore = FALSE;
-                g_mode = MODE_ON;
+            if (AclLevel == ACL_TRUSTEE || AclLevel == ACL_PRIMARY_OWNER) {
+                Hardcore = FALSE;
+                Mode = MODE_ON;
                 show_main_menu(id);
             } else {
-                llRegionSayTo(g_user, 0, "You do not have permission to change Hardcore.");
+                llRegionSayTo(User, 0, "You do not have permission to change Hardcore.");
                 show_mode_menu(id);
             }
             return;
@@ -596,12 +596,12 @@ default {
     }
 
     timer() {
-        if (g_listen) {
-            llListenRemove(g_listen);
-            g_listen = 0;
+        if (Listen) {
+            llListenRemove(Listen);
+            Listen = 0;
         }
-        g_user = NULL_KEY;
-        g_menu_chan = 0;
+        User = NULL_KEY;
+        MenuChan = 0;
         llSetTimerEvent(0.0);
     }
 

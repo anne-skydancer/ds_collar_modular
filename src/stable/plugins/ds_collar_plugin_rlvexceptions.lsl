@@ -39,10 +39,10 @@ string CTX_TRUSTEE_IM   = "trustee_im";
 string CTX_TRUSTEE_TP   = "trustee_tp";
 
 // Exception state (persistent)
-integer g_ex_owner_im      = TRUE;   // Owner IM allowed
-integer g_ex_owner_tp      = TRUE;   // Owner force TP allowed
-integer g_ex_trustee_im    = TRUE;   // Trustee IM allowed
-integer g_ex_trustee_tp    = FALSE;  // Trustee TP allowed (default FALSE!)
+integer ExOwnerIm      = TRUE;   // Owner IM allowed
+integer ExOwnerTp      = TRUE;   // Owner force TP allowed
+integer ExTrusteeIm    = TRUE;   // Trustee IM allowed
+integer ExTrusteeTp    = FALSE;  // Trustee TP allowed (default FALSE!)
 
 // Settings keys
 string EX_OWNER_IM_KEY      = "ex_owner_im";
@@ -51,34 +51,34 @@ string EX_TRUSTEE_IM_KEY    = "ex_trustee_im";
 string EX_TRUSTEE_TP_KEY    = "ex_trustee_tp";
 
 // Session helpers (Animate/Status)
-list    g_sessions;
-integer s_idx(key av) { return llListFindList(g_sessions, [av]); }
+list    Sessions;
+integer s_idx(key av) { return llListFindList(Sessions, [av]); }
 integer s_set(key av, integer page, string csv, float expiry, string ctx, string param, string step, string menucsv, integer chan)
 {
     integer i = s_idx(av);
     if (~i) {
-        integer old = llList2Integer(g_sessions, i+9);
+        integer old = llList2Integer(Sessions, i+9);
         if (old != -1) llListenRemove(old);
-        g_sessions = llDeleteSubList(g_sessions, i, i+9);
+        Sessions = llDeleteSubList(Sessions, i, i+9);
     }
     integer lh = llListen(chan, "", av, "");
-    g_sessions += [av, page, csv, expiry, ctx, param, step, menucsv, chan, lh];
+    Sessions += [av, page, csv, expiry, ctx, param, step, menucsv, chan, lh];
     return TRUE;
 }
 integer s_clear(key av)
 {
     integer i = s_idx(av);
     if (~i) {
-        integer old = llList2Integer(g_sessions, i+9);
+        integer old = llList2Integer(Sessions, i+9);
         if (old != -1) llListenRemove(old);
-        g_sessions = llDeleteSubList(g_sessions, i, i+9);
+        Sessions = llDeleteSubList(Sessions, i, i+9);
     }
     return TRUE;
 }
 list s_get(key av)
 {
     integer i = s_idx(av);
-    if (~i) return llList2List(g_sessions, i, i+9);
+    if (~i) return llList2List(Sessions, i, i+9);
     return [];
 }
 
@@ -201,20 +201,20 @@ default
                         string pname = llGetSubString(kv, 0, eq-1);
                         string pval  = llGetSubString(kv, eq+1, -1);
                         if (pname == EX_OWNER_IM_KEY) {
-                            if (pval == "1") g_ex_owner_im = TRUE; else g_ex_owner_im = FALSE;
+                            if (pval == "1") ExOwnerIm = TRUE; else ExOwnerIm = FALSE;
                         } else if (pname == EX_OWNER_TP_KEY) {
-                            if (pval == "1") g_ex_owner_tp = TRUE; else g_ex_owner_tp = FALSE;
+                            if (pval == "1") ExOwnerTp = TRUE; else ExOwnerTp = FALSE;
                         } else if (pname == EX_TRUSTEE_IM_KEY) {
-                            if (pval == "1") g_ex_trustee_im = TRUE; else g_ex_trustee_im = FALSE;
+                            if (pval == "1") ExTrusteeIm = TRUE; else ExTrusteeIm = FALSE;
                         } else if (pname == EX_TRUSTEE_TP_KEY) {
-                            if (pval == "1") g_ex_trustee_tp = TRUE; else g_ex_trustee_tp = FALSE;
+                            if (pval == "1") ExTrusteeTp = TRUE; else ExTrusteeTp = FALSE;
                         }
                     }
                 }
-                if (DEBUG) llOwnerSay("[RLVEX] Settings sync: ownerIM=" + (string)g_ex_owner_im +
-                    " ownerTP=" + (string)g_ex_owner_tp +
-                    " trusteeIM=" + (string)g_ex_trustee_im +
-                    " trusteeTP=" + (string)g_ex_trustee_tp );
+                if (DEBUG) llOwnerSay("[RLVEX] Settings sync: ownerIM=" + (string)ExOwnerIm +
+                    " ownerTP=" + (string)ExOwnerTp +
+                    " trusteeIM=" + (string)ExTrusteeIm +
+                    " trusteeTP=" + (string)ExTrusteeTp );
             }
             return;
         }
@@ -269,22 +269,22 @@ default
             // Owner submenu
             else if (ctx == CTX_OWNER) {
                 if (msg == "IM") {
-                    show_exception_menu(id, CTX_OWNER_IM, EX_OWNER_IM_KEY, "Owner IM +", "Owner IM -", g_ex_owner_im);
+                    show_exception_menu(id, CTX_OWNER_IM, EX_OWNER_IM_KEY, "Owner IM +", "Owner IM -", ExOwnerIm);
                     return;
                 }
                 if (msg == "TP") {
-                    show_exception_menu(id, CTX_OWNER_TP, EX_OWNER_TP_KEY, "Owner TP +", "Owner TP -", g_ex_owner_tp);
+                    show_exception_menu(id, CTX_OWNER_TP, EX_OWNER_TP_KEY, "Owner TP +", "Owner TP -", ExOwnerTp);
                     return;
                 }
             }
             // Trustee submenu
             else if (ctx == CTX_TRUSTEE) {
                 if (msg == "IM") {
-                    show_exception_menu(id, CTX_TRUSTEE_IM, EX_TRUSTEE_IM_KEY, "Trust IM +", "Trust IM -", g_ex_trustee_im);
+                    show_exception_menu(id, CTX_TRUSTEE_IM, EX_TRUSTEE_IM_KEY, "Trust IM +", "Trust IM -", ExTrusteeIm);
                     return;
                 }
                 if (msg == "TP") {
-                    show_exception_menu(id, CTX_TRUSTEE_TP, EX_TRUSTEE_TP_KEY, "Trust TP +", "Trust TP -", g_ex_trustee_tp);
+                    show_exception_menu(id, CTX_TRUSTEE_TP, EX_TRUSTEE_TP_KEY, "Trust TP +", "Trust TP -", ExTrusteeTp);
                     return;
                 }
             }
@@ -294,51 +294,51 @@ default
 
                 // For any exception +/- button, update value and show this menu again
                 if (msg == "Owner IM +" && ctx == CTX_OWNER_IM) {
-                    g_ex_owner_im = TRUE;
-                    persist_exception(EX_OWNER_IM_KEY, g_ex_owner_im);
-                    show_exception_menu(id, CTX_OWNER_IM, EX_OWNER_IM_KEY, "Owner IM +", "Owner IM -", g_ex_owner_im);
+                    ExOwnerIm = TRUE;
+                    persist_exception(EX_OWNER_IM_KEY, ExOwnerIm);
+                    show_exception_menu(id, CTX_OWNER_IM, EX_OWNER_IM_KEY, "Owner IM +", "Owner IM -", ExOwnerIm);
                     return;
                 }
                 if (msg == "Owner IM -" && ctx == CTX_OWNER_IM) {
-                    g_ex_owner_im = FALSE;
-                    persist_exception(EX_OWNER_IM_KEY, g_ex_owner_im);
-                    show_exception_menu(id, CTX_OWNER_IM, EX_OWNER_IM_KEY, "Owner IM +", "Owner IM -", g_ex_owner_im);
+                    ExOwnerIm = FALSE;
+                    persist_exception(EX_OWNER_IM_KEY, ExOwnerIm);
+                    show_exception_menu(id, CTX_OWNER_IM, EX_OWNER_IM_KEY, "Owner IM +", "Owner IM -", ExOwnerIm);
                     return;
                 }
                 if (msg == "Owner TP +" && ctx == CTX_OWNER_TP) {
-                    g_ex_owner_tp = TRUE;
-                    persist_exception(EX_OWNER_TP_KEY, g_ex_owner_tp);
-                    show_exception_menu(id, CTX_OWNER_TP, EX_OWNER_TP_KEY, "Owner TP +", "Owner TP -", g_ex_owner_tp);
+                    ExOwnerTp = TRUE;
+                    persist_exception(EX_OWNER_TP_KEY, ExOwnerTp);
+                    show_exception_menu(id, CTX_OWNER_TP, EX_OWNER_TP_KEY, "Owner TP +", "Owner TP -", ExOwnerTp);
                     return;
                 }
                 if (msg == "Owner TP -" && ctx == CTX_OWNER_TP) {
-                    g_ex_owner_tp = FALSE;
-                    persist_exception(EX_OWNER_TP_KEY, g_ex_owner_tp);
-                    show_exception_menu(id, CTX_OWNER_TP, EX_OWNER_TP_KEY, "Owner TP +", "Owner TP -", g_ex_owner_tp);
+                    ExOwnerTp = FALSE;
+                    persist_exception(EX_OWNER_TP_KEY, ExOwnerTp);
+                    show_exception_menu(id, CTX_OWNER_TP, EX_OWNER_TP_KEY, "Owner TP +", "Owner TP -", ExOwnerTp);
                     return;
                 }
                 if (msg == "Trust IM +" && ctx == CTX_TRUSTEE_IM) {
-                    g_ex_trustee_im = TRUE;
-                    persist_exception(EX_TRUSTEE_IM_KEY, g_ex_trustee_im);
-                    show_exception_menu(id, CTX_TRUSTEE_IM, EX_TRUSTEE_IM_KEY, "Trust IM +", "Trust IM -", g_ex_trustee_im);
+                    ExTrusteeIm = TRUE;
+                    persist_exception(EX_TRUSTEE_IM_KEY, ExTrusteeIm);
+                    show_exception_menu(id, CTX_TRUSTEE_IM, EX_TRUSTEE_IM_KEY, "Trust IM +", "Trust IM -", ExTrusteeIm);
                     return;
                 }
                 if (msg == "Trust IM -" && ctx == CTX_TRUSTEE_IM) {
-                    g_ex_trustee_im = FALSE;
-                    persist_exception(EX_TRUSTEE_IM_KEY, g_ex_trustee_im);
-                    show_exception_menu(id, CTX_TRUSTEE_IM, EX_TRUSTEE_IM_KEY, "Trust IM +", "Trust IM -", g_ex_trustee_im);
+                    ExTrusteeIm = FALSE;
+                    persist_exception(EX_TRUSTEE_IM_KEY, ExTrusteeIm);
+                    show_exception_menu(id, CTX_TRUSTEE_IM, EX_TRUSTEE_IM_KEY, "Trust IM +", "Trust IM -", ExTrusteeIm);
                     return;
                 }
                 if (msg == "Trust TP +" && ctx == CTX_TRUSTEE_TP) {
-                    g_ex_trustee_tp = TRUE;
-                    persist_exception(EX_TRUSTEE_TP_KEY, g_ex_trustee_tp);
-                    show_exception_menu(id, CTX_TRUSTEE_TP, EX_TRUSTEE_TP_KEY, "Trust TP +", "Trust TP -", g_ex_trustee_tp);
+                    ExTrusteeTp = TRUE;
+                    persist_exception(EX_TRUSTEE_TP_KEY, ExTrusteeTp);
+                    show_exception_menu(id, CTX_TRUSTEE_TP, EX_TRUSTEE_TP_KEY, "Trust TP +", "Trust TP -", ExTrusteeTp);
                     return;
                 }
                 if (msg == "Trust TP -" && ctx == CTX_TRUSTEE_TP) {
-                    g_ex_trustee_tp = FALSE;
-                    persist_exception(EX_TRUSTEE_TP_KEY, g_ex_trustee_tp);
-                    show_exception_menu(id, CTX_TRUSTEE_TP, EX_TRUSTEE_TP_KEY, "Trust TP +", "Trust TP -", g_ex_trustee_tp);
+                    ExTrusteeTp = FALSE;
+                    persist_exception(EX_TRUSTEE_TP_KEY, ExTrusteeTp);
+                    show_exception_menu(id, CTX_TRUSTEE_TP, EX_TRUSTEE_TP_KEY, "Trust TP +", "Trust TP -", ExTrusteeTp);
                     return;
                 }
             }
@@ -349,9 +349,9 @@ default
     {
         integer now = llGetUnixTime();
         integer i = 0;
-        while (i < llGetListLength(g_sessions)) {
-            float exp = llList2Float(g_sessions, i+3);
-            key av = llList2Key(g_sessions, i);
+        while (i < llGetListLength(Sessions)) {
+            float exp = llList2Float(Sessions, i+3);
+            key av = llList2Key(Sessions, i);
             if (now > exp) {
                 s_clear(av);
             } else {

@@ -65,14 +65,14 @@ string KEY_PUBLIC_MODE   = "public_mode";
 /* ---------- UI/session state ---------- */
 integer DIALOG_TIMEOUT_SEC = 180;
 
-key     g_user       = NULL_KEY;  /* current operator (active session) */
-integer g_listen     = 0;
-integer g_menu_chan  = 0;
-string  g_ctx        = "";        /* "main" */
+key     User       = NULL_KEY;  /* current operator (active session) */
+integer Listen     = 0;
+integer MenuChan  = 0;
+string  Ctx        = "";        /* "main" */
 
-integer g_public_access = FALSE;  /* 0/1 state */
+integer PublicAccess = FALSE;  /* 0/1 state */
 
-integer g_acl_pending = FALSE;
+integer AclPending = FALSE;
 
 /* ========================== Helpers ========================== */
 integer json_has(string j, list path) { return (llJsonGetValue(j, path) != JSON_INVALID); }
@@ -134,30 +134,30 @@ integer request_acl(key av) {
     j = llJsonSetValue(j, ["type"],   CONS_MSG_ACL_QUERY);
     j = llJsonSetValue(j, ["avatar"], (string)av);
     llMessageLinked(LINK_SET, AUTH_QUERY_NUM, j, NULL_KEY);
-    g_acl_pending = TRUE;
+    AclPending = TRUE;
     logd("ACL query → " + (string)av);
     return 0;
 }
 
 /* ---------- UI plumbing ---------- */
 integer reset_listen() {
-    if (g_listen) llListenRemove(g_listen);
-    g_listen = 0;
-    g_menu_chan = 0;
+    if (Listen) llListenRemove(Listen);
+    Listen = 0;
+    MenuChan = 0;
     return 0;
 }
 
 integer begin_dialog(key user, string ctx, string body, list buttons) {
     reset_listen();
-    g_user = user;
-    g_ctx  = ctx;
+    User = user;
+    Ctx  = ctx;
 
-    g_menu_chan = -100000 - (integer)llFrand(1000000.0);
-    g_listen    = llListen(g_menu_chan, "", g_user, "");
+    MenuChan = -100000 - (integer)llFrand(1000000.0);
+    Listen    = llListen(MenuChan, "", User, "");
 
     while ((llGetListLength(buttons) % 3) != 0) buttons += " ";
 
-    llDialog(g_user, body, buttons, g_menu_chan);
+    llDialog(User, body, buttons, MenuChan);
     llSetTimerEvent((float)DIALOG_TIMEOUT_SEC);
     return 0;
 }
@@ -165,15 +165,15 @@ integer begin_dialog(key user, string ctx, string body, list buttons) {
 /* ---------- UI content ---------- */
 integer show_main_menu(key user) {
     list btns = ["~","Back","~"];
-    if (g_public_access) btns += ["Disable"];
+    if (PublicAccess) btns += ["Disable"];
     else                 btns += ["Enable"];
 
     string msg = "Public access is currently ";
-    if (g_public_access) msg += "ENABLED.\nDisable public access?";
+    if (PublicAccess) msg += "ENABLED.\nDisable public access?";
     else                 msg += "DISABLED.\nEnable public access?";
 
     begin_dialog(user, "main", msg, btns);
-    logd("Menu → " + (string)user + " chan=" + (string)g_menu_chan);
+    logd("Menu → " + (string)user + " chan=" + (string)MenuChan);
     return 0;
 }
 
@@ -190,9 +190,9 @@ integer apply_settings_sync(string payload) {
     integer want = (integer)v;
     if (want != 0) want = 1;
 
-    if (g_public_access != want) {
-        g_public_access = want;
-        logd("Settings sync applied: public=" + (string)g_public_access);
+    if (PublicAccess != want) {
+        PublicAccess = want;
+        logd("Settings sync applied: public=" + (string)PublicAccess);
     }
     return 0;
 }
@@ -206,10 +206,10 @@ default {
         register_plugin();
         request_settings_get();
 
-        g_user = NULL_KEY;
+        User = NULL_KEY;
         reset_listen();
-        g_ctx = "";
-        g_acl_pending = FALSE;
+        Ctx = "";
+        AclPending = FALSE;
         llSetTimerEvent(0.0);
 
         logd("Ready. SN=" + (string)PLUGIN_SN);
@@ -247,7 +247,7 @@ default {
 
         /* ACL result gate */
         if (num == AUTH_RESULT_NUM) {
-            if (!g_acl_pending) return;
+            if (!AclPending) return;
             if (!json_has(msg, ["type"])) return;
             if (llJsonGetValue(msg, ["type"]) != CONS_MSG_ACL_RESULT) return;
             if (!json_has(msg, ["avatar"])) return;
@@ -256,22 +256,22 @@ default {
             key who = (key)llJsonGetValue(msg, ["avatar"]);
             integer lvl = (integer)llJsonGetValue(msg, ["level"]);
 
-            if (who != g_user) return;
+            if (who != User) return;
 
-            g_acl_pending = FALSE;
+            AclPending = FALSE;
 
             if (acl_is_allowed(lvl)) {
-                show_main_menu(g_user);
+                show_main_menu(User);
             } else {
-                llRegionSayTo(g_user, 0, "Access denied.");
+                llRegionSayTo(User, 0, "Access denied.");
                 string r = llList2Json(JSON_OBJECT, []);
                 r = llJsonSetValue(r, ["type"],    CONS_TYPE_PLUGIN_RETURN);
                 r = llJsonSetValue(r, ["context"], ROOT_CONTEXT);
-                llMessageLinked(LINK_SET, K_PLUGIN_RETURN_NUM, r, g_user);
+                llMessageLinked(LINK_SET, K_PLUGIN_RETURN_NUM, r, User);
 
                 reset_listen();
-                g_user = NULL_KEY;
-                g_ctx = "";
+                User = NULL_KEY;
+                Ctx = "";
                 llSetTimerEvent(0.0);
             }
             return;
@@ -281,8 +281,8 @@ default {
         if (num == K_PLUGIN_START) {
             if (json_has(msg, ["type"]) && llJsonGetValue(msg, ["type"]) == CONS_TYPE_PLUGIN_START) {
                 if (json_has(msg, ["context"]) && llJsonGetValue(msg, ["context"]) == PLUGIN_CONTEXT) {
-                    g_user = id;
-                    request_acl(g_user); /* defer UI until Auth says OK */
+                    User = id;
+                    request_acl(User); /* defer UI until Auth says OK */
                 }
             }
             return;
@@ -290,46 +290,46 @@ default {
     }
 
     listen(integer chan, string name, key id, string message) {
-        if (chan != g_menu_chan) return;
-        if (id != g_user) return;
+        if (chan != MenuChan) return;
+        if (id != User) return;
 
         if (message == "Back") {
             string r = llList2Json(JSON_OBJECT, []);
             r = llJsonSetValue(r, ["type"],    CONS_TYPE_PLUGIN_RETURN);
             r = llJsonSetValue(r, ["context"], ROOT_CONTEXT);
-            llMessageLinked(LINK_SET, K_PLUGIN_RETURN_NUM, r, g_user);
+            llMessageLinked(LINK_SET, K_PLUGIN_RETURN_NUM, r, User);
 
             reset_listen();
-            g_user = NULL_KEY;
-            g_ctx = "";
+            User = NULL_KEY;
+            Ctx = "";
             llSetTimerEvent(0.0);
             return;
         }
 
-        if (g_ctx == "main") {
+        if (Ctx == "main") {
             if (message == "Enable") {
-                g_public_access = TRUE;
-                persist_public(g_public_access);
-                show_main_menu(g_user);
+                PublicAccess = TRUE;
+                persist_public(PublicAccess);
+                show_main_menu(User);
                 return;
             }
             if (message == "Disable") {
-                g_public_access = FALSE;
-                persist_public(g_public_access);
-                show_main_menu(g_user);
+                PublicAccess = FALSE;
+                persist_public(PublicAccess);
+                show_main_menu(User);
                 return;
             }
         }
 
         /* Fallback: redraw */
-        show_main_menu(g_user);
+        show_main_menu(User);
     }
 
     timer() {
         /* No multi-user session table here; simply close on timeout */
         reset_listen();
-        g_user = NULL_KEY;
-        g_ctx = "";
+        User = NULL_KEY;
+        Ctx = "";
         llSetTimerEvent(0.0);
     }
 

@@ -52,21 +52,21 @@ integer PING_TIMEOUT         = 15;
 float   INV_SWEEP_INTERVAL   = 3.0;
 
 /* ---------- Internal State ---------- */
-/* g_plugin_map layout per entry:
+/* PluginMap layout per entry:
    [0]=context, [1]=isn, [2]=sn, [3]=label, [4]=min_acl, [5]=script, [6]=last_seen_unix
 */
-list    g_plugin_map   = [];
-integer g_next_isn     = 1;
+list    PluginMap   = [];
+integer NextIsn     = 1;
 
-list    g_add_queue    = [];
-list    g_dereg_queue  = [];
+list    AddQueue    = [];
+list    DeregQueue  = [];
 
-integer g_registering   = FALSE;
-integer g_deregistering = FALSE;
+integer Registering   = FALSE;
+integer Deregistering = FALSE;
 
-integer g_last_ping_unix      = 0;
-integer g_last_inv_sweep_unix = 0;
-key     g_last_owner          = NULL_KEY;
+integer LastPingUnix      = 0;
+integer LastInvSweepUnix = 0;
+key     LastOwner          = NULL_KEY;
 
 /* ---------- JSON helpers ---------- */
 integer json_has(string j, list path) {
@@ -80,8 +80,8 @@ integer logd(string s) { if (DEBUG) llOwnerSay("[KERNEL] " + s); return FALSE; }
 integer reset_if_owner_changed() {
     key owner = llGetOwner();
     if (owner == NULL_KEY) return FALSE;
-    if (owner != g_last_owner) {
-        g_last_owner = owner;
+    if (owner != LastOwner) {
+        LastOwner = owner;
         llResetScript();
         return TRUE;
     }
@@ -93,26 +93,26 @@ integer map_stride() { return 7; }
 integer map_index_from_context(string ctx) {
     integer stride = map_stride();
     integer i = 0;
-    integer L = llGetListLength(g_plugin_map);
+    integer L = llGetListLength(PluginMap);
     while (i < L) {
-        if (llList2String(g_plugin_map, i) == ctx) return i;
+        if (llList2String(PluginMap, i) == ctx) return i;
         i += stride;
     }
     return -1;
 }
 string map_get_script_at(integer idx) {
-    return llList2String(g_plugin_map, idx + 5);
+    return llList2String(PluginMap, idx + 5);
 }
 integer map_set_last_seen(string ctx, integer when) {
     integer idx = map_index_from_context(ctx);
     if (idx == -1) return FALSE;
-    g_plugin_map = llListReplaceList(g_plugin_map, [
-        llList2String(g_plugin_map, idx),
-        llList2Integer(g_plugin_map, idx+1),
-        llList2Integer(g_plugin_map, idx+2),
-        llList2String (g_plugin_map, idx+3),
-        llList2Integer(g_plugin_map, idx+4),
-        llList2String (g_plugin_map, idx+5),
+    PluginMap = llListReplaceList(PluginMap, [
+        llList2String(PluginMap, idx),
+        llList2Integer(PluginMap, idx+1),
+        llList2Integer(PluginMap, idx+2),
+        llList2String (PluginMap, idx+3),
+        llList2Integer(PluginMap, idx+4),
+        llList2String (PluginMap, idx+5),
         when
     ], idx, idx+6);
     return TRUE;
@@ -121,67 +121,67 @@ integer map_set_last_seen(string ctx, integer when) {
 /* ---------- Registry Functions (serialized) ---------- */
 integer queue_register(string ctx, integer sn, string label, integer min_acl, string script) {
     if (map_index_from_context(ctx) != -1) return FALSE;
-    if (llListFindList(g_add_queue, [ctx]) != -1) return FALSE;
-    g_add_queue += [ ctx, sn, label, min_acl, script ];
-    g_registering = TRUE;
+    if (llListFindList(AddQueue, [ctx]) != -1) return FALSE;
+    AddQueue += [ ctx, sn, label, min_acl, script ];
+    Registering = TRUE;
     return TRUE;
 }
 integer queue_deregister(string ctx) {
     if (map_index_from_context(ctx) == -1) return FALSE;
-    if (llListFindList(g_dereg_queue, [ctx]) != -1) return FALSE;
-    g_dereg_queue += [ ctx ];
-    g_deregistering = TRUE;
+    if (llListFindList(DeregQueue, [ctx]) != -1) return FALSE;
+    DeregQueue += [ ctx ];
+    Deregistering = TRUE;
     return TRUE;
 }
 
 integer process_next_add() {
-    if (llGetListLength(g_add_queue) == 0) {
-        if (g_registering) {
-            g_registering = FALSE;
+    if (llGetListLength(AddQueue) == 0) {
+        if (Registering) {
+            Registering = FALSE;
             broadcast_plugin_list();
         }
         return FALSE;
     }
-    string  ctx     = llList2String (g_add_queue, 0);
-    integer sn      = llList2Integer(g_add_queue, 1);
-    string  label   = llList2String (g_add_queue, 2);
-    integer min_acl = llList2Integer(g_add_queue, 3);
-    string  script  = llList2String (g_add_queue, 4);
-    g_add_queue     = llDeleteSubList(g_add_queue, 0, 4);
+    string  ctx     = llList2String (AddQueue, 0);
+    integer sn      = llList2Integer(AddQueue, 1);
+    string  label   = llList2String (AddQueue, 2);
+    integer min_acl = llList2Integer(AddQueue, 3);
+    string  script  = llList2String (AddQueue, 4);
+    AddQueue     = llDeleteSubList(AddQueue, 0, 4);
     integer idx = map_index_from_context(ctx);
     integer now = llGetUnixTime();
     if (idx == -1) {
-        integer isn = g_next_isn;
-        g_next_isn += 1;
+        integer isn = NextIsn;
+        NextIsn += 1;
         if (script == "") script = ctx;
-        g_plugin_map += [ ctx, isn, sn, label, min_acl, script, now ];
+        PluginMap += [ ctx, isn, sn, label, min_acl, script, now ];
         logd("Registered: ctx=" + ctx + " isn=" + (string)isn + " label=" + label + " script=" + script);
     } else {
-        integer old_isn = llList2Integer(g_plugin_map, idx+1);
-        if (script == "") script = llList2String(g_plugin_map, idx+5);
-        g_plugin_map = llListReplaceList(g_plugin_map, [ ctx, old_isn, sn, label, min_acl, script, now ], idx, idx+6);
+        integer old_isn = llList2Integer(PluginMap, idx+1);
+        if (script == "") script = llList2String(PluginMap, idx+5);
+        PluginMap = llListReplaceList(PluginMap, [ ctx, old_isn, sn, label, min_acl, script, now ], idx, idx+6);
         logd("Refreshed: ctx=" + ctx + " isn=" + (string)old_isn);
     }
     return TRUE;
 }
 
 integer process_next_dereg() {
-    if (llGetListLength(g_dereg_queue) == 0) {
-        if (g_deregistering) {
-            g_deregistering = FALSE;
+    if (llGetListLength(DeregQueue) == 0) {
+        if (Deregistering) {
+            Deregistering = FALSE;
             broadcast_plugin_list();
         }
         return FALSE;
     }
-    string ctx = llList2String(g_dereg_queue, 0);
-    g_dereg_queue = llDeleteSubList(g_dereg_queue, 0, 0);
+    string ctx = llList2String(DeregQueue, 0);
+    DeregQueue = llDeleteSubList(DeregQueue, 0, 0);
     integer idx = map_index_from_context(ctx);
     if (idx != -1) {
         string j = llList2Json(JSON_OBJECT, []);
         j = llJsonSetValue(j, ["type"], MSG_DEREGISTER);
         j = llJsonSetValue(j, ["context"], ctx);
         llMessageLinked(LINK_SET, K_PLUGIN_DEREG, j, NULL_KEY);
-        g_plugin_map = llDeleteSubList(g_plugin_map, idx, idx + 6);
+        PluginMap = llDeleteSubList(PluginMap, idx, idx + 6);
         logd("Deregistered: " + ctx);
         return TRUE;
     }
@@ -192,11 +192,11 @@ integer process_next_dereg() {
 integer send_ping_all() {
     integer stride = map_stride();
     integer i = 0;
-    integer L = llGetListLength(g_plugin_map);
+    integer L = llGetListLength(PluginMap);
     integer now = llGetUnixTime();
     integer sent = 0;
     while (i < L) {
-        string ctx = llList2String(g_plugin_map, i);
+        string ctx = llList2String(PluginMap, i);
         string j = llList2Json(JSON_OBJECT, []);
         j = llJsonSetValue(j, ["type"], MSG_PING);
         j = llJsonSetValue(j, ["context"], ctx);
@@ -211,20 +211,20 @@ integer send_ping_all() {
 integer inventory_sweep_and_prune_if_both_dead() {
     integer stride = map_stride();
     integer i = 0;
-    integer L = llGetListLength(g_plugin_map);
+    integer L = llGetListLength(PluginMap);
     integer now = llGetUnixTime();
     integer any_removed = FALSE;
     while (i < L) {
-        string  ctx     = llList2String (g_plugin_map, i);
-        integer last    = llList2Integer(g_plugin_map, i+6);
-        string  script  = llList2String (g_plugin_map, i+5);
+        string  ctx     = llList2String (PluginMap, i);
+        integer last    = llList2Integer(PluginMap, i+6);
+        string  script  = llList2String (PluginMap, i+5);
         integer has_inv = FALSE;
         if (script == "") script = ctx;
         if (llGetInventoryType(script) == INVENTORY_SCRIPT) has_inv = TRUE;
         integer has_pong = ((now - last) <= PING_TIMEOUT);
         if (!has_inv && !has_pong) {
             logd("Heartbeat failed (inv+pong) → remove: " + ctx);
-            g_plugin_map = llDeleteSubList(g_plugin_map, i, i+6);
+            PluginMap = llDeleteSubList(PluginMap, i, i+6);
             L -= stride;
             any_removed = TRUE;
         } else {
@@ -238,15 +238,15 @@ integer inventory_sweep_and_prune_if_both_dead() {
 /* ---------- Broadcast Plugin List ---------- */
 integer broadcast_plugin_list() {
     integer stride = map_stride();
-    integer L = llGetListLength(g_plugin_map);
+    integer L = llGetListLength(PluginMap);
     integer i = 0;
     list arr = [];
     while (i < L) {
-        string  ctx     = llList2String (g_plugin_map, i);
-        integer isn     = llList2Integer(g_plugin_map, i+1);
-        integer sn      = llList2Integer(g_plugin_map, i+2);
-        string  label   = llList2String (g_plugin_map, i+3);
-        integer min_acl = llList2Integer(g_plugin_map, i+4);
+        string  ctx     = llList2String (PluginMap, i);
+        integer isn     = llList2Integer(PluginMap, i+1);
+        integer sn      = llList2Integer(PluginMap, i+2);
+        string  label   = llList2String (PluginMap, i+3);
+        integer min_acl = llList2Integer(PluginMap, i+4);
         string o = llList2Json(JSON_OBJECT, []);
         o = llJsonSetValue(o, ["isn"],      (string)isn);
         o = llJsonSetValue(o, ["sn"],       (string)sn);
@@ -288,13 +288,13 @@ integer solicit_plugin_register() {
    ============================================================= */
 default {
     state_entry() {
-        g_last_owner = llGetOwner();
-        g_plugin_map   = [];
-        g_add_queue    = [];
-        g_dereg_queue  = [];
-        g_next_isn     = 1;
-        g_last_ping_unix      = llGetUnixTime();
-        g_last_inv_sweep_unix = g_last_ping_unix;
+        LastOwner = llGetOwner();
+        PluginMap   = [];
+        AddQueue    = [];
+        DeregQueue  = [];
+        NextIsn     = 1;
+        LastPingUnix      = llGetUnixTime();
+        LastInvSweepUnix = LastPingUnix;
         llSetTimerEvent(0.2);
         solicit_plugin_register();
     }
@@ -320,12 +320,12 @@ default {
                 if (llJsonGetValue(str, ["type"]) == MSG_KERNEL_SOFT_RST) accepted = TRUE;
             }
             if (!accepted) return;
-            g_plugin_map   = [];
-            g_add_queue    = [];
-            g_dereg_queue  = [];
-            g_next_isn     = 1;
-            g_last_ping_unix      = llGetUnixTime();
-            g_last_inv_sweep_unix = g_last_ping_unix;
+            PluginMap   = [];
+            AddQueue    = [];
+            DeregQueue  = [];
+            NextIsn     = 1;
+            LastPingUnix      = llGetUnixTime();
+            LastInvSweepUnix = LastPingUnix;
             solicit_plugin_register();
             broadcast_plugin_list();
             return;
@@ -379,22 +379,22 @@ default {
     }
 
     timer() {
-        if (g_registering) {
+        if (Registering) {
             process_next_add();
             return;
         }
-        if (g_deregistering) {
+        if (Deregistering) {
             process_next_dereg();
             return;
         }
         integer now = llGetUnixTime();
-        if (now - g_last_ping_unix >= (integer)PING_INTERVAL) {
+        if (now - LastPingUnix >= (integer)PING_INTERVAL) {
             send_ping_all();
-            g_last_ping_unix = now;
+            LastPingUnix = now;
         }
-        if (now - g_last_inv_sweep_unix >= (integer)INV_SWEEP_INTERVAL) {
+        if (now - LastInvSweepUnix >= (integer)INV_SWEEP_INTERVAL) {
             inventory_sweep_and_prune_if_both_dead();
-            g_last_inv_sweep_unix = now;
+            LastInvSweepUnix = now;
         }
     }
 
