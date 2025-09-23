@@ -67,7 +67,7 @@ string KEY_TPE_MODE   = "tpe_mode";
 string KEY_OWNER_KEY  = "owner_key";
 string KEY_OWNER_HON  = "owner_hon";
 
-integer tpe_mode      = FALSE;
+integer TpeMode      = FALSE;
 key     OwnerKey   = NULL_KEY;
 string  OwnerHon   = "";
 
@@ -140,8 +140,8 @@ integer persist_tpe(integer value01) {
     j = llJsonSetValue(j, ["key"],   KEY_TPE_MODE);
     j = llJsonSetValue(j, ["value"], (string)value01);
     llMessageLinked(LINK_SET, K_SETTINGS_QUERY, j, NULL_KEY);
-    tpe_mode = value01;
-    logd("Persisted tpe_mode=" + (string)value01);
+    TpeMode = value01;
+    logd("Persisted TpeMode=" + (string)value01);
     return 0;
 }
 
@@ -185,11 +185,11 @@ integer end_session() {
 /* ---------- UI content ---------- */
 integer show_main_menu(key user) {
     list btns;
-    if (tpe_mode) btns = ["~", "Back", "~", "Disable"];
-    else          btns = ["~", "Back", "~", "Enable"];
+    if (TpeMode) btns = ["~", "Back", "~", "Disable"];
+    else         btns = ["~", "Back", "~", "Enable"];
     string msg = "TPE Mode is currently ";
-    if (tpe_mode) msg += "ENABLED.\nDisable TPE Mode?";
-    else          msg += "DISABLED.\nEnable TPE Mode?";
+    if (TpeMode) msg += "ENABLED.\nDisable TPE Mode?";
+    else         msg += "DISABLED.\nEnable TPE Mode?";
     begin_dialog(user, "main", msg, btns);
     return 0;
 }
@@ -224,7 +224,7 @@ default {
         register_plugin();
         request_settings_get();
 
-        tpe_mode = FALSE;
+        TpeMode = FALSE;
         User = NULL_KEY;
         Initiator = NULL_KEY;
         reset_listen();
@@ -262,7 +262,7 @@ default {
             if (json_has(msg, ["type"]) && llJsonGetValue(msg, ["type"]) == TYPE_SETTINGS_SYNC) {
                 if (json_has(msg, ["kv"])) {
                     string kv = llJsonGetValue(msg, ["kv"]);
-                    if (json_has(kv, [KEY_TPE_MODE]))  tpe_mode  = (integer)llJsonGetValue(kv, [KEY_TPE_MODE]);
+                    if (json_has(kv, [KEY_TPE_MODE]))  TpeMode  = (integer)llJsonGetValue(kv, [KEY_TPE_MODE]);
                     if (json_has(kv, [KEY_OWNER_KEY])) OwnerKey = (key)llJsonGetValue(kv, [KEY_OWNER_KEY]);
                     if (json_has(kv, [KEY_OWNER_HON])) OwnerHon = llJsonGetValue(kv, [KEY_OWNER_HON]);
                 }
