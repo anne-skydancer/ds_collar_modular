@@ -21,6 +21,7 @@
    ============================================================= */
 
 integer DEBUG = FALSE;
+// Logs module debug output when debugging is enabled.
 integer logd(string s){ if (DEBUG) llOwnerSay("[AUTH] " + s); return 0; }
 
 /* ---------- Protocol ---------- */
@@ -59,17 +60,23 @@ integer PublicMode        = FALSE;
 integer TpeMode           = FALSE;
 
 /* ---------- Helpers ---------- */
+// Returns TRUE when the JSON string contains a value at the provided path.
 integer json_has(string j, list path){
     string v = llJsonGetValue(j, path);
     if (v == JSON_INVALID) return FALSE;
     return TRUE;
 }
+// Checks whether a string is a JSON object literal.
 integer is_json_obj(string s){ if (llGetSubString(s,0,0) == "{") return TRUE; return FALSE; }
+// Checks whether a string is a JSON array literal.
 integer is_json_arr(string s){ if (llGetSubString(s,0,0) == "[") return TRUE; return FALSE; }
+// Converts a JSON array string to a list, returning [] if not an array.
 list json_arr_to_list(string s){ if (!is_json_arr(s)) return []; return llJson2List(s); }
+// Returns TRUE when the list already contains the provided string value.
 integer list_has_str(list L, string x){ if (llListFindList(L,[x]) != -1) return TRUE; return FALSE; }
 
 /* ---------- Settings intake ---------- */
+// Parses a settings_sync payload and refreshes the cached owner/trustee/blacklist data.
 integer apply_settings_sync(string sync_json){
     if (!json_has(sync_json, ["type"])) return 0;
     if (llJsonGetValue(sync_json, ["type"]) != MSG_SETTINGS_SYNC) return 0;
@@ -95,6 +102,7 @@ integer apply_settings_sync(string sync_json){
     return 1;
 }
 
+// Requests the latest settings snapshot from the settings module.
 integer request_settings_sync(){
     string j = llList2Json(JSON_OBJECT,[]);
     j = llJsonSetValue(j,["type"],MSG_SETTINGS_GET);
@@ -103,6 +111,7 @@ integer request_settings_sync(){
 }
 
 /* ---------- ACL evaluation ---------- */
+// Derives the ACL tier for the given avatar based on cached settings and policies.
 integer compute_acl_level(key av){
     key wearer = llGetOwner();
 
@@ -135,6 +144,7 @@ integer compute_acl_level(key av){
 }
 
 /* ---------- Central policy emission ---------- */
+// Builds and transmits the acl_result payload for the queried avatar, including policy flags.
 integer send_acl_result(key av, integer level){
     key wearer = llGetOwner();
     integer isWearer = FALSE;
@@ -187,8 +197,10 @@ integer send_acl_result(key av, integer level){
 
 /* ---------- Events ---------- */
 default{
+    // On entry, request a settings snapshot so ACL decisions have fresh data.
     state_entry(){ request_settings_sync(); }
 
+    // Handles inbound settings_sync updates and ACL queries from other modules.
     link_message(integer sender, integer num, string msg, key id){
         if (num == SETTINGS_SYNC_NUM){
             apply_settings_sync(msg);

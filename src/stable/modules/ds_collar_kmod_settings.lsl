@@ -37,22 +37,28 @@ integer MaxListLen = 64;
 integer LastGetTs  = 0;
 
 /* ---------- Helpers ---------- */
+// Emits tagged debug output when DEBUG is enabled.
 integer logd(string s) { if (DEBUG) llOwnerSay("[SETTINGS] " + s); return 0; }
 
+// Returns TRUE when the supplied JSON string has a value at the requested path.
 integer json_has(string j, list path) {
     string v = llJsonGetValue(j, path);
     if (v == JSON_INVALID) return FALSE;
     return TRUE;
 }
+// Identifies JSON object literals.
 integer is_json_obj(string s) { if (llGetSubString(s, 0, 0) == "{") return TRUE; return FALSE; }
+// Identifies JSON array literals.
 integer is_json_arr(string s) { if (llGetSubString(s, 0, 0) == "[") return TRUE; return FALSE; }
 
+// Fetches a stored JSON value by key, returning an empty string when unset.
 string kv_get(string key_str) {
     string v = llJsonGetValue(KvJson, [ key_str ]);
     if (v == JSON_INVALID) return "";
     return v;
 }
 
+// Converts a JSON array into a bounded list, truncating beyond MaxListLen.
 list json_array_to_capped_list(string arr_json) {
     list out = [];
     if (!is_json_arr(arr_json)) return out;
@@ -66,14 +72,17 @@ list json_array_to_capped_list(string arr_json) {
     return out;
 }
 
+// Normalizes stringified booleans into "0" or "1".
 string normalize_mode01(string s) {
     integer v = (integer)s;
     if (v != 0) v = 1;
     return (string)v;
 }
 
+// Compares two JSON scalar strings, returning TRUE when identical.
 integer json_value_equal(string a, string b) { if (a == b) return TRUE; return FALSE; }
 
+// Stores a scalar value when it differs from the previous value and logs the change.
 integer kv_set_scalar(string key_str, string val_str) {
     string oldv = kv_get(key_str);
     if (json_value_equal(oldv, val_str)) return FALSE;
@@ -82,6 +91,7 @@ integer kv_set_scalar(string key_str, string val_str) {
     return TRUE;
 }
 
+// Serializes and stores a list value, emitting a change log when updated.
 integer kv_set_list(string key_str, list values) {
     string new_arr = llList2Json(JSON_ARRAY, values);
     string old_arr = kv_get(key_str);
@@ -91,6 +101,7 @@ integer kv_set_list(string key_str, list values) {
     return TRUE;
 }
 
+// Adds an element to a JSON-backed list if not already present and within bounds.
 integer kv_list_add_unique(string key_str, string elem) {
     string arr = kv_get(key_str);
     list L = [];
@@ -102,6 +113,7 @@ integer kv_list_add_unique(string key_str, string elem) {
     return kv_set_list(key_str, L);
 }
 
+// Removes all instances of an element from a JSON-backed list.
 integer kv_list_remove_all(string key_str, string elem) {
     string arr = kv_get(key_str);
     if (!is_json_arr(arr)) return FALSE;
@@ -120,6 +132,7 @@ integer kv_list_remove_all(string key_str, string elem) {
     return kv_set_list(key_str, R);
 }
 
+// Restricts operations to recognized settings keys.
 integer is_allowed_key(string k) {
     if (k == KEY_OWNER_KEY)      return TRUE;
     if (k == KEY_OWNER_HON)      return TRUE;
@@ -133,7 +146,9 @@ integer is_allowed_key(string k) {
 }
 
 /* ---------- Local list helpers (non-JSON) ---------- */
+// Returns TRUE when the provided string exists inside the list.
 integer list_contains(list L, string s) { if (llListFindList(L, [s]) != -1) return TRUE; return FALSE; }
+// Removes all occurrences of the provided value from a local list copy.
 list list_remove_all_local(list L, string s) {
     integer idx = llListFindList(L, [s]);
     while (idx != -1) {
@@ -142,6 +157,7 @@ list list_remove_all_local(list L, string s) {
     }
     return L;
 }
+// Returns a version of the list containing each value only once.
 list list_unique(list L) {
     list U = [];
     integer i = 0;
@@ -155,6 +171,7 @@ list list_unique(list L) {
 }
 
 /* ---------- Role exclusivity sanitizer ---------- */
+// Cleans owner/trustee/blacklist conflicts and returns a sanitized kv JSON snapshot.
 string sanitize_roles_in_kv(string in_kv) {
     string kv = in_kv;
 
@@ -209,6 +226,7 @@ string sanitize_roles_in_kv(string in_kv) {
 }
 
 /* ---------- Broadcasting with sanitize ---------- */
+// Sanitizes state and sends a settings_sync broadcast to dependents.
 integer broadcast_sync_once() {
     /* Ensure a consistent snapshot before broadcasting */
     KvJson = sanitize_roles_in_kv(KvJson);
@@ -221,6 +239,7 @@ integer broadcast_sync_once() {
     return 0;
 }
 
+// Coalesces repeated GET requests to a single broadcast per second tick.
 integer maybe_broadcast_sync_on_get() {
     integer now = llGetUnixTime();
     if (now == LastGetTs) return 0;
@@ -230,6 +249,7 @@ integer maybe_broadcast_sync_on_get() {
 }
 
 /* ---------- Operation-level role guards ---------- */
+// Enforces mutual exclusivity when assigning an owner by removing conflicting roles.
 integer apply_owner_set_guard(string new_owner_str) {
     /* When setting owner:
        - Remove from trustees
@@ -255,6 +275,7 @@ integer apply_owner_set_guard(string new_owner_str) {
     return TRUE;
 }
 
+// Removes blacklist collisions and owner duplication when adding a trustee.
 integer apply_trustee_add_guard(string who) {
     /* Adding trustee:
        - Remove from blacklist
@@ -273,6 +294,7 @@ integer apply_trustee_add_guard(string who) {
     return TRUE;
 }
 
+// Clears owner/trustee conflicts when adding someone to the blacklist.
 integer apply_blacklist_add_guard(string who) {
     /* Adding to blacklist:
        - Remove from trustees
@@ -299,12 +321,14 @@ integer apply_blacklist_add_guard(string who) {
 /* ---------- Events ---------- */
 default
 {
+    // On entry, cache the owner and push an initial settings snapshot.
     state_entry() {
         LastOwner = llGetOwner();
         /* Initial broadcast of (possibly empty) KvJson */
         broadcast_sync_once();
     }
 
+    // On rez, detect owner transfers and reset to refresh state.
     on_rez(integer start_param) {
         key current_owner = llGetOwner();
         if (current_owner != LastOwner) {
@@ -313,6 +337,7 @@ default
         }
     }
 
+    // On attach, reinitialize if the owner changed while detached.
     attach(key id) {
         if (id == NULL_KEY) return;
 
@@ -323,6 +348,7 @@ default
         }
     }
 
+    // Responds to owner changes by resetting to a clean state.
     changed(integer change) {
         if (change & CHANGED_OWNER) {
             key current_owner = llGetOwner();
@@ -333,6 +359,7 @@ default
         }
     }
 
+    // Processes settings operations (get/set/list_add/list_remove) from other modules.
     link_message(integer sender, integer num, string str, key id)
     {
         if (num != SETTINGS_QUERY_NUM) return;
