@@ -7,7 +7,7 @@
 integer DEBUG = FALSE;
 
 /* ---------- Global String Constants (Magic Words) ---------- */
-key g_last_owner = NULL_KEY;
+key LastOwner = NULL_KEY;
 
 string TYPE_SETTINGS_GET       = "settings_get";
 string TYPE_SETTINGS_SYNC      = "settings_sync";
@@ -30,11 +30,11 @@ integer SETTINGS_QUERY_NUM     = 800;  /* In : {"type":"settings_get"} | {"type"
 integer SETTINGS_SYNC_NUM      = 870;  /* Out: {"type":"settings_sync","kv":{...}} */
 
 /* ---------- Internal JSON store ---------- */
-string kv_json = "{}";
+string KvJson = "{}";
 
 /* Optional bounds */
-integer MAX_LIST_LEN = 64;
-integer LAST_GET_TS  = 0;
+integer MaxListLen = 64;
+integer LastGetTs  = 0;
 
 /* ---------- Helpers ---------- */
 integer logd(string s) { if (DEBUG) llOwnerSay("[SETTINGS] " + s); return 0; }
@@ -48,7 +48,7 @@ integer is_json_obj(string s) { if (llGetSubString(s, 0, 0) == "{") return TRUE;
 integer is_json_arr(string s) { if (llGetSubString(s, 0, 0) == "[") return TRUE; return FALSE; }
 
 string kv_get(string key_str) {
-    string v = llJsonGetValue(kv_json, [ key_str ]);
+    string v = llJsonGetValue(KvJson, [ key_str ]);
     if (v == JSON_INVALID) return "";
     return v;
 }
@@ -59,7 +59,7 @@ list json_array_to_capped_list(string arr_json) {
     list L = llJson2List(arr_json);
     integer n = llGetListLength(L);
     integer i = 0;
-    while (i < n && i < MAX_LIST_LEN) {
+    while (i < n && i < MaxListLen) {
         out += [ llList2String(L, i) ];
         i += 1;
     }
@@ -77,7 +77,7 @@ integer json_value_equal(string a, string b) { if (a == b) return TRUE; return F
 integer kv_set_scalar(string key_str, string val_str) {
     string oldv = kv_get(key_str);
     if (json_value_equal(oldv, val_str)) return FALSE;
-    kv_json = llJsonSetValue(kv_json, [ key_str ], val_str);
+    KvJson = llJsonSetValue(KvJson, [ key_str ], val_str);
     logd("SET " + key_str + " = " + val_str);
     return TRUE;
 }
@@ -86,7 +86,7 @@ integer kv_set_list(string key_str, list values) {
     string new_arr = llList2Json(JSON_ARRAY, values);
     string old_arr = kv_get(key_str);
     if (json_value_equal(old_arr, new_arr)) return FALSE;
-    kv_json = llJsonSetValue(kv_json, [ key_str ], new_arr);
+    KvJson = llJsonSetValue(KvJson, [ key_str ], new_arr);
     logd("SET " + key_str + " count=" + (string)llGetListLength(values));
     return TRUE;
 }
@@ -97,7 +97,7 @@ integer kv_list_add_unique(string key_str, string elem) {
     if (is_json_arr(arr)) L = llJson2List(arr);
     integer idx = llListFindList(L, [ elem ]);
     if (idx != -1) return FALSE;
-    if (llGetListLength(L) >= MAX_LIST_LEN) return FALSE;
+    if (llGetListLength(L) >= MaxListLen) return FALSE;
     L += [ elem ];
     return kv_set_list(key_str, L);
 }
@@ -211,11 +211,11 @@ string sanitize_roles_in_kv(string in_kv) {
 /* ---------- Broadcasting with sanitize ---------- */
 integer broadcast_sync_once() {
     /* Ensure a consistent snapshot before broadcasting */
-    kv_json = sanitize_roles_in_kv(kv_json);
+    KvJson = sanitize_roles_in_kv(KvJson);
 
     string j = llList2Json(JSON_OBJECT, []);
     j = llJsonSetValue(j, ["type"], TYPE_SETTINGS_SYNC);
-    j = llJsonSetValue(j, ["kv"],   kv_json);
+    j = llJsonSetValue(j, ["kv"],   KvJson);
     llMessageLinked(LINK_SET, SETTINGS_SYNC_NUM, j, NULL_KEY);
     logd("sync → " + j);
     return 0;
@@ -223,8 +223,8 @@ integer broadcast_sync_once() {
 
 integer maybe_broadcast_sync_on_get() {
     integer now = llGetUnixTime();
-    if (now == LAST_GET_TS) return 0;
-    LAST_GET_TS = now;
+    if (now == LastGetTs) return 0;
+    LastGetTs = now;
     broadcast_sync_once();
     return 0;
 }
@@ -300,15 +300,15 @@ integer apply_blacklist_add_guard(string who) {
 default
 {
     state_entry() {
-        g_last_owner = llGetOwner();
-        /* Initial broadcast of (possibly empty) kv_json */
+        LastOwner = llGetOwner();
+        /* Initial broadcast of (possibly empty) KvJson */
         broadcast_sync_once();
     }
 
     on_rez(integer start_param) {
         key current_owner = llGetOwner();
-        if (current_owner != g_last_owner) {
-            g_last_owner = current_owner;
+        if (current_owner != LastOwner) {
+            LastOwner = current_owner;
             llResetScript();
         }
     }
@@ -317,8 +317,8 @@ default
         if (id == NULL_KEY) return;
 
         key current_owner = llGetOwner();
-        if (current_owner != g_last_owner) {
-            g_last_owner = current_owner;
+        if (current_owner != LastOwner) {
+            LastOwner = current_owner;
             llResetScript();
         }
     }
@@ -326,8 +326,8 @@ default
     changed(integer change) {
         if (change & CHANGED_OWNER) {
             key current_owner = llGetOwner();
-            if (current_owner != g_last_owner) {
-                g_last_owner = current_owner;
+            if (current_owner != LastOwner) {
+                LastOwner = current_owner;
                 llResetScript();
             }
         }

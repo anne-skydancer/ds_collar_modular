@@ -59,20 +59,20 @@ string KEY_LOCKED          = "locked";
 string KEY_TPE_MODE        = "tpe_mode";
 
 /* ---------- State mirrored from settings ---------- */
-key     owner_key        = NULL_KEY;
-string  owner_hon        = "";
-list    trustee_keys     = [];
-list    trustee_hons     = [];
-list    blacklist_keys   = [];
-integer public_access    = FALSE;
-integer locked           = FALSE;
-integer tpe_mode         = FALSE;
+key     OwnerKey          = NULL_KEY;
+string  OwnerHonorific    = "";
+list    TrusteeKeys       = [];
+list    TrusteeHonorifics = [];
+list    BlacklistKeys     = [];
+integer PublicAccess      = FALSE;
+integer Locked            = FALSE;
+integer TpeMode           = FALSE;
 
 /* ---------- Owner name cache + requests ---------- */
-string  owner_display    = "";        // preferred: Display Name (or legacy if needed)
-key     q_owner_disp     = NULL_KEY;  // query id for llRequestDisplayName
-key     q_owner_legacy   = NULL_KEY;  // query id for llRequestAgentData(DATA_NAME)
-key     last_owner_key   = NULL_KEY;  // track changes to re-fetch names
+string  OwnerDisplay      = "";       // preferred: Display Name (or legacy if needed)
+key     OwnerDisplayQuery = NULL_KEY;  // query id for llRequestDisplayName
+key     OwnerLegacyQuery  = NULL_KEY;  // query id for llRequestAgentData(DATA_NAME)
+key     LastOwnerKey      = NULL_KEY;  // track changes to re-fetch names
 
 /* ---------- Session state ---------- */
 key     User           = NULL_KEY;
@@ -88,20 +88,20 @@ integer logd(string s){ if (DEBUG) llOwnerSay("[STATUS] " + s); return 0; }
 
 /* ---------- Owner name resolution ---------- */
 request_owner_names(){
-    if (owner_key == NULL_KEY) return;
+    if (OwnerKey == NULL_KEY) return;
     // clear old cache and start fresh queries
-    owner_display  = "";
-    q_owner_disp   = llRequestDisplayName(owner_key);
-    q_owner_legacy = llRequestAgentData(owner_key, DATA_NAME);
+    OwnerDisplay  = "";
+    OwnerDisplayQuery   = llRequestDisplayName(OwnerKey);
+    OwnerLegacyQuery = llRequestAgentData(OwnerKey, DATA_NAME);
 }
 string owner_label(){
     // Prefer cached display/legacy name; otherwise indicate fetching
-    string nm = owner_display;
+    string nm = OwnerDisplay;
     if (nm == "") nm = "(fetching…)";
 
     // Apply honorific if present
-    if (owner_hon != ""){
-        return owner_hon + " " + nm;
+    if (OwnerHonorific != ""){
+        return OwnerHonorific + " " + nm;
     }
     return nm;
 }
@@ -139,43 +139,43 @@ update_from_settings(string kv_json){
     /* defensive: expect an object */
     if (llGetSubString(kv_json, 0, 0) != "{") return;
 
-    key prev_owner = owner_key;
+    key prev_owner = OwnerKey;
 
     /* reset local mirror first */
-    owner_key      = NULL_KEY;
-    owner_hon      = "";
-    trustee_keys   = [];
-    trustee_hons   = [];
-    blacklist_keys = [];
-    public_access  = FALSE;
-    locked         = FALSE;
-    tpe_mode       = FALSE;
+    OwnerKey      = NULL_KEY;
+    OwnerHonorific      = "";
+    TrusteeKeys   = [];
+    TrusteeHonorifics   = [];
+    BlacklistKeys = [];
+    PublicAccess  = FALSE;
+    Locked         = FALSE;
+    TpeMode       = FALSE;
 
-    if (json_has(kv_json, [KEY_OWNER_KEY]))      owner_key = (key)llJsonGetValue(kv_json, [KEY_OWNER_KEY]);
-    if (json_has(kv_json, [KEY_OWNER_HON]))      owner_hon = llJsonGetValue(kv_json, [KEY_OWNER_HON]);
+    if (json_has(kv_json, [KEY_OWNER_KEY]))      OwnerKey = (key)llJsonGetValue(kv_json, [KEY_OWNER_KEY]);
+    if (json_has(kv_json, [KEY_OWNER_HON]))      OwnerHonorific = llJsonGetValue(kv_json, [KEY_OWNER_HON]);
 
     if (json_has(kv_json, [KEY_TRUSTEES])){
         string v = llJsonGetValue(kv_json, [KEY_TRUSTEES]);
-        if (llGetSubString(v, 0, 0) == "[") trustee_keys = llJson2List(v);
+        if (llGetSubString(v, 0, 0) == "[") TrusteeKeys = llJson2List(v);
     }
     if (json_has(kv_json, [KEY_TRUSTEE_HONS])){
         string v2 = llJsonGetValue(kv_json, [KEY_TRUSTEE_HONS]);
-        if (llGetSubString(v2, 0, 0) == "[") trustee_hons = llJson2List(v2);
+        if (llGetSubString(v2, 0, 0) == "[") TrusteeHonorifics = llJson2List(v2);
     }
     if (json_has(kv_json, [KEY_BLACKLIST])){
         string v3 = llJsonGetValue(kv_json, [KEY_BLACKLIST]);
-        if (llGetSubString(v3, 0, 0) == "[") blacklist_keys = llJson2List(v3);
+        if (llGetSubString(v3, 0, 0) == "[") BlacklistKeys = llJson2List(v3);
     }
 
-    if (json_has(kv_json, [KEY_PUBLIC_ACCESS])) public_access = (integer)llJsonGetValue(kv_json, [KEY_PUBLIC_ACCESS]);
-    if (json_has(kv_json, [KEY_LOCKED]))        locked        = (integer)llJsonGetValue(kv_json, [KEY_LOCKED]);
-    if (json_has(kv_json, [KEY_TPE_MODE]))      tpe_mode      = (integer)llJsonGetValue(kv_json, [KEY_TPE_MODE]);
+    if (json_has(kv_json, [KEY_PUBLIC_ACCESS])) PublicAccess = (integer)llJsonGetValue(kv_json, [KEY_PUBLIC_ACCESS]);
+    if (json_has(kv_json, [KEY_LOCKED]))        Locked        = (integer)llJsonGetValue(kv_json, [KEY_LOCKED]);
+    if (json_has(kv_json, [KEY_TPE_MODE]))      TpeMode      = (integer)llJsonGetValue(kv_json, [KEY_TPE_MODE]);
 
     // If the owner changed, clear cached name and re-request
-    if (owner_key != prev_owner){
-        last_owner_key = owner_key;
-        owner_display  = "";
-        if (owner_key != NULL_KEY){
+    if (OwnerKey != prev_owner){
+        LastOwnerKey = OwnerKey;
+        OwnerDisplay  = "";
+        if (OwnerKey != NULL_KEY){
             request_owner_names();
         }
     }
@@ -207,19 +207,19 @@ integer open_dialog(key avatar, string body, list buttons){
 string build_status_report(){
     string s = "Collar status:\n";
 
-    if (locked) s += "🔒 Locked\n";
+    if (Locked) s += "🔒 Locked\n";
     else s += "🔓 Unlocked\n";
 
-    if (tpe_mode) s += "💥 TPE Mode: ON\n";
+    if (TpeMode) s += "💥 TPE Mode: ON\n";
     else s += "💥 TPE Mode: OFF\n";
 
-    if (owner_key != NULL_KEY){
+    if (OwnerKey != NULL_KEY){
         s += "Owner: " + owner_label() + "\n";
     } else {
         s += "Owner: (unowned)\n";
     }
 
-    integer tlen = llGetListLength(trustee_keys);
+    integer tlen = llGetListLength(TrusteeKeys);
     if (tlen > 0){
         s += "Trustees: ";
         integer i = 0;
@@ -227,7 +227,7 @@ string build_status_report(){
             if (i != 0) s += ", ";
             /* prefer honorific label if present, else placeholder */
             string h = "";
-            if (i < llGetListLength(trustee_hons)) h = llList2String(trustee_hons, i);
+            if (i < llGetListLength(TrusteeHonorifics)) h = llList2String(TrusteeHonorifics, i);
             if (h == "") h = "(trustee)";
             s += h;
             i += 1;
@@ -237,7 +237,7 @@ string build_status_report(){
         s += "Trustees: (none)\n";
     }
 
-    if (public_access) s += "Public Access: ON\n";
+    if (PublicAccess) s += "Public Access: ON\n";
     else s += "Public Access: OFF\n";
 
     return s;
@@ -307,7 +307,7 @@ default{
             if (json_has(str, ["context"])){
                 if (llJsonGetValue(str, ["context"]) == PLUGIN_CONTEXT){
                     // If we don't have a cached owner display yet, (re)request it
-                    if (owner_key != NULL_KEY && owner_display == ""){
+                    if (OwnerKey != NULL_KEY && OwnerDisplay == ""){
                         request_owner_names();
                     }
                     show_menu(id);
@@ -319,16 +319,16 @@ default{
 
     dataserver(key query_id, string data){
         // Display Name arrives here; legacy name too
-        if (query_id == q_owner_disp){
-            q_owner_disp = NULL_KEY;
-            if (data != "" && data != "???" && owner_key != NULL_KEY){
-                owner_display = data;
+        if (query_id == OwnerDisplayQuery){
+            OwnerDisplayQuery = NULL_KEY;
+            if (data != "" && data != "???" && OwnerKey != NULL_KEY){
+                OwnerDisplay = data;
             }
-        } else if (query_id == q_owner_legacy){
-            q_owner_legacy = NULL_KEY;
+        } else if (query_id == OwnerLegacyQuery){
+            OwnerLegacyQuery = NULL_KEY;
             // Only take legacy if display name didn't resolve
-            if (owner_display == "" && data != "" && owner_key != NULL_KEY){
-                owner_display = data;
+            if (OwnerDisplay == "" && data != "" && OwnerKey != NULL_KEY){
+                OwnerDisplay = data;
             }
         } else {
             return;

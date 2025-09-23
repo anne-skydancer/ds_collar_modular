@@ -52,11 +52,11 @@ integer ACL_UNOWNED       = 4;
 integer ACL_PRIMARY_OWNER = 5;
 
 /* ---------- Cached settings ---------- */
-key     g_owner_key          = NULL_KEY;
-list    g_trustees           = [];
-list    g_blacklist          = [];
-integer g_public_mode        = FALSE;
-integer g_tpe_mode           = FALSE;
+key     OwnerKey          = NULL_KEY;
+list    TrusteeList       = [];
+list    Blacklist         = [];
+integer PublicMode        = FALSE;
+integer TpeMode           = FALSE;
 
 /* ---------- Helpers ---------- */
 integer json_has(string j, list path){
@@ -79,17 +79,17 @@ integer apply_settings_sync(string sync_json){
     if (!is_json_obj(kv)) return 0;
 
     /* defaults */
-    g_owner_key   = NULL_KEY;
-    g_trustees    = [];
-    g_blacklist   = [];
-    g_public_mode = FALSE;
-    g_tpe_mode    = FALSE;
+    OwnerKey     = NULL_KEY;
+    TrusteeList  = [];
+    Blacklist    = [];
+    PublicMode   = FALSE;
+    TpeMode      = FALSE;
 
-    if (json_has(kv, [KEY_OWNER_KEY]))     g_owner_key   = (key)llJsonGetValue(kv, [KEY_OWNER_KEY]);
-    if (json_has(kv, [KEY_TRUSTEES]))      g_trustees    = json_arr_to_list(llJsonGetValue(kv, [KEY_TRUSTEES]));
-    if (json_has(kv, [KEY_BLACKLIST]))     g_blacklist   = json_arr_to_list(llJsonGetValue(kv, [KEY_BLACKLIST]));
-    if (json_has(kv, [KEY_PUBLIC_ACCESS])) g_public_mode = (integer)llJsonGetValue(kv, [KEY_PUBLIC_ACCESS]);
-    if (json_has(kv, [KEY_TPE_MODE]))      g_tpe_mode    = (integer)llJsonGetValue(kv, [KEY_TPE_MODE]);
+    if (json_has(kv, [KEY_OWNER_KEY]))     OwnerKey     = (key)llJsonGetValue(kv, [KEY_OWNER_KEY]);
+    if (json_has(kv, [KEY_TRUSTEES]))      TrusteeList  = json_arr_to_list(llJsonGetValue(kv, [KEY_TRUSTEES]));
+    if (json_has(kv, [KEY_BLACKLIST]))     Blacklist    = json_arr_to_list(llJsonGetValue(kv, [KEY_BLACKLIST]));
+    if (json_has(kv, [KEY_PUBLIC_ACCESS])) PublicMode   = (integer)llJsonGetValue(kv, [KEY_PUBLIC_ACCESS]);
+    if (json_has(kv, [KEY_TPE_MODE]))      TpeMode      = (integer)llJsonGetValue(kv, [KEY_TPE_MODE]);
 
     logd("Settings applied.");
     return 1;
@@ -112,25 +112,25 @@ integer compute_acl_level(key av){
     integer isTrustee = FALSE;
     integer isBlack   = FALSE;
 
-    if (g_owner_key != NULL_KEY) ownerSet = TRUE;
-    if (av == g_owner_key && ownerSet) isOwner = TRUE;
+    if (OwnerKey != NULL_KEY) ownerSet = TRUE;
+    if (av == OwnerKey && ownerSet) isOwner = TRUE;
     if (av == wearer) isWearer = TRUE;
-    if (list_has_str(g_trustees, (string)av)) isTrustee = TRUE;
+    if (list_has_str(TrusteeList, (string)av)) isTrustee = TRUE;
 
     if (!isOwner && !isWearer && !isTrustee){
-        if (list_has_str(g_blacklist, (string)av)) isBlack = TRUE;
+        if (list_has_str(Blacklist, (string)av)) isBlack = TRUE;
     }
 
     if (isOwner) return ACL_PRIMARY_OWNER;
     if (isWearer){
-        if (g_tpe_mode) return ACL_NOACCESS;   /* TPE wearer maps to 0; policy_tpe refines visibility */
+        if (TpeMode) return ACL_NOACCESS;   /* TPE wearer maps to 0; policy_tpe refines visibility */
         if (ownerSet)   return ACL_OWNED;      /* 2 */
         return ACL_UNOWNED;                    /* 4 */
     }
     if (isTrustee) return ACL_TRUSTEE;
     if (isBlack)   return ACL_BLACKLIST;
 
-    if (g_public_mode) return ACL_PUBLIC;      /* 1 */
+    if (PublicMode) return ACL_PUBLIC;      /* 1 */
     return ACL_BLACKLIST;                      /* outsider while public OFF */
 }
 
@@ -141,7 +141,7 @@ integer send_acl_result(key av, integer level){
     if (av == wearer) isWearer = TRUE;
 
     integer ownerSet = FALSE;
-    if (g_owner_key != NULL_KEY) ownerSet = TRUE;
+    if (OwnerKey != NULL_KEY) ownerSet = TRUE;
 
     /* Policy flags (boolean 0/1), per your spec */
     integer policy_tpe            = 0; /* wearer-only: show only plugins with tpe_min_acl==0 */
@@ -152,7 +152,7 @@ integer send_acl_result(key av, integer level){
     integer policy_primary_owner  = 0; /* touchers with acl==5: only ==5 */
 
     if (isWearer){
-        if (g_tpe_mode) policy_tpe = 1;
+        if (TpeMode) policy_tpe = 1;
         else {
             if (ownerSet) policy_owned_only = 1;
             else policy_wearer_unowned = 1;
@@ -161,7 +161,7 @@ integer send_acl_result(key av, integer level){
         if (!ownerSet) policy_trustee_access = 1;
     } else {
         /* non-wearers */
-        if (g_public_mode) policy_public_only = 1;
+        if (PublicMode) policy_public_only = 1;
         if (level == ACL_TRUSTEE) policy_trustee_access = 1;
         if (level == ACL_PRIMARY_OWNER) policy_primary_owner = 1;
     }
