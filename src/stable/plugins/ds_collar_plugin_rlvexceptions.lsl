@@ -6,24 +6,25 @@
 
 integer DEBUG = TRUE;
 
-// === Canonical protocol roots ===
-string REGISTER_MSG_START      = "register";
-string REGISTER_NOW_MSG_START  = "register_now";
-string DEREGISTER_MSG_START    = "deregister";
-string SOFT_RESET_MSG_START    = "core_soft_reset";
-string SETTINGS_SYNC_MSG_START = "settings_sync";
-string SHOW_MENU_MSG_START     = "show_menu";
-string SETTINGS_SET_PREFIX     = "set_";
+// --- Kernel / settings link numbers ---
+integer K_PLUGIN_REG_QUERY   = 500;  // Kernel → Plugin : {"type":"register_now","script":...}
+integer K_PLUGIN_REG_REPLY   = 501;  // Plugin  → Kernel: {"type":"register",...}
+integer K_SETTINGS_QUERY     = 800;  // Plugin ↔ Settings
+integer K_SETTINGS_SYNC      = 870;  // Settings → Plugin
+integer K_PLUGIN_START       = 900;  // UI → Plugin : {"type":"plugin_start",...}
+integer K_PLUGIN_RETURN      = 901;  // Plugin → UI   : {"type":"plugin_return",...}
+
+// --- Canonical message tokens ---
+string TYPE_REGISTER       = "register";
+string TYPE_REGISTER_NOW   = "register_now";
+string TYPE_PLUGIN_START   = "plugin_start";
+string TYPE_PLUGIN_RETURN  = "plugin_return";
+string TYPE_SETTINGS_GET   = "settings_get";
+string TYPE_SETTINGS_SET   = "set";
+string TYPE_SETTINGS_SYNC  = "settings_sync";
 
 string PLUGIN_CONTEXT      = "core_rlv_exceptions";
 string ROOT_CONTEXT        = "core_root";
-
-// Protocol channels
-integer PLUGIN_REG_QUERY_NUM = 500;
-integer PLUGIN_REG_REPLY_NUM = 501;
-integer SETTINGS_QUERY_NUM   = 800;
-integer SETTINGS_SYNC_NUM    = 870;
-integer UI_SHOW_MENU_NUM     = 601;
 
 integer PLUGIN_SN        = 0;
 string  PLUGIN_LABEL     = "Exceptions";
@@ -82,13 +83,94 @@ list s_get(key av)
     return [];
 }
 
-// --- Persistence: canonical protocol (SETTINGS_SET_PREFIX, 800)
-persist_exception(string pname, integer value)
+integer json_has(string j, list path)
 {
-    string msg = SETTINGS_SET_PREFIX + pname + "|" + (string)value;
-    llMessageLinked(LINK_SET, SETTINGS_QUERY_NUM, msg, NULL_KEY);
-    llMessageLinked(LINK_SET, SETTINGS_QUERY_NUM, "get_settings", NULL_KEY);
+    if (llJsonGetValue(j, path) == JSON_INVALID) return FALSE;
+    return TRUE;
+}
+
+integer register_plugin()
+{
+    string payload = llList2Json(JSON_OBJECT, []);
+    payload = llJsonSetValue(payload, ["type"],    TYPE_REGISTER);
+    payload = llJsonSetValue(payload, ["sn"],      (string)PLUGIN_SN);
+    payload = llJsonSetValue(payload, ["label"],   PLUGIN_LABEL);
+    payload = llJsonSetValue(payload, ["min_acl"], (string)PLUGIN_MIN_ACL);
+    payload = llJsonSetValue(payload, ["context"], PLUGIN_CONTEXT);
+    payload = llJsonSetValue(payload, ["script"],  llGetScriptName());
+    llMessageLinked(LINK_SET, K_PLUGIN_REG_REPLY, payload, NULL_KEY);
+    if (DEBUG) llOwnerSay("[RLVEX] Registered → kernel.");
+    return TRUE;
+}
+
+integer request_settings_get()
+{
+    string payload = llList2Json(JSON_OBJECT, []);
+    payload = llJsonSetValue(payload, ["type"], TYPE_SETTINGS_GET);
+    llMessageLinked(LINK_SET, K_SETTINGS_QUERY, payload, NULL_KEY);
+    if (DEBUG) llOwnerSay("[RLVEX] Requested settings_get.");
+    return TRUE;
+}
+
+integer persist_exception(string pname, integer value)
+{
+    if (value != 0) value = 1;
+    string payload = llList2Json(JSON_OBJECT, []);
+    payload = llJsonSetValue(payload, ["type"],  TYPE_SETTINGS_SET);
+    payload = llJsonSetValue(payload, ["key"],   pname);
+    payload = llJsonSetValue(payload, ["value"], (string)value);
+    llMessageLinked(LINK_SET, K_SETTINGS_QUERY, payload, NULL_KEY);
     if (DEBUG) llOwnerSay("[RLVEX] Persisted: " + pname + "=" + (string)value);
+    return TRUE;
+}
+
+integer apply_settings_sync(string payload)
+{
+    if (!json_has(payload, ["type"])) return FALSE;
+    if (llJsonGetValue(payload, ["type"]) != TYPE_SETTINGS_SYNC) return FALSE;
+    if (!json_has(payload, ["kv"])) return FALSE;
+
+    string kv = llJsonGetValue(payload, ["kv"]);
+
+    string value;
+
+    value = llJsonGetValue(kv, [EX_OWNER_IM_KEY]);
+    if (value != JSON_INVALID) {
+        if ((integer)value != 0) ExOwnerIm = TRUE; else ExOwnerIm = FALSE;
+    }
+
+    value = llJsonGetValue(kv, [EX_OWNER_TP_KEY]);
+    if (value != JSON_INVALID) {
+        if ((integer)value != 0) ExOwnerTp = TRUE; else ExOwnerTp = FALSE;
+    }
+
+    value = llJsonGetValue(kv, [EX_TRUSTEE_IM_KEY]);
+    if (value != JSON_INVALID) {
+        if ((integer)value != 0) ExTrusteeIm = TRUE; else ExTrusteeIm = FALSE;
+    }
+
+    value = llJsonGetValue(kv, [EX_TRUSTEE_TP_KEY]);
+    if (value != JSON_INVALID) {
+        if ((integer)value != 0) ExTrusteeTp = TRUE; else ExTrusteeTp = FALSE;
+    }
+
+    if (DEBUG) {
+        llOwnerSay("[RLVEX] Settings sync: ownerIM=" + (string)ExOwnerIm +
+                   " ownerTP=" + (string)ExOwnerTp +
+                   " trusteeIM=" + (string)ExTrusteeIm +
+                   " trusteeTP=" + (string)ExTrusteeTp);
+    }
+    return TRUE;
+}
+
+integer send_plugin_return(key user)
+{
+    string payload = llList2Json(JSON_OBJECT, []);
+    payload = llJsonSetValue(payload, ["type"],    TYPE_PLUGIN_RETURN);
+    payload = llJsonSetValue(payload, ["context"], ROOT_CONTEXT);
+    llMessageLinked(LINK_SET, K_PLUGIN_RETURN, payload, user);
+    if (DEBUG) llOwnerSay("[RLVEX] Return → root for " + (string)user);
+    return TRUE;
 }
 
 // === UI helpers for each menu level ===
@@ -156,80 +238,42 @@ default
 {
     state_entry()
     {
-        PLUGIN_SN = (integer)(llFrand(1.0e5));
-        string reg_msg = REGISTER_MSG_START + "|" +
-                         (string)PLUGIN_SN + "|" +
-                         PLUGIN_LABEL + "|" +
-                         (string)PLUGIN_MIN_ACL + "|" +
-                         PLUGIN_CONTEXT + "|" +
-                         llGetScriptName();
-        llMessageLinked(LINK_SET, PLUGIN_REG_REPLY_NUM, reg_msg, NULL_KEY);
-
-        llMessageLinked(LINK_SET, SETTINGS_QUERY_NUM, "get_settings", NULL_KEY);
+        PLUGIN_SN = (integer)(llFrand(1.0e9));
+        register_plugin();
+        request_settings_get();
 
         if (DEBUG) llOwnerSay("[RLVEX] Ready, SN=" + (string)PLUGIN_SN);
     }
 
     link_message(integer sender, integer num, string str, key id)
     {
-        if ((num == PLUGIN_REG_QUERY_NUM) && llSubStringIndex(str, REGISTER_NOW_MSG_START + "|") == 0)
-        {
-            string script_req = llGetSubString(str, llStringLength(REGISTER_NOW_MSG_START) + 1, -1);
-            if (script_req == llGetScriptName())
-            {
-                string reg_msg = REGISTER_MSG_START + "|" +
-                                 (string)PLUGIN_SN + "|" +
-                                 PLUGIN_LABEL + "|" +
-                                 (string)PLUGIN_MIN_ACL + "|" +
-                                 PLUGIN_CONTEXT + "|" +
-                                 llGetScriptName();
-                llMessageLinked(LINK_SET, PLUGIN_REG_REPLY_NUM, reg_msg, NULL_KEY);
-                if (DEBUG) llOwnerSay("[RLVEX] Registration reply sent.");
+        if (num == K_PLUGIN_REG_QUERY) {
+            if (json_has(str, ["type"]) && llJsonGetValue(str, ["type"]) == TYPE_REGISTER_NOW) {
+                if (json_has(str, ["script"]) && llJsonGetValue(str, ["script"]) == llGetScriptName()) {
+                    register_plugin();
+                }
             }
             return;
         }
 
-        // SETTINGS SYNC (canonical)
-        if (num == SETTINGS_SYNC_NUM) {
-            list parts = llParseStringKeepNulls(str, ["|"], []);
-            if (llList2String(parts, 0) == SETTINGS_SYNC_MSG_START) {
-                integer k;
-                for (k = 1; k < llGetListLength(parts); ++k) {
-                    string kv = llList2String(parts, k);
-                    integer eq = llSubStringIndex(kv, "=");
-                    if (eq != -1) {
-                        string pname = llGetSubString(kv, 0, eq-1);
-                        string pval  = llGetSubString(kv, eq+1, -1);
-                        if (pname == EX_OWNER_IM_KEY) {
-                            if (pval == "1") ExOwnerIm = TRUE; else ExOwnerIm = FALSE;
-                        } else if (pname == EX_OWNER_TP_KEY) {
-                            if (pval == "1") ExOwnerTp = TRUE; else ExOwnerTp = FALSE;
-                        } else if (pname == EX_TRUSTEE_IM_KEY) {
-                            if (pval == "1") ExTrusteeIm = TRUE; else ExTrusteeIm = FALSE;
-                        } else if (pname == EX_TRUSTEE_TP_KEY) {
-                            if (pval == "1") ExTrusteeTp = TRUE; else ExTrusteeTp = FALSE;
-                        }
+        if (num == K_SETTINGS_SYNC) {
+            apply_settings_sync(str);
+            return;
+        }
+
+        if (num == K_PLUGIN_START) {
+            if (json_has(str, ["type"]) && llJsonGetValue(str, ["type"]) == TYPE_PLUGIN_START) {
+                if (json_has(str, ["context"]) && llJsonGetValue(str, ["context"]) == PLUGIN_CONTEXT) {
+                    key user = id;
+                    if (json_has(str, ["avatar"])) {
+                        user = (key)llJsonGetValue(str, ["avatar"]);
+                    }
+                    if (user != NULL_KEY) {
+                        show_main_menu(user);
                     }
                 }
-                if (DEBUG) llOwnerSay("[RLVEX] Settings sync: ownerIM=" + (string)ExOwnerIm +
-                    " ownerTP=" + (string)ExOwnerTp +
-                    " trusteeIM=" + (string)ExTrusteeIm +
-                    " trusteeTP=" + (string)ExTrusteeTp );
             }
             return;
-        }
-
-        // UI menu dispatch
-        if ((num == UI_SHOW_MENU_NUM)) {
-            list parts = llParseStringKeepNulls(str, ["|"], []);
-            if (llGetListLength(parts) >= 3) {
-                string ctx = llList2String(parts, 1);
-                key user = (key)llList2String(parts, 2);
-                if (ctx == PLUGIN_CONTEXT) {
-                    show_main_menu(user);
-                    return;
-                }
-            }
         }
     }
 
@@ -243,10 +287,9 @@ default
             // --- Back button logic (flat, as specified) ---
             if (msg == "Back") {
                 if (ctx == CTX_MAIN) {
-                    // From plugin main menu: Back → root
-                    string menu_req = SHOW_MENU_MSG_START + "|" + ROOT_CONTEXT + "|" + (string)id + "|0";
-                    llMessageLinked(LINK_SET, UI_SHOW_MENU_NUM, menu_req, NULL_KEY);
+                    // From plugin main menu: Back → root via plugin_return
                     s_clear(id);
+                    send_plugin_return(id);
                     return;
                 } else {
                     // From any other submenu, Back → plugin main menu
