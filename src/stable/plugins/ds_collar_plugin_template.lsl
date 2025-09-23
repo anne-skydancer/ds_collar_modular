@@ -64,13 +64,13 @@ list ALLOWED_ACL_LEVELS = [1,2,3,4,5];
 
 /* ---------- UI/session ---------- */
 integer DIALOG_TIMEOUT_SEC = 180;
-key     g_user      = NULL_KEY;
-integer g_listen    = 0;
-integer g_menu_chan = 0;
+key     User      = NULL_KEY;
+integer Listen    = 0;
+integer MenuChan = 0;
 
 /* Gate state */
-integer g_acl_pending = FALSE;
-integer g_acl_level   = ACL_NOACCESS;
+integer AclPending = FALSE;
+integer AclLevel   = ACL_NOACCESS;
 
 /* ========================== Helpers ========================== */
 
@@ -118,29 +118,29 @@ integer request_acl(key av) {
     j = llJsonSetValue(j, ["type"],   CONS_MSG_ACL_QUERY);
     j = llJsonSetValue(j, ["avatar"], (string)av);
     llMessageLinked(LINK_SET, AUTH_QUERY_NUM, j, NULL_KEY);
-    g_acl_pending = TRUE;
+    AclPending = TRUE;
     logd("ACL query → " + (string)av);
     return 0;
 }
 
 /* ----- UI plumbing ----- */
 integer reset_listen() {
-    if (g_listen) llListenRemove(g_listen);
-    g_listen = 0;
-    g_menu_chan = 0;
+    if (Listen) llListenRemove(Listen);
+    Listen = 0;
+    MenuChan = 0;
     return 0;
 }
 
 integer begin_dialog(key user, string body, list buttons) {
     reset_listen();
-    g_user = user;
+    User = user;
 
     /* pad buttons to multiple of 3 */
     while ((llGetListLength(buttons) % 3) != 0) buttons += " ";
 
-    g_menu_chan = -100000 - (integer)llFrand(1000000.0);
-    g_listen    = llListen(g_menu_chan, "", g_user, "");
-    llDialog(g_user, body, buttons, g_menu_chan);
+    MenuChan = -100000 - (integer)llFrand(1000000.0);
+    Listen    = llListen(MenuChan, "", User, "");
+    llDialog(User, body, buttons, MenuChan);
     llSetTimerEvent((float)DIALOG_TIMEOUT_SEC);
     return 0;
 }
@@ -149,14 +149,14 @@ integer begin_dialog(key user, string body, list buttons) {
 integer show_menu(key user) {
     list btns = ["~", "Back", "~", "Example"];
     begin_dialog(user, "Template menu.\nReplace this with your content.", btns);
-    logd("Menu → " + (string)user + " chan=" + (string)g_menu_chan);
+    logd("Menu → " + (string)user + " chan=" + (string)MenuChan);
     return 0;
 }
 
 /* Example per-button ACL re-check (call before action) */
 integer enforce_button_acl(integer lvl, list allowed_for_button) {
     if (llListFindList(allowed_for_button, [lvl]) != -1) return TRUE;
-    llRegionSayTo(g_user, 0, "You do not have permission for that action.");
+    llRegionSayTo(User, 0, "You do not have permission for that action.");
     return FALSE;
 }
 
@@ -164,9 +164,9 @@ integer enforce_button_acl(integer lvl, list allowed_for_button) {
 default {
     state_entry() {
         PLUGIN_SN = (integer)(llFrand(1.0e9));
-        g_user = NULL_KEY;
-        g_acl_pending = FALSE;
-        g_acl_level = ACL_NOACCESS;
+        User = NULL_KEY;
+        AclPending = FALSE;
+        AclLevel = ACL_NOACCESS;
         reset_listen();
         llSetTimerEvent(0.0);
 
@@ -204,8 +204,8 @@ default {
         if (num == K_PLUGIN_START) {
             if (json_has(msg, ["type"]) && llJsonGetValue(msg, ["type"]) == CONS_TYPE_PLUGIN_START) {
                 if (json_has(msg, ["context"]) && llJsonGetValue(msg, ["context"]) == PLUGIN_CONTEXT) {
-                    g_user = id;
-                    request_acl(g_user);
+                    User = id;
+                    request_acl(User);
                 }
             }
             return;
@@ -213,28 +213,28 @@ default {
 
         /* ACL result */
         if (num == AUTH_RESULT_NUM) {
-            if (!g_acl_pending) return;
+            if (!AclPending) return;
             if (!json_has(msg, ["type"])) return;
             if (llJsonGetValue(msg, ["type"]) != CONS_MSG_ACL_RESULT) return;
             if (!json_has(msg, ["avatar"])) return;
 
             key who = (key)llJsonGetValue(msg, ["avatar"]);
-            if (who != g_user) return;
+            if (who != User) return;
 
             if (!json_has(msg, ["level"])) return;
-            g_acl_level = (integer)llJsonGetValue(msg, ["level"]);
-            g_acl_pending = FALSE;
+            AclLevel = (integer)llJsonGetValue(msg, ["level"]);
+            AclPending = FALSE;
 
-            if (in_allowed_levels(g_acl_level)) {
-                show_menu(g_user);
+            if (in_allowed_levels(AclLevel)) {
+                show_menu(User);
             } else {
-                llRegionSayTo(g_user, 0, "Access denied.");
+                llRegionSayTo(User, 0, "Access denied.");
                 /* return to root */
                 string r = llList2Json(JSON_OBJECT, []);
                 r = llJsonSetValue(r, ["type"],    CONS_TYPE_PLUGIN_RETURN);
                 r = llJsonSetValue(r, ["context"], ROOT_CONTEXT);
-                llMessageLinked(LINK_SET, K_PLUGIN_RETURN_NUM, r, g_user);
-                g_user = NULL_KEY;
+                llMessageLinked(LINK_SET, K_PLUGIN_RETURN_NUM, r, User);
+                User = NULL_KEY;
                 reset_listen();
                 llSetTimerEvent(0.0);
             }
@@ -250,18 +250,18 @@ default {
     }
 
     listen(integer chan, string name, key id, string message) {
-        if (chan != g_menu_chan) return;
-        if (id != g_user) return;
+        if (chan != MenuChan) return;
+        if (id != User) return;
 
         if (message == "Back") {
             /* Return to root UI */
             string r = llList2Json(JSON_OBJECT, []);
             r = llJsonSetValue(r, ["type"],    CONS_TYPE_PLUGIN_RETURN);
             r = llJsonSetValue(r, ["context"], ROOT_CONTEXT);
-            llMessageLinked(LINK_SET, K_PLUGIN_RETURN_NUM, r, g_user);
+            llMessageLinked(LINK_SET, K_PLUGIN_RETURN_NUM, r, User);
 
             reset_listen();
-            g_user = NULL_KEY;
+            User = NULL_KEY;
             llSetTimerEvent(0.0);
             return;
         }
@@ -269,20 +269,20 @@ default {
         if (message == "Example") {
             /* Example per-button ACL: only Trustees+ (3,5) allowed */
             list allow_btn = [ACL_TRUSTEE, ACL_PRIMARY_OWNER];
-            if (!enforce_button_acl(g_acl_level, allow_btn)) return;
+            if (!enforce_button_acl(AclLevel, allow_btn)) return;
 
-            llRegionSayTo(g_user, 0, "Example action executed.");
-            show_menu(g_user);
+            llRegionSayTo(User, 0, "Example action executed.");
+            show_menu(User);
             return;
         }
 
         /* Unknown → redraw */
-        show_menu(g_user);
+        show_menu(User);
     }
 
     timer() {
         reset_listen();
-        g_user = NULL_KEY;
+        User = NULL_KEY;
         llSetTimerEvent(0.0);
     }
 

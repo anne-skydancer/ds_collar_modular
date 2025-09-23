@@ -72,15 +72,15 @@ string PRIM_LOCKED   = "locked";
 string PRIM_UNLOCKED = "unlocked";
 
 /* ---------- Session & ACL state ---------- */
-integer g_locked        = FALSE;   // 0=unlocked, 1=locked
-key     g_menu_user     = NULL_KEY;
-integer g_listen_handle = 0;
-integer g_menu_chan     = 0;
-integer g_menu_timeout  = 180;
+integer Locked        = FALSE;   // 0=unlocked, 1=locked
+key     MenuUser     = NULL_KEY;
+integer ListenHandle = 0;
+integer MenuChan     = 0;
+integer MenuTimeout  = 180;
 
-integer g_acl_pending   = FALSE;
-integer g_acl_level     = -9999;
-key     g_acl_avatar    = NULL_KEY;
+integer AclPending   = FALSE;
+integer AclLevel     = -9999;
+key     AclAvatar    = NULL_KEY;
 
 /* ========================== Helpers ========================== */
 integer json_has(string j, list path) {
@@ -140,9 +140,9 @@ request_acl(key av) {
     j = llJsonSetValue(j, ["avatar"], (string)av);
     llMessageLinked(LINK_SET, AUTH_QUERY_NUM, j, NULL_KEY);
 
-    g_acl_pending = TRUE;
-    g_acl_avatar  = av;
-    g_acl_level   = -9999;
+    AclPending = TRUE;
+    AclAvatar  = av;
+    AclLevel   = -9999;
     logd("ACL query → " + (string)av);
 }
 
@@ -177,20 +177,20 @@ apply_rlv(integer lock_state) {
 /* ---------- Core state change (no re-register) ---------- */
 set_lock_state(integer new_state, integer do_persist, integer refresh_local_menu) {
     if (new_state != 0) new_state = 1;
-    g_locked = new_state;
+    Locked = new_state;
 
-    set_lock_visibility(g_locked);
-    apply_rlv(g_locked);
+    set_lock_visibility(Locked);
+    apply_rlv(Locked);
 
     if (do_persist) {
-        persist_locked(g_locked);
+        persist_locked(Locked);
     }
 
-    if (refresh_local_menu && g_menu_user != NULL_KEY) {
-        show_locking_menu(g_menu_user);
+    if (refresh_local_menu && MenuUser != NULL_KEY) {
+        show_locking_menu(MenuUser);
     }
 
-    logd("State → locked=" + (string)g_locked);
+    logd("State → locked=" + (string)Locked);
 }
 
 /* ---------- Settings intake ---------- */
@@ -206,7 +206,7 @@ apply_settings_sync(string msg) {
     integer want = (integer)v;
     if (want != 0) want = 1;
 
-    if (g_locked != want) {
+    if (Locked != want) {
         set_lock_state(want, FALSE, TRUE);
         logd("Settings sync applied: locked=" + (string)want);
     }
@@ -216,30 +216,30 @@ apply_settings_sync(string msg) {
 show_locking_menu(key user) {
     list buttons;
     string action = "Lock";
-    if (g_locked) action = "Unlock";
+    if (Locked) action = "Unlock";
 
     buttons = [ "Back", action, "~" ];
 
-    if (g_listen_handle) llListenRemove(g_listen_handle);
-    g_menu_chan     = -100000 - (integer)llFrand(1000000.0);
-    g_menu_user     = user;
-    g_listen_handle = llListen(g_menu_chan, "", user, "");
+    if (ListenHandle) llListenRemove(ListenHandle);
+    MenuChan     = -100000 - (integer)llFrand(1000000.0);
+    MenuUser     = user;
+    ListenHandle = llListen(MenuChan, "", user, "");
 
     string msg = "Collar is currently ";
-    if (g_locked) msg += "LOCKED.\nTap Unlock to allow detach.";
+    if (Locked) msg += "LOCKED.\nTap Unlock to allow detach.";
     else          msg += "UNLOCKED.\nTap Lock to prevent detach.";
 
-    llDialog(user, msg, buttons, g_menu_chan);
-    llSetTimerEvent((float)g_menu_timeout);
+    llDialog(user, msg, buttons, MenuChan);
+    llSetTimerEvent((float)MenuTimeout);
 
-    logd("Menu → " + (string)user + " action=" + action + " chan=" + (string)g_menu_chan);
+    logd("Menu → " + (string)user + " action=" + action + " chan=" + (string)MenuChan);
 }
 
 cleanup_session() {
-    if (g_listen_handle) llListenRemove(g_listen_handle);
-    g_listen_handle = 0;
-    g_menu_user     = NULL_KEY;
-    g_menu_chan     = 0;
+    if (ListenHandle) llListenRemove(ListenHandle);
+    ListenHandle = 0;
+    MenuUser     = NULL_KEY;
+    MenuChan     = 0;
     llSetTimerEvent(0.0);
 }
 
@@ -253,8 +253,8 @@ default
         register_once();
         request_settings_get();
 
-        set_lock_visibility(g_locked);
-        apply_rlv(g_locked);
+        set_lock_visibility(Locked);
+        apply_rlv(Locked);
 
         logd("Ready. SN=" + (string)PLUGIN_SN);
     }
@@ -295,22 +295,22 @@ default
             if (llJsonGetValue(msg, ["type"]) != CONS_ACL_RESULT) return;
             if (!json_has(msg, ["avatar"])) return;
             key who = (key)llJsonGetValue(msg, ["avatar"]);
-            if (who != g_acl_avatar) return;
+            if (who != AclAvatar) return;
             if (!json_has(msg, ["level"])) return;
 
-            g_acl_pending = FALSE;
-            g_acl_level   = (integer)llJsonGetValue(msg, ["level"]);
+            AclPending = FALSE;
+            AclLevel   = (integer)llJsonGetValue(msg, ["level"]);
 
-            if (list_has_int(ALLOWED_ACL, g_acl_level)) {
+            if (list_has_int(ALLOWED_ACL, AclLevel)) {
                 /* Authorized → open menu */
-                show_locking_menu(g_acl_avatar);
+                show_locking_menu(AclAvatar);
             } else {
-                llRegionSayTo(g_acl_avatar, 0, "Access denied.");
+                llRegionSayTo(AclAvatar, 0, "Access denied.");
                 /* Bounce back to root */
                 string r = llList2Json(JSON_OBJECT, []);
                 r = llJsonSetValue(r, ["type"],    CONS_TYPE_PLUGIN_RETURN);
                 r = llJsonSetValue(r, ["context"], ROOT_CONTEXT);
-                llMessageLinked(LINK_SET, K_PLUGIN_RETURN_NUM, r, g_acl_avatar);
+                llMessageLinked(LINK_SET, K_PLUGIN_RETURN_NUM, r, AclAvatar);
                 cleanup_session();
             }
             return;
@@ -328,11 +328,11 @@ default
     }
 
     listen(integer chan, string name, key id, string pressed) {
-        if (chan != g_menu_chan) return;
-        if (id != g_menu_user)   return;
+        if (chan != MenuChan) return;
+        if (id != MenuUser)   return;
 
         /* Per-button ACL recheck (defense-in-depth) */
-        if (!list_has_int(ALLOWED_ACL, g_acl_level)) {
+        if (!list_has_int(ALLOWED_ACL, AclLevel)) {
             llRegionSayTo(id, 0, "Access denied.");
             cleanup_session();
             return;
@@ -342,7 +342,7 @@ default
             string r = llList2Json(JSON_OBJECT, []);
             r = llJsonSetValue(r, ["type"],    CONS_TYPE_PLUGIN_RETURN);
             r = llJsonSetValue(r, ["context"], ROOT_CONTEXT);
-            llMessageLinked(LINK_SET, K_PLUGIN_RETURN_NUM, r, g_menu_user);
+            llMessageLinked(LINK_SET, K_PLUGIN_RETURN_NUM, r, MenuUser);
             cleanup_session();
             return;
         }

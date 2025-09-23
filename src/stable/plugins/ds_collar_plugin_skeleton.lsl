@@ -63,19 +63,19 @@ list CAP_META = [
 ];
 
 /* ---------- UI session ---------- */
-key     g_user       = NULL_KEY;
-integer g_listen     = 0;
-integer g_menu_chan  = 0;
+key     User       = NULL_KEY;
+integer Listen     = 0;
+integer MenuChan  = 0;
 string  s_context    = "";       // "", "menu", "settings", ...
 
 /* ---------- ACL Filter: ticket + caps ---------- */
-string  g_ticket     = "";       // provided by filter on start/action
-string  g_caps_json  = "";       // {"__default__":1,"Do Thing":1,...}
+string  Ticket     = "";       // provided by filter on start/action
+string  CapsJson  = "";       // {"__default__":1,"Do Thing":1,...}
 
 /* ---------- Heartbeat ---------- */
 integer HB_TICK_SEC      = 10;   // timer tick
 integer HB_SILENCE_SEC   = 60;   // if no ping this long → re-register
-integer g_lastPingEpoch  = 0;
+integer LastPingEpoch  = 0;
 
 /* ---------- Utils ---------- */
 integer logd(string s){ if (DEBUG) llOwnerSay("[SKELETON] " + s); return 0; }
@@ -149,12 +149,12 @@ integer register_caps_meta(){
 }
 
 /* HB init: call after register_self() */
-integer hb_init(){ g_lastPingEpoch = now(); llSetTimerEvent((float)HB_TICK_SEC); return 0; }
-integer hb_on_ping_ok(){ g_lastPingEpoch = now(); return 0; }
+integer hb_init(){ LastPingEpoch = now(); llSetTimerEvent((float)HB_TICK_SEC); return 0; }
+integer hb_on_ping_ok(){ LastPingEpoch = now(); return 0; }
 integer hb_tick(){
-    if ((now() - g_lastPingEpoch) > HB_SILENCE_SEC){
+    if ((now() - LastPingEpoch) > HB_SILENCE_SEC){
         register_self(); // defensive re-register
-        g_lastPingEpoch = now();
+        LastPingEpoch = now();
     }
     return 0;
 }
@@ -163,12 +163,12 @@ integer hb_tick(){
    ACL Filter: ticket + caps helpers
    ============================================================= */
 integer caps_has(string label){
-    if (g_caps_json == "") return FALSE;
-    if (json_has(g_caps_json, [label])){
-        return (json_int(g_caps_json, [label], 0) != 0);
+    if (CapsJson == "") return FALSE;
+    if (json_has(CapsJson, [label])){
+        return (json_int(CapsJson, [label], 0) != 0);
     }
     /* fall back to default if not explicitly listed */
-    return (json_int(g_caps_json, ["__default__"], 0) != 0);
+    return (json_int(CapsJson, ["__default__"], 0) != 0);
 }
 
 list filter_buttons(list inBtns){
@@ -189,16 +189,16 @@ list filter_buttons(list inBtns){
    UI helpers
    ============================================================= */
 integer reset_listen(){
-    if (g_listen) llListenRemove(g_listen);
-    g_listen = 0;
-    g_menu_chan = 0;
+    if (Listen) llListenRemove(Listen);
+    Listen = 0;
+    MenuChan = 0;
     return 0;
 }
 integer dialog_to(key who, string body, list buttons){
     reset_listen();
-    g_menu_chan = -100000 - (integer)llFrand(1000000.0);
-    g_listen = llListen(g_menu_chan, "", who, "");
-    llDialog(who, body, buttons, g_menu_chan);
+    MenuChan = -100000 - (integer)llFrand(1000000.0);
+    Listen = llListen(MenuChan, "", who, "");
+    llDialog(who, body, buttons, MenuChan);
     return 0;
 }
 integer ui_return_root(key toUser){
@@ -235,10 +235,10 @@ integer show_menu_settings(key user){
 default{
     state_entry(){
         /* baseline init */
-        g_user = NULL_KEY;
+        User = NULL_KEY;
         s_context = "";
-        g_ticket = "";
-        g_caps_json = "";
+        Ticket = "";
+        CapsJson = "";
         reset_listen();
 
         notify_soft_reset();
@@ -300,12 +300,12 @@ default{
                     return;
                 }
 
-                g_user = id;                   /* filter forwards with id = avatar */
-                g_ticket = llJsonGetValue(msg, ["ticket"]);
-                g_caps_json = llJsonGetValue(msg, ["caps"]);
+                User = id;                   /* filter forwards with id = avatar */
+                Ticket = llJsonGetValue(msg, ["ticket"]);
+                CapsJson = llJsonGetValue(msg, ["caps"]);
 
                 /* Open root menu immediately (no AUTH roundtrip). */
-                show_menu_root(g_user);
+                show_menu_root(User);
                 return;
             }
 
@@ -336,14 +336,14 @@ default{
 
     /* Dialog replies */
     listen(integer chan, string name, key id, string b){
-        if (chan != g_menu_chan) return;
+        if (chan != MenuChan) return;
 
         /* Back nav */
         if (b == "Back"){
             if (s_context == "menu"){
                 ui_return_root(id);    // from plugin root → back to main UI
                 reset_listen();
-                g_user = NULL_KEY;
+                User = NULL_KEY;
                 s_context = "";
                 return;
             }

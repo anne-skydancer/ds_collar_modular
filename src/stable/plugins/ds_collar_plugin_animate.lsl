@@ -68,11 +68,11 @@ list ALLOWED_ACL_LEVELS = [ACL_PUBLIC, ACL_OWNED, ACL_TRUSTEE, ACL_UNOWNED, ACL_
 
 /* ---------- UI/session ---------- */
 integer DIALOG_TIMEOUT_SEC = 180;
-key     g_user             = NULL_KEY;
-integer g_listen           = 0;
-integer g_menu_chan        = 0;
+key     User             = NULL_KEY;
+integer Listen           = 0;
+integer MenuChan        = 0;
 
-integer g_page             = 0;
+integer Page             = 0;
 /* One slot is reserved for Relax → use 8 anims per page */
 integer PAGE_SIZE          = 8;
 
@@ -83,14 +83,14 @@ string BTN_RELAX           = "Relax";
 string BTN_FILL            = " ";   /* single-space blank button */
 
 /* ---------- AUTH gate session ---------- */
-integer g_acl_pending      = FALSE;
-integer g_acl_level        = ACL_NOACCESS;
-key     g_acl_avatar       = NULL_KEY;
+integer AclPending      = FALSE;
+integer AclLevel        = ACL_NOACCESS;
+key     AclAvatar       = NULL_KEY;
 
 /* ---------- Inventory-driven animations ---------- */
-list    g_anims            = [];     // list of animation names (strings)
-string  g_lastAnim         = "";     // last started (for Relax)
-integer g_perm_ok          = FALSE;  // PERMISSION_TRIGGER_ANIMATION granted?
+list    Anims            = [];     // list of animation names (strings)
+string  LastAnim         = "";     // last started (for Relax)
+integer PermOk          = FALSE;  // PERMISSION_TRIGGER_ANIMATION granted?
 
 /* ---------- Helpers ---------- */
 integer json_has(string j, list path){
@@ -104,15 +104,15 @@ integer in_allowed_levels(integer lvl){
 integer anim_count(){ return llGetInventoryNumber(INVENTORY_ANIMATION); }
 string anim_name_at(integer idx){ return llGetInventoryName(INVENTORY_ANIMATION, idx); }
 integer refresh_anim_list(){
-    g_anims = [];
+    Anims = [];
     integer n = anim_count();
     integer i = 0;
     while (i < n){
         string nm = anim_name_at(i);
-        if (nm != "") g_anims += nm;
+        if (nm != "") Anims += nm;
         i += 1;
     }
-    logd("Found animations: " + (string)llGetListLength(g_anims));
+    logd("Found animations: " + (string)llGetListLength(Anims));
     return 0;
 }
 
@@ -157,9 +157,9 @@ integer request_acl(key av){
     j = llJsonSetValue(j, ["avatar"], (string)av);
     llMessageLinked(LINK_SET, AUTH_QUERY_NUM, j, NULL_KEY);
 
-    g_acl_pending = TRUE;
-    g_acl_avatar  = av;
-    g_acl_level   = ACL_NOACCESS;
+    AclPending = TRUE;
+    AclAvatar  = av;
+    AclLevel   = ACL_NOACCESS;
     return 0;
 }
 
@@ -167,19 +167,19 @@ integer request_acl(key av){
 integer ensure_permissions(){
     key wearer = llGetOwner();
     if (wearer == NULL_KEY) return 0;
-    if (!g_perm_ok){
+    if (!PermOk){
         llRequestPermissions(wearer, PERMISSION_TRIGGER_ANIMATION);
     }
     return 0;
 }
 integer start_anim(string name){
     ensure_permissions();
-    if (g_perm_ok){
+    if (PermOk){
         llStartAnimation(name);
-        g_lastAnim = name;
+        LastAnim = name;
         logd("Start anim: " + name);
     } else {
-        llRegionSayTo(g_user, 0, "Missing permission to trigger animations (requesting). Try again in a moment.");
+        llRegionSayTo(User, 0, "Missing permission to trigger animations (requesting). Try again in a moment.");
     }
     return 0;
 }
@@ -191,25 +191,25 @@ integer stop_anim(string name){
     return 0;
 }
 integer relax_all(){
-    if (g_lastAnim != ""){
-        stop_anim(g_lastAnim);
-        g_lastAnim = "";
+    if (LastAnim != ""){
+        stop_anim(LastAnim);
+        LastAnim = "";
     }
     integer i = 0;
-    integer n = llGetListLength(g_anims);
+    integer n = llGetListLength(Anims);
     while (i < n){
-        string nm = llList2String(g_anims, i);
+        string nm = llList2String(Anims, i);
         if (nm != "") llStopAnimation(nm);
         i += 1;
     }
-    llRegionSayTo(g_user, 0, "Relaxed.");
+    llRegionSayTo(User, 0, "Relaxed.");
     return 0;
 }
 
 /* ---------- Dialog helpers ---------- */
 integer reset_listen(){
-    if (g_listen) llListenRemove(g_listen);
-    g_listen = 0; g_menu_chan = 0;
+    if (Listen) llListenRemove(Listen);
+    Listen = 0; MenuChan = 0;
     return 0;
 }
 integer dialog_to(key who, string body, list buttons){
@@ -217,9 +217,9 @@ integer dialog_to(key who, string body, list buttons){
     /* Ensure 3-column layout — buttons_for_page already targets 12 */
     while ((llGetListLength(buttons) % 3) != 0) buttons += BTN_FILL;
 
-    g_menu_chan = -100000 - (integer)llFrand(1000000.0);
-    g_listen    = llListen(g_menu_chan, "", who, "");
-    llDialog(who, body, buttons, g_menu_chan);
+    MenuChan = -100000 - (integer)llFrand(1000000.0);
+    Listen    = llListen(MenuChan, "", who, "");
+    llDialog(who, body, buttons, MenuChan);
     llSetTimerEvent((float)DIALOG_TIMEOUT_SEC);
     return 0;
 }
@@ -235,7 +235,7 @@ integer ui_return_root(key toUser){
 list buttons_for_page(integer page){
     list btns = [];
 
-    integer total = llGetListLength(g_anims);
+    integer total = llGetListLength(Anims);
     integer maxPage = 0;
     if (total > 0){
         maxPage = (total - 1) / PAGE_SIZE;
@@ -260,7 +260,7 @@ list buttons_for_page(integer page){
     integer i = start;
     while (i <= end){
         if (i < total){
-            string nm = llList2String(g_anims, i);
+            string nm = llList2String(Anims, i);
             if (nm != "") btns += [nm];
         }
         i += 1;
@@ -274,19 +274,19 @@ list buttons_for_page(integer page){
     return btns;
 }
 integer show_menu(key user, integer page){
-    g_page = page;
-    integer total = llGetListLength(g_anims);
+    Page = page;
+    integer total = llGetListLength(Anims);
     integer maxPage = 0;
     if (total > 0){
         maxPage = (total - 1) / PAGE_SIZE;
     }
-    if (g_page < 0) g_page = 0;
-    if (g_page > maxPage) g_page = maxPage;
+    if (Page < 0) Page = 0;
+    if (Page > maxPage) Page = maxPage;
 
     string body = "Choose an animation to play on the wearer.\n";
-    body += "Page " + (string)(g_page + 1) + " of " + (string)(maxPage + 1) + ".";
+    body += "Page " + (string)(Page + 1) + " of " + (string)(maxPage + 1) + ".";
 
-    list btns = buttons_for_page(g_page);
+    list btns = buttons_for_page(Page);
     dialog_to(user, body, btns);
     return 0;
 }
@@ -294,11 +294,11 @@ integer show_menu(key user, integer page){
 /* ---------- Session cleanup ---------- */
 integer cleanup_session(){
     reset_listen();
-    g_user = NULL_KEY;
+    User = NULL_KEY;
     llSetTimerEvent(0.0);
-    g_acl_pending = FALSE;
-    g_acl_avatar  = NULL_KEY;
-    g_acl_level   = ACL_NOACCESS;
+    AclPending = FALSE;
+    AclAvatar  = NULL_KEY;
+    AclLevel   = ACL_NOACCESS;
     return 0;
 }
 
@@ -322,15 +322,15 @@ default{
         if (c & CHANGED_INVENTORY){
             refresh_anim_list();
             /* clamp page & redraw if user has menu open */
-            if (g_user != NULL_KEY && g_listen != 0){
-                show_menu(g_user, g_page);
+            if (User != NULL_KEY && Listen != 0){
+                show_menu(User, Page);
             }
         }
     }
 
     run_time_permissions(integer perm){
         if (perm & PERMISSION_TRIGGER_ANIMATION){
-            g_perm_ok = TRUE;
+            PermOk = TRUE;
             logd("Permission granted: TRIGGER_ANIMATION");
         }
     }
@@ -369,8 +369,8 @@ default{
                 if (llJsonGetValue(msg, ["type"]) == TYPE_PLUGIN_START){
                     if (json_has(msg, ["context"])){
                         if (llJsonGetValue(msg, ["context"]) == PLUGIN_CONTEXT){
-                            g_user = id;
-                            request_acl(g_user);
+                            User = id;
+                            request_acl(User);
                         }
                     }
                 }
@@ -379,25 +379,25 @@ default{
         }
 
         if (num == AUTH_RESULT_NUM){
-            if (!g_acl_pending) return;
+            if (!AclPending) return;
             if (!json_has(msg, ["type"])) return;
             if (llJsonGetValue(msg, ["type"]) != MSG_ACL_RESULT) return;
             if (!json_has(msg, ["avatar"])) return;
             if (!json_has(msg, ["level"])) return;
 
             key who = (key)llJsonGetValue(msg, ["avatar"]);
-            if (who != g_user) return;
+            if (who != User) return;
 
-            g_acl_pending = FALSE;
-            g_acl_level   = (integer)llJsonGetValue(msg, ["level"]);
+            AclPending = FALSE;
+            AclLevel   = (integer)llJsonGetValue(msg, ["level"]);
 
-            if (in_allowed_levels(g_acl_level)){
+            if (in_allowed_levels(AclLevel)){
                 ensure_permissions();
                 refresh_anim_list();
-                show_menu(g_user, 0);
+                show_menu(User, 0);
             } else {
-                llRegionSayTo(g_user, 0, "Access denied.");
-                ui_return_root(g_user);
+                llRegionSayTo(User, 0, "Access denied.");
+                ui_return_root(User);
                 cleanup_session();
             }
             return;
@@ -405,46 +405,46 @@ default{
     }
 
     listen(integer chan, string name, key id, string b){
-        if (chan != g_menu_chan) return;
-        if (id != g_user) return;
+        if (chan != MenuChan) return;
+        if (id != User) return;
 
-        if (!in_allowed_levels(g_acl_level)){
+        if (!in_allowed_levels(AclLevel)){
             llRegionSayTo(id, 0, "Access denied.");
             cleanup_session();
             return;
         }
 
         if (b == BTN_BACK){
-            ui_return_root(g_user);
+            ui_return_root(User);
             cleanup_session();
             return;
         }
         if (b == BTN_LEFT){
-            show_menu(g_user, g_page - 1);
+            show_menu(User, Page - 1);
             return;
         }
         if (b == BTN_RIGHT){
-            show_menu(g_user, g_page + 1);
+            show_menu(User, Page + 1);
             return;
         }
         if (b == BTN_RELAX){
             relax_all();
-            show_menu(g_user, g_page);
+            show_menu(User, Page);
             return;
         }
         if (b == BTN_FILL){
-            show_menu(g_user, g_page);
+            show_menu(User, Page);
             return;
         }
 
-        integer idx = llListFindList(g_anims, [b]);
+        integer idx = llListFindList(Anims, [b]);
         if (idx != -1){
             start_anim(b);
-            show_menu(g_user, g_page);
+            show_menu(User, Page);
             return;
         }
 
-        show_menu(g_user, g_page);
+        show_menu(User, Page);
     }
 
     timer(){
