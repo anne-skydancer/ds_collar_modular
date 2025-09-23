@@ -1,265 +1,461 @@
-# AGENTS.md — General Guide to Writing Correct LSL
+# AGENTS.md — LSL Coding Requirements & Best Practices for LSL
 
-A project‑agnostic playbook for humans and AI agents to produce **compile‑ready**, **safe**, and **efficient** Linden Scripting Language (LSL) code for any Second Life build: HUDs, attachments, rezzers, vendors, vehicles, RP tools, etc.
-
----
-
-## 0) North‑Star Principles
-
-1. **Compilation first.** Only use syntax supported by LSL. Favor clarity over cleverness.
-2. **Event‑driven design.** Keep logic small inside events; push reusable work into helpers.
-3. **Safety by default.** Guard listeners, validate input, deny if unsure.
-4. **Resource awareness.** Work within LSL’s memory/time limits.
-5. **Predictable UX.** Clear menus, minimal chat spam, graceful failure.
+> A practical checklist for agents and assistants that generate or review **Linden Scripting Language (LSL)** code. This is **generic** guidance (not project‑specific) and assumes standard Second Life capabilities.
 
 ---
 
-## 1) Language Rules & Gotchas
+## 1) Scope & Goals
 
-- **No ternary operator** (`cond ? a : b`).
-- **No `switch`** in LSL; use `if/else` chains.
-- **No `break` statement**. Use early `return` in functions or flags in loops to emulate breaking.
-- **One variable per declaration**; no chained declarations.
-- **Explicit casting**: `(integer)`, `(float)`, `(string)`; avoid implicit conversions.
-- **Dialog buttons**: must be a multiple of 3; pad with exactly one space `" "`.
-- **Memory**: avoid giant lists/strings; reuse data; watch for stack‑heap collisions.
-- **State usage**: use sparingly; prefer flags instead of many states.
-- **Events**: all code runs inside events; there is no main loop.
+* Produce **compile‑ready** LSL (no unsupported syntax or APIs).
+* Prefer **robust, secure, and performant** patterns over “clever” code.
+* Keep scripts **event‑driven** and **single‑thread friendly**; avoid blocking.
 
-JSON helpers:
+## 2) Hard Language Constraints (must‑remember)
+
+* **No ternary operator** (`cond ? a : b`) — use explicit `if/else` chains.
+* **No `break` / `continue`** keywords — use structured logic or `jump` labels.
+* **No `switch`** statement — use `if/else if/else` ladders.
+* **No exceptions / try–catch** — handle errors with guards and return codes.
+* **No function overloading or default params** — unique names, explicit args.
+* **Single timer per script** (`llSetTimerEvent`) — design accordingly.
+* **Event‑driven model** only — no custom threads; yields occur on event exit.
+* **Blocking calls stall the script** — prefer async APIs (dataserver, HTTP, etc.).
+* **Memory is tight** (Mono VM; heap/stack are limited) — avoid bloat.
+* **Max 12 dialog buttons** (3×4 grid). Pad to multiples of 3 with a single space (`" "`).
+* **Listen filters matter** — avoid wide open listeners; always scope to avatar/channel.
+* **Key/UUID is a string** (`key`), treat as opaque; validate when needed.
+
+## 3) Core Event Model
+
+Common events to implement thoughtfully:
+
+* `state_entry`, `on_rez`, `changed`, `attach` — init/reset/ownership transitions.
+* UI/input: `touch_start`, `listen`, `timer` — keep responsive; never heavy work inside.
+* Async: `dataserver`, `http_response`, `link_message`, `run_time_permissions` — always validate payloads and request IDs.
+
+**Guidelines**
+
+* Keep event handlers short; offload to small helpers.
+* Never assume ordering across different events; persist minimal shared state in globals.
+* Guard against reentrancy (e.g., ignore stale responses using request IDs).
+
+## 4) States (finite‑state organization)
+
+* Use states to separate **modes** (e.g., idle vs active). Each state has its own event set.
+* Transition with `state newState;` only after you’ve cleaned up listeners, timers, particles, etc.
+* Use `state_entry` to (re)initialize **only** what the new state needs.
+* Data must be in **globals** (or persisted externally); locals do not survive state changes.
+* Avoid ping‑ponging states for simple flags — a single state with booleans is often cheaper.
+
+## 5) Performance & Memory
+
+* Minimize allocations in hot paths (lists, JSON strings). Reuse buffers.
+* Avoid large lists and repeated `llList2List/llDeleteSubList` chains in loops.
+* Prefer integer arithmetic; trim floats early.
+* Cache values you read often (owner key, names) and **invalidate** on `changed` when needed.
+* Keep timer intervals sensible; **don’t use sub‑second timers** unless absolutely necessary.
+* Avoid frequent `llSleep`; it stalls the event queue.
+* Use `DEBUG` flags and lightweight `logd()` helpers; strip or gate noisy logs.
+
+## 6) Dialogs & Listeners (UI)
+
+* **Layout indexing:** `llDialog` lays out buttons **bottom‑left → top‑right**. Plan button array order and any “reserved index” (e.g., Relax at index 3) with this in mind.
+* **Padding:** Not required for functional dialogs. Use padding to multiples of 3 only when it improves layout cosmetics. Do not pad in modal dialogs (e.g., single **OK**) or confirmation dialogs (e.g., **OK/Cancel**), where fewer buttons are expected.
+* **Command vs. Label:** Prefer routing dialog responses by a **command/label pair** instead of only by label. This lets you change button labels (for localization or cosmetics) without breaking the underlying command logic.
+* One dialog = one private negative channel; use a **random negative int** per session.
+* **Scope listens**: `llListen(chan, "", avatar, "")`. Remove with `llListenRemove` promptly.
+* Don’t open duplicate dialogs; track current session (avatar, channel, listen id).
+* Provide a **Back** path; on exit, **return control** to the caller if you have one.
+
+## 7) Communication & Security
+
+* Prefer **link messages** (`llMessageLinked`) for intra‑object comms.
+* For chat: use **negative channels**; never listen on public chat (`0`) for control flows.
+* Validate every inbound payload:
+
+  * Check a `type` field and only accept known values.
+  * Verify expected sender or session/req IDs.
+  * Reject or ignore malformed JSON.
+* Throttle potentially spammy actions; be mindful of rate limits.
+
+## 8) Permissions & Animations
+
+* Request only what you need via `llRequestPermissions` and handle `run_time_permissions`.
+* Re‑request on ownership/attach changes; release gracefully when detached.
+* Don’t call animation or control APIs until permissions are granted.
+* Provide a **Relax/Stop** action to clear animations or controls.
+
+## 9) Data Handling (JSON, lists, strings)
+
+* Use `llList2Json/llJsonSetValue/llJsonGetValue` for structured data.
+* Guard with a helper `json_has(j, path)` before reading.
+* Keep JSON paths shallow to avoid stack/heap pressure.
+* Be explicit converting strings ↔ ints/floats; handle `JSON_INVALID`.
+* When size matters, use compact keys and flat arrays (stride lists) to lower overhead.
+
+## 10) Error Handling & Logging
+
+* Add `DEBUG` boolean + `logd()`; keep production logs minimal.
+* Fail **closed** on unknown messages or permission denials (do nothing, or show polite error).
+* Use owner‑visible notices sparingly; prefer IMs or controlled chat when helpful.
+
+## 11) Initialization & Lifecycle
+
+* On `state_entry`/`on_rez`: reset session vars, clear listeners, stop particles, cancel timers.
+* On `changed( CHANGED_OWNER | CHANGED_REGION )`: re‑init ownership, names, permissions.
+* On soft resets, re‑register with any local controller and re‑establish heartbeats.
+
+## 12) Asset & Inventory Access
+
+* Inventory lookups (`llGetInventoryNumber`, etc.) can be slow; cache counts and names.
+* Always check asset presence before use; handle empty inventories gracefully.
+* When giving items (`llGiveInventory`), confirm existence; handle failures politely.
+
+## 13) Naming, Style & Structure
+
+* **No chained declarations** in output; declare one symbol per line for clarity.
+* Use consistent casing (e.g., UPPER\_SNAKE for constants, PascalCase for globals, lower\_snake for locals).
+* Group **constants, link numbers, and strings** at the top with comments.
+* Write **small, single‑purpose** functions; keep event bodies tiny.
+* Prefer explicit returns and early guards over deep nesting.
+
+## 14) UI/UX Conventions (llDialog specifics)
+
+* Buttons are laid out **bottom‑left → top‑right**.
+* Reserve a label (e.g., `"Back"`) consistently; ensure it exists on sub‑pages.
+* When paginating, use `<<` and `>>` and keep page size consistent.
+* For blank fillers, use exactly a single space character `" "` (not tildes or empty strings).
+
+## 15) Testing & Diagnostics
+
+* Provide a **debug mode** that prints key transitions and payloads.
+* Use a **test harness** object or script to simulate common events (touch, auth, messages).
+* Log request IDs for async flows (dataserver, http, link\_message) to correlate responses.
+
+## 16) Safety Patterns (must‑do)
+
+* Always **remove listeners** when a dialog closes or the user navigates away.
+* Treat **all inbound data as untrusted**; validate types and ranges.
+* Use **private negative channels**; never expose control flows on public chat.
+* Provide a **soft‑reset** path (cleanup + re‑register) to recover from silence.
+* Keep a **heartbeat** (ping/pong) only when truly needed; don’t repurpose heartbeats for unrelated syncs.
+
+## 17) Common Gotchas (quick checklist)
+
+* ❌ Ternary (`?:`), `switch`, `break`/`continue`, try–catch, default params.
+* ❌ Duplicate dialogs / orphaned listeners.
+* ❌ Public chat listeners or unscoped `llListen`.
+* ❌ Timers left running across state transitions.
+* ❌ Overuse of `llSleep` and sub‑second timers.
+* ❌ Large JSON objects built per click without reuse.
+* ❌ Use of **reserved expressions or keywords as variable names** (e.g., `state`, `vector`, `default`).
+
+## 18) Minimal Reusable Snippets) Minimal Reusable Snippets
+
+**Debug logger**
+
 ```lsl
-integer json_has(string j, list p){ return (llJsonGetValue(j,p) != JSON_INVALID); }
-integer json_int(string j, list p, integer def){ string v=llJsonGetValue(j,p); if(v==JSON_INVALID||v=="") return def; return (integer)v; }
-string  json_str(string j, list p, string def){ string v=llJsonGetValue(j,p); if(v==JSON_INVALID) return def; return v; }
-```
-
----
-
-## 2) Best Practices (Deep Dive)
-
-### 2.1 Communication & Chat
-- Prefer **targeted channels** over broadcast:
-  - `llRegionSayTo`/`llInstantMessage` for targeted messages to avatars; avoid spamming region chat.  
-  - `llOwnerSay` only reaches the owner **in the same region**; use IM if the owner may be elsewhere.
-- Avoid channel 0 for scripted traffic. Use a **random negative channel** for dialogs and private chat.
-- **Throttle awareness**:
-  - DEBUG channel messages are throttled region‑wide; excessive debug spam will be dropped.
-- Always **filter listeners** by channel **and** speaker key; remove or disable listeners when not in use.
-
-### 2.2 Listeners & Dialogs
-- One active `llListen` per menu/session; close it on `Back`, on timeout, and on reset.
-- Dialog buttons must be a **multiple of 3**; pad with a single space `" "`.
-- `llListen` channel must fit in a 32‑bit integer; out‑of‑range literals resolve to `-1`.
-
-### 2.3 Memory & Data
-- Watch free memory with `llGetFreeMemory()`; avoid large transient lists/strings.
-- The **heap never shrinks** at runtime; repeated concatenations grow memory usage permanently.
-- Prefer integers/enums/bit‑flags over strings; reuse buffers; avoid `llListSort` in hot paths.
-- For JSON, extract fields directly (`llJsonGetValue`) instead of converting whole structures.
-
-### 2.4 Events & Flow Control
-- Keep work **short inside events**; offload heavy work via timers/state transitions.
-- **No `break`** in LSL: exit loops by flags or restructure into helper functions and **early `return`**.
-- Avoid long `llSleep()` in events; it blocks the event queue for that script.
-- Be mindful of the **64‑event queue**; high‑volume listeners/sensors can starve other events.
-
-### 2.5 Timers & Sensors
-- Use **modest timer intervals** (≥0.2–0.5s for UI, seconds for background tasks).
-- Sensors: narrow **range and arc**; schedule with timers; prefer raycasts or region APIs when appropriate.
-
-### 2.6 HTTP & External I/O
-- Respect HTTP throttles (per‑object and per‑owner). Queue/pace requests; retry on 503.
-- Body sizes: incoming `http_request` body is limited (~2048 bytes), headers ~255 bytes per header.
-- Batch large transfers; compress or chunk payloads; service your event queue while throttled.
-
-### 2.7 Permissions & Animations
-- Request only the permissions you need; verify bits in `run_time_permissions`.
-- Stop animations/particles on reset, soft‑reset, detach, and error paths.
-
-### 2.8 Intra‑Object Messaging
-- Prefer `llMessageLinked` with **small numeric lanes** and **compact JSON** payloads.
-- Validate message `num` and `type` before handling; ignore unknown types safely.
-
-### 2.9 Attachments, HUDs, Rez Objects
-- Attachments: wearer is `llGetOwner()`; initialize on `attach()` and `on_rez()`.
-- HUDs: avoid region chat; keep visual updates ≤ 10 Hz; don’t assume camera facing.
-- Rezzers: check creator/owner permissions; clean up orphaned children; handle failed rez.
-
-### 2.10 UX Conventions
-- Keep dialog bodies short (viewer truncation).  
-- Consistent nav: `<<`, `Back`, `>>`.  
-- Place critical actions with `llDialog`’s **bottom‑left → top‑right** fill order in mind.
-
-### 2.11 Robustness & Recovery
-- Handle `CHANGED_OWNER`, `CHANGED_REGION`, `CHANGED_TELEPORT`, `CHANGED_INVENTORY`.
-- Close listeners, stop effects, and clear temp state on any reset or soft‑reset.
-
-### 2.12 States
-- Use states sparingly. Most control flow can be handled with flags and context variables.
-- Good use cases for states:
-  - Distinct lifecycle phases (e.g., `init`, `active`, `waiting`).
-  - Scripts that must ignore events until setup completes.
-  - Long‑lived modes with completely different event logic.
-- Bad use cases:
-  - Avoid states just to break out of loops or events—use early `return` or helper functions instead.
-  - Don’t create many near‑duplicate states; harder to maintain.
-- On `state` change:
-  - All event queues are cleared; be careful not to lose needed data.
-  - Re‑initialize variables if required (globals reset to defaults).
-- Document why each state exists. If unclear, prefer staying in `default` with flags.
-
-### 2.13 Micro‑Optimization Reality Check
-- Classic micro‑tweaks (like `++a` vs `a++`) **do not matter** under Mono; focus on algorithms and allocations.
-
----
-
-## 3) Core Event Usage
-
-- **`state_entry`**: initialize globals, load config, start timers.
-- **`on_rez`**: usually `llResetScript()` for clean reinit.
-- **`attach`**: handle attach/detach; request permissions if needed.
-- **`touch_start`**: entry point for user interaction.
-- **`listen`**: always filter by channel and speaker key.
-- **`timer`**: short, non‑blocking recurring tasks.
-- **`sensor`/`no_sensor`**: use narrow arcs, short ranges, modest frequency.
-- **`run_time_permissions`**: check granted bits before acting.
-- **`link_message`**: use JSON; check `num` and `type` before handling.
-- **`dataserver`**: compare query IDs before using data.
-- **`changed`**: handle owner/region/inventory changes.
-
----
-
-## 4) Common Patterns
-
-### Dialog + Listener
-```lsl
-integer gListen=0; integer gChan=0; key gUser=NULL_KEY;
-integer reset_listen(){ if(gListen) llListenRemove(gListen); gListen=0; gChan=0; return 0; }
-integer dialog_to(key who,string body,list buttons){
-    reset_listen(); while((llGetListLength(buttons)%3)!=0) buttons += " ";
-    gChan=-100000-(integer)llFrand(1000000.0);
-    gListen=llListen(gChan,"",who,"");
-    llDialog(who,body,buttons,gChan); return 0;
+integer DEBUG = FALSE;
+integer logd(string s) {
+    if (DEBUG) llOwnerSay(s);
+    return 0;
 }
 ```
 
-### Permissions
-```lsl
-integer gHasPerms=FALSE;
-request_perms(){ llRequestPermissions(llGetOwner(), PERMISSION_TRIGGER_ANIMATION|PERMISSION_TAKE_CONTROLS); }
-run_time_permissions(integer p){ if(p & PERMISSION_TRIGGER_ANIMATION) gHasPerms=TRUE; }
-```
+**JSON guard**
 
-### Loop Exit (no break)
 ```lsl
-integer stop=FALSE; integer i;
-for(i=0;i<10 && !stop;++i){
-    if(i==5) stop=TRUE; // emulate break
+integer json_has(string j, list path) {
+    if (llJsonGetValue(j, path) == JSON_INVALID) return FALSE;
+    return TRUE;
 }
 ```
 
-### Inventory Scan
-```lsl
-list load_items(integer type){ list L=[]; integer n=llGetInventoryNumber(type); integer i; for(i=0;i<n;++i) L += llGetInventoryName(type,i); return L; }
-```
-
-### Particles
-```lsl
-start_particles(){ llParticleSystem([ PSYS_PART_MAX_AGE,1.5 ]); }
-stop_particles(){ llParticleSystem([]); }
-```
-
----
-
-## 5) Debugging
-
-- Use a `DEBUG` flag and helper like `logd()` to control chat output.
-- Log only essentials; avoid flooding chat.
-- Use early returns to isolate where logic breaks.
-- Print IDs for notecard/dataserver queries.
-
----
-
-## 6) Minimal Generic Skeleton
+**Dialog helper (pads to multiples of 3)**
 
 ```lsl
-integer DEBUG=FALSE; integer logd(string s){ if(DEBUG) llOwnerSay("[S] "+s); return 0; }
-
-key gUser=NULL_KEY; integer gListen=0; integer gChan=0; string gCtx="";
-
-integer reset_listen(){ if(gListen) llListenRemove(gListen); gListen=0; gChan=0; return 0; }
-integer dialog_to(key who,string body,list buttons){
-    reset_listen(); while((llGetListLength(buttons)%3)!=0) buttons+=" ";
-    gChan=-100000-(integer)llFrand(1000000.0);
-    gListen=llListen(gChan,"",who,"");
-    llDialog(who,body,buttons,gChan); return 0;
-}
-
-default{
-    state_entry(){ logd("Ready"); }
-    on_rez(integer p){ llResetScript(); }
-    changed(integer c){ if(c & CHANGED_OWNER) llResetScript(); }
-    touch_start(integer n){ key av=llDetectedKey(0); gUser=av; dialog_to(av,"Menu",["Do","Settings","Back"]); }
-    listen(integer ch,string nm,key id,string msg){ if(ch!=gChan||id!=gUser) return;
-        if(msg=="Back"){ reset_listen(); gUser=NULL_KEY; return; }
-        if(msg=="Do"){ llOwnerSay("Did something"); }
+integer dialog_to(key who, string body, list buttons, integer chan) {
+    integer n = llGetListLength(buttons);
+    while ((n % 3) != 0) {
+        buttons += " ";
+        n += 1;
     }
+    llDialog(who, body, buttons, chan);
+    return 0;
 }
+```
+
+**Listener hygiene**
+
+```lsl
+integer gListen = 0;
+integer reset_listen() {
+    if (gListen) llListenRemove(gListen);
+    gListen = 0;
+    return 0;
+}
+```
+
+## 19) Review Checklist (for agents)
+
+Use this end‑of‑pass checklist to confirm a script is **release‑ready**. Each bullet is a concrete requirement — do not ship until all apply.
+
+### 19.1 Syntax & Language Rules
+
+* Must compile under LSL: no ternary (`?:`), no `switch`, no `break`/`continue`, no chained declarations, no default params/overloads.
+* Only supported LSL APIs are called (verify against the LSL reference).
+* One symbol per line; all variables explicitly typed.
+
+### 19.2 Events & States
+
+* Event handlers are short (≈25 lines or fewer) and guarded against invalid input.
+* Persistent data lives in globals; no reliance on locals across state changes.
+* Every state transition **cleans up**: listeners removed, timers cancelled, particles/controls/animations stopped.
+* `on_rez`, `attach`, and `changed` handle resets and ownership/region transitions safely.
+
+### 19.3 UI / Dialogs & Listeners
+
+* ≤ 12 dialog buttons; padded to a multiple of 3 with a single space (`" "`).
+* **Back** button present where navigation requires it; pagination uses `<<` and `>>` consistently.
+* If a special button (e.g., **Relax**) is reserved, its index is enforced and documented.
+* Dialog channel is a **random negative integer** per session; listeners are scoped to `(avatar, channel)` and removed on close.
+
+### 19.4 Permissions & Animations
+
+* Requests only the permissions it needs; no action taken before `run_time_permissions` grants them.
+* Denial paths are handled (user refusal does not break the script).
+* Provides a **Relax/Stop** action to clear controls/animations.
+
+### 19.5 Communication & Security
+
+* Intra‑object comms use link messages with JSON payloads that include a `type` field.
+* All inbound data is validated (expected sender, request/session IDs, schema).
+* No control flow on public chat channel `0`; private **negative** channels only.
+* Output is throttled where appropriate to avoid spam and rate limits.
+
+### 19.6 Performance & Memory (Stack‑Heap Safety)
+
+* No `llSleep` in hot paths; timers use sane intervals (≥ 1s unless justified).
+* Buffers are reused; avoid repeated list slicing (`llList2List`, `llDeleteSubList`) in loops.
+* Strings are built with a **join‑once** pattern; JSON kept shallow/compact.
+* Inventory counts, page indices, and heavy computations are cached and invalidated when needed.
+* Large temporaries are nulled after use; UI pages precomputed where possible.
+* `llGetFreeMemory()` checked before heavy operations; script degrades gracefully if low.
+
+### 19.7 Logging & Debug
+
+* `DEBUG` flag gates verbose logs; release builds default `DEBUG = FALSE`.
+* Log tags are consistent (e.g., `[MODULE]`); async flows include IDs for correlation.
+* No owner‑spam during normal operation.
+
+### 19.8 Documentation & Comments
+
+* File header includes: ROLE, ABI & link numbers, permissions, events used, resource notes, constraints, known issues/TODOs.
+* Non‑trivial functions document purpose, inputs/outputs, side effects, assumptions, and failure modes.
+* Inline comments explain **why** (design/rationale), and mark `TODO:`, `FIXME:`, `HACK:` with dates.
+
+### 19.9 Lifecycle & Safety
+
+* Soft‑reset path exists and performs cleanup + (re)registration as applicable.
+* Heartbeats (if any) are used only for liveness, **not** for unrelated syncing.
+* Ownership/region changes trigger safe re‑init and permission re‑requests as needed.
+* Script fails **closed** on bad inputs (ignores/denies) without crashing.
+
+### 19.10 Final Gate
+
+* Trace a full happy path: touch → auth → UI open → click → action → Back → main. No leaks, no duplicates.
+* No orphaned listeners; memory before vs. after basic interaction remains stable.
+* Free memory after init meets project policy (e.g., > 4 KiB) or documented if tighter.
+* Version string present; `DEBUG` default confirmed for release.
+
+---
+
+### Appendix A — Recommended File Header Template
+
+```lsl
+/* =============================================================
+   SCRIPT: <name>.lsl
+   ROLE  : <what this script does>
+   NOTES : <quirks, ABI versions, permissions, UI rules>
+   ============================================================= */
+
+integer DEBUG = FALSE;
+integer logd(string s){ if (DEBUG) llOwnerSay("[<TAG>] " + s); return 0; }
+```
+
+### Appendix B — Safe Defaults
+
+* Use **negative, randomized dialog channels** per session.
+* Keep a **single, centralized** place for link numbers and message type strings.
+* Prefer **explicit** `if/else` over clever one‑liners.
+* Return early on invalid input.
+
+---
+
+## 20) Commenting & Documentation Guidelines
+
+**Purpose:** Make intent, risks, and rationale clear so maintainers can safely modify code without re‑deriving design choices.
+
+**File Header (augment the template):**
+
+* **ROLE / Summary:** One sentence on what the script does.
+* **ABI & Dependencies:** Link numbers used, message types, external modules.
+* **Permissions:** What is requested and why.
+* **Events Used:** Key events and the reason each exists.
+* **Resource Notes:** Timers, listeners, particles, HTTP caps.
+* **Constraints:** Known sim limits, viewer quirks, race conditions.
+* **Known Issues / TODO:** List with short bullets and dates.
+
+**Function Headers:** For each non‑trivial function include:
+
+* **What it does / Why it exists** (primary intent, not line‑by‑line narration).
+* **Inputs / Outputs** (types, units, ranges; `NULL_KEY` handling).
+* **Side Effects** (listeners opened/removed, timers set, global mutations).
+* **Assumptions / Invariants** (e.g., menu size ≤ 12, channel is negative).
+* **Failure Modes** (e.g., permission not granted, JSON invalid).
+
+**Inline Comments (focus on reasoning):**
+
+* Prefer **why** over **what**; the code already says *what*.
+* Mark **problem areas** (race windows, throttles, rate limits) with `NOTE:`.
+* Mark **workarounds** for SL quirks (e.g., dataserver latency) with `WHY:`.
+* Document **UI layout logic** (e.g., why Relax sits at index 3; padding rules).
+* Call out **magic numbers** and derive them briefly.
+
+**Change Rationale Blocks:**
+
+* At major edits, add a short `/* WHY: ... DATE: YYYY‑MM‑DD */` block near the change.
+
+**Tags:** Use `TODO:` for planned work, `FIXME:` for known bugs, `HACK:` for temporary compromises.
+
+**Style:**
+
+* Use `//` for short notes; `/* ... */` for multi‑line context.
+* Keep comments accurate; delete stale ones immediately.
+
+**Examples:**
+
+```lsl
+/* WHY: We pin page size to 8 because one slot is reserved for "Relax" and we
+   must keep the dialog a multiple of 3; see §14. DATE: 2025‑09‑23 */
 ```
 
 ---
 
-## 7) Prompting Hints for AI Agents
+## 21) Memory Efficiency & Stack‑Heap Safety
 
-- “Generate **compile‑ready** LSL with only supported syntax.”
-- “Do not use ternary, `switch`, or `break`.”
-- “Always clean up listeners when leaving a menu.”
-- “Pad dialog buttons to a multiple of 3 with a single space.”
-- “Filter listeners by channel and avatar key.”
-- “Use early return or flags instead of break.”
-- “Keep per‑event code minimal.”
+**Goal:** Avoid Stack‑Heap Collision by reducing transient allocations and overall footprint.
+
+**General Principles:**
+
+* **Reuse buffers**: keep reusable strings/lists in globals; clear with `""` or `[]` after use to free memory.
+* **Prefer lists → join once**: build strings by accumulating pieces in a list, then `llDumpList2String` once.
+* **Keep JSON compact**: shallow paths, short keys, avoid rebuilding whole objects inside loops.
+* **Favor stride lists** over deeply nested JSON for hot paths.
+* **Minimize copies**: avoid `llList2List`/`llDeleteSubList` in tight loops; operate by index math when possible.
+* **Cache counts and indexes** (e.g., inventory size, page offsets); recompute only when invalidated.
+* **Gate debug output**: excessive logging allocates strings.
+
+**Dialog/UI:**
+
+* Precompute/persist button pages; do not rebuild on every click.
+* Pad once to multiples of 3; avoid per‑event padding work.
+
+**Strings:**
+
+* Avoid repeated concatenation in loops (`s += piece` inside a loop); collect pieces and join.
+* Trim floats/strings early; store integers where possible.
+
+**JSON Tips:**
+
+* Use `json_has(j, path)` before `llJsonGetValue` to avoid handling `JSON_INVALID` branches repeatedly.
+* For frequent updates, keep a **flat array** payload and only replace changed indices.
+
+**Listeners & Timers:**
+
+* Keep **one active listener** per session; remove as soon as it’s not needed.
+* Use sensible timer intervals; avoid sub‑second timers.
+
+**Data Lifetime:**
+
+* Null out large temporaries after sending (`big = []` / `big = ""`).
+* Prefer small enums (integers) to string state names in hot paths.
+
+**Measuring & Guarding:**
+
+* Use `llGetFreeMemory()` to check available bytes before heavy operations.
+* Add guardrails (e.g., skip building a giant menu if memory falls below a threshold) and degrade gracefully.
+
+**Patterns that risk SHC:**
+
+* Building large JSON strings within nested loops.
+* Re‑creating button arrays and dialog strings every click.
+* Deeply nested `llJsonSetValue`/`llJsonGetValue` in hot paths.
+
+**Safe Snippets:**
+
+*Memory guard + degrade:*
+
+```lsl
+integer mem_ok(integer need){
+    return (llGetFreeMemory() > need);
+}
+
+integer safe_send_dialog(key av, string body, list btns, integer chan){
+    // estimate: body + labels + overhead
+    if (!mem_ok(2048)) return 0; // skip if tight
+    integer n = llGetListLength(btns);
+    while ((n % 3) != 0){ btns += " "; n += 1; }
+    llDialog(av, body, btns, chan);
+    return 1;
+}
+```
+
+*Join once pattern:*
+
+```lsl
+list parts = [];
+parts += ["Title: ", title];
+parts += ["
+Page ", (string)page, "/", (string)pages];
+string body = llDumpList2String(parts, ""); // one allocation
+```
+
+*Compact stride cache (example):*
+
+```lsl
+// stride: [id, label, min_acl]
+list reg = [];
+integer add_entry(string id, string label, integer acl){ reg += [id, label, acl]; return 0; }
+```
 
 ---
 
-**This document is a living reference.** Extend it with domain‑specific best practices (HUDs, vendors, vehicles, etc.) as needed.
+## Appendix C — Reserved Identifiers to Avoid (do not use as variable/function names)
 
+These identifiers are part of the LSL language and **must not** be used for user variables, function names, or state names.
 
-## 12) Best Practices for **States** in LSL
+### C.1 Control Keywords
 
-States are powerful but easy to overuse. Treat them as **coarse‑grained modes** (setup, idle, active, error) rather than replacing simple flags.
+`default`, `do`, `else`, `event` (unused), `for`, `if`, `jump`, `print` (not useful), `return`, `state`, `while`
 
-### 12.1 When to Use States
-- **Modal behavior**: substantially different event handling (e.g., setup vs. runtime vs. error‑recovery).
-- **Lifecycle gates**: permission negotiation, HTTP server sessions, sensor sweep phases, multi‑step interactions.
-- **Performance control**: disable heavy listeners/sensors entirely in states where they’re not needed.
+### C.2 Types (built‑in)
 
-### 12.2 When **Not** to Use States
-- Minor toggles (on/off, a single option) — prefer a boolean flag.
-- Small UI subpages — keep one state and track a `context` string/enum.
-- To emulate `break`/`continue` — use early `return` and loop flags instead.
+`integer`, `float`, `string`, `key`, `list`, `vector`, `rotation`, `quaternion` (synonym of `rotation`)
 
-### 12.3 Entering & Leaving States
-- Use `state_entry` to (re)initialize **only what this state needs**:
-  - set/clear timers with `llSetTimerEvent`
-  - (re)open listeners for this mode only
-  - reset per‑state variables and UI
-- Use `state_exit` to stop effects:
-  - remove/close listeners (defensive), stop particles/animations, save transient state if needed
-- **Queues & timing**: moving state clears pending events for the old state; schedule critical work before switching.
-- **Variables**: global variables persist across states; reinitialize intentionally to avoid stale data.
+### C.3 Events (built‑in)
 
-### 12.4 Patterns
-- **Two‑state setup**: `state Setup` → load config/permissions → `state Idle` when ready.
-- **Error trap**: `state Error` with a small menu (Retry/Reset/Report); exit back to Idle when healthy.
-- **Activity mode**: `state Active` enables listeners/sensors only while a session is running; `state Idle` keeps them off.
+`at_rot_target`, `at_target`, `attach`, `changed`, `collision`, `collision_end`, `collision_start`, `control`, `dataserver`, `email`, `experience_permissions`, `experience_permissions_denied`, `http_request`, `http_response`, `land_collision`, `land_collision_end`, `land_collision_start`, `link_message`, `listen`, `money`, `moving_end`, `moving_start`, `no_sensor`, `not_at_rot_target`, `not_at_target`, `object_rez`, `on_rez`, `path_update`, `remote_data`, `run_time_permissions`, `sensor`, `state_entry`, `state_exit`, `timer`, `touch`, `touch_end`, `touch_start`, `transaction_result`
 
-### 12.5 Anti‑Patterns
-- Splitting nearly identical logic across many states → hard to reason and test.
-- Re‑implementing the same helper in multiple states — keep helpers outside states and share.
-- Forgetting to re‑arm the timer/listener in `state_entry` and assuming it carried over.
+> Note: Event identifiers are reserved even outside event blocks; do not reuse them for variables.
 
-### 12.6 Testing States
-- Verify that **each** state has a clean `state_entry` and that leaving the state stops timers/listeners/effects.
-- Exercise unexpected transitions (teleport, detach, owner change) and ensure you don’t strand particles or open listens.
-- Log the current state name on transitions (guarded by `DEBUG`).
+### C.4 Also Avoid
 
+* Names of **built‑in functions** (e.g., `llDialog`, `llGetOwner`, etc.) and **constants** (e.g., `NULL_KEY`, `ZERO_VECTOR`, `ZERO_ROTATION`).
+* Single‑letter **label** anchors used by `jump`/`@` in your code.
+
+If in doubt, consult the LSL Wiki lists for **Flow Control**, **Types**, **Events**, and **Functions** before naming.
+
+---
+
+**End of AGENTS.md**
