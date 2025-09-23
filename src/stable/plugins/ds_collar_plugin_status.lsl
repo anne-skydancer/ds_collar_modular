@@ -87,12 +87,13 @@ integer json_has(string j, list path){
 integer logd(string s){ if (DEBUG) llOwnerSay("[STATUS] " + s); return 0; }
 
 /* ---------- Owner name resolution ---------- */
-request_owner_names(){
-    if (OwnerKey == NULL_KEY) return;
+integer request_owner_names(){
+    if (OwnerKey == NULL_KEY) return 0;
     // clear old cache and start fresh queries
     OwnerDisplay  = "";
     OwnerDisplayQuery   = llRequestDisplayName(OwnerKey);
     OwnerLegacyQuery = llRequestAgentData(OwnerKey, DATA_NAME);
+    return 0;
 }
 string owner_label(){
     // Prefer cached display/legacy name; otherwise indicate fetching
@@ -107,7 +108,7 @@ string owner_label(){
 }
 
 /* ---------- Registration / soft-reset ---------- */
-register_self(){
+integer register_self(){
     string j = llList2Json(JSON_OBJECT, []);
     j = llJsonSetValue(j, ["type"],    TYPE_REGISTER);
     j = llJsonSetValue(j, ["sn"],      (string)PLUGIN_SN);
@@ -121,23 +122,26 @@ register_self(){
     }
     llMessageLinked(LINK_SET, K_PLUGIN_REG_REPLY, j, NULL_KEY);
     logd("Registered with kernel.");
+    return 0;
 }
-notify_soft_reset(){
+integer notify_soft_reset(){
     string j = llList2Json(JSON_OBJECT, []);
     j = llJsonSetValue(j, ["type"],    TYPE_PLUGIN_SOFT_RESET);
     j = llJsonSetValue(j, ["context"], PLUGIN_CONTEXT);
     llMessageLinked(LINK_SET, K_PLUGIN_SOFT_RESET, j, NULL_KEY);
+    return 0;
 }
 
 /* ---------- Settings I/O ---------- */
-request_settings_sync_once(){
+integer request_settings_sync_once(){
     string j = llList2Json(JSON_OBJECT, []);
     j = llJsonSetValue(j, ["type"], TYPE_SETTINGS_GET);
     llMessageLinked(LINK_SET, K_SETTINGS_QUERY, j, NULL_KEY);
+    return 0;
 }
-update_from_settings(string kv_json){
+integer update_from_settings(string kv_json){
     /* defensive: expect an object */
-    if (llGetSubString(kv_json, 0, 0) != "{") return;
+    if (llGetSubString(kv_json, 0, 0) != "{") return 0;
 
     key prev_owner = OwnerKey;
 
@@ -181,15 +185,17 @@ update_from_settings(string kv_json){
     }
 
     logd("Settings mirror updated.");
+    return 0;
 }
 
 /* ---------- UI plumbing ---------- */
-cleanup_session(){
+integer cleanup_session(){
     if (Listen != 0) llListenRemove(Listen);
     Listen = 0;
     User   = NULL_KEY;
     Chan   = 0;
     llSetTimerEvent(0.0);
+    return 0;
 }
 integer open_dialog(key avatar, string body, list buttons){
     /* pad to multiples of 3 for llDialog */
@@ -242,11 +248,12 @@ string build_status_report(){
 
     return s;
 }
-show_menu(key avatar){
+integer show_menu(key avatar){
     string report = build_status_report();
     list buttons = [BTN_FILL, BTN_BACK, BTN_FILL];
-    open_dialog(avatar, report, buttons);
+    integer opened = open_dialog(avatar, report, buttons);
     logd("Menu → " + (string)avatar + " chan=" + (string)Chan);
+    return opened;
 }
 
 /* =========================== EVENTS =========================== */
