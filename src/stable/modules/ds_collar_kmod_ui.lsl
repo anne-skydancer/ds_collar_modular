@@ -132,6 +132,7 @@ list filterForViewer(){
         string  audience = llList2String (g_all, i + 6);
 
         integer include = TRUE;
+        integer isCoreOwner = (context == "core_owner");
 
         /* audience gate */
         if (gIsWearer){
@@ -142,6 +143,16 @@ list filterForViewer(){
 
         /* ACL -1 is handled by caller; still guard */
         if (gAcl < 0) include = FALSE;
+
+        if (isCoreOwner){
+            if (gIsWearer){
+                if (gOwnerSet){
+                    include = TRUE;
+                } else {
+                    include = FALSE;
+                }
+            }
+        }
 
         if (include){
             /* Wearer under TPE: only items that explicitly opt in with tpe_min_acl==0 */
