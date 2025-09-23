@@ -74,7 +74,7 @@ integer json_has(string j, list path) {
 }
 
 /* ---------- Debug helper ---------- */
-logd(string s) { if (DEBUG) llOwnerSay("[KERNEL] " + s); }
+integer logd(string s) { if (DEBUG) llOwnerSay("[KERNEL] " + s); return FALSE; }
 
 /* ---------- Owner handling ---------- */
 integer reset_if_owner_changed() {
@@ -134,13 +134,13 @@ integer queue_deregister(string ctx) {
     return TRUE;
 }
 
-process_next_add() {
+integer process_next_add() {
     if (llGetListLength(g_add_queue) == 0) {
         if (g_registering) {
             g_registering = FALSE;
             broadcast_plugin_list();
         }
-        return;
+        return FALSE;
     }
     string  ctx     = llList2String (g_add_queue, 0);
     integer sn      = llList2Integer(g_add_queue, 1);
@@ -162,15 +162,16 @@ process_next_add() {
         g_plugin_map = llListReplaceList(g_plugin_map, [ ctx, old_isn, sn, label, min_acl, script, now ], idx, idx+6);
         logd("Refreshed: ctx=" + ctx + " isn=" + (string)old_isn);
     }
+    return TRUE;
 }
 
-process_next_dereg() {
+integer process_next_dereg() {
     if (llGetListLength(g_dereg_queue) == 0) {
         if (g_deregistering) {
             g_deregistering = FALSE;
             broadcast_plugin_list();
         }
-        return;
+        return FALSE;
     }
     string ctx = llList2String(g_dereg_queue, 0);
     g_dereg_queue = llDeleteSubList(g_dereg_queue, 0, 0);
@@ -182,15 +183,18 @@ process_next_dereg() {
         llMessageLinked(LINK_SET, K_PLUGIN_DEREG, j, NULL_KEY);
         g_plugin_map = llDeleteSubList(g_plugin_map, idx, idx + 6);
         logd("Deregistered: " + ctx);
+        return TRUE;
     }
+    return FALSE;
 }
 
 /* ---------- Heartbeat ---------- */
-send_ping_all() {
+integer send_ping_all() {
     integer stride = map_stride();
     integer i = 0;
     integer L = llGetListLength(g_plugin_map);
     integer now = llGetUnixTime();
+    integer sent = 0;
     while (i < L) {
         string ctx = llList2String(g_plugin_map, i);
         string j = llList2Json(JSON_OBJECT, []);
@@ -199,10 +203,12 @@ send_ping_all() {
         j = llJsonSetValue(j, ["ts"], (string)now);
         llMessageLinked(LINK_SET, K_PLUGIN_PING, j, NULL_KEY);
         i += stride;
+        sent += 1;
     }
+    return sent;
 }
 
-inventory_sweep_and_prune_if_both_dead() {
+integer inventory_sweep_and_prune_if_both_dead() {
     integer stride = map_stride();
     integer i = 0;
     integer L = llGetListLength(g_plugin_map);
@@ -226,10 +232,11 @@ inventory_sweep_and_prune_if_both_dead() {
         }
     }
     if (any_removed) broadcast_plugin_list();
+    return any_removed;
 }
 
 /* ---------- Broadcast Plugin List ---------- */
-broadcast_plugin_list() {
+integer broadcast_plugin_list() {
     integer stride = map_stride();
     integer L = llGetListLength(g_plugin_map);
     integer i = 0;
@@ -253,12 +260,14 @@ broadcast_plugin_list() {
     j = llJsonSetValue(j, ["type"], MSG_PLUGIN_LIST);
     j = llJsonSetValue(j, ["plugins"], llList2Json(JSON_ARRAY, arr));
     llMessageLinked(LINK_SET, K_PLUGIN_LIST, j, NULL_KEY);
+    return (L / stride);
 }
 
 /* ---------- Registration Solicitation ---------- */
-solicit_plugin_register() {
+integer solicit_plugin_register() {
     integer n = llGetInventoryNumber(INVENTORY_SCRIPT);
     integer i;
+    integer sent = 0;
     for (i = 0; i < n; ++i) {
         string script_name = llGetInventoryName(INVENTORY_SCRIPT, i);
         if (script_name != llGetScriptName()) {
@@ -267,9 +276,11 @@ solicit_plugin_register() {
                 j = llJsonSetValue(j, ["type"],   MSG_REGISTER_NOW);
                 j = llJsonSetValue(j, ["script"], script_name);
                 llMessageLinked(LINK_SET, K_PLUGIN_REG_QUERY, j, NULL_KEY);
+                sent += 1;
             }
         }
     }
+    return sent;
 }
 
 /* =============================================================
