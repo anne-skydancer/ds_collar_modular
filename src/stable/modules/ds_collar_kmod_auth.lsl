@@ -59,6 +59,9 @@ list    Blacklist         = [];
 integer PublicMode        = FALSE;
 integer TpeMode           = FALSE;
 
+integer SettingsReady     = FALSE;  //PATCH track readiness of cached settings
+list    PendingQueries    = [];     //PATCH avatar keys awaiting ACL replies while settings load
+
 /* ---------- Helpers ---------- */
 // Returns TRUE when the JSON string contains a value at the provided path.
 integer json_has(string j, list path){
@@ -97,6 +100,21 @@ integer apply_settings_sync(string sync_json){
     if (json_has(kv, [KEY_BLACKLIST]))     Blacklist    = json_arr_to_list(llJsonGetValue(kv, [KEY_BLACKLIST]));
     if (json_has(kv, [KEY_PUBLIC_ACCESS])) PublicMode   = (integer)llJsonGetValue(kv, [KEY_PUBLIC_ACCESS]);
     if (json_has(kv, [KEY_TPE_MODE]))      TpeMode      = (integer)llJsonGetValue(kv, [KEY_TPE_MODE]);
+
+    SettingsReady = TRUE;
+
+    /* replay any queued ACL queries now that caches are warm */
+    integer qn = llGetListLength(PendingQueries);
+    integer qi = 0;
+    while (qi < qn){
+        key av = (key)llList2String(PendingQueries, qi);
+        if (av != NULL_KEY){
+            integer lvl = compute_acl_level(av);
+            send_acl_result(av, lvl);
+        }
+        qi = qi + 1;
+    }
+    PendingQueries = [];
 
     logd("Settings applied.");
     return 1;
@@ -198,7 +216,11 @@ integer send_acl_result(key av, integer level){
 /* ---------- Events ---------- */
 default{
     // On entry, request a settings snapshot so ACL decisions have fresh data.
-    state_entry(){ request_settings_sync(); }
+    state_entry(){
+        SettingsReady  = FALSE; //PATCH ensure ACL replies wait for settings
+        PendingQueries = [];
+        request_settings_sync();
+    }
 
     // Handles inbound settings_sync updates and ACL queries from other modules.
     link_message(integer sender, integer num, string msg, key id){
@@ -214,6 +236,13 @@ default{
 
             key av = (key)llJsonGetValue(msg,["avatar"]);
             if (av == NULL_KEY) return;
+
+            if (!SettingsReady){
+                if (llListFindList(PendingQueries, [(string)av]) == -1){
+                    PendingQueries += [(string)av];
+                }
+                return;
+            }
 
             integer lvl = compute_acl_level(av);
             send_acl_result(av, lvl);
