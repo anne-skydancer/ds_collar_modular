@@ -34,6 +34,8 @@ integer IsRequest(string t){
 
 /* Map "to" → lane */
 integer lane_for_module(string mod){
+    if (mod == "") return 0;
+    if (mod == "api") return 0;
     if (mod == "ui_backend")  return L_UI_BE_IN;
     if (mod == "ui_frontend") return L_UI_FE_IN;
     /* Default: route through API lane */
@@ -89,6 +91,8 @@ integer emit_error(string toMod, string reqId, string code, string message){
 }
 
 integer forward_to_module(string payload, string toMod){
+    if (toMod == "") return FALSE;
+    if (toMod == "api") return TRUE;
     integer lane = lane_for_module(toMod);
     if (lane == 0) return FALSE;
     llMessageLinked(LINK_SET, lane, payload, NULL_KEY);
@@ -160,6 +164,10 @@ default{
         }
 
         if (toMod != ""){
+            if (toMod == "api"){
+                logd("EVT " + t + " " + fromMod + "→api (local)");
+                return;
+            }
             integer ok3 = forward_to_module(msg, toMod);
             if (!ok3){
                 emit_error(fromMod, reqId, "E_NOTFOUND", "Unknown 'to'");
