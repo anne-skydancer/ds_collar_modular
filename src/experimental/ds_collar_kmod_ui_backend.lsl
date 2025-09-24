@@ -36,7 +36,11 @@ list Pending; integer PS = 9;
 integer PENDING_TIMEOUT_SEC = 30;
 integer PENDING_SWEEP_INTERVAL = 10;
 
-/* Menus cache block: [context, buttons_json, count, label1, id1, min1, ...] */
+/* Menus cache is a variable-stride list of blocks.
+   Each block has the structure: [context, buttons_json, count, label1, id1, min1, ..., labelN, idN, minN]
+   - 'count' indicates the number of (label, id, min) triplets that follow.
+   - To iterate blocks: start at index 0, read count at offset 2, and skip (3 + count*3) elements to reach the next block.
+*/
 list MenuCache;
 
 /* JSON helpers */
