@@ -9,13 +9,6 @@ integer logd(string s){ if (DEBUG) llOwnerSay("[AUTH] " + s); return 0; }
 /* === DS Collar ABI & Lanes (match ds_collar_api.lsl) === */
 integer ABI_VERSION   = 1;
 integer L_API         = -1000;
-integer L_BROADCAST   = -1001;
-integer L_SETTINGS_IN = -1300;
-integer L_AUTH_IN     = -1400;
-integer L_ACL_IN      = -1500;
-integer L_UI_BE_IN    = -1600;
-integer L_UI_FE_IN    = -1700;
-integer L_IDENTITY_IN = -1800;
 
 /* Types (baseline) */
 string T_SETTINGS_SUB      = "settings_sub";
@@ -168,7 +161,7 @@ default{
     changed(integer c){ if (c & CHANGED_OWNER) llResetScript(); }
 
     link_message(integer s, integer num, string msg, key id){
-        if (num != L_AUTH_IN) return;
+        if (num != L_API) return;
 
         string t   = llJsonGetValue(msg, ["type"]);
         string frm = llJsonGetValue(msg, ["from"]);
