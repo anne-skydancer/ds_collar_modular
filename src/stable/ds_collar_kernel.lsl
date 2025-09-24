@@ -128,8 +128,23 @@ integer map_set_last_seen(string ctx, integer when) {
 /* ---------- Registry Functions (serialized) ---------- */
 // Queues a plugin registration request if the context is not already known.
 integer queue_register(string ctx, integer sn, string label, integer min_acl, string script) {
-    if (map_index_from_context(ctx) != -1) return FALSE;
-    if (llListFindList(AddQueue, [ctx]) != -1) return FALSE;
+    integer existing_idx = llListFindList(AddQueue, [ctx]);
+    if (existing_idx != -1) {
+        //PATCH refresh queued registration with latest metadata
+        AddQueue = llListReplaceList(AddQueue, [ ctx, sn, label, min_acl, script ], existing_idx, existing_idx + 4);
+        Registering = TRUE;
+        return TRUE;
+    }
+
+    integer dq_idx = llListFindList(DeregQueue, [ctx]);
+    if (dq_idx != -1) {
+        //PATCH cancel any pending deregistration for this context
+        DeregQueue = llDeleteSubList(DeregQueue, dq_idx, dq_idx);
+        if (llGetListLength(DeregQueue) == 0) {
+            Deregistering = FALSE;
+        }
+    }
+
     AddQueue += [ ctx, sn, label, min_acl, script ];
     Registering = TRUE;
     return TRUE;

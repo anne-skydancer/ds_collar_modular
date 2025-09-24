@@ -461,10 +461,30 @@ default{
         }
 
         if (num == K_PLUGIN_RETURN_NUM){
-            if (llJsonValueType(msg,["context"]) != JSON_INVALID){
-                string ctx = llJsonGetValue(msg,["context"]);
-                if (ctx == ROOT_CONTEXT) showRoot(User, Page);
+            if (llJsonValueType(msg,["context"]) == JSON_INVALID) return;
+
+            string ctx = llJsonGetValue(msg,["context"]);
+            if (ctx != ROOT_CONTEXT) return;
+
+            if (id == NULL_KEY) return;
+
+            if (id != User){
+                //PATCH honor returning avatar; rebuild their session safely
+                User = id;
+                if (DialogOpen) closeDialog();
+
+                AclReady = FALSE; ListReady = FALSE;
+                Acl = -1; IsWearer = FALSE; OwnerSet = FALSE;
+                PolTpe = FALSE; PolPublicOnly = FALSE; PolOwnedOnly = FALSE;
+                PolTrusteeAccess = FALSE; PolWearerUnowned = FALSE; PolPrimaryOwner = FALSE;
+                Page = 0;
+
+                queryAcl(User);
+                fetchRegistry();
+                return;
             }
+
+            showRoot(User, Page);
             return;
         }
     }
