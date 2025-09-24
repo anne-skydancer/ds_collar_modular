@@ -29,12 +29,19 @@ string T_UI_MESSAGE   = "ui_show_message";
 string T_ACL_FILTER   = "acl_filter";
 string T_ACL_FRES     = "acl_filter_result";
 
-/* Pending ACL requests: stride=8
-   [req_id, avatar, session, context, title, body, buttons_json, origin_req_id] */
-list Pending; integer PS = 8;
+/* Pending ACL requests: stride=9
+   [req_id, avatar, session, context, title, body, buttons_json, origin_req_id, ts] */
+list Pending; integer PS = 9;
 
-/* Menus by context: stride=2 [context, buttons_json] */
-list Menus;   integer MS = 2;
+integer PENDING_TIMEOUT_SEC = 30;
+integer PENDING_SWEEP_INTERVAL = 10;
+
+/* Menus cache is a variable-stride list of blocks.
+   Each block has the structure: [context, buttons_json, count, label1, id1, min1, ..., labelN, idN, minN]
+   - 'count' indicates the number of (label, id, min) triplets that follow.
+   - To iterate blocks: start at index 0, read count at offset 2, and skip (3 + count*3) elements to reach the next block.
+*/
+list MenuCache;
 
 /* JSON helpers */
 string J(){ return llList2Json(JSON_OBJECT, []); }
@@ -53,7 +60,7 @@ string new_req_id(){
     return "be-" + (string)llGetUnixTime() + "-" + llGetSubString((string)llGenerateKey(),0,7);
 }
 integer pend_add(string rid, key av, string sid, string ctx, string t, string b, string btns, string origin_req_id){
-    Pending += [rid, (string)av, sid, ctx, t, b, btns, origin_req_id];
+    Pending += [rid, (string)av, sid, ctx, t, b, btns, origin_req_id, llGetUnixTime()];
     return TRUE;
 }
 integer pend_idx(string rid){
@@ -72,94 +79,154 @@ list pend_take(string rid){
     return row;
 }
 
-/* Menus */
-integer menu_set(string ctx, string btns){
-    integer i=0; integer n=llGetListLength(Menus);
-    while (i<n){
-        if (llList2String(Menus,i) == ctx){
-            Menus = llListReplaceList(Menus, [ctx, btns], i, i+MS-1);
-            return TRUE;
+integer pend_sweep(){
+    integer now = llGetUnixTime();
+    integer i = 0; integer removed = 0; integer n = llGetListLength(Pending);
+    while (i < n){
+        integer ts = llList2Integer(Pending, i + 8);
+        if (now - ts >= PENDING_TIMEOUT_SEC){
+            string rid = llList2String(Pending, i);
+            key av = (key)llList2String(Pending, i + 1);
+            string sid = llList2String(Pending, i + 2);
+            string ctx = llList2String(Pending, i + 3);
+            string origin_req = llList2String(Pending, i + 7);
+            if (DEBUG) logd("drop stale acl_filter rid=" + rid);
+            Pending = llDeleteSubList(Pending, i, i + PS - 1);
+            n -= PS;
+            removed += 1;
+            send_close_to_frontend(av, sid, ctx, "acl_timeout", origin_req);
+            continue;
         }
-        i += MS;
+        i += PS;
     }
-    Menus += [ctx, btns];
-    return TRUE;
-}
-string menu_get(string ctx){
-    integer i=0; integer n=llGetListLength(Menus);
-    while (i<n){
-        if (llList2String(Menus,i) == ctx) return llList2String(Menus,i+1);
-        i += MS;
-    }
-    return JSON_INVALID;
+    return removed;
 }
 
-/* ---------- Button normalization & filtering ---------- */
-integer btn_ok(string item){
-    // Accept shapes:
-    // A) {"label":"..","id":"..","min_acl":"N"}
-    // B) ["Label","feature_id","next_ctx","payload","min_acl"]
-    string label = JGET(item, ["label"]);
-    string idv   = JGET(item, ["id"]);
-    if (label != JSON_INVALID && idv != JSON_INVALID) return TRUE;
+list normalize_buttons(string btns_json){
+    list norm = [];
+    if (btns_json == JSON_INVALID) return norm;
+    if (llJsonValueType(btns_json, []) != JSON_ARRAY) return norm;
 
-    if (llJsonValueType(item, []) == JSON_ARRAY){
-        list tup = llJson2List(item);
-        if (llGetListLength(tup) >= 2){
-            string lab = llList2String(tup, 0);
-            string fid = llList2String(tup, 1);
-            if (lab != "" && fid != "") return TRUE;
-        }
-    }
-    return FALSE;
-}
-integer btn_min_acl(string item){
-    string mv = JGET(item, ["min_acl"]);
-    if (mv != JSON_INVALID && mv != "") return (integer)mv;
-    if (llJsonValueType(item, []) == JSON_ARRAY){
-        list tup = llJson2List(item);
-        if (llGetListLength(tup) >= 5){
-            string s = llList2String(tup, 4);
-            if (s != "") return (integer)s;
-        }
-    }
-    return 0;
-}
-string btn_label(string item){
-    string lab = JGET(item, ["label"]);
-    if (lab != JSON_INVALID) return lab;
-    if (llJsonValueType(item, []) == JSON_ARRAY) return llList2String(llJson2List(item), 0);
-    return "";
-}
-string btn_id(string item){
-    string idv = JGET(item, ["id"]);
-    if (idv != JSON_INVALID) return idv;
-    if (llJsonValueType(item, []) == JSON_ARRAY) return llList2String(llJson2List(item), 1);
-    return "";
-}
+    list raw = llJson2List(btns_json);
+    integer n = llGetListLength(raw);
+    integer i = 0;
+    while (i < n){
+        string item = llList2String(raw, i);
+        string label = "";
+        string idv = "";
+        integer min_acl = 0;
 
-string filter_buttons_by_level(string btns_json, integer level){
-    if (btns_json == JSON_INVALID) return "[]";
-    if (llJsonValueType(btns_json, []) != JSON_ARRAY) return "[]";
-
-    list out = [];
-    integer n = llGetListLength(llJson2List(btns_json));
-    integer i=0;
-    while (i<n){
-        string item = llJsonGetValue(btns_json, [i]);
-        if (btn_ok(item)){
-            integer need = btn_min_acl(item);
-            if (level >= need){
-                // Normalize to object form for FE
-                string o = J();
-                o = JSET(o, ["label"], btn_label(item));
-                o = JSET(o, ["id"],    btn_id(item));
-                out += [o];
+        if (llJsonValueType(item, []) == JSON_OBJECT){
+            label = llJsonGetValue(item, ["label"]);
+            idv   = llJsonGetValue(item, ["id"]);
+            string mv = llJsonGetValue(item, ["min_acl"]);
+            if (mv != JSON_INVALID && mv != "") min_acl = (integer)mv;
+        } else if (llJsonValueType(item, []) == JSON_ARRAY){
+            list tup = llJson2List(item);
+            integer tn = llGetListLength(tup);
+            if (tn >= 2){
+                label = llList2String(tup, 0);
+                idv   = llList2String(tup, 1);
+                if (tn >= 5){
+                    string mv2 = llList2String(tup, 4);
+                    if (mv2 != "") min_acl = (integer)mv2;
+                }
             }
+        }
+
+        if (label != JSON_INVALID && idv != JSON_INVALID && label != "" && idv != ""){
+            norm += [label, idv, min_acl];
         }
         i += 1;
     }
+    return norm;
+}
+
+integer normalized_count(list norm){
+    return llGetListLength(norm) / 3;
+}
+
+integer menu_index(string ctx){
+    integer i = 0; integer n = llGetListLength(MenuCache);
+    while (i < n){
+        if (llList2String(MenuCache, i) == ctx) return i;
+        integer count = llList2Integer(MenuCache, i + 2);
+        i += 3 + (count * 3);
+    }
+    return -1;
+}
+
+integer menu_exists(string ctx){
+    return (menu_index(ctx) != -1);
+}
+
+string menu_get_buttons_json(string ctx){
+    integer idx = menu_index(ctx);
+    if (idx == -1) return JSON_INVALID;
+    return llList2String(MenuCache, idx + 1);
+}
+
+list menu_get_norm_list(string ctx){
+    integer idx = menu_index(ctx);
+    if (idx == -1) return [];
+    integer count = llList2Integer(MenuCache, idx + 2);
+    if (count <= 0) return [];
+    integer start = idx + 3;
+    integer end = start + (count * 3) - 1;
+    return llList2List(MenuCache, start, end);
+}
+
+integer menu_set(string ctx, string btns){
+    list norm = normalize_buttons(btns);
+    integer count = normalized_count(norm);
+    list block = [ctx, btns, count];
+    block += norm;
+
+    integer idx = menu_index(ctx);
+    if (idx == -1){
+        MenuCache += block;
+    } else {
+        integer oldCount = llList2Integer(MenuCache, idx + 2);
+        integer span = 3 + (oldCount * 3);
+        MenuCache = llDeleteSubList(MenuCache, idx, idx + span - 1);
+        MenuCache = llListInsertList(MenuCache, block, idx);
+    }
+    return TRUE;
+}
+
+/* ---------- Button normalization & filtering ---------- */
+string filter_from_normalized(list norm, integer level){
+    list out = [];
+    integer count = normalized_count(norm);
+    integer i = 0; integer idx = 0;
+    while (i < count){
+        string label = llList2String(norm, idx);
+        string idv   = llList2String(norm, idx + 1);
+        integer need = llList2Integer(norm, idx + 2);
+        if (level >= need){
+            string o = J();
+            o = JSET(o, ["label"], label);
+            o = JSET(o, ["id"],    idv);
+            out += [o];
+        }
+        i += 1;
+        idx += 3;
+    }
     return llList2Json(JSON_ARRAY, out);
+}
+
+string filter_buttons_raw(string btns_json, integer level){
+    list norm = normalize_buttons(btns_json);
+    if (llGetListLength(norm) == 0) return "[]";
+    return filter_from_normalized(norm, level);
+}
+
+string filter_buttons_for_context(string ctx, string btns_json, integer level){
+    list norm = [];
+    if (ctx != JSON_INVALID && ctx != "") norm = menu_get_norm_list(ctx);
+    if (llGetListLength(norm) == 0) norm = normalize_buttons(btns_json);
+    if (llGetListLength(norm) == 0) return "[]";
+    return filter_from_normalized(norm, level);
 }
 
 /* ---------- ACL query ---------- */
@@ -226,7 +293,7 @@ integer handle_open_context(key av, string sid, string ctx, string origin_req_id
     string use_ctx = ctx;
     if (use_ctx == JSON_INVALID || use_ctx == "") use_ctx = DEFAULT_CONTEXT;
 
-    string btns = menu_get(use_ctx);
+    string btns = menu_get_buttons_json(use_ctx);
     if (btns == JSON_INVALID){
         if (DEBUG) logd("no menu for context '"+use_ctx+"'");
         render_to_frontend(av, use_sid, use_ctx, "Oops", "No UI registered for '"+use_ctx+"'.", "[]", origin_req_id);
@@ -241,7 +308,7 @@ integer handle_open_context(key av, string sid, string ctx, string origin_req_id
 default{
     state_entry(){
         Pending = [];
-        Menus   = [];
+        MenuCache = [];
 
         // optional hello (lets the router know our lane)
         string hello = J();
@@ -252,6 +319,7 @@ default{
         hello = JSET(hello, ["lane"], (string)L_UI_BE_IN);
         llMessageLinked(LINK_SET, L_API, hello, NULL_KEY);
 
+        llSetTimerEvent(PENDING_SWEEP_INTERVAL);
         logd("UI-BE up");
     }
 
@@ -308,7 +376,7 @@ default{
                     return;
                 }
 
-                if (menu_get(command) != JSON_INVALID){
+                if (menu_exists(command)){
                     handle_open_context(avc, sidc, command, ridc);
                     return;
                 }
@@ -374,7 +442,7 @@ default{
                 string origin_req = llList2String(row, 7);
 
                 integer level = (integer)JGET(msg, ["level"]);
-                string filtered = filter_buttons_by_level(btns, level);
+                string filtered = filter_buttons_for_context(ctx, btns, level);
                 render_to_frontend(av, sid, ctx, t, bdy, filtered, origin_req);
                 return;
             }
@@ -382,5 +450,9 @@ default{
             return;
         }
 
+    }
+
+    timer(){
+        pend_sweep();
     }
 }

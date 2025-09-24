@@ -39,8 +39,8 @@ list   AV2HASH;  integer HS = 2;
 list   AV2CHAN;  integer CS = 2;
 /* Listen handle per avatar: [ avatar_key, listen_handle ] */
 list   AV2LHN;   integer LS = 2;
-/* Button maps per avatar: [ avatar_key, labels_json, ids_json, context ] */
-list   AV2BTNS;  integer BS = 4;
+/* Button maps per avatar: [ avatar_key, context, count, label0, id0, ... ] */
+list   AV2BTNS;
 
 /* ---------------- JSON helpers ---------------- */
 string J(){ return llList2Json(JSON_OBJECT, []); }
@@ -131,21 +131,50 @@ integer lhn_del(key av){
 }
 
 /* Button maps get/set/del */
-integer btn_idx(key av){ return idx(AV2BTNS, BS, av); }
-integer btn_set(key av, string labels_json, string ids_json, string context){
+integer btn_idx(key av){
+    integer i = 0; integer n = llGetListLength(AV2BTNS);
+    while (i < n){
+        if ((key)llList2String(AV2BTNS, i) == av) return i;
+        integer count = llList2Integer(AV2BTNS, i + 2);
+        i += 3 + (count * 2);
+    }
+    return -1;
+}
+
+integer btn_block_len(integer start){
+    integer count = llList2Integer(AV2BTNS, start + 2);
+    return 3 + (count * 2);
+}
+
+integer btn_set(key av, list pairs, string context){
+    integer count = llGetListLength(pairs) / 2;
+    list block = [(string)av, context, count];
+    block += pairs;
+
     integer i = btn_idx(av);
-    if (i == -1) AV2BTNS += [(string)av, labels_json, ids_json, context];
-    else AV2BTNS = llListReplaceList(AV2BTNS, [(string)av, labels_json, ids_json, context], i, i+BS-1);
+    if (i == -1){
+        AV2BTNS += block;
+    } else {
+        integer span = btn_block_len(i);
+        AV2BTNS = llDeleteSubList(AV2BTNS, i, i + span - 1);
+        AV2BTNS = llListInsertList(AV2BTNS, block, i);
+    }
     return TRUE;
 }
+
 list btn_get(key av){
     integer i = btn_idx(av);
     if (i == -1) return [];
-    return llList2List(AV2BTNS, i, i+BS-1);
+    integer span = btn_block_len(i);
+    return llList2List(AV2BTNS, i, i + span - 1);
 }
+
 integer btn_del(key av){
     integer i = btn_idx(av);
-    if (i != -1) AV2BTNS = llDeleteSubList(AV2BTNS, i, i+BS-1);
+    if (i != -1){
+        integer span = btn_block_len(i);
+        AV2BTNS = llDeleteSubList(AV2BTNS, i, i + span - 1);
+    }
     return TRUE;
 }
 
@@ -176,22 +205,26 @@ list parse_buttons_to_label_id_pairs(string btns_json){
     if (btns_json == JSON_INVALID) return out;
     if (llJsonValueType(btns_json, []) != JSON_ARRAY) return out;
 
-    integer n = llGetListLength(llJson2List(btns_json));
+    list raw = llJson2List(btns_json);
+    integer n = llGetListLength(raw);
     integer i=0;
     while (i < n){
-        string item = llJsonGetValue(btns_json, [i]);
+        string item = llList2String(raw, i);
+        string lab = "";
+        string idv = "";
 
-        string lab = JGET(item, ["label"]);
-        string idv = JGET(item, ["id"]);
-
-        if (lab == JSON_INVALID || idv == JSON_INVALID){
-            // try tuple shape (flat array)
+        integer typev = llJsonValueType(item, []);
+        if (typev == JSON_OBJECT){
+            lab = JGET(item, ["label"]);
+            idv = JGET(item, ["id"]);
+        } else if (typev == JSON_ARRAY){
             list t = llJson2List(item);
             if (llGetListLength(t) >= 2){
                 lab = llList2String(t, 0);
                 idv = llList2String(t, 1);
             }
         }
+
         if (lab != JSON_INVALID && idv != JSON_INVALID && lab != "" && idv != ""){
             out += [lab, idv];
         }
@@ -309,18 +342,14 @@ default{
             // Parse buttons → [label,id,label,id,...]
             list pairs = parse_buttons_to_label_id_pairs(btns);
             list labels = [];
-            list ids    = [];
             integer m=0; integer M = llGetListLength(pairs);
             while (m < M){
                 labels += llList2String(pairs, m);
-                ids    += llList2String(pairs, m+1);
                 m += 2;
             }
 
             // Remember label/id mapping for this avatar
-            string labels_json = llList2Json(JSON_ARRAY, labels);
-            string ids_json    = llList2Json(JSON_ARRAY, ids);
-            btn_set(av, labels_json, ids_json, ctx);
+            btn_set(av, pairs, ctx);
 
             // Make per-avatar channel from SID, start listen for that avatar only
             integer ch = fe_channel_from_sid(sid);
@@ -359,18 +388,23 @@ default{
         list row = btn_get(av);
         if (llGetListLength(row) == 0) return;
 
-        string labels_json = llList2String(row, 1);
-        string ids_json    = llList2String(row, 2);
-        string context     = llList2String(row, 3);
+        string context     = llList2String(row, 1);
+        integer count      = llList2Integer(row, 2);
+        if (count <= 0) return;
 
-        list labs = llJson2List(labels_json);
-        integer i = llListFindList(labs, [txt]);
-        if (i == -1) return;
+        integer base = 3;
+        integer k = 0;
+        while (k < count){
+            string lab = llList2String(row, base + (k * 2));
+            if (lab == txt){
+                string fid = llList2String(row, base + (k * 2) + 1);
+                if (fid == "") return;
 
-        string fid = llList2String(llJson2List(ids_json), i);
-        if (fid == "") return;
-
-        // Send click → backend (explicit FE → BE request)
-        send_ui_click(av, sid, context, fid, txt);
+                // Send click → backend (explicit FE → BE request)
+                send_ui_click(av, sid, context, fid, txt);
+                return;
+            }
+            k += 1;
+        }
     }
 }
