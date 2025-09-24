@@ -9,13 +9,8 @@ integer logd(string s){ if (DEBUG) llOwnerSay("[API] " + s); return 0; }
 /* === DS Collar ABI & Lanes (CANONICAL) === */
 integer ABI_VERSION   = 1;
 integer L_API         = -1000;
-integer L_BROADCAST   = -1001;
-integer L_SETTINGS_IN = -1300;
-integer L_AUTH_IN     = -1400;
-integer L_ACL_IN      = -1500;
 integer L_UI_BE_IN    = -1600;
 integer L_UI_FE_IN    = -1700;
-integer L_IDENTITY_IN = -1800;
 
 /* Requests (must include req_id) */
 integer IsRequest(string t){
@@ -39,18 +34,16 @@ integer IsRequest(string t){
 
 /* Map "to" → lane */
 integer lane_for_module(string mod){
-    if (mod == "settings")    return L_SETTINGS_IN;
-    if (mod == "auth")        return L_AUTH_IN;
-    if (mod == "acl")         return L_ACL_IN;
     if (mod == "ui_backend")  return L_UI_BE_IN;
     if (mod == "ui_frontend") return L_UI_FE_IN;
-    if (mod == "bootstrap")   return L_IDENTITY_IN;
-    if (mod == "any")         return L_BROADCAST;
-    return 0;
+    /* Default: route through API lane */
+    return L_API;
 }
 
 list Pending;
 integer PENDING_STRIDE = 5; /* [req_id, from, to, type, sent] */
+integer PENDING_TIMEOUT_SEC = 3;
+float   PENDING_SWEEP_SEC   = 1.0;
 
 integer now(){ return llGetUnixTime(); }
 
@@ -65,7 +58,17 @@ integer pending_index(string rid){
 }
 
 integer pending_add(string rid, string from, string to, string typ){
+    integer wasEmpty = (llGetListLength(Pending) == 0);
     Pending += [rid, from, to, typ, now()];
+    if (wasEmpty) llSetTimerEvent(PENDING_SWEEP_SEC);
+    return TRUE;
+}
+
+integer pending_remove_at(integer idx){
+    Pending = llDeleteSubList(Pending, idx, idx + (PENDING_STRIDE - 1));
+    if (llGetListLength(Pending) == 0){
+        llSetTimerEvent(0.0);
+    }
     return TRUE;
 }
 
@@ -80,10 +83,7 @@ integer emit_error(string toMod, string reqId, string code, string message){
     j = llJsonSetValue(j, ["abi"], (string)ABI_VERSION);
 
     integer lane = lane_for_module(toMod);
-    if (lane == 0){
-        llMessageLinked(LINK_SET, L_BROADCAST, j, NULL_KEY);
-        return FALSE;
-    }
+    if (lane == 0) lane = L_API;
     llMessageLinked(LINK_SET, lane, j, NULL_KEY);
     return TRUE;
 }
@@ -98,7 +98,7 @@ integer forward_to_module(string payload, string toMod){
 default{
     state_entry(){
         Pending = [];
-        llSetTimerEvent(0.5);
+        llSetTimerEvent(0.0);
         logd("API up");
     }
 
@@ -154,7 +154,7 @@ default{
                 } else {
                     logd("RES " + t + " " + fromMod + "→" + requester + " rid=" + reqId);
                 }
-                Pending = llDeleteSubList(Pending, idx, idx + (PENDING_STRIDE - 1));
+                pending_remove_at(idx);
                 return;
             }
         }
@@ -179,13 +179,16 @@ default{
             string to   = llList2String(Pending, i+2);
             string typ  = llList2String(Pending, i+3);
             integer ts  = llList2Integer(Pending, i+4);
-            if ((tnow - ts) > 3){
+            if ((tnow - ts) > PENDING_TIMEOUT_SEC){
                 emit_error(from, rid, "E_TIMEOUT", "No response from '"+to+"' for '"+typ+"'");
-                Pending = llDeleteSubList(Pending, i, i + (PENDING_STRIDE - 1));
+                pending_remove_at(i);
                 n = llGetListLength(Pending);
             } else {
                 i += PENDING_STRIDE;
             }
+        }
+        if (n == 0){
+            llSetTimerEvent(0.0);
         }
     }
 }

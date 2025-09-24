@@ -12,7 +12,6 @@ integer logd(string s){ if (DEBUG) llOwnerSay("[ACL] " + s); return 0; }
 /* === ABI & Lanes === */
 integer ABI_VERSION   = 1;
 integer L_API         = -1000;
-integer L_ACL_IN      = -1500;
 
 /* Types */
 string T_SETTINGS_SUB        = "settings_sub";
@@ -200,7 +199,7 @@ default{
     changed(integer c){ if (c & CHANGED_OWNER) llResetScript(); }
 
     link_message(integer s, integer num, string msg, key id){
-        if (num != L_ACL_IN) return;
+        if (num != L_API) return;
 
         string t   = llJsonGetValue(msg, ["type"]);
         string rid = llJsonGetValue(msg, ["req_id"]);

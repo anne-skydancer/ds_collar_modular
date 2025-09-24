@@ -1,15 +1,13 @@
 /* =============================================================
    MODULE: ds_collar_kernel.lsl
    ROLE  : Orchestrator (registration, heartbeat, soft-reset)
-           - Accepts module registration and "ready"
-           - 30s heartbeat ping (−1120) and pong (−1121) tracking
-           - Broadcasts soft_reset (−1103) and system_ready (−1001)
+           - Accepts module registration and "ready" on the API lane
+           - 30s heartbeat ping/pong tracking via API broadcast
+           - Broadcasts soft_reset and system_ready via API routing
            - Emits system_ready when MVP set is ready:
              { auth, acl, settings, ui_backend, ui_frontend }
    NOTES :
-     • API comes later. For now, modules send directly on domain lanes.
-     • When API is introduced, it will forward to the SAME lanes; kernel
-       does not need to change.
+     • Modules are expected to communicate via the API router (-1000).
    CONSTRAINTS:
      • No ternary, no break/continue
      • PascalCase globals; ALL_CAPS constants; locals lowercase
@@ -23,43 +21,7 @@ integer logd(string s){ if (DEBUG) llOwnerSay("[KERNEL] " + s); return 0; }
 integer ABI_VERSION = 1;
 
 /* ---------- Link-message channels (negative 4-digit, frozen) ---------- */
-integer L_API                   = -1000; /* (Ingress for future API) */
-integer L_BROADCAST             = -1001; /* system announcements */
-
-integer L_REG_REGISTER          = -1100; /* register */
-integer L_REG_REGISTER_ACK      = -1101; /* register_ack */
-integer L_REG_READY             = -1102; /* ready */
-integer L_REG_SOFT_RESET        = -1103; /* soft_reset */
-
-integer L_HEARTBEAT_PING        = -1120; /* ping (kernel→all) */
-integer L_HEARTBEAT_PONG        = -1121; /* pong (modules→kernel) */
-
-integer L_KERNEL_CTRL           = -1200; /* reserved internal ctrl */
-
-integer L_SETTINGS_GET          = -1300;
-integer L_SETTINGS_SNAPSHOT     = -1301;
-integer L_SETTINGS_SET          = -1302;
-integer L_SETTINGS_ACK          = -1303;
-integer L_SETTINGS_LIST_ADD     = -1304;
-integer L_SETTINGS_LIST_REMOVE  = -1305;
-integer L_SETTINGS_SYNC         = -1306;
-
-integer L_AUTH_QUERY            = -1400;
-integer L_AUTH_RESULT           = -1401;
-
-integer L_ACL_VIS_QUERY         = -1500;
-integer L_ACL_VIS_RESULT        = -1501;
-
-integer L_UI_BE_TOUCH           = -1600;
-integer L_UI_BE_CLICK           = -1601;
-
-integer L_UI_FE_RENDER          = -1700;
-integer L_UI_FE_CLOSE           = -1701;
-
-integer L_IDENTITY_UPDATE       = -1800;
-
-integer L_LOG_LOG               = -1900;
-integer L_LOG_ERROR             = -1901;
+integer L_API                   = -1000; /* API ingress lane */
 
 /* ---------- Message "type" strings (canonical) ---------- */
 string TYPE_REGISTER            = "register";
@@ -107,7 +69,7 @@ string MOD_API        = "api";
 /* ---------- Timing ---------- */
 integer HB_INTERVAL_SEC   = 30;   /* heartbeat ping cadence */
 integer HB_PONG_TIMEOUT_S = 60;   /* stale module timeout */
-float   TIMER_TICK_SEC    = 1.0;  /* driver tick */
+float   TIMER_TICK_SEC    = 5.0;  /* driver tick */
 
 /* ---------- Internal State ---------- */
 list    ModuleMap;        /* stride 5: [id, lastPong, isReady, abi, ver] */
@@ -116,6 +78,24 @@ integer LastPingUnix;
 /* ---------- Helpers ---------- */
 integer now(){ return llGetUnixTime(); }
 integer stride(){ return 5; }
+
+integer send_kernel_message(string type, string to, list kv){
+    string j = llList2Json(JSON_OBJECT, []);
+    j = llJsonSetValue(j, ["type"], type);
+    j = llJsonSetValue(j, ["from"], "kernel");
+    if (to != "") j = llJsonSetValue(j, ["to"], to);
+    j = llJsonSetValue(j, ["abi"], (string)ABI_VERSION);
+    integer i = 0;
+    integer n = llGetListLength(kv);
+    while (i + 1 < n){
+        string k = llList2String(kv, i);
+        string v = llList2String(kv, i + 1);
+        j = llJsonSetValue(j, [k], v);
+        i += 2;
+    }
+    llMessageLinked(LINK_SET, L_API, j, NULL_KEY);
+    return TRUE;
+}
 
 integer json_has(string j, list path){
     if (llJsonGetValue(j, path) == JSON_INVALID) return FALSE;
@@ -218,42 +198,23 @@ integer prune_dead_modules(){
 
 /* ---------- Outbound helpers ---------- */
 integer emit_soft_reset(string reason){
-    string j = llList2Json(JSON_OBJECT, []);
-    j = llJsonSetValue(j, ["type"], TYPE_SOFT_RESET);
-    j = llJsonSetValue(j, ["from"], "kernel");
-    j = llJsonSetValue(j, ["abi"], (string)ABI_VERSION);
-    j = llJsonSetValue(j, ["reason"], reason);
-    llMessageLinked(LINK_SET, L_REG_SOFT_RESET, j, NULL_KEY);
+    send_kernel_message(TYPE_SOFT_RESET, "any", ["reason", reason]);
     return 0;
 }
 
 integer emit_system_ready(){
-    string j = llList2Json(JSON_OBJECT, []);
-    j = llJsonSetValue(j, ["type"], TYPE_SYSTEM_READY);
-    j = llJsonSetValue(j, ["from"], "kernel");
-    j = llJsonSetValue(j, ["abi"], (string)ABI_VERSION);
-    llMessageLinked(LINK_SET, L_BROADCAST, j, NULL_KEY);
+    send_kernel_message(TYPE_SYSTEM_READY, "any", []);
     logd("Broadcast: system_ready");
     return 0;
 }
 
 integer send_ping(){
-    string j = llList2Json(JSON_OBJECT, []);
-    j = llJsonSetValue(j, ["type"], TYPE_PING);
-    j = llJsonSetValue(j, ["from"], "kernel");
-    j = llJsonSetValue(j, ["abi"], (string)ABI_VERSION);
-    llMessageLinked(LINK_SET, L_HEARTBEAT_PING, j, NULL_KEY);
+    send_kernel_message(TYPE_PING, "any", []);
     return 0;
 }
 
 integer ack_register(string toMod, integer ok){
-    string j = llList2Json(JSON_OBJECT, []);
-    j = llJsonSetValue(j, ["type"], TYPE_REGISTER_ACK);
-    j = llJsonSetValue(j, ["from"], "kernel");
-    j = llJsonSetValue(j, ["to"], toMod);
-    j = llJsonSetValue(j, ["abi"], (string)ABI_VERSION);
-    j = llJsonSetValue(j, ["ok"], (string)ok);
-    llMessageLinked(LINK_SET, L_REG_REGISTER_ACK, j, NULL_KEY);
+    send_kernel_message(TYPE_REGISTER_ACK, toMod, ["ok", (string)ok]);
     return 0;
 }
 
@@ -274,34 +235,38 @@ default{
     changed(integer c){ if (c & CHANGED_OWNER) llResetScript(); }
 
     link_message(integer sender, integer num, string msg, key id){
-        if (num == L_REG_REGISTER){
-            if (!json_has(msg, ["type"])) return;
-            if (llJsonGetValue(msg, ["type"]) != TYPE_REGISTER) return;
-            if (!json_has(msg, ["from"])) return;
+        if (num != L_API) return;
+        if (!json_has(msg, ["type"])) return;
 
-            string mod = llJsonGetValue(msg, ["from"]);
+        string type = llJsonGetValue(msg, ["type"]);
+        string from = "";
+        if (json_has(msg, ["from"])) from = llJsonGetValue(msg, ["from"]);
+        string to = "";
+        if (json_has(msg, ["to"])) to = llJsonGetValue(msg, ["to"]);
+
+        if (from == "kernel") return; /* ignore our own broadcasts */
+        if (to != "kernel") return;
+
+        if (type == TYPE_REGISTER){
+            if (from == "") return;
             integer abi = ABI_VERSION;
             if (json_has(msg, ["abi"])) abi = (integer)llJsonGetValue(msg, ["abi"]);
             string ver = "";
             if (json_has(msg, ["module_ver"])) ver = llJsonGetValue(msg, ["module_ver"]);
 
             if (abi != ABI_VERSION){
-                logd("ABI mismatch from " + mod + " (" + (string)abi + ")");
-                ack_register(mod, FALSE);
+                logd("ABI mismatch from " + from + " (" + (string)abi + ")");
+                ack_register(from, FALSE);
                 return;
             }
-            module_upsert(mod, abi, ver);
-            ack_register(mod, TRUE);
+            module_upsert(from, abi, ver);
+            ack_register(from, TRUE);
             return;
         }
 
-        if (num == L_REG_READY){
-            if (!json_has(msg, ["type"])) return;
-            if (llJsonGetValue(msg, ["type"]) != TYPE_READY) return;
-            if (!json_has(msg, ["from"])) return;
-
-            string mod = llJsonGetValue(msg, ["from"]);
-            if (module_mark_ready(mod)){
+        if (type == TYPE_READY){
+            if (from == "") return;
+            if (module_mark_ready(from)){
                 if (all_mvp_ready()){
                     emit_system_ready();
                 }
@@ -309,23 +274,14 @@ default{
             return;
         }
 
-        if (num == L_REG_SOFT_RESET){
-            integer ok = FALSE;
-            if (json_has(msg, ["type"])){
-                if (llJsonGetValue(msg, ["type"]) == TYPE_SOFT_RESET) ok = TRUE;
-            }
-            if (!ok) return;
+        if (type == TYPE_SOFT_RESET){
             emit_soft_reset("requested");
             return;
         }
 
-        if (num == L_HEARTBEAT_PONG){
-            if (!json_has(msg, ["type"])) return;
-            if (llJsonGetValue(msg, ["type"]) != TYPE_PONG) return;
-            if (!json_has(msg, ["from"])) return;
-
-            string mod = llJsonGetValue(msg, ["from"]);
-            module_mark_pong(mod);
+        if (type == TYPE_PONG){
+            if (from == "") return;
+            module_mark_pong(from);
             return;
         }
     }

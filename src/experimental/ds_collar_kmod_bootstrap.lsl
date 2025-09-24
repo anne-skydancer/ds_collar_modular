@@ -21,7 +21,6 @@ integer ABI_VERSION = 1;
 
 /* ---------- Lanes ---------- */
 integer L_API       = -1000;
-integer L_BROADCAST = -1001;
 
 /* ---------- Message types ---------- */
 string TYPE_SETTINGS_PUT        = "settings_put";
@@ -386,9 +385,9 @@ default{
     changed(integer c){ if (c & CHANGED_OWNER) llResetScript(); }
 
     link_message(integer s, integer num, string msg, key id){
-        if (num != L_BROADCAST) return;
+        if (num != L_API) return;
         string to = llJsonGetValue(msg, ["to"]);
-        if (to != "bootstrap") return;
+        if (!(to == "bootstrap" || to == "any")) return;
 
         string t = llJsonGetValue(msg, ["type"]);
         if (t == TYPE_SETTINGS_SNAPSHOT){
