@@ -4,11 +4,10 @@
        - On touch_start: send ui_touch (avatar)
        - On ui_render: track SID per avatar; render llDialog
        - On dialog reply: accept ONLY on the avatar's SID-derived channel,
-         then send ui_button (avatar + feature_id + context)
+         then send ui_click (command + label + context)
  LANES:
    L_API       (-1000)  (FE talks to API)
    L_UI_FE_IN  (-1700)  (ingress from API for ui_render/ui_close)
-   L_BROADCAST (-1001)  (not used here but available)
  ============================================================= */
 
 integer DEBUG = TRUE;
@@ -22,7 +21,14 @@ integer L_UI_FE_IN  = -1700;
 string T_UI_TOUCH   = "ui_touch";    // FE → BE (via API)
 string T_UI_RENDER  = "ui_render";   // BE → FE (via API routing to L_UI_FE_IN)
 string T_UI_CLOSE   = "ui_close";    // BE → FE
-string T_UI_BUTTON  = "ui_button";   // FE → BE (via API)
+string T_UI_CLICK   = "ui_click";    // FE → BE (via API)
+
+string MOD_FE       = "ui_frontend";
+string MOD_BE       = "ui_backend";
+
+string fe_new_req_id(){
+    return "fe-" + (string)llGetUnixTime() + "-" + llGetSubString((string)llGenerateKey(), 0, 3);
+}
 
 /* ---------------- Per-avatar state (all stride-2 lists) ---------------- */
 /* SID per avatar: [ avatar_key, session ] */
@@ -216,23 +222,28 @@ integer show_dialog_for_avatar(key av, string title, string body, list labels, i
 integer send_ui_touch(key av){
     string j = J();
     j = JSET(j, ["type"], T_UI_TOUCH);
-    j = JSET(j, ["from"], "ui_frontend");
-    j = JSET(j, ["to"],   "ui_backend");
+    j = JSET(j, ["from"], MOD_FE);
+    j = JSET(j, ["to"],   MOD_BE);
     j = JSET(j, ["abi"],  "1");
+    j = JSET(j, ["req_id"], fe_new_req_id());
     j = JSET(j, ["avatar"], (string)av);
     llMessageLinked(LINK_SET, L_API, j, NULL_KEY);
     return TRUE;
 }
 
-integer send_ui_button(key av, string feature_id, string context){
+integer send_ui_click(key av, string sid, string context, string command, string label){
     string j = J();
-    j = JSET(j, ["type"], T_UI_BUTTON);
-    j = JSET(j, ["from"], "ui_frontend");
-    j = JSET(j, ["to"],   "any"); // API will broadcast on L_BROADCAST
+    j = JSET(j, ["type"], T_UI_CLICK);
+    j = JSET(j, ["from"], MOD_FE);
+    j = JSET(j, ["to"],   MOD_BE);
     j = JSET(j, ["abi"],  "1");
+    j = JSET(j, ["req_id"], fe_new_req_id());
     j = JSET(j, ["avatar"],    (string)av);
-    j = JSET(j, ["feature_id"], feature_id);
-    j = JSET(j, ["context"],    context);
+    if (sid != "") j = JSET(j, ["session"],  sid);
+    if (context != "") j = JSET(j, ["context"],    context);
+    j = JSET(j, ["command"],   command);
+    j = JSET(j, ["feature_id"], command);
+    j = JSET(j, ["label"],     label);
     llMessageLinked(LINK_SET, L_API, j, NULL_KEY);
     return TRUE;
 }
@@ -359,7 +370,7 @@ default{
         string fid = llList2String(llJson2List(ids_json), i);
         if (fid == "") return;
 
-        // Send click → backend (broadcast via API)
-        send_ui_button(av, fid, context);
+        // Send click → backend (explicit FE → BE request)
+        send_ui_click(av, sid, context, fid, txt);
     }
 }
