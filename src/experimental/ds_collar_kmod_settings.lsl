@@ -204,17 +204,46 @@ integer deliver_sync(list changedPaths){
         if (llGetListLength(tup)>0) changedObj=llJsonSetValue(changedObj,[pathStr], llList2String(tup,2));
         else changedObj=llJsonSetValue(changedObj,[pathStr], JSON_NULL);
     }
-    /* Per-subscriber filtered syncs */
+    /* Per-subscriber filtered syncs (cache per-prefix) */
     integer si; integer sn=llGetListLength(Subs);
-    for (si=0;si<sn;si+=SUBS_STRIDE){
-        string mod=llList2String(Subs,si);
-        string pref=llList2String(Subs,si+1);
-        string subObj=llList2Json(JSON_OBJECT,[]); integer any=FALSE;
-        for (i=0;i<n;i++){
-            string p2=llList2String(changedPaths,i);
-            if (starts_with(p2,pref)){ any=TRUE; subObj=llJsonSetValue(subObj,[p2], llJsonGetValue(changedObj,[p2])); }
+    if (sn>0){
+        list prefixCache=[]; /* stride-3: [prefix, payload_json, any_int] */
+        integer ci=0;
+        while (ci<sn){
+            string prefBuild=llList2String(Subs,ci+1);
+            integer existing=-1;
+            integer pk=0; integer pkn=llGetListLength(prefixCache);
+            while (pk<pkn){
+                if (llList2String(prefixCache,pk)==prefBuild){ existing=pk; pk=pkn; }
+                else pk += 3;
+            }
+            if (existing==-1){
+                string subObj=llList2Json(JSON_OBJECT,[]); integer any=FALSE;
+                for (i=0;i<n;i++){
+                    string p2=llList2String(changedPaths,i);
+                    if (starts_with(p2,prefBuild)){
+                        any=TRUE;
+                        subObj=llJsonSetValue(subObj,[p2], llJsonGetValue(changedObj,[p2]));
+                    }
+                }
+                prefixCache += [prefBuild, subObj, any];
+            }
+            ci += SUBS_STRIDE;
         }
-        if (any) send_sync_to(mod, subObj);
+
+        for (si=0; si<sn; si+=SUBS_STRIDE){
+            string mod=llList2String(Subs,si);
+            string pref=llList2String(Subs,si+1);
+            integer pk2=0; integer pkn2=llGetListLength(prefixCache);
+            while (pk2<pkn2){
+                if (llList2String(prefixCache,pk2)==pref){
+                    if (llList2Integer(prefixCache,pk2+2)) send_sync_to(mod, llList2String(prefixCache,pk2+1));
+                    pk2 = pkn2;
+                } else {
+                    pk2 += 3;
+                }
+            }
+        }
     }
     /* Broadcast to 'any' */
     string j=llList2Json(JSON_OBJECT,[]);
@@ -251,6 +280,10 @@ integer handle_put(string fromMod,string reqId,string pathStr,string vtypeStr,st
     list vv=validate_value(vtypeStr,rawVal);
     if (!llList2Integer(vv,0)){ send_error(fromMod,reqId,"E_TYPE",llList2String(vv,2)); return FALSE; }
     integer rc=store_put(pathStr,vtypeStr,llList2String(vv,1));
+    if (rc==-1){
+        send_error(fromMod,reqId,"E_LIMIT","store full");
+        return FALSE;
+    }
     integer rev=0; integer idx=store_index(pathStr); if (idx!=-1) rev=llList2Integer(Store,idx+3);
     send_ack(fromMod,reqId,pathStr,TRUE,(rc==1),rev);
     if (rc==1 && !is_volatile_path(pathStr)) deliver_sync([pathStr]);
