@@ -39,6 +39,7 @@ string PATH_OWNER_HON = "core.owner.hon";
 
 /* ---------- State ---------- */
 string  BootId;
+integer ReqSeq;
 
 /* Owner state + name resolution */
 key    OwnerKey;
@@ -89,6 +90,14 @@ string mk_boot_id(){
     return (string)t + "-" + (string)llRound(r) + "-" + shortOwner;
 }
 
+string next_req_id(string tag){
+    if (BootId == "") BootId = mk_boot_id();
+    ReqSeq += 1;
+    string rid = "boot-" + BootId + "-" + (string)ReqSeq;
+    if (tag != "") rid += "-" + tag;
+    return rid;
+}
+
 /* JSON array push */
 string json_array_push(string arr, string obj){
     integer i = 0;
@@ -104,7 +113,7 @@ integer api_send(string toMod, string type, list kv){
     j = llJsonSetValue(j, ["type"], type);
     j = llJsonSetValue(j, ["from"], "bootstrap");
     j = llJsonSetValue(j, ["to"], toMod);
-    j = llJsonSetValue(j, ["req_id"], (string)now());
+    j = llJsonSetValue(j, ["req_id"], next_req_id(type));
 
     integer i = 0;
     integer n = llGetListLength(kv);
@@ -159,7 +168,7 @@ integer store_display_name(string uuid, string name){
     j = llJsonSetValue(j, ["type"], TYPE_DISPLAY_NAME_UPDATE);
     j = llJsonSetValue(j, ["from"], "bootstrap");
     j = llJsonSetValue(j, ["to"], "settings");
-    j = llJsonSetValue(j, ["req_id"], (string)now());
+    j = llJsonSetValue(j, ["req_id"], next_req_id("name"));
     j = llJsonSetValue(j, ["uuid"], llToLower(uuid));
     j = llJsonSetValue(j, ["name"], name);
     llMessageLinked(LINK_SET, L_API, j, NULL_KEY);
@@ -364,6 +373,7 @@ integer rlv_finish_and_persist(){
 default{
     state_entry(){
         PendingNames = [];
+        ReqSeq = 0;
         BootId = mk_boot_id();
 
         publish_boot_runtime();
