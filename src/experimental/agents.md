@@ -114,7 +114,7 @@ Common events to implement thoughtfully:
 ## 13) Naming, Style & Structure
 
 * **No chained declarations** in output; declare one symbol per line for clarity.
-* Use consistent casing (e.g., UPPER\_SNAKE for constants, PascalCase for globals, lower\_snake for locals).
+* Use consistent casing (e.g., UPPER\\_SNAKE for constants, PascalCase for globals, lower\\_snake for locals).
 * Group **constants, link numbers, and strings** at the top with comments.
 * Write **small, single‑purpose** functions; keep event bodies tiny.
 * Prefer explicit returns and early guards over deep nesting.
@@ -130,7 +130,7 @@ Common events to implement thoughtfully:
 
 * Provide a **debug mode** that prints key transitions and payloads.
 * Use a **test harness** object or script to simulate common events (touch, auth, messages).
-* Log request IDs for async flows (dataserver, http, link\_message) to correlate responses.
+* Log request IDs for async flows (dataserver, http, link\\_message) to correlate responses.
 
 ## 16) Safety Patterns (must‑do)
 
@@ -431,31 +431,49 @@ integer add_entry(string id, string label, integer acl){ reg += [id, label, acl]
 
 ---
 
-## Appendix C — Reserved Identifiers to Avoid (do not use as variable/function names)
+# 22) Project-Specific Rules — D/s Collar (Experimental / New‑UI ABI)
 
-These identifiers are part of the LSL language and **must not** be used for user variables, function names, or state names.
+**This file is for the `experimental/` directory. Do not mix with Stable ABI.**
 
-### C.1 Control Keywords
+## 22.1 Canonical Lanes (Negative Link Channels)
 
-`default`, `do`, `else`, `event` (unused), `for`, `if`, `jump`, `print` (not useful), `return`, `state`, `while`
+- API hub: `-1000`
+- UI Backend IN: `-1600`
+- UI Frontend IN: `-1700`
 
-### C.2 Types (built‑in)
+## 22.2 Message Types
 
-`integer`, `float`, `string`, `key`, `list`, `vector`, `rotation`, `quaternion` (synonym of `rotation`)
+- FE → BE: `ui_touch`, `ui_click`
+- BE → FE: `ui_render`, `ui_close`
 
-### C.3 Events (built‑in)
+All payloads include at minimum: `type`, and when async: `session` / `req_id`. Use compact, shallow JSON or **stride lists** for hot paths.
 
-`at_rot_target`, `at_target`, `attach`, `changed`, `collision`, `collision_end`, `collision_start`, `control`, `dataserver`, `email`, `experience_permissions`, `experience_permissions_denied`, `http_request`, `http_response`, `land_collision`, `land_collision_end`, `land_collision_start`, `link_message`, `listen`, `money`, `moving_end`, `moving_start`, `no_sensor`, `not_at_rot_target`, `not_at_target`, `object_rez`, `on_rez`, `path_update`, `remote_data`, `run_time_permissions`, `sensor`, `state_entry`, `state_exit`, `timer`, `touch`, `touch_end`, `touch_start`, `transaction_result`
+## 22.3 Responsibilities Split
 
-> Note: Event identifiers are reserved even outside event blocks; do not reuse them for variables.
+**Frontend (FE):**
+- Owns `touch_start`, `llDialog`, `listen`.
+- Random negative channel per session; listener scoped to `(avatar, channel)` and removed on close.
+- Sends **command + label** for routing clicks; labels are cosmetic.
 
-### C.4 Also Avoid
+**Backend (BE):**
+- Owns ACL resolution, menu schema, paging, and actions.
+- Emits `ui_render` to FE; **never** calls `llDialog` directly.
+- No Stable numbers (`K_PLUGIN_START`, etc.).
 
-* Names of **built‑in functions** (e.g., `llDialog`, `llGetOwner`, etc.) and **constants** (e.g., `NULL_KEY`, `ZERO_VECTOR`, `ZERO_ROTATION`).
-* Single‑letter **label** anchors used by `jump`/`@` in your code.
+## 22.4 Settings & Heartbeats
 
-If in doubt, consult the LSL Wiki lists for **Flow Control**, **Types**, **Events**, and **Functions** before naming.
+- **Event‑driven settings** (`settings_sync`, explicit queries). No periodic 30s loops.
+- Heartbeat (if any) is **liveness only**; silence → re‑announce with minimal footprint.
 
----
+## 22.5 UI Rules
 
-**End of AGENTS.md**
+- ≤ 12 buttons; **padding only when beneficial** (never for 1 or 2 button dialogs).
+- Layout bottom‑left → top‑right; document any reserved positions (e.g., Relax at index 3).
+- Pagination uses `<<` / `>>` with consistent page size.
+
+## 22.6 Final Experimental Checklist
+
+- Uses only **Experimental** lanes (`-1000`, `-1600`, `-1700`).
+- Clear FE/BE split; no kernel plugin numbers.
+- Command+label routing; listener cleanup verified.
+- No settings sync on timers; no public chat control.

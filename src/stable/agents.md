@@ -114,7 +114,7 @@ Common events to implement thoughtfully:
 ## 13) Naming, Style & Structure
 
 * **No chained declarations** in output; declare one symbol per line for clarity.
-* Use consistent casing (e.g., UPPER\_SNAKE for constants, PascalCase for globals, lower\_snake for locals).
+* Use consistent casing (e.g., UPPER\\_SNAKE for constants, PascalCase for globals, lower\\_snake for locals).
 * Group **constants, link numbers, and strings** at the top with comments.
 * Write **small, single‑purpose** functions; keep event bodies tiny.
 * Prefer explicit returns and early guards over deep nesting.
@@ -130,7 +130,7 @@ Common events to implement thoughtfully:
 
 * Provide a **debug mode** that prints key transitions and payloads.
 * Use a **test harness** object or script to simulate common events (touch, auth, messages).
-* Log request IDs for async flows (dataserver, http, link\_message) to correlate responses.
+* Log request IDs for async flows (dataserver, http, link\\_message) to correlate responses.
 
 ## 16) Safety Patterns (must‑do)
 
@@ -431,31 +431,76 @@ integer add_entry(string id, string label, integer acl){ reg += [id, label, acl]
 
 ---
 
-## Appendix C — Reserved Identifiers to Avoid (do not use as variable/function names)
+# 22) Project-Specific Rules — D/s Collar (Stable Plugin ABI)
 
-These identifiers are part of the LSL language and **must not** be used for user variables, function names, or state names.
+**This file is for the `stable/` directory. Do not mix with Experimental/New‑UI ABI.**
 
-### C.1 Control Keywords
+Conventions:
+* PascalCase global variables
+* ALLCAP constants
+* snake_case local variables
 
-`default`, `do`, `else`, `event` (unused), `for`, `if`, `jump`, `print` (not useful), `return`, `state`, `while`
+Comments:
+* Briefly comment each function for maintainability and readability.
+* Additionally, comment each script at the top with a brief dewcription of its intended functionality. 
+* Comment patches with a //PATCH comment including the reason for the patch.
 
-### C.2 Types (built‑in)
+## 22.1 Canonical Link Numbers (Stable)
 
-`integer`, `float`, `string`, `key`, `list`, `vector`, `rotation`, `quaternion` (synonym of `rotation`)
+- `K_PLUGIN_REG_QUERY = 500`
+- `K_PLUGIN_REG_REPLY = 501`
+- `K_PLUGIN_SOFT_RESET = 504`
+- `K_PLUGIN_PING = 650`
+- `K_PLUGIN_PONG = 651`
+- `AUTH_QUERY_NUM = 700`
+- `AUTH_RESULT_NUM = 710`
+- `K_PLUGIN_START = 900`
+- `K_PLUGIN_RETURN_NUM = 901`
 
-### C.3 Events (built‑in)
+## 22.2 Registration Contract
 
-`at_rot_target`, `at_target`, `attach`, `changed`, `collision`, `collision_end`, `collision_start`, `control`, `dataserver`, `email`, `experience_permissions`, `experience_permissions_denied`, `http_request`, `http_response`, `land_collision`, `land_collision_end`, `land_collision_start`, `link_message`, `listen`, `money`, `moving_end`, `moving_start`, `no_sensor`, `not_at_rot_target`, `not_at_target`, `object_rez`, `on_rez`, `path_update`, `remote_data`, `run_time_permissions`, `sensor`, `state_entry`, `state_exit`, `timer`, `touch`, `touch_end`, `touch_start`, `transaction_result`
+Required JSON on startup and on demanded re‑register:
+```json
+{
+  "type": "register",
+  "label": "<menu label>",
+  "min_acl": "0..5",
+  "context": "<plugin_context>",
+  "script": "<llGetScriptName()>",
+  "tpe_min_acl": "0 (optional)",
+  "label_tpe": "<alt label (optional)>",
+  "audience": "all|wearer|others (optional)"
+}
+```
 
-> Note: Event identifiers are reserved even outside event blocks; do not reuse them for variables.
+## 22.3 UI Contract
 
-### C.4 Also Avoid
+- **Back** from plugin root → **main UI** (send `plugin_return` with kernel number).
+- From subpages → plugin root.
+- Dialog buttons laid out bottom‑left → top‑right; if a slot is reserved (e.g., Relax at index 3), **document and enforce**.
+- Prefer **command + label** routing for listens.
 
-* Names of **built‑in functions** (e.g., `llDialog`, `llGetOwner`, etc.) and **constants** (e.g., `NULL_KEY`, `ZERO_VECTOR`, `ZERO_ROTATION`).
-* Single‑letter **label** anchors used by `jump`/`@` in your code.
+## 22.4 AUTH/ACL
 
-If in doubt, consult the LSL Wiki lists for **Flow Control**, **Types**, **Events**, and **Functions** before naming.
+- Request ACL via `AUTH_QUERY_NUM`; honor `AUTH_RESULT_NUM` (level, `is_wearer`, policy flags).
+- Minimal local safety checks (blacklist or policy filters). **AUTH is the authority.**
 
----
+## 22.5 Heartbeat & Liveness
 
-**End of AGENTS.md**
+- Reply `PONG` to `PING` with matching `context`.
+- Keep a silence window (e.g., 60s). If exceeded → **re‑register** defensively.
+- **Do not** sync settings on heartbeat.
+
+## 22.6 RLVa Conventions
+
+- Owner plugin must reconcile `@accepttp:<ownerUUID>=add/rem` on set/transfer/release/runaway and on settings sync.
+- Provide **Relax/Stop** in any plugin that acquires controls/animations/controls.
+
+## 22.7 Final Stable Checklist
+
+- Uses only **Stable** link numbers.
+- Correct **Back** behavior.
+- Listener scope & cleanup demonstrated.
+- Heartbeat used **only** for liveness.
+- No public chat control; negative channels only.
+
