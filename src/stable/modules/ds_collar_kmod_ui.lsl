@@ -35,6 +35,9 @@ string BTN_NAV_LEFT  = "<<";
 string BTN_NAV_GAP   = " ";
 string BTN_NAV_RIGHT = ">>";
 
+/* ACL tiers (mirrors AUTH module) */
+integer ACL_UNOWNED = 4;
+
 /* ---------- State ---------- */
 /* Flattened registry: [label,context,min_acl,has_tpe,label_tpe,tpe_min_acl,audience,...] */
 list    All = [];
@@ -151,10 +154,11 @@ list filterForViewer(){
 
         if (isCoreOwner){
             if (IsWearer){
-                if (OwnerSet){
-                    include = TRUE;
-                } else {
-                    include = FALSE;
+                if (!OwnerSet){
+                    /* Unowned wearers need the Owner plugin to set a new owner. */
+                    if (Acl < ACL_UNOWNED){
+                        include = FALSE;
+                    }
                 }
             }
         }
