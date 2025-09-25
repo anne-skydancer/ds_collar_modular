@@ -152,6 +152,7 @@ integer register_plugin() {
     j = llJsonSetValue(j, ["label"],    PLUGIN_LABEL);
     j = llJsonSetValue(j, ["min_acl"],  "0");                // matches your current file
     j = llJsonSetValue(j, ["context"],  PLUGIN_CONTEXT);
+    j = llJsonSetValue(j, ["script"],   llGetScriptName());
     llMessageLinked(LINK_SET, K_PLUGIN_REG_REPLY, j, NULL_KEY);
     logd("Registered.");
     return 0;
