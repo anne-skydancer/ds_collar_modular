@@ -57,6 +57,7 @@ string  PLUGIN_CONTEXT   = "core_owner";
 string  ROOT_CONTEXT     = "core_root";
 string  PLUGIN_LABEL     = "Owner";
 integer PLUGIN_SN        = 0;
+integer PLUGIN_MIN_ACL   = ACL_OWNED;  // wearer while owned (min menu access level)
 
 /* ---------- ACL levels ---------- */
 integer ACL_BLACKLIST        = -1;
@@ -150,7 +151,7 @@ integer register_plugin() {
     j = llJsonSetValue(j, ["type"],     CONS_TYPE_REGISTER);
     j = llJsonSetValue(j, ["sn"],       (string)PLUGIN_SN);
     j = llJsonSetValue(j, ["label"],    PLUGIN_LABEL);
-    j = llJsonSetValue(j, ["min_acl"],  "2");                // matches your current file
+    j = llJsonSetValue(j, ["min_acl"],  (string)PLUGIN_MIN_ACL);
     j = llJsonSetValue(j, ["context"],  PLUGIN_CONTEXT);
     j = llJsonSetValue(j, ["script"],   llGetScriptName());
     llMessageLinked(LINK_SET, K_PLUGIN_REG_REPLY, j, NULL_KEY);
