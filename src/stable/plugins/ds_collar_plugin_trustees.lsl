@@ -52,6 +52,10 @@ string  PLUGIN_LABEL     = "Trustees";
 integer PLUGIN_SN        = 0;
 integer PLUGIN_MIN_ACL   = ACL_UNOWNED; // advertise to ACL level 4 (unowned wearers)
 
+/* ---------- Registration state ---------- */
+string  RegAudience           = "all";
+integer RegisteredOwnerMode   = -1; // -1 unknown, 0 = no owner, 1 = owner present
+
 /* ---------- ACL levels (authoritative mapping) ---------- */
 integer ACL_BLACKLIST     = -1;
 integer ACL_NOACCESS      = 0;
@@ -115,8 +119,23 @@ integer register_plugin() {
     j = llJsonSetValue(j, ["label"],   PLUGIN_LABEL);
     j = llJsonSetValue(j, ["min_acl"], (string)PLUGIN_MIN_ACL);
     j = llJsonSetValue(j, ["context"], PLUGIN_CONTEXT);
+    if (RegAudience != "all") j = llJsonSetValue(j, ["audience"], RegAudience);
     llMessageLinked(LINK_SET, K_PLUGIN_REG_REPLY, j, NULL_KEY);
     logd("Registered.");
+    return 0;
+}
+
+integer refresh_plugin_registration(integer owner_present) {
+    integer desired_mode = 0;
+    if (owner_present) desired_mode = 1;
+    if (desired_mode == RegisteredOwnerMode) return 0;
+
+    RegAudience = "all";
+    if (owner_present) RegAudience = "non_wearer_only";
+
+    register_plugin();
+    RegisteredOwnerMode = desired_mode;
+    logd("Registration audience → " + RegAudience);
     return 0;
 }
 integer notify_soft_reset() {
@@ -170,6 +189,8 @@ integer apply_trustee_settings_payload(string payload) {
 integer ingest_settings(string j) {
     string payload = "";
     integer have_payload = FALSE;
+    integer owner_was_present = FALSE;
+    if (collar_owner != NULL_KEY) owner_was_present = TRUE;
 
     if (json_has(j, ["kv"])) {
         string kv = llJsonGetValue(j, ["kv"]);
@@ -186,8 +207,17 @@ integer ingest_settings(string j) {
     }
 
     if (!have_payload) return 0;
+    integer result = apply_trustee_settings_payload(payload);
 
-    return apply_trustee_settings_payload(payload);
+    integer owner_is_present = FALSE;
+    if (collar_owner != NULL_KEY) owner_is_present = TRUE;
+
+    if (owner_was_present != owner_is_present) {
+        logd("Owner presence toggled → " + (string)owner_is_present);
+    }
+
+    refresh_plugin_registration(owner_is_present);
+    return result;
 }
 
 /* Push trustees only (kernel should merge per-key within NS) */
@@ -297,8 +327,12 @@ default {
         reset_listen();
         llSetTimerEvent(0.0);
 
+        RegAudience = "all";
+        RegisteredOwnerMode = -1;
+        collar_owner = NULL_KEY;
+
         notify_soft_reset();
-        register_plugin();
+        refresh_plugin_registration(FALSE);
 
         /* Request current settings */
         string q = llList2Json(JSON_OBJECT, []);
