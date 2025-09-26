@@ -61,6 +61,8 @@ integer PLUGIN_MIN_ACL   = 3;   /* kernel-side filter: 3+ covers 3,4,5 */
 
 /* ---------- Settings ---------- */
 string KEY_PUBLIC_MODE   = "public_mode";
+string KEY_OWNER_KEY     = "owner_key";
+string KEY_OWNER_LEGACY  = "owner";
 
 /* ---------- UI/session state ---------- */
 integer DIALOG_TIMEOUT_SEC = 180;
@@ -71,6 +73,10 @@ integer MenuChan  = 0;
 string  Ctx        = "";        /* "main" */
 
 integer PublicAccess = FALSE;  /* 0/1 state */
+
+key     CollarOwner = NULL_KEY; /* tracked via settings sync */
+integer OwnerPresent = FALSE;
+integer LastRegOwnerPresent = -1;
 
 integer AclPending = FALSE;
 
@@ -87,8 +93,15 @@ integer register_plugin() {
     j = llJsonSetValue(j, ["label"],    PLUGIN_LABEL);
     j = llJsonSetValue(j, ["min_acl"],  (string)PLUGIN_MIN_ACL);
     j = llJsonSetValue(j, ["context"],  PLUGIN_CONTEXT);
+    j = llJsonSetValue(j, ["script"],   llGetScriptName());
+
+    string audience = "all";
+    if (OwnerPresent) audience = "non_wearer_only";
+    j = llJsonSetValue(j, ["audience"], audience);
+
     llMessageLinked(LINK_SET, K_PLUGIN_REG_REPLY, j, NULL_KEY);
-    logd("Registered with kernel.");
+    LastRegOwnerPresent = OwnerPresent;
+    logd("Registered with kernel (owner_present=" + (string)OwnerPresent + ").");
     return 0;
 }
 
@@ -181,19 +194,71 @@ integer show_main_menu(key user) {
 integer apply_settings_sync(string payload) {
     if (!json_has(payload, ["type"])) return 0;
     if (llJsonGetValue(payload, ["type"]) != CONS_SETTINGS_SYNC) return 0;
-    if (!json_has(payload, ["kv"])) return 0;
 
-    string kv = llJsonGetValue(payload, ["kv"]);
-    string v  = llJsonGetValue(kv, [ KEY_PUBLIC_MODE ]);
-    if (v == JSON_INVALID) return 0;
+    string body = "";
+    integer have_payload = FALSE;
 
-    integer want = (integer)v;
-    if (want != 0) want = 1;
-
-    if (PublicAccess != want) {
-        PublicAccess = want;
-        logd("Settings sync applied: public=" + (string)PublicAccess);
+    if (json_has(payload, ["kv"])) {
+        string kv = llJsonGetValue(payload, ["kv"]);
+        if (llGetSubString(kv, 0, 0) == "{") {
+            body = kv;
+            have_payload = TRUE;
+        }
     }
+
+    if (!have_payload) {
+        body = payload;
+        have_payload = TRUE;
+    }
+
+    if (!have_payload) return 0;
+
+    if (json_has(body, [ KEY_PUBLIC_MODE ])) {
+        string v = llJsonGetValue(body, [ KEY_PUBLIC_MODE ]);
+        if (v != JSON_INVALID) {
+            integer want = (integer)v;
+            if (want != 0) want = 1;
+            if (PublicAccess != want) {
+                PublicAccess = want;
+                logd("Settings sync applied: public=" + (string)PublicAccess);
+            }
+        }
+    }
+
+    integer saw_owner = FALSE;
+    key new_owner = CollarOwner;
+
+    if (json_has(body, [ KEY_OWNER_KEY ])) {
+        new_owner = (key)llJsonGetValue(body, [ KEY_OWNER_KEY ]);
+        saw_owner = TRUE;
+    } else if (json_has(body, [ KEY_OWNER_LEGACY ])) {
+        new_owner = (key)llJsonGetValue(body, [ KEY_OWNER_LEGACY ]);
+        saw_owner = TRUE;
+    }
+
+    if (saw_owner) {
+        key prev_owner = CollarOwner;
+        integer prev_present = OwnerPresent;
+
+        CollarOwner = new_owner;
+        OwnerPresent = (CollarOwner != NULL_KEY);
+
+        if (OwnerPresent != prev_present) {
+            if (OwnerPresent) logd("Settings indicate collar is owned.");
+            else logd("Settings indicate collar is unowned.");
+        }
+
+        if (LastRegOwnerPresent != OwnerPresent) {
+            logd("Owner registration state changed via settings sync. Re-registering.");
+            register_plugin();
+        }
+        else if (CollarOwner != prev_owner) {
+            /* Owner changed but presence stayed the same (e.g., new owner). Refresh registration anyway. */
+            logd("Owner identity changed. Refreshing registration metadata.");
+            register_plugin();
+        }
+    }
+
     return 0;
 }
 
@@ -201,6 +266,11 @@ integer apply_settings_sync(string payload) {
 default {
     state_entry() {
         PLUGIN_SN = (integer)(llFrand(1.0e9));
+
+        PublicAccess = FALSE;
+        CollarOwner = NULL_KEY;
+        OwnerPresent = FALSE;
+        LastRegOwnerPresent = -1;
 
         notify_soft_reset();
         register_plugin();
