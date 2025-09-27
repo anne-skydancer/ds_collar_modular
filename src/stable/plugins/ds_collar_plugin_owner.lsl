@@ -634,8 +634,17 @@ default{
                 push_settings();
                 dialog_to(newOwner, wearer_display_name() + " has submitted to you as their \"" + hon + "\".", ["OK"]);
                 dialog_to(llGetOwner(), "You have submitted to " + candidate_display_name(newOwner) + " as your " + hon + ".", ["OK"]);
-                UiContext = "menu";
-                show_menu(User);
+                //PATCH: prevent the owner plugin menu from reopening after wearer confirmation.
+                UiContext = "";
+                UiParam1 = "";
+                UiParam2 = "";
+                UiData = "";
+                key priorUser = User;
+                User = NULL_KEY;
+                reset_listen();
+                if (priorUser != NULL_KEY){
+                    ui_return_root(priorUser);
+                }
                 return;
             }
             show_menu(User);
