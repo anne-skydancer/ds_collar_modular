@@ -38,7 +38,7 @@ string TYPE_SETTINGS_SET        = "set";
 /* ---------- Identity ---------- */
 integer PLUGIN_SN        = 0;
 string  PLUGIN_LABEL     = "Blacklist";
-integer PLUGIN_MIN_ACL   = 3;
+integer PLUGIN_MIN_ACL   = 2; // ACL_OWNED - allow safety access for level 2 users
 string  PLUGIN_CONTEXT   = "core_blacklist";
 string  ROOT_CONTEXT     = "core_root";
 
