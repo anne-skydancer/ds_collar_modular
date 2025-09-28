@@ -235,7 +235,9 @@ integer show_main_menu(key user) {
 
 integer show_remove_menu(key user) {
     if (llGetListLength(Blacklist) == 0) {
-        show_main_menu(user);
+        //PATCH: Present info dialog when blacklist is empty to avoid blank remove menu.
+        begin_dialog(user, "info", "Blacklist is empty.", [BTN_BACK]);
+        logd("Remove menu empty.");
         return 0;
     }
 
