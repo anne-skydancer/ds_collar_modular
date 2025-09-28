@@ -13,6 +13,7 @@
 ## 2) Hard Language Constraints (must‑remember)
 
 * **No ternary operator** (`cond ? a : b`) — use explicit `if/else` chains.
+* **Variables and constants must be declared before use""
 * **No `break` / `continue`** keywords — use structured logic or `jump` labels.
 * **No `switch`** statement — use `if/else if/else` ladders.
 * **No exceptions / try–catch** — handle errors with guards and return codes.
@@ -503,4 +504,5 @@ Required JSON on startup and on demanded re‑register:
 - Listener scope & cleanup demonstrated.
 - Heartbeat used **only** for liveness.
 - No public chat control; negative channels only.
+
 
