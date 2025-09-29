@@ -561,7 +561,9 @@ default{
         }
     }
 
+    /* Handle responses from llRequestAgentData and llRequestDisplayName. */
     dataserver(key query_id, string data){
+        //PATCH: llRequestDisplayName replies surface in dataserver; refresh owner cache here.
         integer refresh = FALSE;
 
         if (query_id == CollarOwnerLegacyQuery){
@@ -584,26 +586,6 @@ default{
             if (User != NULL_KEY && Listen != 0 && UiContext == "menu"){
                 show_menu(User);
             }
-        }
-    }
-
-    /* Handle responses from llRequestDisplayName. */
-    display_name(key agent, string name){
-        if (agent != CollarOwner) {
-            return;
-        }
-        if (CollarOwnerDisplayQuery == NULL_KEY) {
-            return;
-        }
-
-        CollarOwnerDisplayQuery = NULL_KEY;
-
-        if (name != "" && name != "???") {
-            CollarOwnerDisplay = name;
-        }
-
-        if (User != NULL_KEY && Listen != 0 && UiContext == "menu") {
-            show_menu(User);
         }
     }
 
