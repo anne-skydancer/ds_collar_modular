@@ -52,7 +52,6 @@ string KEY_TRUSTEE_HONS            = "trustee_honorifics";
 string KEY_PUBLIC_MODE             = "public_mode";
 string KEY_LOCKED_FLAG             = "locked";
 
-integer DATA_NAME                  = 1;                 // llRequestAgentData legacy name field
 
 /* ---------- Identity ---------- */
 string  PLUGIN_CONTEXT   = "core_owner";
@@ -588,12 +587,12 @@ default{
         }
     }
 
-    display_name(key agent, string name, key query_id){
-        if (query_id != CollarOwnerDisplayQuery) return;
+    display_name(key agent, string name){
+        if (agent != CollarOwner) return;
+        if (CollarOwnerDisplayQuery == NULL_KEY) return;
 
         CollarOwnerDisplayQuery = NULL_KEY;
 
-        if (agent != CollarOwner) return;
         if (name != "" && name != "???"){
             CollarOwnerDisplay = name;
         }
