@@ -52,6 +52,8 @@ string KEY_TRUSTEE_HONS            = "trustee_honorifics";
 string KEY_PUBLIC_MODE             = "public_mode";
 string KEY_LOCKED_FLAG             = "locked";
 
+integer DATA_NAME                  = 1;                 // llRequestAgentData legacy name field
+
 /* ---------- Identity ---------- */
 string  PLUGIN_CONTEXT   = "core_owner";
 string  ROOT_CONTEXT     = "core_root";
@@ -89,6 +91,12 @@ integer CollarPublicAccess    = FALSE;
 list    CollarTrustees         = [];
 list    CollarTrusteeHonorifics = [];
 
+/* ---------- Owner name cache ---------- */
+string  CollarOwnerDisplay     = "";
+string  CollarOwnerLegacy      = "";
+key     CollarOwnerDisplayQuery = NULL_KEY;
+key     CollarOwnerLegacyQuery = NULL_KEY;
+
 /* ---------- RLVa auto-accept TP state ---------- */
 key RlvAccepttpOwner = NULL_KEY;
 
@@ -111,8 +119,48 @@ list owner_honorifics() { return ["Master","Mistress","Daddy","Mommy","King","Qu
 
 /* Names */
 string wearer_display_name() { return llKey2Name(llGetOwner()); }
-string candidate_display_name(key k) { string n = llKey2Name(k); if (n == "") n = (string)k; return n; }
-string owner_display_name() { return candidate_display_name(CollarOwner); }
+string candidate_display_name(key k) {
+    if (k == CollarOwner) {
+        if (CollarOwnerDisplay != "") return CollarOwnerDisplay;
+        if (CollarOwnerLegacy != "") return CollarOwnerLegacy;
+        if (CollarOwnerDisplayQuery == NULL_KEY && CollarOwnerLegacyQuery == NULL_KEY) {
+            return (string)k;
+        }
+    }
+
+    string n = llKey2Name(k);
+    if (n == "" || n == "???") n = (string)k;
+    return n;
+}
+string owner_display_name() {
+    if (CollarOwner == NULL_KEY) return "";
+
+    if (CollarOwnerDisplay != "") return CollarOwnerDisplay;
+    if (CollarOwnerLegacy != "") return CollarOwnerLegacy;
+
+    string n = llKey2Name(CollarOwner);
+    if (n == "" || n == "???") {
+        if (CollarOwnerDisplayQuery == NULL_KEY && CollarOwnerLegacyQuery == NULL_KEY) {
+            n = (string)CollarOwner;
+        }
+    }
+    if (n == "" || n == "???") n = (string)CollarOwner;
+    return n;
+}
+
+integer request_owner_name_cache() {
+    CollarOwnerDisplay = "";
+    CollarOwnerLegacy = "";
+
+    if (CollarOwnerDisplayQuery != NULL_KEY) CollarOwnerDisplayQuery = NULL_KEY;
+    if (CollarOwnerLegacyQuery != NULL_KEY) CollarOwnerLegacyQuery = NULL_KEY;
+
+    if (CollarOwner == NULL_KEY) return 0;
+
+    CollarOwnerDisplayQuery = llRequestDisplayName(CollarOwner);
+    CollarOwnerLegacyQuery = llRequestAgentData(CollarOwner, DATA_NAME);
+    return 0;
+}
 
 /* ---------- RLVa helpers: auto-accept TP for the Primary Owner ---------- */
 integer rlv_accepttp_add(key k){
@@ -253,10 +301,10 @@ integer apply_owner_settings_payload(string payload) {
     else if (json_has(payload, ["locked"]))        CollarLocked = ((integer)llJsonGetValue(payload, ["locked"])) != 0;
 
     if (CollarOwner != prev_owner) {
-        rlv_accepttp_reconcile(CollarOwner);
-    } else {
-        rlv_accepttp_reconcile(CollarOwner);
+        request_owner_name_cache();
     }
+
+    rlv_accepttp_reconcile(CollarOwner);
     return 0;
 }
 
@@ -514,6 +562,47 @@ default{
         }
     }
 
+    dataserver(key query_id, string data){
+        integer refresh = FALSE;
+
+        if (query_id == CollarOwnerLegacyQuery){
+            CollarOwnerLegacyQuery = NULL_KEY;
+            if (CollarOwner != NULL_KEY && data != "" && data != "???"){
+                CollarOwnerLegacy = data;
+                refresh = TRUE;
+            }
+        } else if (query_id == CollarOwnerDisplayQuery){
+            CollarOwnerDisplayQuery = NULL_KEY;
+            if (CollarOwner != NULL_KEY && data != "" && data != "???"){
+                CollarOwnerDisplay = data;
+                refresh = TRUE;
+            }
+        } else {
+            return;
+        }
+
+        if (refresh || (CollarOwnerDisplayQuery == NULL_KEY && CollarOwnerLegacyQuery == NULL_KEY)){
+            if (User != NULL_KEY && Listen != 0 && UiContext == "menu"){
+                show_menu(User);
+            }
+        }
+    }
+
+    display_name(key agent, string name, key query_id){
+        if (query_id != CollarOwnerDisplayQuery) return;
+
+        CollarOwnerDisplayQuery = NULL_KEY;
+
+        if (agent != CollarOwner) return;
+        if (name != "" && name != "???"){
+            CollarOwnerDisplay = name;
+        }
+
+        if (User != NULL_KEY && Listen != 0 && UiContext == "menu"){
+            show_menu(User);
+        }
+    }
+
     /* Proximity scan for candidate selection */
     sensor(integer n) {
         if (UiContext != "add_owner_select" && UiContext != "transfer_select") return;
@@ -628,6 +717,8 @@ default{
                 CollarOwner = newOwner;
                 CollarOwnerHonorific = hon;
 
+                request_owner_name_cache();
+
                 /* RLVa: ensure PO can TP the wearer */
                 rlv_accepttp_reconcile(newOwner);
 
@@ -690,6 +781,8 @@ default{
                 CollarOwner = newOwner;
                 CollarOwnerHonorific = hon;
 
+                request_owner_name_cache();
+
                 /* RLVa: swap rule old → new */
                 rlv_accepttp_reconcile(newOwner);
 
@@ -726,6 +819,8 @@ default{
                 CollarOwner = NULL_KEY;
                 CollarOwnerHonorific = "";
 
+                request_owner_name_cache();
+
                 push_settings();
                 dialog_to(old, wearer_display_name() + " is now free.", ["OK"]);
                 dialog_to(llGetOwner(), "You have been released as " + oldHon + " " + candidate_display_name(old) + "'s submissive.\nYou are now free.", ["OK"]);
@@ -745,6 +840,8 @@ default{
 
                 CollarOwner = NULL_KEY;
                 CollarOwnerHonorific = "";
+
+                request_owner_name_cache();
                 push_settings();
                 dialog_to(id, "You have run away and are now unowned.", ["OK"]);
                 UiContext = "menu";
