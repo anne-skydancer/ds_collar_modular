@@ -587,17 +587,22 @@ default{
         }
     }
 
+    /* Handle responses from llRequestDisplayName. */
     display_name(key agent, string name){
-        if (agent != CollarOwner) return;
-        if (CollarOwnerDisplayQuery == NULL_KEY) return;
+        if (agent != CollarOwner) {
+            return;
+        }
+        if (CollarOwnerDisplayQuery == NULL_KEY) {
+            return;
+        }
 
         CollarOwnerDisplayQuery = NULL_KEY;
 
-        if (name != "" && name != "???"){
+        if (name != "" && name != "???") {
             CollarOwnerDisplay = name;
         }
 
-        if (User != NULL_KEY && Listen != 0 && UiContext == "menu"){
+        if (User != NULL_KEY && Listen != 0 && UiContext == "menu") {
             show_menu(User);
         }
     }
