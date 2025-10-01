@@ -120,6 +120,7 @@ float   MaxLenMargin = 0.98;
 /* ---------- Holder handshake (JSON) ---------- */
 integer LEASH_HOLDER_CHAN     = -192837465;
 integer HOLDER_REPLY_WAIT_SEC = 2;
+integer OC_LEASH_POST_CHAN    = -8888; //PATCH: OpenCollar leash posts listen on this fixed channel.
 
 /* Worn holder (controller’s attachment) */
 integer HolderListen     = 0;
@@ -484,10 +485,11 @@ integer do_unclip(){
 /* =============================================================
    Holder handshake (JSON + OpenCollar compatibility)
    -------------------------------------------------
-   NOTE: Both the DS JSON exchange and the OpenCollar remote channel
-         request must stay in sync. Future updates should keep the
-         dual-protocol flow intact so holders that only understand one
-         format still respond.
+   NOTE: Both the DS JSON exchange and the OpenCollar remote channels
+         must stay in sync. Future updates should keep the dual-protocol
+         flow intact — we send on the base (offset 0) remote channel and
+         the leash-post broadcast (-8888) channel so holders that only
+         understand one format still respond.
    ============================================================= */
 integer begin_worn_holder_handshake(key controller){
     close_holder_listen();
@@ -513,6 +515,8 @@ integer begin_worn_holder_handshake(key controller){
         integer wearer_chan = oc_remote_channel(controller, 0);
         /* OpenCollar request: send our collar key so the holder advertises via "anchor <primKey>". */
         llRegionSayTo(controller, wearer_chan, (string)llGetKey());
+        //PATCH: Also mirror the request on the leash-post channel for OpenCollar posts.
+        llRegionSayTo(controller, OC_LEASH_POST_CHAN, (string)llGetKey());
     }
     return TRUE;
 }
