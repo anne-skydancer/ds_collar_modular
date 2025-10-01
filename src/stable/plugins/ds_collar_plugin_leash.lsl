@@ -513,9 +513,11 @@ integer begin_worn_holder_handshake(key controller){
     llRegionSay(LEASH_HOLDER_CHAN,req);
     if (controller != NULL_KEY){
         integer wearer_chan = oc_remote_channel(controller, 0);
-        /* OpenCollar request: send our collar key so the holder advertises via "anchor <primKey>". */
+        integer post_chan = oc_remote_channel(controller, 1234);
+        /* OpenCollar request: send our collar key on both wearer and post channels so the holder advertises via "anchor <primKey>". */
         llRegionSayTo(controller, wearer_chan, (string)llGetKey());
-        //PATCH: Broadcast on the leash-post channel so OpenCollar posts hear us.
+        //PATCH: Broadcast on the derived post channel and the legacy leash-post channel for compatibility.
+        llRegionSay(post_chan, (string)llGetKey());
         llRegionSay(OC_LEASH_POST_CHAN, (string)llGetKey());
     }
     return TRUE;
