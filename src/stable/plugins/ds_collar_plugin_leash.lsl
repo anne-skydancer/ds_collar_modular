@@ -121,6 +121,7 @@ float   MaxLenMargin = 0.98;
 integer LEASH_HOLDER_CHAN     = -192837465;
 integer HOLDER_REPLY_WAIT_SEC = 2;
 integer OC_LEASH_POST_CHAN    = -8888; //PATCH: OpenCollar leash posts listen on this fixed channel.
+integer OC_LEASH_POST_OFFSET  = 1234;  //PATCH: Offset for computing OpenCollar leash post remote channels.
 
 /* Worn holder (controller’s attachment) */
 integer HolderListen     = 0;
@@ -512,7 +513,7 @@ integer begin_worn_holder_handshake(key controller){
     req = llJsonSetValue(req,["session"],   (string)WornSession);
     llRegionSay(LEASH_HOLDER_CHAN,req);
     if (controller != NULL_KEY){
-        integer wearer_chan = oc_remote_channel(controller, 0);
+        integer wearer_chan = oc_remote_channel(controller, OC_LEASH_POST_OFFSET);
         /* OpenCollar request: send our collar key so the holder advertises via "anchor <primKey>". */
         llRegionSayTo(controller, wearer_chan, (string)llGetKey());
         //PATCH: Broadcast on the leash-post channel so OpenCollar posts hear us.
