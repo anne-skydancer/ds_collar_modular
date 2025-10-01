@@ -485,6 +485,11 @@ integer do_unclip(){
     stop_leash_particles();          /* <-- patched stop (now linkset-wide) */
     OffsimFlag = FALSE;
     OffsimStartEpoch = 0;
+    //PATCH: Manual unclip must cancel any pending holder handshake.
+    WornWaiting = FALSE;
+    WornDeadline = 0;
+    WornSession = 0;
+    close_holder_listen();
     return TRUE;
 }
 integer do_toggle_turn(){
@@ -672,38 +677,40 @@ default{
     listen(integer chan, string nm, key id, string text){
         /* Holder channel (worn holder only) */
         if (chan == LEASH_HOLDER_CHAN){
-            if (WornWaiting){
-                if (!json_has(text,["type"])) return;
-                if (llJsonGetValue(text,["type"]) != "leash_target") return;
+            if (!WornWaiting) return;
+            if (!json_has(text,["type"])) return;
+            if (llJsonGetValue(text,["type"]) != "leash_target") return;
 
-                integer okSess2 = FALSE;
-                if (json_has(text,["session"])){
-                    integer s2 = (integer)llJsonGetValue(text,["session"]);
-                    if (s2 == WornSession) okSess2 = TRUE;
-                }
-                if (!okSess2) return;
-
-                integer ok2 = 0;
-                if (json_has(text,["ok"])) ok2 = (integer)llJsonGetValue(text,["ok"]);
-
-                if (ok2 == 1 && json_has(text,["holder"])){
-                    key prim2 = (key)llJsonGetValue(text,["holder"]);
-                    if (prim2 != NULL_KEY){
-                        do_leash(prim2);
-                    }
-                } else {
-                    /* Fallback: leash to avatar center if reply says not ok */
-                    do_leash(WornController);
-                }
-
-                WornWaiting = FALSE;
-                WornDeadline= 0;
-                WornSession = 0;
-                close_holder_listen();
-
-                if (User != NULL_KEY) show_main_menu(User,LastAclLevel);
-                return;
+            integer okSess2 = FALSE;
+            if (json_has(text,["session"])){
+                integer s2 = (integer)llJsonGetValue(text,["session"]);
+                if (s2 == WornSession) okSess2 = TRUE;
             }
+            if (!okSess2) return;
+
+            //PATCH: Ignore stale holder replies after a manual unclip.
+            if (!WornWaiting) return;
+
+            integer ok2 = 0;
+            if (json_has(text,["ok"])) ok2 = (integer)llJsonGetValue(text,["ok"]);
+
+            if (ok2 == 1 && json_has(text,["holder"])){
+                key prim2 = (key)llJsonGetValue(text,["holder"]);
+                if (prim2 != NULL_KEY){
+                    do_leash(prim2);
+                }
+            } else {
+                /* Fallback: leash to avatar center if reply says not ok */
+                do_leash(WornController);
+            }
+
+            WornWaiting = FALSE;
+            WornDeadline= 0;
+            WornSession = 0;
+            close_holder_listen();
+
+            if (User != NULL_KEY) show_main_menu(User,LastAclLevel);
+            return;
         }
 
         /* Dialog channel */
@@ -834,12 +841,16 @@ default{
 
         /* Holder handshake timeout → fallback to avatar center */
         if (WornWaiting && now() >= WornDeadline){
+            integer sessionActive = (WornSession != 0);
             WornWaiting = FALSE;
+            WornDeadline = 0;
             close_holder_listen();
-            if (WornController != NULL_KEY){
+            //PATCH: Skip timeout fallback if leash was manually canceled.
+            if (sessionActive && WornController != NULL_KEY){
                 do_leash(WornController);
                 if (User != NULL_KEY) show_main_menu(User,LastAclLevel);
             }
+            WornSession = 0;
         }
 
         /* Presence / auto-release + auto-reclip */
