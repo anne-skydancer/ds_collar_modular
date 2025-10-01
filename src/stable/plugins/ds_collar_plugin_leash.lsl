@@ -123,6 +123,8 @@ integer HOLDER_REPLY_WAIT_SEC = 2;
 
 /* Worn holder (controller’s attachment) */
 integer HolderListen     = 0;
+integer HolderOcListen   = 0;
+integer HolderOcChannel  = 0;
 integer WornWaiting     = FALSE;
 integer WornSession     = 0;
 key     WornController  = NULL_KEY;  /* avatar key we asked */
@@ -146,6 +148,11 @@ integer LastPingEpoch = 0;
 integer logd(string s){ if (DEBUG) llOwnerSay("[LEASH] " + s); return 0; }
 integer now(){ return llGetUnixTime(); }
 integer json_has(string j, list path){ if (llJsonGetValue(j, path) != JSON_INVALID) return TRUE; return FALSE; }
+/* Compute the OpenCollar remote channel for a given controller key and offset. */
+integer oc_remote_channel(key controller, integer offset){
+    integer chan = -llAbs((integer)("0x" + llGetSubString((string)controller, -7, -1)) + offset);
+    return chan;
+}
 
 /* ---------- Listener helpers ---------- */
 integer reset_listen(){
@@ -158,6 +165,11 @@ integer close_holder_listen(){
         llListenRemove(HolderListen);
         HolderListen = 0;
     }
+    if (HolderOcListen){
+        llListenRemove(HolderOcListen);
+        HolderOcListen = 0;
+    }
+    HolderOcChannel = 0;
     return TRUE;
 }
 
@@ -352,30 +364,6 @@ integer leash_follow_logic(){
 }
 
 /* =============================================================
-   Holder JSON handshake (avatars only)
-   ============================================================= */
-integer begin_worn_holder_handshake(key controller){
-    close_holder_listen();
-    HolderListen = llListen(LEASH_HOLDER_CHAN,"",NULL_KEY,"");
-
-    WornSession   = (integer)llFrand(2147483000.0);
-    WornController= controller;
-    WornWaiting   = TRUE;
-    WornDeadline  = now() + HOLDER_REPLY_WAIT_SEC;
-
-    LastController = controller; /* remember for auto-reclip */
-
-    string req = llList2Json(JSON_OBJECT,[]);
-    req = llJsonSetValue(req,["type"],      "leash_req");
-    req = llJsonSetValue(req,["wearer"],    (string)llGetOwner());
-    req = llJsonSetValue(req,["collar"],    (string)llGetKey());
-    req = llJsonSetValue(req,["controller"],(string)controller);
-    req = llJsonSetValue(req,["session"],   (string)WornSession);
-    llRegionSay(LEASH_HOLDER_CHAN,req);
-    return TRUE;
-}
-
-/* =============================================================
    UI builders
    ============================================================= */
 integer begin_dialog_ctx(key user, string body, list pairs){
@@ -490,6 +478,53 @@ integer do_unclip(){
     WornDeadline = 0;
     WornSession = 0;
     close_holder_listen();
+    return TRUE;
+}
+
+/* =============================================================
+   Holder handshake (JSON + OpenCollar compatibility)
+   -------------------------------------------------
+   NOTE: Both the DS JSON exchange and the OpenCollar remote channel
+         request must stay in sync. Future updates should keep the
+         dual-protocol flow intact so holders that only understand one
+         format still respond.
+   ============================================================= */
+integer begin_worn_holder_handshake(key controller){
+    close_holder_listen();
+    HolderListen = llListen(LEASH_HOLDER_CHAN,"",NULL_KEY,"");
+    HolderOcChannel = oc_remote_channel(llGetKey(), 0);
+    HolderOcListen = llListen(HolderOcChannel, "", NULL_KEY, "");
+
+    WornSession   = (integer)llFrand(2147483000.0);
+    WornController= controller;
+    WornWaiting   = TRUE;
+    WornDeadline  = now() + HOLDER_REPLY_WAIT_SEC;
+
+    LastController = controller; /* remember for auto-reclip */
+
+    string req = llList2Json(JSON_OBJECT,[]);
+    req = llJsonSetValue(req,["type"],      "leash_req");
+    req = llJsonSetValue(req,["wearer"],    (string)llGetOwner());
+    req = llJsonSetValue(req,["collar"],    (string)llGetKey());
+    req = llJsonSetValue(req,["controller"],(string)controller);
+    req = llJsonSetValue(req,["session"],   (string)WornSession);
+    llRegionSay(LEASH_HOLDER_CHAN,req);
+    if (controller != NULL_KEY){
+        integer wearer_chan = oc_remote_channel(controller, 0);
+        /* OpenCollar request: send our collar key so the holder advertises via "anchor <primKey>". */
+        llRegionSayTo(controller, wearer_chan, (string)llGetKey());
+    }
+    return TRUE;
+}
+
+integer finish_holder_handshake(key leash_target){
+    if (leash_target == NULL_KEY) leash_target = WornController;
+    if (leash_target != NULL_KEY) do_leash(leash_target);
+    WornWaiting = FALSE;
+    WornDeadline = 0;
+    WornSession = 0;
+    close_holder_listen();
+    if (User != NULL_KEY) show_main_menu(User, LastAclLevel);
     return TRUE;
 }
 integer do_toggle_turn(){
@@ -675,6 +710,20 @@ default{
 
     /* Listens: holder handshake & dialog */
     listen(integer chan, string nm, key id, string text){
+        /* OpenCollar remote channel reply */
+        if (HolderOcChannel != 0 && chan == HolderOcChannel){
+            if (!WornWaiting) return;
+            string msg = llStringTrim(text, STRING_TRIM);
+            integer sep = llSubStringIndex(msg, " ");
+            if (sep == -1) return;
+            if (llToLower(llGetSubString(msg, 0, sep - 1)) != "anchor") return;
+            string prim_str = llStringTrim(llGetSubString(msg, sep + 1, -1), STRING_TRIM);
+            key prim = (key)prim_str;
+            if (prim == NULL_KEY) return;
+            finish_holder_handshake(prim);
+            return;
+        }
+
         /* Holder channel (worn holder only) */
         if (chan == LEASH_HOLDER_CHAN){
             if (!WornWaiting) return;
@@ -697,19 +746,13 @@ default{
             if (ok2 == 1 && json_has(text,["holder"])){
                 key prim2 = (key)llJsonGetValue(text,["holder"]);
                 if (prim2 != NULL_KEY){
-                    do_leash(prim2);
+                    finish_holder_handshake(prim2);
+                    return;
                 }
-            } else {
-                /* Fallback: leash to avatar center if reply says not ok */
-                do_leash(WornController);
             }
 
-            WornWaiting = FALSE;
-            WornDeadline= 0;
-            WornSession = 0;
-            close_holder_listen();
-
-            if (User != NULL_KEY) show_main_menu(User,LastAclLevel);
+            /* Fallback: leash to avatar center if reply says not ok */
+            finish_holder_handshake(NULL_KEY);
             return;
         }
 
@@ -842,15 +885,14 @@ default{
         /* Holder handshake timeout → fallback to avatar center */
         if (WornWaiting && now() >= WornDeadline){
             integer sessionActive = (WornSession != 0);
-            WornWaiting = FALSE;
             WornDeadline = 0;
-            close_holder_listen();
-            //PATCH: Skip timeout fallback if leash was manually canceled.
-            if (sessionActive && WornController != NULL_KEY){
-                do_leash(WornController);
-                if (User != NULL_KEY) show_main_menu(User,LastAclLevel);
-            }
             WornSession = 0;
+            if (sessionActive && WornController != NULL_KEY){
+                finish_holder_handshake(WornController);
+            } else {
+                WornWaiting = FALSE;
+                close_holder_listen();
+            }
         }
 
         /* Presence / auto-release + auto-reclip */
