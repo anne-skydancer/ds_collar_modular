@@ -495,7 +495,8 @@ integer do_unclip(){
 integer begin_worn_holder_handshake(key controller){
     close_holder_listen();
     HolderListen = llListen(LEASH_HOLDER_CHAN,"",NULL_KEY,"");
-    HolderOcChannel = oc_remote_channel(llGetKey(), 0);
+    //PATCH: Derive the OpenCollar remote channel from the wearer (llGetOwner) so particles target the anchor, not the controller.
+    HolderOcChannel = oc_remote_channel(llGetOwner(), 0);
     HolderOcListen = llListen(HolderOcChannel, "", NULL_KEY, "");
 
     WornSession   = (integer)llFrand(2147483000.0);
@@ -515,7 +516,7 @@ integer begin_worn_holder_handshake(key controller){
     if (controller != NULL_KEY){
         integer wearer_chan = oc_remote_channel(controller, 0);
         integer post_chan = oc_remote_channel(controller, 1234);
-        /* OpenCollar request: send our collar key on both wearer and post channels so the holder advertises via "anchor <primKey>". */
+        /* OpenCollar request: send our collar key on both wearer-based remote and post channels so the holder advertises via "anchor <primKey>". */
         llRegionSayTo(controller, wearer_chan, (string)llGetKey());
         //PATCH: Broadcast on the derived post channel and the legacy leash-post channel for compatibility.
         llRegionSay(post_chan, (string)llGetKey());
