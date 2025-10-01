@@ -743,7 +743,7 @@ default{
             string trimmed = llStringTrim(text, STRING_TRIM);
             string wearer_key = (string)llGetOwner();
             integer wearer_len = llStringLength(wearer_key);
-            if (wearer_len <= 0) return;
+            if (wearer_len != 36) return;
             if (llStringLength(trimmed) <= wearer_len) return;
             if (llGetSubString(trimmed, 0, wearer_len - 1) != wearer_key) return;
             string suffix = llStringTrim(llGetSubString(trimmed, wearer_len, -1), STRING_TRIM);
