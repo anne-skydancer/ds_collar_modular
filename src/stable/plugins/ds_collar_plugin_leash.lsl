@@ -124,9 +124,10 @@ integer OC_LEASH_POST_CHAN    = -8888; //PATCH: OpenCollar leash posts listen on
 integer OC_LEASH_POST_OFFSET  = 1234;  //PATCH: Offset for computing OpenCollar leash post remote channels.
 
 /* Worn holder (controller’s attachment) */
-integer HolderListen     = 0;
-integer HolderOcListen   = 0;
-integer HolderOcChannel  = 0;
+integer HolderListen       = 0;
+integer HolderOcListen     = 0;
+integer HolderOcPostListen = 0;
+integer HolderOcChannel    = 0;
 integer WornWaiting     = FALSE;
 integer WornSession     = 0;
 key     WornController  = NULL_KEY;  /* avatar key we asked */
@@ -170,6 +171,10 @@ integer close_holder_listen(){
     if (HolderOcListen){
         llListenRemove(HolderOcListen);
         HolderOcListen = 0;
+    }
+    if (HolderOcPostListen){
+        llListenRemove(HolderOcPostListen);
+        HolderOcPostListen = 0;
     }
     HolderOcChannel = 0;
     return TRUE;
@@ -498,6 +503,7 @@ integer begin_worn_holder_handshake(key controller){
     //PATCH: Derive the OpenCollar remote channel from the wearer (llGetOwner) so particles target the anchor, not the controller.
     HolderOcChannel = oc_remote_channel(llGetOwner(), 0);
     HolderOcListen = llListen(HolderOcChannel, "", NULL_KEY, "");
+    HolderOcPostListen = llListen(OC_LEASH_POST_CHAN, "", NULL_KEY, "");
 
     WornSession   = (integer)llFrand(2147483000.0);
     WornController= controller;
@@ -729,6 +735,20 @@ default{
             key prim = (key)prim_str;
             if (prim == NULL_KEY) return;
             finish_holder_handshake(prim);
+            return;
+        }
+
+        if (chan == OC_LEASH_POST_CHAN){
+            if (!WornWaiting) return;
+            string trimmed = llStringTrim(text, STRING_TRIM);
+            string wearer_key = (string)llGetOwner();
+            integer wearer_len = llStringLength(wearer_key);
+            if (wearer_len <= 0) return;
+            if (llStringLength(trimmed) <= wearer_len) return;
+            if (llGetSubString(trimmed, 0, wearer_len - 1) != wearer_key) return;
+            string suffix = llStringTrim(llGetSubString(trimmed, wearer_len, -1), STRING_TRIM);
+            if (llToLower(suffix) != "handle ok") return;
+            finish_holder_handshake(id);
             return;
         }
 
