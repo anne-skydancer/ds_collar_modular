@@ -121,6 +121,7 @@ float   MaxLenMargin = 0.98;
 integer LEASH_HOLDER_CHAN     = -192837465;
 integer HOLDER_REPLY_WAIT_SEC = 2;
 integer OC_LEASH_POST_CHAN    = -8888; //PATCH: OpenCollar leash posts listen on this fixed channel.
+integer OC_LEASH_POST_OFFSET  = 1234;  //PATCH: Offset for computing OpenCollar leash post remote channels.
 
 /* Worn holder (controller’s attachment) */
 integer HolderListen     = 0;
