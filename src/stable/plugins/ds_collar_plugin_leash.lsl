@@ -344,38 +344,48 @@ integer turn_to_leasher(key leasher){
 integer clear_turn(){ llOwnerSay("@setrot=clear"); return 0; }
 
 integer leash_follow_logic(){
-    if (!g_leashed) return 0;
-    if (g_leasher == NULL_KEY) return 0;
+    if (!g_leashed) return;
 
-    vector leash_pt = leash_ring_world();
-    if (g_leasher != llGetOwner()){
-        list det = llGetObjectDetails(g_leasher,[OBJECT_POS]);
-        if (llGetListLength(det) > 0) leash_pt = llList2Vector(det,0);
-    }
+    vector sourcePos = llGetPos();
+    vector targetPos = ZERO_VECTOR;
+    integer validTarget = FALSE;
 
-    vector wearer = llGetRootPosition();
-    vector offset = wearer - leash_pt;
-    float  dist   = llVecMag(offset);
-
-    if (g_controls_ok){
-        if (dist > (float)g_leash_length){
-            vector tgt = leash_pt + llVecNorm(offset) * (float)g_leash_length * g_max_len_margin;
-            if (llVecMag(tgt - g_last_target) > g_move_hyst){
-                llMoveToTarget(tgt,0.5);
-                g_last_target = tgt;
-            }
-            if (g_turn_to) turn_to_leasher(g_leasher);
-        } else {
-            if (g_last_dist >= 0.0){
-                if (g_last_dist > (float)g_leash_length){
-                    llStopMoveToTarget();
-                    g_last_target = ZERO_VECTOR;
-                }
-            }
+    /* Prioritize Worn Holder Protocol */
+    if (g_leash_render_mode == LEASH_MODE_NATIVE || g_leash_render_mode == LEASH_MODE_OC){
+        list details = llGetObjectDetails(g_leasher, [OBJECT_POS]);
+        if (llGetListLength(details) > 0){
+            targetPos = llList2Vector(details,0);
+            validTarget = TRUE;
         }
     }
-    g_last_dist = dist;
-    draw_leash_particles(g_leasher);
+    /* Fallback: Avatar Center */
+    else if (g_leash_render_mode == LEASH_MODE_AVATAR){
+        list agentInfo = llGetObjectDetails(g_leasher, [OBJECT_POS]);
+        if (llGetListLength(agentInfo) > 0){
+            targetPos = llList2Vector(agentInfo,0);
+            validTarget = TRUE;
+        }
+    }
+
+    if (!validTarget){
+        stop_particles();
+        return;
+    }
+
+    float dist = llVecDist(sourcePos, targetPos);
+    if (dist > (g_leash_length * g_max_len_margin)){
+        vector pullPos = sourcePos + llVecNorm(targetPos - sourcePos) * (g_leash_length - 0.1);
+        llMoveToTarget(pullPos, FOLLOW_TICK);
+    } else {
+        llStopMoveToTarget();
+    }
+
+    /* Update particles only if position changed significantly */
+    if (llVecDist(targetPos, g_last_target) > g_move_hyst || llFabs(dist - g_last_dist) > 0.1){
+        g_last_target = targetPos;
+        g_last_dist = dist;
+        update_particles(targetPos);
+    }
     return 0;
 }
 
@@ -931,3 +941,4 @@ default{
         }
     }
 }
+
