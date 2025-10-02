@@ -117,6 +117,14 @@ vector  g_last_target     = ZERO_VECTOR;
 float   g_last_dist       = -1.0;
 float   g_move_hyst       = 0.20;
 float   g_max_len_margin  = 0.98;
+integer g_leashpoint_link = 0;
+
+integer LEASH_MODE_NONE   = 0;
+integer LEASH_MODE_NATIVE = 1;
+integer LEASH_MODE_OC     = 2;
+integer LEASH_MODE_AVATAR = 3;
+integer g_leash_render_mode = LEASH_MODE_NONE;
+integer g_next_leash_mode   = LEASH_MODE_NATIVE;
 
 /* ---------- Holder handshake (JSON) ---------- */
 integer LEASH_HOLDER_CHAN     = -192837465;
@@ -128,6 +136,7 @@ integer g_worn_waiting    = FALSE;
 integer g_worn_session    = 0;
 key     g_worn_controller = NULL_KEY;  /* avatar key we asked */
 integer g_worn_deadline   = 0;
+integer g_worn_protocol   = 0;         /* 0=native,1=oc */
 
 /* ---------- Presence/persistence (auto-reclip) ---------- */
 integer g_offsimFlag       = FALSE;
@@ -256,40 +265,70 @@ vector leash_ring_world(){
     }
     return llGetRootPosition();
 }
+//PATCH: Enforce ribbon leash emission from dedicated leashpoint prims.
+integer find_leashpoint_link(){
+    integer n = llGetNumberOfPrims();
+    integer i = 2;
+    while (i <= n){
+        list params = llGetLinkPrimitiveParams(i,[PRIM_NAME, PRIM_DESC]);
+        string nm = llToLower(llStringTrim(llList2String(params,0), STRING_TRIM));
+        string desc = llToLower(llStringTrim(llList2String(params,1), STRING_TRIM));
+        if (nm == "leashpoint" && desc == "leashpoint") return i;
+        i = i + 1;
+    }
+    return LINK_ROOT;
+}
+
+integer apply_ribbon_particles(integer link, key target){
+    list flags = [
+        PSYS_PART_INTERP_COLOR_MASK,
+        PSYS_PART_FOLLOW_SRC_MASK,
+        PSYS_PART_TARGET_POS_MASK,
+        PSYS_PART_FOLLOW_VELOCITY_MASK,
+        PSYS_PART_RIBBON_MASK
+    ];
+    integer i = 0;
+    integer L = llGetListLength(flags);
+    integer mask = 0;
+    while (i < L){ mask = mask | llList2Integer(flags,i); i = i + 1; }
+
+    list settings = [
+        PSYS_SRC_PATTERN, PSYS_SRC_PATTERN_DROP,
+        PSYS_SRC_TEXTURE, g_chain_texture,
+        PSYS_SRC_BURST_RATE, 0.00,
+        PSYS_SRC_BURST_PART_COUNT, 1,
+        PSYS_PART_START_ALPHA, 1.0,
+        PSYS_PART_END_ALPHA, 1.0,
+        PSYS_PART_MAX_AGE, 2.6,
+        PSYS_PART_START_SCALE, <0.07,0.07,0>,
+        PSYS_PART_END_SCALE,   <0.07,0.07,0>,
+        PSYS_PART_START_COLOR, <1,1,1>,
+        PSYS_PART_END_COLOR,   <1,1,1>,
+        PSYS_SRC_ACCEL, <0,0,-1.25>,
+        PSYS_PART_FLAGS, mask,
+        PSYS_SRC_TARGET_KEY, target
+    ];
+    llLinkParticleSystem(link, settings);
+    return TRUE;
+}
+
 integer draw_leash_particles(key to){
+    if (g_leashpoint_link == 0){ g_leashpoint_link = find_leashpoint_link(); }
     if (to == NULL_KEY){
-        if (g_psys_on){ llParticleSystem([]); g_psys_on = FALSE; }
+        if (g_psys_on){ llLinkParticleSystem(g_leashpoint_link, []); g_psys_on = FALSE; }
         g_psys_target = NULL_KEY;
         return 0;
     }
     if (!g_psys_on || g_psys_target != to){
         g_psys_target = to;
-        llParticleSystem([
-            PSYS_SRC_PATTERN, PSYS_SRC_PATTERN_DROP,
-            PSYS_SRC_TEXTURE, g_chain_texture,
-            PSYS_SRC_BURST_RATE, 0.00,
-            PSYS_SRC_BURST_PART_COUNT, 1,
-            PSYS_PART_START_ALPHA, 1.0,
-            PSYS_PART_END_ALPHA, 1.0,
-            PSYS_PART_MAX_AGE, 2.6,
-            PSYS_PART_START_SCALE, <0.07,0.07,0>,
-            PSYS_PART_END_SCALE,   <0.07,0.07,0>,
-            PSYS_PART_START_COLOR, <1,1,1>,
-            PSYS_PART_END_COLOR,   <1,1,1>,
-            PSYS_SRC_ACCEL, <0,0,-1.25>,
-            PSYS_PART_FLAGS, PSYS_PART_INTERP_COLOR_MASK
-                            |PSYS_PART_FOLLOW_SRC_MASK
-                            |PSYS_PART_TARGET_POS_MASK
-                            |PSYS_PART_FOLLOW_VELOCITY_MASK
-                            |PSYS_PART_RIBBON_MASK,
-            PSYS_SRC_TARGET_KEY, to
-        ]);
+        apply_ribbon_particles(g_leashpoint_link, to);
         g_psys_on = TRUE;
     }
     return 0;
 }
 integer stop_leash_particles(){
-    if (g_psys_on){ llParticleSystem([]); g_psys_on = FALSE; }
+    if (g_leashpoint_link == 0){ g_leashpoint_link = find_leashpoint_link(); }
+    if (g_psys_on){ llLinkParticleSystem(g_leashpoint_link, []); g_psys_on = FALSE; }
     g_psys_target = NULL_KEY;
     return 0;
 }
@@ -351,6 +390,7 @@ integer begin_worn_holder_handshake(key controller){
     g_worn_controller = controller;
     g_worn_waiting    = TRUE;
     g_worn_deadline   = now() + HOLDER_REPLY_WAIT_SEC;
+    g_worn_protocol   = 0;
 
     g_last_controller = controller;   /* remember for auto-reclip */
 
@@ -360,8 +400,38 @@ integer begin_worn_holder_handshake(key controller){
     req = llJsonSetValue(req,["collar"],(string)llGetKey());
     req = llJsonSetValue(req,["controller"],(string)controller);
     req = llJsonSetValue(req,["session"],(string)g_worn_session);
+    req = llJsonSetValue(req,["origin"],"leashpoint");
+    req = llJsonSetValue(req,["holder_name"],"Leash Holder Origin Prim");
 
     llRegionSay(LEASH_HOLDER_CHAN,req);
+    g_next_leash_mode = LEASH_MODE_NATIVE;
+    return TRUE;
+}
+
+//PATCH: Provide OpenCollar-compatible handshake fallback targeting holder prims.
+integer begin_oc_holder_handshake(key controller){
+    close_holder_listen();
+    g_holderListen = llListen(LEASH_HOLDER_CHAN,"",NULL_KEY,"");
+
+    g_worn_session    = (integer)llFrand(2147483000.0);
+    g_worn_controller = controller;
+    g_worn_waiting    = TRUE;
+    g_worn_deadline   = now() + HOLDER_REPLY_WAIT_SEC;
+    g_worn_protocol   = 1;
+
+    g_last_controller = controller;
+
+    string req = llList2Json(JSON_OBJECT,[]);
+    req = llJsonSetValue(req,["type"],"oc_leash_req");
+    req = llJsonSetValue(req,["wearer"],(string)llGetOwner());
+    req = llJsonSetValue(req,["collar"],(string)llGetKey());
+    req = llJsonSetValue(req,["controller"],(string)controller);
+    req = llJsonSetValue(req,["session"],(string)g_worn_session);
+    req = llJsonSetValue(req,["origin"],"leashpoint");
+    req = llJsonSetValue(req,["holder_name"],"Leash Holder Origin Prim");
+
+    llRegionSay(LEASH_HOLDER_CHAN,req);
+    g_next_leash_mode = LEASH_MODE_OC;
     return TRUE;
 }
 
@@ -439,13 +509,17 @@ integer ui_return_root(key toUser){
 integer do_leash(key who){
     if (who == NULL_KEY) return FALSE;
     g_leasher = who; g_leashed = TRUE; g_offsimFlag = FALSE; g_offsimStartEpoch = 0;
+    g_leash_render_mode = g_next_leash_mode;
     draw_leash_particles(g_leasher);
     return TRUE;
 }
 integer do_unclip(){
     g_leashed = FALSE; g_leasher = NULL_KEY;
+    g_leash_render_mode = LEASH_MODE_NONE;
+    g_next_leash_mode   = LEASH_MODE_NATIVE;
     llStopMoveToTarget(); g_last_target = ZERO_VECTOR; stop_leash_particles();
     g_offsimFlag = FALSE; g_offsimStartEpoch = 0;
+    g_worn_waiting = FALSE; g_worn_deadline = 0; g_worn_session = 0; g_worn_protocol = 0;
     return TRUE;
 }
 integer do_toggle_turn(){
@@ -503,6 +577,8 @@ default{
     state_entry(){
         /* Hard unclip on any (re)start */
         do_unclip();
+
+        g_leashpoint_link = find_leashpoint_link();
 
         /* reset UI + listeners */
         g_user = NULL_KEY;
@@ -632,10 +708,11 @@ default{
     listen(integer chan, string nm, key id, string text){
         /* Holder channel (worn holder only) */
         if (chan == LEASH_HOLDER_CHAN){
-            if (g_worn_waiting){
-                if (!json_has(text,["type"])) return;
-                if (llJsonGetValue(text,["type"]) != "leash_target") return;
+            if (!g_worn_waiting) return;
+            if (!json_has(text,["type"])) return;
 
+            string t = llJsonGetValue(text,["type"]);
+            if (t == "leash_target"){
                 integer okSess2 = FALSE;
                 if (json_has(text,["session"])){
                     integer s2 = (integer)llJsonGetValue(text,["session"]);
@@ -647,16 +724,53 @@ default{
                 if (json_has(text,["ok"])) ok2 = (integer)llJsonGetValue(text,["ok"]);
                 if (ok2 == 1 && json_has(text,["holder"])){
                     key prim2 = (key)llJsonGetValue(text,["holder"]);
-                    if (prim2 != NULL_KEY){ do_leash(prim2); }
-                } else {
-                    /* Fallback: leash to avatar center if reply says not ok */
+                    if (prim2 != NULL_KEY){
+                        g_next_leash_mode = LEASH_MODE_NATIVE;
+                        do_leash(prim2);
+                        g_worn_waiting = FALSE; g_worn_deadline = 0; g_worn_session = 0; g_worn_protocol = 0;
+                        close_holder_listen();
+                        if (g_user != NULL_KEY) show_main_menu(g_user,g_last_acl_level);
+                    }
+                    return;
+                }
+
+                g_worn_waiting = FALSE; g_worn_deadline = 0; g_worn_session = 0;
+                close_holder_listen();
+                if (g_worn_controller != NULL_KEY){
+                    begin_oc_holder_handshake(g_worn_controller);
+                }
+                return;
+            }
+
+            if (t == "oc_leash_target"){
+                integer okSess3 = FALSE;
+                if (json_has(text,["session"])){
+                    integer s3 = (integer)llJsonGetValue(text,["session"]);
+                    if (s3 == g_worn_session) okSess3 = TRUE;
+                }
+                if (!okSess3) return;
+
+                integer ok3 = 0;
+                if (json_has(text,["ok"])) ok3 = (integer)llJsonGetValue(text,["ok"]);
+
+                key holderPrim = NULL_KEY;
+                if (json_has(text,["holder"])) holderPrim = (key)llJsonGetValue(text,["holder"]);
+
+                g_worn_waiting = FALSE; g_worn_deadline = 0; g_worn_session = 0; g_worn_protocol = 0;
+                close_holder_listen();
+
+                if (ok3 == 1 && holderPrim != NULL_KEY){
+                    g_next_leash_mode = LEASH_MODE_OC;
+                    do_leash(holderPrim);
+                } else if (g_worn_controller != NULL_KEY){
+                    g_next_leash_mode = LEASH_MODE_AVATAR;
                     do_leash(g_worn_controller);
                 }
-                g_worn_waiting = FALSE; g_worn_deadline=0; g_worn_session=0;
-                close_holder_listen();
+
                 if (g_user != NULL_KEY) show_main_menu(g_user,g_last_acl_level);
                 return;
             }
+            return;
         }
 
         /* Dialog channel */
@@ -764,13 +878,19 @@ default{
             if (now() >= g_scan_expires){ g_scan_keys=[]; g_page_idx=0; }
         }
 
-        /* Holder handshake timeout → fallback to avatar center */
+        /* Holder handshake timeout → try OC fallback, then avatar */
         if (g_worn_waiting && now() >= g_worn_deadline){
             g_worn_waiting = FALSE;
             close_holder_listen();
             if (g_worn_controller != NULL_KEY){
-                do_leash(g_worn_controller);
-                if (g_user != NULL_KEY) show_main_menu(g_user,g_last_acl_level);
+                if (g_worn_protocol == 0){
+                    begin_oc_holder_handshake(g_worn_controller);
+                } else {
+                    g_worn_protocol = 0;
+                    g_next_leash_mode = LEASH_MODE_AVATAR;
+                    do_leash(g_worn_controller);
+                    if (g_user != NULL_KEY) show_main_menu(g_user,g_last_acl_level);
+                }
             }
         }
 
