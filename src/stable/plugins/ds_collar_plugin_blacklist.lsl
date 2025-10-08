@@ -4,6 +4,7 @@
             - JSON register/register_now contract (§22.2)
             - plugin_start / plugin_return routing
             - Settings JSON persistence (channels 800/870)
+            - AUTH-gated access with defense-in-depth validation
             - Local submenus return to root; root Back → kernel
    ============================================================= */
 
@@ -16,6 +17,9 @@ integer K_PLUGIN_SOFT_RESET  = 504; // {"type":"plugin_soft_reset",...}
 
 integer K_PLUGIN_PING        = 650; // {"type":"plugin_ping","context":...}
 integer K_PLUGIN_PONG        = 651; // {"type":"plugin_pong","context":...}
+
+integer AUTH_QUERY_NUM       = 700; // Request ACL level for avatar
+integer AUTH_RESULT_NUM      = 710; // ACL level response
 
 integer K_SETTINGS_QUERY     = 800; // Plugin ↔ Settings JSON
 integer K_SETTINGS_SYNC      = 870; // Settings → Plugin JSON
@@ -35,12 +39,27 @@ string TYPE_SETTINGS_GET        = "settings_get";
 string TYPE_SETTINGS_SYNC       = "settings_sync";
 string TYPE_SETTINGS_SET        = "set";
 
+string MSG_ACL_QUERY            = "acl_query";
+string MSG_ACL_RESULT           = "acl_result";
+
 /* ---------- Identity ---------- */
-integer PLUGIN_SN        = 0;
+integer PluginSn         = 0;        // Mutable: PascalCase per style guide
 string  PLUGIN_LABEL     = "Blacklist";
-integer PLUGIN_MIN_ACL   = 2; // ACL_OWNED - allow safety access for level 2 users
+integer PLUGIN_MIN_ACL   = 2;        // ACL_OWNED - safety access for level 2+
 string  PLUGIN_CONTEXT   = "core_blacklist";
 string  ROOT_CONTEXT     = "core_root";
+
+/* ---------- ACL policy ---------- */
+integer ACL_BLACKLIST        = -1;
+integer ACL_NOACCESS         = 0;
+integer ACL_PUBLIC           = 1;
+integer ACL_OWNED            = 2;
+integer ACL_TRUSTEE          = 3;
+integer ACL_UNOWNED          = 4;
+integer ACL_PRIMARY_OWNER    = 5;
+
+/* Allowed ACL levels: OWNED and above */
+list ALLOWED_ACL_LEVELS = [ACL_OWNED, ACL_TRUSTEE, ACL_UNOWNED, ACL_PRIMARY_OWNER];
 
 /* ---------- Settings ---------- */
 string KEY_BLACKLIST     = "blacklist";
@@ -53,13 +72,18 @@ integer DIALOG_TIMEOUT   = 180;
 float   BLACKLIST_RADIUS = 5.0;
 
 /* ---------- Session state ---------- */
-key     ActiveUser    = NULL_KEY;
-integer ListenHandle  = 0;
-integer MenuChannel   = 0;
-string  MenuContext   = ""; // "main", "remove", "add_scan", "add_pick", "info"
+key     ActiveUser       = NULL_KEY;
+integer ListenHandle     = 0;
+integer MenuChannel      = 0;
+string  MenuContext      = ""; // "main", "remove", "add_scan", "add_pick", "info"
 
-list    Blacklist     = [];
-list    CandidateKeys = [];
+list    Blacklist        = [];
+list    CandidateKeys    = [];
+
+/* ---------- AUTH gate session ---------- */
+integer AclPending       = FALSE;
+integer AclLevel         = ACL_NOACCESS;
+key     AclAvatar        = NULL_KEY;
 
 /* ========================== Helpers ========================== */
 integer json_has(string j, list path) {
@@ -67,16 +91,26 @@ integer json_has(string j, list path) {
     return TRUE;
 }
 
-integer logd(string s) { if (DEBUG) llOwnerSay("[BLACKLIST] " + s); return 0; }
+integer logd(string s) { 
+    if (DEBUG) llOwnerSay("[BLACKLIST] " + s); 
+    return 0; 
+}
+
+integer in_allowed_levels(integer lvl) {
+    if (llListFindList(ALLOWED_ACL_LEVELS, [lvl]) != -1) return TRUE;
+    return FALSE;
+}
 
 list blacklist_names() {
     list out = [];
-    integer i;
-    for (i = 0; i < llGetListLength(Blacklist); ++i) {
+    integer i = 0;
+    integer count = llGetListLength(Blacklist);
+    while (i < count) {
         key k = (key)llList2String(Blacklist, i);
         string nm = llKey2Name(k);
         if (nm == "") nm = (string)k;
         out += nm;
+        i += 1;
     }
     return out;
 }
@@ -84,7 +118,7 @@ list blacklist_names() {
 integer register_plugin() {
     string j = llList2Json(JSON_OBJECT, []);
     j = llJsonSetValue(j, ["type"],    TYPE_REGISTER);
-    j = llJsonSetValue(j, ["sn"],      (string)PLUGIN_SN);
+    j = llJsonSetValue(j, ["sn"],      (string)PluginSn);
     j = llJsonSetValue(j, ["label"],   PLUGIN_LABEL);
     j = llJsonSetValue(j, ["min_acl"], (string)PLUGIN_MIN_ACL);
     j = llJsonSetValue(j, ["context"], PLUGIN_CONTEXT);
@@ -121,6 +155,21 @@ integer persist_blacklist() {
     return 0;
 }
 
+/* ---------- AUTH ---------- */
+integer request_acl(key av) {
+    if (av == NULL_KEY) return 0;
+    string j = llList2Json(JSON_OBJECT, []);
+    j = llJsonSetValue(j, ["type"],   MSG_ACL_QUERY);
+    j = llJsonSetValue(j, ["avatar"], (string)av);
+    llMessageLinked(LINK_SET, AUTH_QUERY_NUM, j, NULL_KEY);
+
+    AclPending = TRUE;
+    AclAvatar  = av;
+    AclLevel   = ACL_NOACCESS;
+    logd("Requested ACL for " + (string)av);
+    return 0;
+}
+
 integer apply_blacklist_payload(string payload) {
     if (llGetSubString(payload, 0, 0) != "{") return 0;
     if (!json_has(payload, [KEY_BLACKLIST])) return 0;
@@ -135,12 +184,16 @@ integer apply_blacklist_payload(string payload) {
 
     if (llGetSubString(raw, 0, 0) == "[") {
         list arr = llJson2List(raw);
-        integer i;
-        for (i = 0; i < llGetListLength(arr); ++i) {
+        integer i = 0;
+        integer arr_len = llGetListLength(arr);
+        while (i < arr_len) {
             string entry = llList2String(arr, i);
             if (entry != "" && entry != " ") {
-                if (llListFindList(updated, [entry]) == -1) updated += entry;
+                if (llListFindList(updated, [entry]) == -1) {
+                    updated += entry;
+                }
             }
+            i += 1;
         }
         Blacklist = updated;
         logd("Settings applied: " + (string)llGetListLength(Blacklist) + " entries.");
@@ -154,10 +207,14 @@ integer apply_blacklist_payload(string payload) {
     }
 
     list csv = llParseStringKeepNulls(raw, [","], []);
-    integer j;
-    for (j = 0; j < llGetListLength(csv); ++j) {
+    integer j = 0;
+    integer csv_len = llGetListLength(csv);
+    while (j < csv_len) {
         string entry2 = llStringTrim(llList2String(csv, j), STRING_TRIM);
-        if (entry2 != "" && llListFindList(updated, [entry2]) == -1) updated += entry2;
+        if (entry2 != "" && llListFindList(updated, [entry2]) == -1) {
+            updated += entry2;
+        }
+        j += 1;
     }
     Blacklist = updated;
     logd("Settings applied (legacy csv): " + (string)llGetListLength(Blacklist) + " entries.");
@@ -186,6 +243,9 @@ integer reset_session() {
     ActiveUser   = NULL_KEY;
     MenuContext  = "";
     CandidateKeys = [];
+    AclPending   = FALSE;
+    AclAvatar    = NULL_KEY;
+    AclLevel     = ACL_NOACCESS;
     llSetTimerEvent(0.0);
     return 0;
 }
@@ -207,7 +267,9 @@ integer begin_dialog(key user, string ctx, string body, list buttons) {
     ListenHandle = llListen(MenuChannel, "", ActiveUser, "");
 
     list btns = buttons;
-    while ((llGetListLength(btns) % 3) != 0) btns += " ";
+    while ((llGetListLength(btns) % 3) != 0) {
+        btns += " ";
+    }
 
     llDialog(ActiveUser, body, btns, MenuChannel);
     llSetTimerEvent((float)DIALOG_TIMEOUT);
@@ -218,12 +280,15 @@ integer show_main_menu(key user) {
     CandidateKeys = [];
     list names = blacklist_names();
     string msg = "Blacklisted users:\n";
-    integer i;
-    if (llGetListLength(names) == 0) {
+    integer i = 0;
+    integer name_count = llGetListLength(names);
+    
+    if (name_count == 0) {
         msg += "  (none)\n";
     } else {
-        for (i = 0; i < llGetListLength(names); ++i) {
+        while (i < name_count) {
             msg += "  " + llList2String(names, i) + "\n";
+            i += 1;
         }
     }
 
@@ -235,7 +300,6 @@ integer show_main_menu(key user) {
 
 integer show_remove_menu(key user) {
     if (llGetListLength(Blacklist) == 0) {
-        //PATCH: Present info dialog when blacklist is empty to avoid blank remove menu.
         begin_dialog(user, "info", "Blacklist is empty.", [BTN_BACK]);
         logd("Remove menu empty.");
         return 0;
@@ -244,10 +308,13 @@ integer show_remove_menu(key user) {
     list names = blacklist_names();
     string msg = "Select avatar to remove:\n";
     list btns = ["~", BTN_BACK, "~"];
-    integer i;
-    for (i = 0; i < llGetListLength(names); ++i) {
+    integer i = 0;
+    integer name_count = llGetListLength(names);
+    
+    while (i < name_count) {
         msg += (string)(i + 1) + ". " + llList2String(names, i) + "\n";
         btns += [(string)(i + 1)];
+        i += 1;
     }
 
     begin_dialog(user, "remove", msg, btns);
@@ -264,13 +331,16 @@ integer show_add_candidates(key user) {
 
     string msg = "Select avatar to blacklist:\n";
     list btns = ["~", BTN_BACK, "~"];
-    integer i;
-    for (i = 0; i < llGetListLength(CandidateKeys); ++i) {
+    integer i = 0;
+    integer cand_count = llGetListLength(CandidateKeys);
+    
+    while (i < cand_count) {
         key k = (key)llList2String(CandidateKeys, i);
         string nm = llKey2Name(k);
         if (nm == "") nm = (string)k;
         msg += (string)(i + 1) + ". " + nm + "\n";
         btns += [(string)(i + 1)];
+        i += 1;
     }
 
     begin_dialog(user, "add_pick", msg, btns);
@@ -281,33 +351,41 @@ integer show_add_candidates(key user) {
 /* =========================== Events ========================== */
 default {
     state_entry() {
-        PLUGIN_SN = (integer)(llFrand(1.0e9));
+        PluginSn = (integer)(llFrand(1.0e9));
         reset_session();
 
         notify_soft_reset();
         register_plugin();
         request_settings_get();
 
-        logd("Ready. SN=" + (string)PLUGIN_SN);
+        logd("Ready. SN=" + (string)PluginSn);
     }
 
     link_message(integer sender, integer num, string msg, key id) {
         if (num == K_PLUGIN_PING) {
-            if (json_has(msg, ["type"]) && llJsonGetValue(msg, ["type"]) == TYPE_PLUGIN_PING) {
-                if (json_has(msg, ["context"]) && llJsonGetValue(msg, ["context"]) == PLUGIN_CONTEXT) {
-                    string pong = llList2Json(JSON_OBJECT, []);
-                    pong = llJsonSetValue(pong, ["type"],    TYPE_PLUGIN_PONG);
-                    pong = llJsonSetValue(pong, ["context"], PLUGIN_CONTEXT);
-                    llMessageLinked(LINK_SET, K_PLUGIN_PONG, pong, NULL_KEY);
+            if (json_has(msg, ["type"])) {
+                if (llJsonGetValue(msg, ["type"]) == TYPE_PLUGIN_PING) {
+                    if (json_has(msg, ["context"])) {
+                        if (llJsonGetValue(msg, ["context"]) == PLUGIN_CONTEXT) {
+                            string pong = llList2Json(JSON_OBJECT, []);
+                            pong = llJsonSetValue(pong, ["type"],    TYPE_PLUGIN_PONG);
+                            pong = llJsonSetValue(pong, ["context"], PLUGIN_CONTEXT);
+                            llMessageLinked(LINK_SET, K_PLUGIN_PONG, pong, NULL_KEY);
+                        }
+                    }
                 }
             }
             return;
         }
 
         if (num == K_PLUGIN_REG_QUERY) {
-            if (json_has(msg, ["type"]) && llJsonGetValue(msg, ["type"]) == TYPE_REGISTER_NOW) {
-                if (json_has(msg, ["script"]) && llJsonGetValue(msg, ["script"]) == llGetScriptName()) {
-                    register_plugin();
+            if (json_has(msg, ["type"])) {
+                if (llJsonGetValue(msg, ["type"]) == TYPE_REGISTER_NOW) {
+                    if (json_has(msg, ["script"])) {
+                        if (llJsonGetValue(msg, ["script"]) == llGetScriptName()) {
+                            register_plugin();
+                        }
+                    }
                 }
             }
             return;
@@ -319,11 +397,39 @@ default {
         }
 
         if (num == K_PLUGIN_START) {
-            if (json_has(msg, ["type"]) && llJsonGetValue(msg, ["type"]) == TYPE_PLUGIN_START) {
-                if (json_has(msg, ["context"]) && llJsonGetValue(msg, ["context"]) == PLUGIN_CONTEXT) {
-                    reset_session();
-                    show_main_menu(id);
+            if (json_has(msg, ["type"])) {
+                if (llJsonGetValue(msg, ["type"]) == TYPE_PLUGIN_START) {
+                    if (json_has(msg, ["context"])) {
+                        if (llJsonGetValue(msg, ["context"]) == PLUGIN_CONTEXT) {
+                            reset_session();
+                            ActiveUser = id;
+                            request_acl(id);
+                        }
+                    }
                 }
+            }
+            return;
+        }
+
+        if (num == AUTH_RESULT_NUM) {
+            if (!AclPending) return;
+            if (!json_has(msg, ["type"])) return;
+            if (llJsonGetValue(msg, ["type"]) != MSG_ACL_RESULT) return;
+            if (!json_has(msg, ["avatar"])) return;
+            if (!json_has(msg, ["level"])) return;
+
+            key who = (key)llJsonGetValue(msg, ["avatar"]);
+            if (who != ActiveUser) return;
+
+            AclPending = FALSE;
+            AclLevel   = (integer)llJsonGetValue(msg, ["level"]);
+
+            if (in_allowed_levels(AclLevel)) {
+                show_main_menu(ActiveUser);
+            } else {
+                llRegionSayTo(ActiveUser, 0, "Access denied.");
+                send_plugin_return(ActiveUser);
+                reset_session();
             }
             return;
         }
@@ -332,6 +438,14 @@ default {
     listen(integer chan, string name, key id, string message) {
         if (chan != MenuChannel) return;
         if (id != ActiveUser) return;
+
+        /* Defense-in-depth: re-validate ACL in listener */
+        if (!in_allowed_levels(AclLevel)) {
+            llRegionSayTo(id, 0, "Access denied.");
+            send_plugin_return(id);
+            reset_session();
+            return;
+        }
 
         if (message == BTN_BACK) {
             if (MenuContext == "main") {
@@ -378,8 +492,10 @@ default {
             return;
         }
         else if (MenuContext == "info") {
-            show_main_menu(id);
-            return;
+            if (message == BTN_BACK) {
+                show_main_menu(id);
+                return;
+            }
         }
 
         show_main_menu(id);
@@ -391,16 +507,24 @@ default {
 
         list candidates = [];
         key owner = llGetOwner();
-        integer i;
-        for (i = 0; i < count; ++i) {
+        integer i = 0;
+        
+        while (i < count) {
             key k = llDetectedKey(i);
-            if (k == owner) jump continue;
-            if (k == ActiveUser) jump continue;
             string entry = (string)k;
-            if (~llListFindList(Blacklist, [entry])) jump continue;
-            if (~llListFindList(candidates, [entry])) jump continue;
-            candidates += entry;
-            @continue;
+            
+            /* Use boolean flag pattern to determine if avatar should be added */
+            integer should_add = TRUE;
+            if (k == owner) should_add = FALSE;
+            if (k == ActiveUser) should_add = FALSE;
+            if (llListFindList(Blacklist, [entry]) != -1) should_add = FALSE;
+            if (llListFindList(candidates, [entry]) != -1) should_add = FALSE;
+            
+            if (should_add) {
+                candidates += entry;
+            }
+            
+            i += 1;
         }
 
         CandidateKeys = candidates;
