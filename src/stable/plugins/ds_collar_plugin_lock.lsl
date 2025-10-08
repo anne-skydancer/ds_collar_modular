@@ -6,6 +6,7 @@
 //          - Heartbeat + soft-reset safe
 //          - AUTH ACL check (query/result) before UI
 // LSL-SAFE: No ternaries used
+// NAMING: PascalCase globals, ALL_CAPS constants, snake_case locals
 // =============================================================
 
 integer DEBUG = TRUE;
@@ -27,7 +28,7 @@ integer AUTH_RESULT_NUM      = 710; // ← Auth : {"type":"acl_result","avatar":
 integer K_PLUGIN_START       = 900; // UI → Plugins   : {"type":"plugin_start","context":...}
 integer K_PLUGIN_RETURN_NUM  = 901; // Plugins → UI   : {"type":"plugin_return","context":"core_root"}
 
-/* ---------- Shared “magic words” ---------- */
+/* ---------- Shared "magic words" ---------- */
 string CONS_TYPE_REGISTER          = "register";
 string CONS_TYPE_REGISTER_NOW      = "register_now";
 string CONS_TYPE_PLUGIN_START      = "plugin_start";
@@ -83,79 +84,82 @@ integer AclLevel     = -9999;
 key     AclAvatar    = NULL_KEY;
 
 /* ========================== Helpers ========================== */
-integer json_has(string j, list path) {
-    return (llJsonGetValue(j, path) != JSON_INVALID);
+integer json_has(string json_str, list path) {
+    return (llJsonGetValue(json_str, path) != JSON_INVALID);
 }
 
-integer logd(string s) { if (DEBUG) llOwnerSay("[LOCKING] " + s); return 0; }
+integer logd(string msg_str) { 
+    if (DEBUG) llOwnerSay("[LOCKING] " + msg_str); 
+    return 0; 
+}
 
-integer list_has_int(list L, integer v) {
+integer list_has_int(list search_list, integer value) {
     integer i = 0;
-    integer n = llGetListLength(L);
-    while (i < n) {
-        if (llList2Integer(L, i) == v) return TRUE;
+    integer list_length = llGetListLength(search_list);
+    while (i < list_length) {
+        if (llList2Integer(search_list, i) == value) return TRUE;
         i += 1;
     }
     return FALSE;
 }
 
 register_once() {
-    string j = llList2Json(JSON_OBJECT, []);
-    j = llJsonSetValue(j, ["type"],     CONS_TYPE_REGISTER);
-    j = llJsonSetValue(j, ["sn"],       (string)PLUGIN_SN);
-    j = llJsonSetValue(j, ["label"],    PLUGIN_LABEL);
-    j = llJsonSetValue(j, ["min_acl"],  (string)PLUGIN_MIN_ACL);
-    j = llJsonSetValue(j, ["context"],  PLUGIN_CONTEXT);
-    llMessageLinked(LINK_SET, K_PLUGIN_REG_REPLY, j, NULL_KEY);
+    string json_msg = llList2Json(JSON_OBJECT, []);
+    json_msg = llJsonSetValue(json_msg, ["type"],     CONS_TYPE_REGISTER);
+    json_msg = llJsonSetValue(json_msg, ["sn"],       (string)PLUGIN_SN);
+    json_msg = llJsonSetValue(json_msg, ["label"],    PLUGIN_LABEL);
+    json_msg = llJsonSetValue(json_msg, ["min_acl"],  (string)PLUGIN_MIN_ACL);
+    json_msg = llJsonSetValue(json_msg, ["context"],  PLUGIN_CONTEXT);
+    llMessageLinked(LINK_SET, K_PLUGIN_REG_REPLY, json_msg, NULL_KEY);
     logd("Registered with kernel. Label=" + PLUGIN_LABEL);
 }
 
 notify_soft_reset() {
-    string j = llList2Json(JSON_OBJECT, []);
-    j = llJsonSetValue(j, ["type"],    CONS_TYPE_PLUGIN_SOFT_RESET);
-    j = llJsonSetValue(j, ["context"], PLUGIN_CONTEXT);
-    llMessageLinked(LINK_SET, K_PLUGIN_SOFT_RESET, j, NULL_KEY);
+    string json_msg = llList2Json(JSON_OBJECT, []);
+    json_msg = llJsonSetValue(json_msg, ["type"],    CONS_TYPE_PLUGIN_SOFT_RESET);
+    json_msg = llJsonSetValue(json_msg, ["context"], PLUGIN_CONTEXT);
+    llMessageLinked(LINK_SET, K_PLUGIN_SOFT_RESET, json_msg, NULL_KEY);
 }
 
 request_settings_get() {
-    string j = llList2Json(JSON_OBJECT, []);
-    j = llJsonSetValue(j, ["type"], CONS_SETTINGS_GET);
-    llMessageLinked(LINK_SET, K_SETTINGS_QUERY, j, NULL_KEY);
+    string json_msg = llList2Json(JSON_OBJECT, []);
+    json_msg = llJsonSetValue(json_msg, ["type"], CONS_SETTINGS_GET);
+    llMessageLinked(LINK_SET, K_SETTINGS_QUERY, json_msg, NULL_KEY);
 }
 
-persist_locked(integer value01) {
-    if (value01 != 0) value01 = 1;
-    string j = llList2Json(JSON_OBJECT, []);
-    j = llJsonSetValue(j, ["type"],  CONS_SETTINGS_SET);
-    j = llJsonSetValue(j, ["key"],   KEY_LOCKED);
-    j = llJsonSetValue(j, ["value"], (string)value01);
-    llMessageLinked(LINK_SET, K_SETTINGS_QUERY, j, NULL_KEY);
-    logd("Persisted locked=" + (string)value01);
+persist_locked(integer lock_value) {
+    if (lock_value != 0) lock_value = 1;
+    string json_msg = llList2Json(JSON_OBJECT, []);
+    json_msg = llJsonSetValue(json_msg, ["type"],  CONS_SETTINGS_SET);
+    json_msg = llJsonSetValue(json_msg, ["key"],   KEY_LOCKED);
+    json_msg = llJsonSetValue(json_msg, ["value"], (string)lock_value);
+    llMessageLinked(LINK_SET, K_SETTINGS_QUERY, json_msg, NULL_KEY);
+    logd("Persisted locked=" + (string)lock_value);
 }
 
 /* ---------- AUTH ---------- */
-request_acl(key av) {
-    string j = llList2Json(JSON_OBJECT, []);
-    j = llJsonSetValue(j, ["type"],   CONS_ACL_QUERY);
-    j = llJsonSetValue(j, ["avatar"], (string)av);
-    llMessageLinked(LINK_SET, AUTH_QUERY_NUM, j, NULL_KEY);
+request_acl(key avatar_key) {
+    string json_msg = llList2Json(JSON_OBJECT, []);
+    json_msg = llJsonSetValue(json_msg, ["type"],   CONS_ACL_QUERY);
+    json_msg = llJsonSetValue(json_msg, ["avatar"], (string)avatar_key);
+    llMessageLinked(LINK_SET, AUTH_QUERY_NUM, json_msg, NULL_KEY);
 
     AclPending = TRUE;
-    AclAvatar  = av;
+    AclAvatar  = avatar_key;
     AclLevel   = -9999;
-    logd("ACL query → " + (string)av);
+    logd("ACL query → " + (string)avatar_key);
 }
 
 /* ---------- Visuals ---------- */
 set_lock_visibility(integer lock_state) {
-    integer total = llGetNumberOfPrims();
+    integer prim_count = llGetNumberOfPrims();
     integer i = 1;
-    while (i <= total) {
-        string pname = llGetLinkName(i);
-        if (pname == PRIM_LOCKED) {
+    while (i <= prim_count) {
+        string prim_name = llGetLinkName(i);
+        if (prim_name == PRIM_LOCKED) {
             if (lock_state) llSetLinkAlpha(i, 1.0, ALL_SIDES);
             else            llSetLinkAlpha(i, 0.0, ALL_SIDES);
-        } else if (pname == PRIM_UNLOCKED) {
+        } else if (prim_name == PRIM_UNLOCKED) {
             if (lock_state) llSetLinkAlpha(i, 0.0, ALL_SIDES);
             else            llSetLinkAlpha(i, 1.0, ALL_SIDES);
         }
@@ -199,16 +203,16 @@ apply_settings_sync(string msg) {
     if (llJsonGetValue(msg, ["type"]) != CONS_SETTINGS_SYNC) return;
     if (!json_has(msg, ["kv"])) return;
 
-    string kv = llJsonGetValue(msg, ["kv"]);
-    string v  = llJsonGetValue(kv, [ KEY_LOCKED ]);
-    if (v == JSON_INVALID) return;
+    string key_values = llJsonGetValue(msg, ["kv"]);
+    string value_str  = llJsonGetValue(key_values, [ KEY_LOCKED ]);
+    if (value_str == JSON_INVALID) return;
 
-    integer want = (integer)v;
-    if (want != 0) want = 1;
+    integer desired_state = (integer)value_str;
+    if (desired_state != 0) desired_state = 1;
 
-    if (Locked != want) {
-        set_lock_state(want, FALSE, TRUE);
-        logd("Settings sync applied: locked=" + (string)want);
+    if (Locked != desired_state) {
+        set_lock_state(desired_state, FALSE, TRUE);
+        logd("Settings sync applied: locked=" + (string)desired_state);
     }
 }
 
@@ -264,16 +268,16 @@ default
         if (num == K_PLUGIN_PING) {
             if (json_has(msg, ["type"]) && llJsonGetValue(msg, ["type"]) == CONS_TYPE_PLUGIN_PING) {
                 if (json_has(msg, ["context"]) && llJsonGetValue(msg, ["context"]) == PLUGIN_CONTEXT) {
-                    string pong = llList2Json(JSON_OBJECT, []);
-                    pong = llJsonSetValue(pong, ["type"],    CONS_TYPE_PLUGIN_PONG);
-                    pong = llJsonSetValue(pong, ["context"], PLUGIN_CONTEXT);
-                    llMessageLinked(LINK_SET, K_PLUGIN_PONG, pong, NULL_KEY);
+                    string json_pong = llList2Json(JSON_OBJECT, []);
+                    json_pong = llJsonSetValue(json_pong, ["type"],    CONS_TYPE_PLUGIN_PONG);
+                    json_pong = llJsonSetValue(json_pong, ["context"], PLUGIN_CONTEXT);
+                    llMessageLinked(LINK_SET, K_PLUGIN_PONG, json_pong, NULL_KEY);
                 }
             }
             return;
         }
 
-        /* Kernel: “register_now” for THIS script */
+        /* Kernel: "register_now" for THIS script */
         if (num == K_PLUGIN_REG_QUERY) {
             if (json_has(msg, ["type"]) && llJsonGetValue(msg, ["type"]) == CONS_TYPE_REGISTER_NOW) {
                 if (json_has(msg, ["script"]) && llJsonGetValue(msg, ["script"]) == llGetScriptName()) {
@@ -294,8 +298,8 @@ default
             if (!json_has(msg, ["type"])) return;
             if (llJsonGetValue(msg, ["type"]) != CONS_ACL_RESULT) return;
             if (!json_has(msg, ["avatar"])) return;
-            key who = (key)llJsonGetValue(msg, ["avatar"]);
-            if (who != AclAvatar) return;
+            key avatar_key = (key)llJsonGetValue(msg, ["avatar"]);
+            if (avatar_key != AclAvatar) return;
             if (!json_has(msg, ["level"])) return;
 
             AclPending = FALSE;
@@ -307,10 +311,10 @@ default
             } else {
                 llRegionSayTo(AclAvatar, 0, "Access denied.");
                 /* Bounce back to root */
-                string r = llList2Json(JSON_OBJECT, []);
-                r = llJsonSetValue(r, ["type"],    CONS_TYPE_PLUGIN_RETURN);
-                r = llJsonSetValue(r, ["context"], ROOT_CONTEXT);
-                llMessageLinked(LINK_SET, K_PLUGIN_RETURN_NUM, r, AclAvatar);
+                string json_return = llList2Json(JSON_OBJECT, []);
+                json_return = llJsonSetValue(json_return, ["type"],    CONS_TYPE_PLUGIN_RETURN);
+                json_return = llJsonSetValue(json_return, ["context"], ROOT_CONTEXT);
+                llMessageLinked(LINK_SET, K_PLUGIN_RETURN_NUM, json_return, AclAvatar);
                 cleanup_session();
             }
             return;
@@ -339,21 +343,23 @@ default
         }
 
         if (pressed == "Back") {
-            string r = llList2Json(JSON_OBJECT, []);
-            r = llJsonSetValue(r, ["type"],    CONS_TYPE_PLUGIN_RETURN);
-            r = llJsonSetValue(r, ["context"], ROOT_CONTEXT);
-            llMessageLinked(LINK_SET, K_PLUGIN_RETURN_NUM, r, MenuUser);
+            string json_return = llList2Json(JSON_OBJECT, []);
+            json_return = llJsonSetValue(json_return, ["type"],    CONS_TYPE_PLUGIN_RETURN);
+            json_return = llJsonSetValue(json_return, ["context"], ROOT_CONTEXT);
+            llMessageLinked(LINK_SET, K_PLUGIN_RETURN_NUM, json_return, MenuUser);
             cleanup_session();
             return;
         }
 
         if (pressed == "Lock") {
             set_lock_state(TRUE, TRUE, TRUE);
+            llRegionSayTo(id, 0, "Collar locked. Detachment prevented.");
             return;
         }
 
         if (pressed == "Unlock") {
             set_lock_state(FALSE, TRUE, TRUE);
+            llRegionSayTo(id, 0, "Collar unlocked. Detachment allowed.");
             return;
         }
     }
