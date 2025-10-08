@@ -1,5 +1,5 @@
 /* =============================================================
-   PLUGIN: ds_collar_plugin_status.lsl  (authoritative migration)
+   PLUGIN: ds_collar_plugin_status.lsl  (Optimized & Consistent)
    PURPOSE: Show collar status; Back returns to main menu
    NOTES:
      - Authoritative kernel JSON (register/heartbeat/soft-reset)
@@ -80,106 +80,133 @@ integer Chan           = 0;
 integer Listen         = 0;
 
 /* ========================== Helpers ========================== */
-integer json_has(string j, list path){
-    if (llJsonGetValue(j, path) == JSON_INVALID) return FALSE;
+integer json_has(string json_str, list path) {
+    if (llJsonGetValue(json_str, path) == JSON_INVALID) {
+        return FALSE;
+    }
     return TRUE;
 }
-integer logd(string s){ if (DEBUG) llOwnerSay("[STATUS] " + s); return 0; }
 
-/* ---------- Owner name resolution ---------- */
-integer request_owner_names(){
-    if (OwnerKey == NULL_KEY) return 0;
-    // clear old cache and start fresh queries
-    OwnerDisplay  = "";
-    OwnerDisplayQuery   = llRequestDisplayName(OwnerKey);
-    OwnerLegacyQuery = llRequestAgentData(OwnerKey, DATA_NAME);
+integer logd(string log_msg) {
+    if (DEBUG) llOwnerSay("[STATUS] " + log_msg);
     return 0;
 }
-string owner_label(){
+
+/* ---------- Owner name resolution ---------- */
+integer request_owner_names() {
+    if (OwnerKey == NULL_KEY) return 0;
+    // clear old cache and start fresh queries
+    OwnerDisplay      = "";
+    OwnerDisplayQuery = llRequestDisplayName(OwnerKey);
+    OwnerLegacyQuery  = llRequestAgentData(OwnerKey, DATA_NAME);
+    return 0;
+}
+
+string owner_label() {
     // Prefer cached display/legacy name; otherwise indicate fetching
-    string nm = OwnerDisplay;
-    if (nm == "") nm = "(fetching…)";
+    string owner_name = OwnerDisplay;
+    if (owner_name == "") {
+        owner_name = "(fetching…)";
+    }
 
     // Apply honorific if present
-    if (OwnerHonorific != ""){
-        return OwnerHonorific + " " + nm;
+    if (OwnerHonorific != "") {
+        return OwnerHonorific + " " + owner_name;
     }
-    return nm;
+    return owner_name;
 }
 
 /* ---------- Registration / soft-reset ---------- */
-integer register_self(){
-    string j = llList2Json(JSON_OBJECT, []);
-    j = llJsonSetValue(j, ["type"],    TYPE_REGISTER);
-    j = llJsonSetValue(j, ["sn"],      (string)PLUGIN_SN);
-    j = llJsonSetValue(j, ["label"],   PLUGIN_LABEL);
-    j = llJsonSetValue(j, ["min_acl"], (string)PLUGIN_MIN_ACL);
-    j = llJsonSetValue(j, ["context"], PLUGIN_CONTEXT);
-    j = llJsonSetValue(j, ["script"],  llGetScriptName());
+integer register_self() {
+    string json_obj = llList2Json(JSON_OBJECT, []);
+    json_obj = llJsonSetValue(json_obj, ["type"],    TYPE_REGISTER);
+    json_obj = llJsonSetValue(json_obj, ["sn"],      (string)PLUGIN_SN);
+    json_obj = llJsonSetValue(json_obj, ["label"],   PLUGIN_LABEL);
+    json_obj = llJsonSetValue(json_obj, ["min_acl"], (string)PLUGIN_MIN_ACL);
+    json_obj = llJsonSetValue(json_obj, ["context"], PLUGIN_CONTEXT);
+    json_obj = llJsonSetValue(json_obj, ["script"],  llGetScriptName());
     /* audience hint (omit if "all") */
-    if (REG_AUDIENCE != "" && REG_AUDIENCE != "all"){
-        j = llJsonSetValue(j, ["audience"], REG_AUDIENCE);
+    if (REG_AUDIENCE != "" && REG_AUDIENCE != "all") {
+        json_obj = llJsonSetValue(json_obj, ["audience"], REG_AUDIENCE);
     }
-    llMessageLinked(LINK_SET, K_PLUGIN_REG_REPLY, j, NULL_KEY);
+    llMessageLinked(LINK_SET, K_PLUGIN_REG_REPLY, json_obj, NULL_KEY);
     logd("Registered with kernel.");
     return 0;
 }
-integer notify_soft_reset(){
-    string j = llList2Json(JSON_OBJECT, []);
-    j = llJsonSetValue(j, ["type"],    TYPE_PLUGIN_SOFT_RESET);
-    j = llJsonSetValue(j, ["context"], PLUGIN_CONTEXT);
-    llMessageLinked(LINK_SET, K_PLUGIN_SOFT_RESET, j, NULL_KEY);
+
+integer notify_soft_reset() {
+    string json_obj = llList2Json(JSON_OBJECT, []);
+    json_obj = llJsonSetValue(json_obj, ["type"],    TYPE_PLUGIN_SOFT_RESET);
+    json_obj = llJsonSetValue(json_obj, ["context"], PLUGIN_CONTEXT);
+    llMessageLinked(LINK_SET, K_PLUGIN_SOFT_RESET, json_obj, NULL_KEY);
     return 0;
 }
 
 /* ---------- Settings I/O ---------- */
-integer request_settings_sync_once(){
-    string j = llList2Json(JSON_OBJECT, []);
-    j = llJsonSetValue(j, ["type"], TYPE_SETTINGS_GET);
-    llMessageLinked(LINK_SET, K_SETTINGS_QUERY, j, NULL_KEY);
+integer request_settings_sync_once() {
+    string json_obj = llList2Json(JSON_OBJECT, []);
+    json_obj = llJsonSetValue(json_obj, ["type"], TYPE_SETTINGS_GET);
+    llMessageLinked(LINK_SET, K_SETTINGS_QUERY, json_obj, NULL_KEY);
     return 0;
 }
-integer update_from_settings(string kv_json){
+
+integer update_from_settings(string kv_json) {
     /* defensive: expect an object */
     if (llGetSubString(kv_json, 0, 0) != "{") return 0;
 
-    key prev_owner = OwnerKey;
+    key previous_owner = OwnerKey;
 
     /* reset local mirror first */
-    OwnerKey      = NULL_KEY;
-    OwnerHonorific      = "";
-    TrusteeKeys   = [];
-    TrusteeHonorifics   = [];
-    BlacklistKeys = [];
-    PublicAccess  = FALSE;
-    Locked         = FALSE;
-    TpeMode       = FALSE;
+    OwnerKey          = NULL_KEY;
+    OwnerHonorific    = "";
+    TrusteeKeys       = [];
+    TrusteeHonorifics = [];
+    BlacklistKeys     = [];
+    PublicAccess      = FALSE;
+    Locked            = FALSE;
+    TpeMode           = FALSE;
 
-    if (json_has(kv_json, [KEY_OWNER_KEY]))      OwnerKey = (key)llJsonGetValue(kv_json, [KEY_OWNER_KEY]);
-    if (json_has(kv_json, [KEY_OWNER_HON]))      OwnerHonorific = llJsonGetValue(kv_json, [KEY_OWNER_HON]);
-
-    if (json_has(kv_json, [KEY_TRUSTEES])){
-        string v = llJsonGetValue(kv_json, [KEY_TRUSTEES]);
-        if (llGetSubString(v, 0, 0) == "[") TrusteeKeys = llJson2List(v);
+    if (json_has(kv_json, [KEY_OWNER_KEY])) {
+        OwnerKey = (key)llJsonGetValue(kv_json, [KEY_OWNER_KEY]);
     }
-    if (json_has(kv_json, [KEY_TRUSTEE_HONS])){
-        string v2 = llJsonGetValue(kv_json, [KEY_TRUSTEE_HONS]);
-        if (llGetSubString(v2, 0, 0) == "[") TrusteeHonorifics = llJson2List(v2);
-    }
-    if (json_has(kv_json, [KEY_BLACKLIST])){
-        string v3 = llJsonGetValue(kv_json, [KEY_BLACKLIST]);
-        if (llGetSubString(v3, 0, 0) == "[") BlacklistKeys = llJson2List(v3);
+    if (json_has(kv_json, [KEY_OWNER_HON])) {
+        OwnerHonorific = llJsonGetValue(kv_json, [KEY_OWNER_HON]);
     }
 
-    if (json_has(kv_json, [KEY_PUBLIC_ACCESS])) PublicAccess = (integer)llJsonGetValue(kv_json, [KEY_PUBLIC_ACCESS]);
-    if (json_has(kv_json, [KEY_LOCKED]))        Locked        = (integer)llJsonGetValue(kv_json, [KEY_LOCKED]);
-    if (json_has(kv_json, [KEY_TPE_MODE]))      TpeMode      = (integer)llJsonGetValue(kv_json, [KEY_TPE_MODE]);
+    if (json_has(kv_json, [KEY_TRUSTEES])) {
+        string trustees_json = llJsonGetValue(kv_json, [KEY_TRUSTEES]);
+        if (llGetSubString(trustees_json, 0, 0) == "[") {
+            TrusteeKeys = llJson2List(trustees_json);
+        }
+    }
+    if (json_has(kv_json, [KEY_TRUSTEE_HONS])) {
+        string honorifics_json = llJsonGetValue(kv_json, [KEY_TRUSTEE_HONS]);
+        if (llGetSubString(honorifics_json, 0, 0) == "[") {
+            TrusteeHonorifics = llJson2List(honorifics_json);
+        }
+    }
+    if (json_has(kv_json, [KEY_BLACKLIST])) {
+        string blacklist_json = llJsonGetValue(kv_json, [KEY_BLACKLIST]);
+        if (llGetSubString(blacklist_json, 0, 0) == "[") {
+            BlacklistKeys = llJson2List(blacklist_json);
+        }
+    }
+
+    if (json_has(kv_json, [KEY_PUBLIC_ACCESS])) {
+        PublicAccess = (integer)llJsonGetValue(kv_json, [KEY_PUBLIC_ACCESS]);
+    }
+    if (json_has(kv_json, [KEY_LOCKED])) {
+        Locked = (integer)llJsonGetValue(kv_json, [KEY_LOCKED]);
+    }
+    if (json_has(kv_json, [KEY_TPE_MODE])) {
+        TpeMode = (integer)llJsonGetValue(kv_json, [KEY_TPE_MODE]);
+    }
 
     // If the owner changed, clear cached name and re-request
-    if (OwnerKey != prev_owner){
+    if (OwnerKey != previous_owner) {
         LastOwnerKey = OwnerKey;
-        OwnerDisplay  = "";
-        if (OwnerKey != NULL_KEY){
+        OwnerDisplay = "";
+        if (OwnerKey != NULL_KEY) {
             request_owner_names();
         }
     }
@@ -189,7 +216,7 @@ integer update_from_settings(string kv_json){
 }
 
 /* ---------- UI plumbing ---------- */
-integer cleanup_session(){
+integer cleanup_session() {
     if (Listen != 0) llListenRemove(Listen);
     Listen = 0;
     User   = NULL_KEY;
@@ -197,68 +224,86 @@ integer cleanup_session(){
     llSetTimerEvent(0.0);
     return 0;
 }
-integer open_dialog(key avatar, string body, list buttons){
+
+integer open_dialog(key avatar_id, string dialog_body, list dialog_buttons) {
     /* pad to multiples of 3 for llDialog */
-    while ((llGetListLength(buttons) % 3) != 0) buttons += " ";
+    while ((llGetListLength(dialog_buttons) % 3) != 0) {
+        dialog_buttons += " ";
+    }
     if (Listen != 0) llListenRemove(Listen);
     Chan   = -100000 - (integer)llFrand(1000000.0);
-    Listen = llListen(Chan, "", avatar, "");
-    User   = avatar;
-    llDialog(avatar, body, buttons, Chan);
+    Listen = llListen(Chan, "", avatar_id, "");
+    User   = avatar_id;
+    llDialog(avatar_id, dialog_body, dialog_buttons, Chan);
     llSetTimerEvent((float)DIALOG_TIMEOUT);
     return TRUE;
 }
 
 /* ---------- Status text ---------- */
-string build_status_report(){
-    string s = "Collar status:\n";
+string build_status_report() {
+    string status_text = "Collar status:\n";
 
-    if (Locked) s += "🔒 Locked\n";
-    else s += "🔓 Unlocked\n";
-
-    if (TpeMode) s += "💥 TPE Mode: ON\n";
-    else s += "💥 TPE Mode: OFF\n";
-
-    if (OwnerKey != NULL_KEY){
-        s += "Owner: " + owner_label() + "\n";
+    if (Locked) {
+        status_text += "🔒 Locked\n";
     } else {
-        s += "Owner: (unowned)\n";
+        status_text += "🔓 Unlocked\n";
     }
 
-    integer tlen = llGetListLength(TrusteeKeys);
-    if (tlen > 0){
-        s += "Trustees: ";
-        integer i = 0;
-        while (i < tlen){
-            if (i != 0) s += ", ";
+    if (TpeMode) {
+        status_text += "💥 TPE Mode: ON\n";
+    } else {
+        status_text += "💥 TPE Mode: OFF\n";
+    }
+
+    if (OwnerKey != NULL_KEY) {
+        status_text += "Owner: " + owner_label() + "\n";
+    } else {
+        status_text += "Owner: (unowned)\n";
+    }
+
+    integer trustee_count = llGetListLength(TrusteeKeys);
+    if (trustee_count > 0) {
+        status_text += "Trustees: ";
+        integer trustee_idx;
+        for (trustee_idx = 0; trustee_idx < trustee_count; trustee_idx++) {
+            if (trustee_idx != 0) {
+                status_text += ", ";
+            }
             /* prefer honorific label if present, else placeholder */
-            string h = "";
-            if (i < llGetListLength(TrusteeHonorifics)) h = llList2String(TrusteeHonorifics, i);
-            if (h == "") h = "(trustee)";
-            s += h;
-            i += 1;
+            string honorific = "";
+            if (trustee_idx < llGetListLength(TrusteeHonorifics)) {
+                honorific = llList2String(TrusteeHonorifics, trustee_idx);
+            }
+            if (honorific == "") {
+                honorific = "(trustee)";
+            }
+            status_text += honorific;
         }
-        s += "\n";
+        status_text += "\n";
     } else {
-        s += "Trustees: (none)\n";
+        status_text += "Trustees: (none)\n";
     }
 
-    if (PublicAccess) s += "Public Access: ON\n";
-    else s += "Public Access: OFF\n";
+    if (PublicAccess) {
+        status_text += "Public Access: ON\n";
+    } else {
+        status_text += "Public Access: OFF\n";
+    }
 
-    return s;
+    return status_text;
 }
-integer show_menu(key avatar){
-    string report = build_status_report();
-    list buttons = [BTN_FILL, BTN_BACK, BTN_FILL];
-    integer opened = open_dialog(avatar, report, buttons);
-    logd("Menu → " + (string)avatar + " chan=" + (string)Chan);
-    return opened;
+
+integer show_menu(key avatar_id) {
+    string status_report = build_status_report();
+    list menu_buttons = [BTN_FILL, BTN_BACK, BTN_FILL];
+    integer dialog_opened = open_dialog(avatar_id, status_report, menu_buttons);
+    logd("Menu → " + (string)avatar_id + " chan=" + (string)Chan);
+    return dialog_opened;
 }
 
 /* =========================== EVENTS =========================== */
-default{
-    state_entry(){
+default {
+    state_entry() {
         cleanup_session();
         PLUGIN_SN = (integer)(llFrand(1.0e9));
         notify_soft_reset();
@@ -267,29 +312,29 @@ default{
         logd("Ready. SN=" + (string)PLUGIN_SN);
     }
 
-    link_message(integer sender, integer num, string str, key id){
+    link_message(integer sender_num, integer msg_num, string msg_str, key msg_id) {
         /* Heartbeat */
-        if (num == K_PLUGIN_PING){
-            if (json_has(str, ["type"])){
-                if (llJsonGetValue(str, ["type"]) == TYPE_PLUGIN_PING){
-                    if (json_has(str, ["context"])){
-                        if (llJsonGetValue(str, ["context"]) != PLUGIN_CONTEXT) return;
+        if (msg_num == K_PLUGIN_PING) {
+            if (json_has(msg_str, ["type"])) {
+                if (llJsonGetValue(msg_str, ["type"]) == TYPE_PLUGIN_PING) {
+                    if (json_has(msg_str, ["context"])) {
+                        if (llJsonGetValue(msg_str, ["context"]) != PLUGIN_CONTEXT) return;
                     }
-                    string pong = llList2Json(JSON_OBJECT, []);
-                    pong = llJsonSetValue(pong, ["type"],    TYPE_PLUGIN_PONG);
-                    pong = llJsonSetValue(pong, ["context"], PLUGIN_CONTEXT);
-                    llMessageLinked(LINK_SET, K_PLUGIN_PONG, pong, NULL_KEY);
+                    string pong_json = llList2Json(JSON_OBJECT, []);
+                    pong_json = llJsonSetValue(pong_json, ["type"],    TYPE_PLUGIN_PONG);
+                    pong_json = llJsonSetValue(pong_json, ["context"], PLUGIN_CONTEXT);
+                    llMessageLinked(LINK_SET, K_PLUGIN_PONG, pong_json, NULL_KEY);
                 }
             }
             return;
         }
 
         /* Settings sync */
-        if (num == K_SETTINGS_SYNC){
-            if (json_has(str, ["type"])){
-                if (llJsonGetValue(str, ["type"]) == TYPE_SETTINGS_SYNC){
-                    if (json_has(str, ["kv"])){
-                        update_from_settings(llJsonGetValue(str, ["kv"]));
+        if (msg_num == K_SETTINGS_SYNC) {
+            if (json_has(msg_str, ["type"])) {
+                if (llJsonGetValue(msg_str, ["type"]) == TYPE_SETTINGS_SYNC) {
+                    if (json_has(msg_str, ["kv"])) {
+                        update_from_settings(llJsonGetValue(msg_str, ["kv"]));
                     }
                 }
             }
@@ -297,11 +342,11 @@ default{
         }
 
         /* Kernel asks this script to re-register */
-        if (num == K_PLUGIN_REG_QUERY){
-            if (json_has(str, ["type"])){
-                if (llJsonGetValue(str, ["type"]) == TYPE_REGISTER_NOW){
-                    if (json_has(str, ["script"])){
-                        if (llJsonGetValue(str, ["script"]) != llGetScriptName()) return;
+        if (msg_num == K_PLUGIN_REG_QUERY) {
+            if (json_has(msg_str, ["type"])) {
+                if (llJsonGetValue(msg_str, ["type"]) == TYPE_REGISTER_NOW) {
+                    if (json_has(msg_str, ["script"])) {
+                        if (llJsonGetValue(msg_str, ["script"]) != llGetScriptName()) return;
                     }
                     register_self();
                 }
@@ -310,31 +355,31 @@ default{
         }
 
         /* UI start: open the status menu (no AUTH gate) */
-        if (num == K_PLUGIN_START){
-            if (json_has(str, ["context"])){
-                if (llJsonGetValue(str, ["context"]) == PLUGIN_CONTEXT){
+        if (msg_num == K_PLUGIN_START) {
+            if (json_has(msg_str, ["context"])) {
+                if (llJsonGetValue(msg_str, ["context"]) == PLUGIN_CONTEXT) {
                     // If we don't have a cached owner display yet, (re)request it
-                    if (OwnerKey != NULL_KEY && OwnerDisplay == ""){
+                    if (OwnerKey != NULL_KEY && OwnerDisplay == "") {
                         request_owner_names();
                     }
-                    show_menu(id);
+                    show_menu(msg_id);
                 }
             }
             return;
         }
     }
 
-    dataserver(key query_id, string data){
+    dataserver(key query_id, string data) {
         // Display Name arrives here; legacy name too
-        if (query_id == OwnerDisplayQuery){
+        if (query_id == OwnerDisplayQuery) {
             OwnerDisplayQuery = NULL_KEY;
-            if (data != "" && data != "???" && OwnerKey != NULL_KEY){
+            if (data != "" && data != "???" && OwnerKey != NULL_KEY) {
                 OwnerDisplay = data;
             }
-        } else if (query_id == OwnerLegacyQuery){
+        } else if (query_id == OwnerLegacyQuery) {
             OwnerLegacyQuery = NULL_KEY;
             // Only take legacy if display name didn't resolve
-            if (OwnerDisplay == "" && data != "" && OwnerKey != NULL_KEY){
+            if (OwnerDisplay == "" && data != "" && OwnerKey != NULL_KEY) {
                 OwnerDisplay = data;
             }
         } else {
@@ -342,20 +387,20 @@ default{
         }
 
         // If a user has the menu open, refresh it with the resolved name
-        if (User != NULL_KEY && Listen != 0){
+        if (User != NULL_KEY && Listen != 0) {
             show_menu(User);
         }
     }
 
-    listen(integer channel, string name, key id, string msg){
-        if (channel != Chan) return;
-        if (id != User) return;
+    listen(integer listen_chan, string speaker_name, key speaker_id, string button_msg) {
+        if (listen_chan != Chan) return;
+        if (speaker_id != User) return;
 
-        if (msg == BTN_BACK){
-            string j = llList2Json(JSON_OBJECT, []);
-            j = llJsonSetValue(j, ["type"],    TYPE_PLUGIN_RETURN);
-            j = llJsonSetValue(j, ["context"], ROOT_CONTEXT);
-            llMessageLinked(LINK_SET, K_PLUGIN_RETURN_NUM, j, id);
+        if (button_msg == BTN_BACK) {
+            string return_json = llList2Json(JSON_OBJECT, []);
+            return_json = llJsonSetValue(return_json, ["type"],    TYPE_PLUGIN_RETURN);
+            return_json = llJsonSetValue(return_json, ["context"], ROOT_CONTEXT);
+            llMessageLinked(LINK_SET, K_PLUGIN_RETURN_NUM, return_json, speaker_id);
             cleanup_session();
             return;
         }
@@ -364,9 +409,11 @@ default{
         cleanup_session();
     }
 
-    timer(){ cleanup_session(); }
+    timer() {
+        cleanup_session();
+    }
 
-    changed(integer change){
-        if (change & CHANGED_OWNER) llResetScript();
+    changed(integer change_flags) {
+        if (change_flags & CHANGED_OWNER) llResetScript();
     }
 }
