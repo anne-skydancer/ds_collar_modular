@@ -1,7 +1,7 @@
 // =============================================================
-//  PLUGIN: ds_collar_plugin_rlv_exceptions.lsl (Canonical, DS Collar 1.4+)
-//  PURPOSE: RLV Owner/Trustee Exceptions, persistent, canonical protocol
-//  DATE:    2025-08-01 (Flat "Back" routing as specified, full compliance)
+//  PLUGIN: ds_collar_plugin_rlvexceptions.lsl (Enhanced with RLV enforcement)
+//  PURPOSE: RLV Owner/Trustee Exceptions, persistent, with actual RLV command enforcement
+//  DATE:    2025-10-08 (Enhanced to apply actual RLV commands)
 // =============================================================
 
 integer DEBUG = TRUE;
@@ -45,11 +45,19 @@ integer ExOwnerTp      = TRUE;   // Owner force TP allowed
 integer ExTrusteeIm    = TRUE;   // Trustee IM allowed
 integer ExTrusteeTp    = FALSE;  // Trustee TP allowed (default FALSE!)
 
-// Settings keys
+// Settings keys for exceptions
 string EX_OWNER_IM_KEY      = "ex_owner_im";
 string EX_OWNER_TP_KEY      = "ex_owner_tp";
 string EX_TRUSTEE_IM_KEY    = "ex_trustee_im";
 string EX_TRUSTEE_TP_KEY    = "ex_trustee_tp";
+
+// Settings keys for owner/trustees (to track who gets exceptions)
+string KEY_OWNER_KEY        = "owner_key";
+string KEY_TRUSTEES         = "trustees";
+
+// Cached owner/trustee data
+key  OwnerKey               = NULL_KEY;
+list TrusteeList            = [];
 
 // Session helpers (Animate/Status)
 list    Sessions;
@@ -89,6 +97,87 @@ integer json_has(string j, list path)
     return TRUE;
 }
 
+integer logd(string s) { if (DEBUG) llOwnerSay("[RLVEX] " + s); return 0; }
+
+// ===== RLV COMMAND ENFORCEMENT =====
+
+// Apply @accepttp and @tplure for a specific avatar based on exception settings
+integer apply_tp_exceptions(key who, integer allow)
+{
+    if (who == NULL_KEY) return FALSE;
+    
+    if (allow) {
+        llOwnerSay("@accepttp:" + (string)who + "=add");
+        llOwnerSay("@tplure:" + (string)who + "=add");
+        logd("Applied TP exceptions for " + (string)who);
+    } else {
+        llOwnerSay("@accepttp:" + (string)who + "=rem");
+        llOwnerSay("@tplure:" + (string)who + "=rem");
+        logd("Removed TP exceptions for " + (string)who);
+    }
+    return TRUE;
+}
+
+// Apply @sendim and @recvim for a specific avatar based on exception settings
+integer apply_im_exceptions(key who, integer allow)
+{
+    if (who == NULL_KEY) return FALSE;
+    
+    if (allow) {
+        llOwnerSay("@sendim:" + (string)who + "=add");
+        llOwnerSay("@recvim:" + (string)who + "=add");
+        logd("Applied IM exceptions for " + (string)who);
+    } else {
+        llOwnerSay("@sendim:" + (string)who + "=rem");
+        llOwnerSay("@recvim:" + (string)who + "=rem");
+        logd("Removed IM exceptions for " + (string)who);
+    }
+    return TRUE;
+}
+
+// Reconcile ALL RLV exceptions based on current settings
+integer reconcile_all_exceptions()
+{
+    logd("Reconciling all RLV exceptions...");
+    
+    // Owner exceptions
+    if (OwnerKey != NULL_KEY) {
+        apply_tp_exceptions(OwnerKey, ExOwnerTp);
+        apply_im_exceptions(OwnerKey, ExOwnerIm);
+    }
+    
+    // Trustee exceptions
+    integer i = 0;
+    integer n = llGetListLength(TrusteeList);
+    while (i < n) {
+        key trustee = (key)llList2String(TrusteeList, i);
+        if (trustee != NULL_KEY) {
+            apply_tp_exceptions(trustee, ExTrusteeTp);
+            apply_im_exceptions(trustee, ExTrusteeIm);
+        }
+        i++;
+    }
+    
+    logd("Reconciliation complete.");
+    return TRUE;
+}
+
+// Clear all exceptions for a specific person (when they're removed from owner/trustee)
+integer clear_all_exceptions_for(key who)
+{
+    if (who == NULL_KEY) return FALSE;
+    
+    llOwnerSay("@accepttp:" + (string)who + "=rem");
+    llOwnerSay("@tplure:" + (string)who + "=rem");
+    llOwnerSay("@sendim:" + (string)who + "=rem");
+    llOwnerSay("@recvim:" + (string)who + "=rem");
+    
+    logd("Cleared all exceptions for " + (string)who);
+    return TRUE;
+}
+
+// ===== REGISTRATION & SETTINGS =====
+
 integer register_plugin()
 {
     string payload = llList2Json(JSON_OBJECT, []);
@@ -99,7 +188,7 @@ integer register_plugin()
     payload = llJsonSetValue(payload, ["context"], PLUGIN_CONTEXT);
     payload = llJsonSetValue(payload, ["script"],  llGetScriptName());
     llMessageLinked(LINK_SET, K_PLUGIN_REG_REPLY, payload, NULL_KEY);
-    if (DEBUG) llOwnerSay("[RLVEX] Registered → kernel.");
+    logd("Registered → kernel.");
     return TRUE;
 }
 
@@ -108,7 +197,7 @@ integer request_settings_get()
     string payload = llList2Json(JSON_OBJECT, []);
     payload = llJsonSetValue(payload, ["type"], TYPE_SETTINGS_GET);
     llMessageLinked(LINK_SET, K_SETTINGS_QUERY, payload, NULL_KEY);
-    if (DEBUG) llOwnerSay("[RLVEX] Requested settings_get.");
+    logd("Requested settings_get.");
     return TRUE;
 }
 
@@ -120,7 +209,7 @@ integer persist_exception(string pname, integer value)
     payload = llJsonSetValue(payload, ["key"],   pname);
     payload = llJsonSetValue(payload, ["value"], (string)value);
     llMessageLinked(LINK_SET, K_SETTINGS_QUERY, payload, NULL_KEY);
-    if (DEBUG) llOwnerSay("[RLVEX] Persisted: " + pname + "=" + (string)value);
+    logd("Persisted: " + pname + "=" + (string)value);
     return TRUE;
 }
 
@@ -131,35 +220,83 @@ integer apply_settings_sync(string payload)
     if (!json_has(payload, ["kv"])) return FALSE;
 
     string kv = llJsonGetValue(payload, ["kv"]);
-
     string value;
+    
+    // Store previous owner/trustees to detect changes
+    key prev_owner = OwnerKey;
+    list prev_trustees = TrusteeList;
 
+    // Load owner/trustees
+    value = llJsonGetValue(kv, [KEY_OWNER_KEY]);
+    if (value != JSON_INVALID) {
+        OwnerKey = (key)value;
+    } else {
+        OwnerKey = NULL_KEY;
+    }
+    
+    value = llJsonGetValue(kv, [KEY_TRUSTEES]);
+    if (value != JSON_INVALID && llGetSubString(value, 0, 0) == "[") {
+        TrusteeList = llJson2List(value);
+    } else {
+        TrusteeList = [];
+    }
+
+    // Load exception settings
     value = llJsonGetValue(kv, [EX_OWNER_IM_KEY]);
     if (value != JSON_INVALID) {
-        if ((integer)value != 0) ExOwnerIm = TRUE; else ExOwnerIm = FALSE;
+        ExOwnerIm = ((integer)value != 0);
     }
 
     value = llJsonGetValue(kv, [EX_OWNER_TP_KEY]);
     if (value != JSON_INVALID) {
-        if ((integer)value != 0) ExOwnerTp = TRUE; else ExOwnerTp = FALSE;
+        ExOwnerTp = ((integer)value != 0);
     }
 
     value = llJsonGetValue(kv, [EX_TRUSTEE_IM_KEY]);
     if (value != JSON_INVALID) {
-        if ((integer)value != 0) ExTrusteeIm = TRUE; else ExTrusteeIm = FALSE;
+        ExTrusteeIm = ((integer)value != 0);
     }
 
     value = llJsonGetValue(kv, [EX_TRUSTEE_TP_KEY]);
     if (value != JSON_INVALID) {
-        if ((integer)value != 0) ExTrusteeTp = TRUE; else ExTrusteeTp = FALSE;
+        ExTrusteeTp = ((integer)value != 0);
     }
 
-    if (DEBUG) {
-        llOwnerSay("[RLVEX] Settings sync: ownerIM=" + (string)ExOwnerIm +
-                   " ownerTP=" + (string)ExOwnerTp +
-                   " trusteeIM=" + (string)ExTrusteeIm +
-                   " trusteeTP=" + (string)ExTrusteeTp);
+    logd("Settings sync: owner=" + (string)OwnerKey + 
+         " trustees=" + (string)llGetListLength(TrusteeList) +
+         " ownerIM=" + (string)ExOwnerIm +
+         " ownerTP=" + (string)ExOwnerTp +
+         " trusteeIM=" + (string)ExTrusteeIm +
+         " trusteeTP=" + (string)ExTrusteeTp);
+
+    // Handle owner change
+    if (prev_owner != OwnerKey) {
+        if (prev_owner != NULL_KEY) {
+            clear_all_exceptions_for(prev_owner);
+        }
+        if (OwnerKey != NULL_KEY) {
+            apply_tp_exceptions(OwnerKey, ExOwnerTp);
+            apply_im_exceptions(OwnerKey, ExOwnerIm);
+        }
+    } else if (OwnerKey != NULL_KEY) {
+        // Owner unchanged but settings might have changed
+        apply_tp_exceptions(OwnerKey, ExOwnerTp);
+        apply_im_exceptions(OwnerKey, ExOwnerIm);
     }
+    
+    // Handle trustee changes - this is simplified; a full diff would be better
+    // For now, reconcile all trustees
+    integer i = 0;
+    integer n = llGetListLength(TrusteeList);
+    while (i < n) {
+        key trustee = (key)llList2String(TrusteeList, i);
+        if (trustee != NULL_KEY) {
+            apply_tp_exceptions(trustee, ExTrusteeTp);
+            apply_im_exceptions(trustee, ExTrusteeIm);
+        }
+        i++;
+    }
+    
     return TRUE;
 }
 
@@ -169,7 +306,7 @@ integer send_plugin_return(key user)
     payload = llJsonSetValue(payload, ["type"],    TYPE_PLUGIN_RETURN);
     payload = llJsonSetValue(payload, ["context"], ROOT_CONTEXT);
     llMessageLinked(LINK_SET, K_PLUGIN_RETURN, payload, user);
-    if (DEBUG) llOwnerSay("[RLVEX] Return → root for " + (string)user);
+    logd("Return → root for " + (string)user);
     return TRUE;
 }
 
@@ -183,8 +320,9 @@ show_main_menu(key user)
 
     string msg = "RLV Exceptions Menu\nChoose Owner or Trustee exceptions to manage.";
     llDialog(user, msg, btns, menu_chan);
-    if (DEBUG) llOwnerSay("[RLVEX] Main menu → " + (string)user + " chan=" + (string)menu_chan);
+    logd("Main menu → " + (string)user + " chan=" + (string)menu_chan);
 }
+
 show_owner_menu(key user)
 {
     list btns = ["~", "Back", "~", "IM", "~", "TP"];
@@ -194,8 +332,9 @@ show_owner_menu(key user)
 
     string msg = "Owner Exceptions:\nChoose which exception to edit.";
     llDialog(user, msg, btns, menu_chan);
-    if (DEBUG) llOwnerSay("[RLVEX] Owner menu → " + (string)user + " chan=" + (string)menu_chan);
+    logd("Owner menu → " + (string)user + " chan=" + (string)menu_chan);
 }
+
 show_trustee_menu(key user)
 {
     list btns = ["~", "Back", "~", "IM", "~", "TP"];
@@ -205,7 +344,7 @@ show_trustee_menu(key user)
 
     string msg = "Trustee Exceptions:\nChoose which exception to edit.";
     llDialog(user, msg, btns, menu_chan);
-    if (DEBUG) llOwnerSay("[RLVEX] Trustee menu → " + (string)user + " chan=" + (string)menu_chan);
+    logd("Trustee menu → " + (string)user + " chan=" + (string)menu_chan);
 }
 
 show_exception_menu(key user, string ctx, string persist_key, string plus_label, string minus_label, integer current_val)
@@ -230,7 +369,7 @@ show_exception_menu(key user, string ctx, string persist_key, string plus_label,
         msg += "Current: DENIED\n";
     msg += "\nChoose to allow (+) or deny (-).";
     llDialog(user, msg, btns, menu_chan);
-    if (DEBUG) llOwnerSay("[RLVEX] Exception menu ("+ctx+") → " + (string)user + " chan=" + (string)menu_chan);
+    logd("Exception menu ("+ctx+") → " + (string)user + " chan=" + (string)menu_chan);
 }
 
 // --- MAIN EVENT LOOP ---
@@ -242,7 +381,7 @@ default
         register_plugin();
         request_settings_get();
 
-        if (DEBUG) llOwnerSay("[RLVEX] Ready, SN=" + (string)PLUGIN_SN);
+        logd("Ready, SN=" + (string)PLUGIN_SN);
     }
 
     link_message(integer sender, integer num, string str, key id)
@@ -335,52 +474,84 @@ default
             else if (ctx == CTX_OWNER_IM || ctx == CTX_OWNER_TP ||
                      ctx == CTX_TRUSTEE_IM || ctx == CTX_TRUSTEE_TP) {
 
-                // For any exception +/- button, update value and show this menu again
+                // For any exception +/- button, update value, apply immediately, and show menu again
                 if (msg == "Owner IM +" && ctx == CTX_OWNER_IM) {
                     ExOwnerIm = TRUE;
                     persist_exception(EX_OWNER_IM_KEY, ExOwnerIm);
+                    if (OwnerKey != NULL_KEY) apply_im_exceptions(OwnerKey, ExOwnerIm);
                     show_exception_menu(id, CTX_OWNER_IM, EX_OWNER_IM_KEY, "Owner IM +", "Owner IM -", ExOwnerIm);
                     return;
                 }
                 if (msg == "Owner IM -" && ctx == CTX_OWNER_IM) {
                     ExOwnerIm = FALSE;
                     persist_exception(EX_OWNER_IM_KEY, ExOwnerIm);
+                    if (OwnerKey != NULL_KEY) apply_im_exceptions(OwnerKey, ExOwnerIm);
                     show_exception_menu(id, CTX_OWNER_IM, EX_OWNER_IM_KEY, "Owner IM +", "Owner IM -", ExOwnerIm);
                     return;
                 }
                 if (msg == "Owner TP +" && ctx == CTX_OWNER_TP) {
                     ExOwnerTp = TRUE;
                     persist_exception(EX_OWNER_TP_KEY, ExOwnerTp);
+                    if (OwnerKey != NULL_KEY) apply_tp_exceptions(OwnerKey, ExOwnerTp);
                     show_exception_menu(id, CTX_OWNER_TP, EX_OWNER_TP_KEY, "Owner TP +", "Owner TP -", ExOwnerTp);
                     return;
                 }
                 if (msg == "Owner TP -" && ctx == CTX_OWNER_TP) {
                     ExOwnerTp = FALSE;
                     persist_exception(EX_OWNER_TP_KEY, ExOwnerTp);
+                    if (OwnerKey != NULL_KEY) apply_tp_exceptions(OwnerKey, ExOwnerTp);
                     show_exception_menu(id, CTX_OWNER_TP, EX_OWNER_TP_KEY, "Owner TP +", "Owner TP -", ExOwnerTp);
                     return;
                 }
                 if (msg == "Trust IM +" && ctx == CTX_TRUSTEE_IM) {
                     ExTrusteeIm = TRUE;
                     persist_exception(EX_TRUSTEE_IM_KEY, ExTrusteeIm);
+                    // Apply to all trustees
+                    integer i = 0;
+                    while (i < llGetListLength(TrusteeList)) {
+                        key t = (key)llList2String(TrusteeList, i);
+                        if (t != NULL_KEY) apply_im_exceptions(t, ExTrusteeIm);
+                        i++;
+                    }
                     show_exception_menu(id, CTX_TRUSTEE_IM, EX_TRUSTEE_IM_KEY, "Trust IM +", "Trust IM -", ExTrusteeIm);
                     return;
                 }
                 if (msg == "Trust IM -" && ctx == CTX_TRUSTEE_IM) {
                     ExTrusteeIm = FALSE;
                     persist_exception(EX_TRUSTEE_IM_KEY, ExTrusteeIm);
+                    // Apply to all trustees
+                    integer i = 0;
+                    while (i < llGetListLength(TrusteeList)) {
+                        key t = (key)llList2String(TrusteeList, i);
+                        if (t != NULL_KEY) apply_im_exceptions(t, ExTrusteeIm);
+                        i++;
+                    }
                     show_exception_menu(id, CTX_TRUSTEE_IM, EX_TRUSTEE_IM_KEY, "Trust IM +", "Trust IM -", ExTrusteeIm);
                     return;
                 }
                 if (msg == "Trust TP +" && ctx == CTX_TRUSTEE_TP) {
                     ExTrusteeTp = TRUE;
                     persist_exception(EX_TRUSTEE_TP_KEY, ExTrusteeTp);
+                    // Apply to all trustees
+                    integer i = 0;
+                    while (i < llGetListLength(TrusteeList)) {
+                        key t = (key)llList2String(TrusteeList, i);
+                        if (t != NULL_KEY) apply_tp_exceptions(t, ExTrusteeTp);
+                        i++;
+                    }
                     show_exception_menu(id, CTX_TRUSTEE_TP, EX_TRUSTEE_TP_KEY, "Trust TP +", "Trust TP -", ExTrusteeTp);
                     return;
                 }
                 if (msg == "Trust TP -" && ctx == CTX_TRUSTEE_TP) {
                     ExTrusteeTp = FALSE;
                     persist_exception(EX_TRUSTEE_TP_KEY, ExTrusteeTp);
+                    // Apply to all trustees
+                    integer i = 0;
+                    while (i < llGetListLength(TrusteeList)) {
+                        key t = (key)llList2String(TrusteeList, i);
+                        if (t != NULL_KEY) apply_tp_exceptions(t, ExTrusteeTp);
+                        i++;
+                    }
                     show_exception_menu(id, CTX_TRUSTEE_TP, EX_TRUSTEE_TP_KEY, "Trust TP +", "Trust TP -", ExTrusteeTp);
                     return;
                 }
