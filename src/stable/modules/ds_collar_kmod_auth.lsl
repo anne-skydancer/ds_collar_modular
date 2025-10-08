@@ -139,7 +139,8 @@ integer compute_acl_level(key av){
     integer is_wearer = (av == WearerKey);
     if (is_wearer){
         if (TpeMode) return ACL_NOACCESS;
-        return (OwnerKey != NULL_KEY) ? ACL_OWNED : ACL_UNOWNED;
+        if (OwnerKey != NULL_KEY) return ACL_OWNED;
+        return ACL_UNOWNED;
     }
     
     // Check trustee
@@ -149,7 +150,8 @@ integer compute_acl_level(key av){
     if (list_has_key(Blacklist, av)) return ACL_BLACKLIST;
     
     // Public or blacklist based on public mode
-    return PublicMode ? ACL_PUBLIC : ACL_BLACKLIST;
+    if (PublicMode) return ACL_PUBLIC;
+    return ACL_BLACKLIST;
 }
 
 /* ---------- Central policy emission ---------- */
