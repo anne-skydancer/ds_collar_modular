@@ -105,9 +105,9 @@ integer withinRange(key av){
 }
 
 /* OPTIMIZED: Extract boolean flags from JSON with default FALSE */
-integer extractBoolFlag(string json, string key){
-    if (llJsonValueType(json, [key]) != JSON_INVALID){
-        return (integer)llJsonGetValue(json, [key]);
+integer extractBoolFlag(string json, string field_name){
+    if (llJsonValueType(json, [field_name]) != JSON_INVALID){
+        return (integer)llJsonGetValue(json, [field_name]);
     }
     return FALSE;
 }
@@ -137,37 +137,34 @@ integer parseRegistry(string j){
         string context = llJsonGetValue(j, ["plugins", i, "context"]);
         string mv = llJsonGetValue(j, ["plugins", i, "min_acl"]);
 
-        /* Skip invalid entries */
-        if (label == "" || context == "" || mv == JSON_INVALID){
-            ++i;
-            continue;
-        }
+        /* Process only valid entries */
+        if (label != "" && context != "" && mv != JSON_INVALID){
+            integer min_acl = (integer)mv;
+            if (min_acl < 0) min_acl = 0;
+            if (min_acl > 5) min_acl = 5;
 
-        integer min_acl = (integer)mv;
-        if (min_acl < 0) min_acl = 0;
-        if (min_acl > 5) min_acl = 5;
+            /* Extract optional fields with defaults */
+            integer has_tpe = FALSE;
+            integer tpe_min = 999;   /* sentinel: not declared */
+            string label_tpe = "";
+            string audience = "all";
 
-        /* Extract optional fields with defaults */
-        integer has_tpe = FALSE;
-        integer tpe_min = 999;   /* sentinel: not declared */
-        string label_tpe = "";
-        string audience = "all";
-
-        if (llJsonValueType(j, ["plugins", i, "tpe_min_acl"]) != JSON_INVALID){
-            tpe_min = (integer)llJsonGetValue(j, ["plugins", i, "tpe_min_acl"]);
-            has_tpe = TRUE;
-        }
-        if (llJsonValueType(j, ["plugins", i, "label_tpe"]) != JSON_INVALID){
-            label_tpe = llJsonGetValue(j, ["plugins", i, "label_tpe"]);
-        }
-        if (llJsonValueType(j, ["plugins", i, "audience"]) != JSON_INVALID){
-            string a = llJsonGetValue(j, ["plugins", i, "audience"]);
-            if (a == "wearer_only" || a == "non_wearer_only" || a == "all"){
-                audience = a;
+            if (llJsonValueType(j, ["plugins", i, "tpe_min_acl"]) != JSON_INVALID){
+                tpe_min = (integer)llJsonGetValue(j, ["plugins", i, "tpe_min_acl"]);
+                has_tpe = TRUE;
             }
-        }
+            if (llJsonValueType(j, ["plugins", i, "label_tpe"]) != JSON_INVALID){
+                label_tpe = llJsonGetValue(j, ["plugins", i, "label_tpe"]);
+            }
+            if (llJsonValueType(j, ["plugins", i, "audience"]) != JSON_INVALID){
+                string a = llJsonGetValue(j, ["plugins", i, "audience"]);
+                if (a == "wearer_only" || a == "non_wearer_only" || a == "all"){
+                    audience = a;
+                }
+            }
 
-        All += [label, context, min_acl, has_tpe, label_tpe, tpe_min, audience];
+            All += [label, context, min_acl, has_tpe, label_tpe, tpe_min, audience];
+        }
         ++i;
     }
     
@@ -333,8 +330,20 @@ list buttonsForPage(integer page){
 
     /* Add navigation buttons if multi-page */
     if (pages > 1){
-        string left_btn = (page > 0) ? BTN_NAV_LEFT : BTN_NAV_GAP;
-        string right_btn = (page < pages - 1) ? BTN_NAV_RIGHT : BTN_NAV_GAP;
+        string left_btn;
+        if (page > 0){
+            left_btn = BTN_NAV_LEFT;
+        } else {
+            left_btn = BTN_NAV_GAP;
+        }
+        
+        string right_btn;
+        if (page < pages - 1){
+            right_btn = BTN_NAV_RIGHT;
+        } else {
+            right_btn = BTN_NAV_GAP;
+        }
+        
         btns = [left_btn, BTN_NAV_GAP, right_btn] + btns;
     }
     
