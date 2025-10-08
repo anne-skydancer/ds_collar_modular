@@ -1,7 +1,12 @@
 /* =============================================================
    PLUGIN: ds_collar_plugin_owner.lsl  (New Kernel ABI, JSON)
    ROLE  : Owner Control & Management (RLV exceptions handled by separate plugin)
-   DATE  : 2025-10-08 (Cleaned - RLV code removed)
+   DATE  : 2025-10-08 (Optimized - Security hardened)
+   NOTES : Two-party consent flows for ownership changes
+           - Add Owner: Candidate chooses honorific → Wearer confirms
+           - Transfer: New candidate chooses honorific → Confirms
+           - Release: Owner initiates → Wearer confirms
+           - Runaway: Wearer-only action
    ============================================================= */
 
 integer DEBUG = TRUE;
@@ -41,7 +46,7 @@ string KEY_LOCKED_FLAG             = "locked";
 string  PLUGIN_CONTEXT   = "core_owner";
 string  ROOT_CONTEXT     = "core_root";
 string  PLUGIN_LABEL     = "Owner";
-integer PLUGIN_SN        = 0;
+integer PluginSn         = 0;
 integer PLUGIN_MIN_ACL   = 2;
 
 integer ACL_BLACKLIST        = -1;
@@ -55,23 +60,24 @@ integer ACL_PRIMARY_OWNER    = 5;
 list ALLOWED_ACL_LEVELS = [ACL_OWNED, ACL_UNOWNED, ACL_PRIMARY_OWNER];
 
 integer DIALOG_TIMEOUT_SEC = 180;
+
 key     User             = NULL_KEY;
 integer Listen           = 0;
-integer MenuChan        = 0;
-integer AclPending = FALSE;
-integer AclLevel   = ACL_NOACCESS;
+integer MenuChan         = 0;
+integer AclPending       = FALSE;
+integer AclLevel         = ACL_NOACCESS;
 
 key     CollarOwner            = NULL_KEY;
-string  CollarOwnerHonorific  = "";
+string  CollarOwnerHonorific   = "";
 integer CollarLocked           = FALSE;
-integer CollarPublicAccess    = FALSE;
+integer CollarPublicAccess     = FALSE;
 list    CollarTrustees         = [];
 list    CollarTrusteeHonorifics = [];
 
 string  CollarOwnerDisplay     = "";
 string  CollarOwnerLegacy      = "";
 key     CollarOwnerDisplayQuery = NULL_KEY;
-key     CollarOwnerLegacyQuery = NULL_KEY;
+key     CollarOwnerLegacyQuery  = NULL_KEY;
 
 string UiContext = "";
 string UiParam1  = "";
@@ -83,11 +89,19 @@ integer json_has(string j, list path) {
     if (v == JSON_INVALID) return FALSE;
     return TRUE;
 }
-integer logd(string s) { if (DEBUG) llOwnerSay("[OWNER] " + s); return 0; }
 
-list owner_honorifics() { return ["Master","Mistress","Daddy","Mommy","King","Queen"]; }
+integer logd(string s) { 
+    if (DEBUG) llOwnerSay("[OWNER] " + s); 
+    return 0; 
+}
 
-string wearer_display_name() { return llKey2Name(llGetOwner()); }
+list owner_honorifics() { 
+    return ["Master", "Mistress", "Daddy", "Mommy", "King", "Queen"]; 
+}
+
+string wearer_display_name() { 
+    return llKey2Name(llGetOwner()); 
+}
 
 string candidate_display_name(key k) {
     if (k == CollarOwner) {
@@ -130,7 +144,7 @@ integer request_owner_name_cache() {
 integer register_plugin() {
     string j = llList2Json(JSON_OBJECT, []);
     j = llJsonSetValue(j, ["type"],     CONS_TYPE_REGISTER);
-    j = llJsonSetValue(j, ["sn"],       (string)PLUGIN_SN);
+    j = llJsonSetValue(j, ["sn"],       (string)PluginSn);
     j = llJsonSetValue(j, ["label"],    PLUGIN_LABEL);
     j = llJsonSetValue(j, ["min_acl"],  (string)PLUGIN_MIN_ACL);
     j = llJsonSetValue(j, ["context"],  PLUGIN_CONTEXT);
@@ -149,7 +163,7 @@ integer notify_soft_reset() {
 }
 
 integer in_allowed_levels(integer lvl) {
-    if (~llListFindList(ALLOWED_ACL_LEVELS, [lvl])) return TRUE;
+    if (llListFindList(ALLOWED_ACL_LEVELS, [lvl]) != -1) return TRUE;
     return FALSE;
 }
 
@@ -189,8 +203,10 @@ integer push_settings() {
     settings_set_scalar(KEY_OWNER_HON, hon);
     settings_set_list(KEY_TRUSTEES, CollarTrustees);
     settings_set_list(KEY_TRUSTEE_HONS, CollarTrusteeHonorifics);
-    string pub = "0"; if (CollarPublicAccess) pub = "1";
-    string lck = "0"; if (CollarLocked)        lck = "1";
+    string pub = "0"; 
+    if (CollarPublicAccess) pub = "1";
+    string lck = "0"; 
+    if (CollarLocked) lck = "1";
     settings_set_scalar(KEY_PUBLIC_MODE, pub);
     settings_set_scalar(KEY_LOCKED_FLAG, lck);
     logd("Settings pushed via kernel set operations.");
@@ -198,28 +214,46 @@ integer push_settings() {
 }
 
 integer apply_owner_settings_payload(string payload) {
-    if (json_has(payload, [KEY_OWNER_KEY]))  CollarOwner = (key)llJsonGetValue(payload, [KEY_OWNER_KEY]);
-    else if (json_has(payload, [KEY_OWNER_LEGACY])) CollarOwner = (key)llJsonGetValue(payload, [KEY_OWNER_LEGACY]);
-    if (json_has(payload, [KEY_OWNER_HON]))  CollarOwnerHonorific = llJsonGetValue(payload, [KEY_OWNER_HON]);
-    else if (json_has(payload, ["owner_hon"])) CollarOwnerHonorific = llJsonGetValue(payload, ["owner_hon"]);
+    if (json_has(payload, [KEY_OWNER_KEY])) {
+        CollarOwner = (key)llJsonGetValue(payload, [KEY_OWNER_KEY]);
+    } else if (json_has(payload, [KEY_OWNER_LEGACY])) {
+        CollarOwner = (key)llJsonGetValue(payload, [KEY_OWNER_LEGACY]);
+    }
+    
+    if (json_has(payload, [KEY_OWNER_HON])) {
+        CollarOwnerHonorific = llJsonGetValue(payload, [KEY_OWNER_HON]);
+    } else if (json_has(payload, ["owner_hon"])) {
+        CollarOwnerHonorific = llJsonGetValue(payload, ["owner_hon"]);
+    }
+    
     if (json_has(payload, [KEY_TRUSTEES])) {
         string arr = llJsonGetValue(payload, [KEY_TRUSTEES]);
         if (llGetSubString(arr, 0, 0) == "[") CollarTrustees = llJson2List(arr);
     } else if (json_has(payload, ["trustees"])) {
-        string arrLegacy = llJsonGetValue(payload, ["trustees"]);
-        if (llGetSubString(arrLegacy, 0, 0) == "[") CollarTrustees = llJson2List(arrLegacy);
+        string arr_legacy = llJsonGetValue(payload, ["trustees"]);
+        if (llGetSubString(arr_legacy, 0, 0) == "[") CollarTrustees = llJson2List(arr_legacy);
     }
+    
     if (json_has(payload, [KEY_TRUSTEE_HONS])) {
         string arrh = llJsonGetValue(payload, [KEY_TRUSTEE_HONS]);
         if (llGetSubString(arrh, 0, 0) == "[") CollarTrusteeHonorifics = llJson2List(arrh);
     } else if (json_has(payload, ["trustees_hon"])) {
-        string arrhLegacy = llJsonGetValue(payload, ["trustees_hon"]);
-        if (llGetSubString(arrhLegacy, 0, 0) == "[") CollarTrusteeHonorifics = llJson2List(arrhLegacy);
+        string arrh_legacy = llJsonGetValue(payload, ["trustees_hon"]);
+        if (llGetSubString(arrh_legacy, 0, 0) == "[") CollarTrusteeHonorifics = llJson2List(arrh_legacy);
     }
-    if (json_has(payload, [KEY_PUBLIC_MODE])) CollarPublicAccess = ((integer)llJsonGetValue(payload, [KEY_PUBLIC_MODE])) != 0;
-    else if (json_has(payload, ["public_access"])) CollarPublicAccess = ((integer)llJsonGetValue(payload, ["public_access"])) != 0;
-    if (json_has(payload, [KEY_LOCKED_FLAG])) CollarLocked = ((integer)llJsonGetValue(payload, [KEY_LOCKED_FLAG])) != 0;
-    else if (json_has(payload, ["locked"]))        CollarLocked = ((integer)llJsonGetValue(payload, ["locked"])) != 0;
+    
+    if (json_has(payload, [KEY_PUBLIC_MODE])) {
+        CollarPublicAccess = ((integer)llJsonGetValue(payload, [KEY_PUBLIC_MODE])) != 0;
+    } else if (json_has(payload, ["public_access"])) {
+        CollarPublicAccess = ((integer)llJsonGetValue(payload, ["public_access"])) != 0;
+    }
+    
+    if (json_has(payload, [KEY_LOCKED_FLAG])) {
+        CollarLocked = ((integer)llJsonGetValue(payload, [KEY_LOCKED_FLAG])) != 0;
+    } else if (json_has(payload, ["locked"])) {
+        CollarLocked = ((integer)llJsonGetValue(payload, ["locked"])) != 0;
+    }
+    
     request_owner_name_cache();
     return 0;
 }
@@ -247,14 +281,17 @@ integer ingest_settings(string j) {
 
 integer reset_listen() {
     if (Listen) llListenRemove(Listen);
-    Listen = 0; MenuChan = 0;
+    Listen = 0; 
+    MenuChan = 0;
     llSetTimerEvent(0.0);
     return 0;
 }
 
 integer dialog_to(key who, string body, list buttons) {
     reset_listen();
-    while ((llGetListLength(buttons) % 3) != 0) buttons += " ";
+    while ((llGetListLength(buttons) % 3) != 0) {
+        buttons += " ";
+    }
     MenuChan = -100000 - (integer)llFrand(1000000.0);
     Listen = llListen(MenuChan, "", who, "");
     llDialog(who, body, buttons, MenuChan);
@@ -262,11 +299,11 @@ integer dialog_to(key who, string body, list buttons) {
     return 0;
 }
 
-integer ui_return_root(key toUser) {
+integer ui_return_root(key to_user) {
     string r = llList2Json(JSON_OBJECT, []);
     r = llJsonSetValue(r, ["type"],    CONS_TYPE_PLUGIN_RETURN);
     r = llJsonSetValue(r, ["context"], ROOT_CONTEXT);
-    llMessageLinked(LINK_SET, K_PLUGIN_RETURN_NUM, r, toUser);
+    llMessageLinked(LINK_SET, K_PLUGIN_RETURN_NUM, r, to_user);
     return 0;
 }
 
@@ -324,7 +361,8 @@ integer dialog_candidates_select(list candidates) {
     }
     list keys = [];
     list lines = [];
-    integer i = 0; integer n = llGetListLength(candidates);
+    integer i = 0; 
+    integer n = llGetListLength(candidates);
     while (i < n){
         key k = (key)llList2String(candidates, i);
         if (k != llGetOwner()) {
@@ -342,7 +380,8 @@ integer dialog_candidates_select(list candidates) {
     UiData = llDumpList2String(keys, ",");
     string body = "Choose a person:\n" + llDumpList2String(lines, "\n");
     list buttons = [];
-    integer b = 1; integer m = llGetListLength(keys);
+    integer b = 1; 
+    integer m = llGetListLength(keys);
     while (b <= m){
         buttons += (string)b;
         b = b + 1;
@@ -351,24 +390,30 @@ integer dialog_candidates_select(list candidates) {
     dialog_to(User, body, buttons);
     return TRUE;
 }
+
 default{
     state_entry(){
         reset_listen();
         UiContext = "";
         AclPending = FALSE;
         AclLevel = ACL_NOACCESS;
-        PLUGIN_SN = (integer)llFrand(2147480000.0);
+        PluginSn = (integer)llFrand(2147480000.0);
         notify_soft_reset();
         register_plugin();
         string q = llList2Json(JSON_OBJECT, []);
         q = llJsonSetValue(q, ["type"], CONS_SETTINGS_SYNC);
         q = llJsonSetValue(q, ["ns"],   CONS_SETTINGS_NS_OWNER);
         llMessageLinked(LINK_SET, K_SETTINGS_SYNC, q, NULL_KEY);
-        logd("Ready. SN=" + (string)PLUGIN_SN);
+        logd("Ready. SN=" + (string)PluginSn);
     }
 
-    on_rez(integer sp){ llResetScript(); }
-    changed(integer c){ if (c & CHANGED_OWNER) llResetScript(); }
+    on_rez(integer sp){ 
+        llResetScript(); 
+    }
+    
+    changed(integer c){ 
+        if (c & CHANGED_OWNER) llResetScript(); 
+    }
 
     link_message(integer sender, integer num, string str, key id){
         if (num == K_PLUGIN_PING){
@@ -408,11 +453,15 @@ default{
         }
 
         if (num == K_PLUGIN_START){
-            if (json_has(str, ["type"]) && llJsonGetValue(str, ["type"]) == CONS_TYPE_PLUGIN_START){
-                if (json_has(str, ["context"]) && llJsonGetValue(str, ["context"]) == PLUGIN_CONTEXT){
-                    User = id;
-                    request_acl(User);
-                    return;
+            if (json_has(str, ["type"])){
+                if (llJsonGetValue(str, ["type"]) == CONS_TYPE_PLUGIN_START){
+                    if (json_has(str, ["context"])){
+                        if (llJsonGetValue(str, ["context"]) == PLUGIN_CONTEXT){
+                            User = id;
+                            request_acl(User);
+                            return;
+                        }
+                    }
                 }
             }
             return;
@@ -489,6 +538,15 @@ default{
 
     listen(integer chan, string name, key id, string message){
         if (chan != MenuChan) return;
+        
+        if (!in_allowed_levels(AclLevel)){
+            llRegionSayTo(id, 0, "Access denied - permission revoked.");
+            ui_return_root(id);
+            User = NULL_KEY;
+            reset_listen();
+            return;
+        }
+        
         if (message == "Back"){
             if (UiContext == "menu"){
                 ui_return_root(id);
@@ -501,6 +559,11 @@ default{
         }
 
         if (UiContext == "menu"){
+            if (id != User){
+                llRegionSayTo(id, 0, "This is not your menu session.");
+                return;
+            }
+            
             if (message == "Add Owner"){
                 begin_pick_candidate("add_owner_select");
                 return;
@@ -510,13 +573,18 @@ default{
                 return;
             }
             if (message == "Release Sub"){
+                if (CollarOwner == NULL_KEY){
+                    llRegionSayTo(User, 0, "No owner to release.");
+                    show_menu(User);
+                    return;
+                }
                 UiContext = "release_owner_confirm";
-                dialog_to(CollarOwner, "Release your submissive " + wearer_display_name() + "?", ["Yes","No","Cancel"]);
+                dialog_to(CollarOwner, "Release your submissive " + wearer_display_name() + "?", ["Yes", "No", "Cancel"]);
                 return;
             }
             if (message == "Runaway"){
                 UiContext = "runaway_confirm";
-                dialog_to(llGetOwner(), "Run away and become unowned?", ["Yes","No","Cancel"]);
+                dialog_to(llGetOwner(), "Run away and become unowned?", ["Yes", "No", "Cancel"]);
                 return;
             }
             show_menu(User);
@@ -524,6 +592,11 @@ default{
         }
 
         if (UiContext == "add_owner_select"){
+            if (id != User){
+                llRegionSayTo(id, 0, "This is not your menu session.");
+                return;
+            }
+            
             list keys = llParseString2List(UiData, [","], []);
             integer idx = (integer)message - 1;
             if (idx >= 0 && idx < llGetListLength(keys)) {
@@ -540,13 +613,19 @@ default{
         }
         
         if (UiContext == "add_owner_hon"){
+            key expected_candidate = (key)UiParam1;
+            if (id != expected_candidate){
+                llRegionSayTo(id, 0, "This dialog is not for you.");
+                return;
+            }
+            
             list honors = owner_honorifics();
             integer sel = llListFindList(honors, [message]);
             if (sel != -1){
                 UiParam2 = llList2String(honors, sel);
                 UiContext = "add_owner_cand_ok";
                 string body = wearer_display_name() + " has submitted to you as their " + UiParam2 + ".\nAccept?";
-                dialog_to(id, body, ["Yes","No","Cancel"]);
+                dialog_to(id, body, ["Yes", "No", "Cancel"]);
                 return;
             }
             dialog_to(id, "Please choose an honorific.", honors);
@@ -554,10 +633,16 @@ default{
         }
         
         if (UiContext == "add_owner_cand_ok"){
+            key expected_candidate = (key)UiParam1;
+            if (id != expected_candidate){
+                llRegionSayTo(id, 0, "This dialog is not for you.");
+                return;
+            }
+            
             if (message == "Yes"){
                 UiContext = "add_owner_wearer_ok";
                 string body = "You have submitted to " + candidate_display_name((key)UiParam1) + " as your " + UiParam2 + ".\nConfirm?";
-                dialog_to(llGetOwner(), body, ["Yes","No","Cancel"]);
+                dialog_to(llGetOwner(), body, ["Yes", "No", "Cancel"]);
                 return;
             }
             show_menu(User);
@@ -565,24 +650,29 @@ default{
         }
         
         if (UiContext == "add_owner_wearer_ok"){
+            if (id != llGetOwner()){
+                llRegionSayTo(id, 0, "This dialog is not for you.");
+                return;
+            }
+            
             if (message == "Yes"){
-                key newOwner = (key)UiParam1;
-                string hon = UiParam2;
-                CollarOwner = newOwner;
-                CollarOwnerHonorific = hon;
+                key new_owner = (key)UiParam1;
+                string honorific = UiParam2;
+                CollarOwner = new_owner;
+                CollarOwnerHonorific = honorific;
                 request_owner_name_cache();
                 push_settings();
-                dialog_to(newOwner, wearer_display_name() + " has submitted to you as their \"" + hon + "\".", ["OK"]);
-                dialog_to(llGetOwner(), "You have submitted to " + candidate_display_name(newOwner) + " as your " + hon + ".", ["OK"]);
+                dialog_to(new_owner, wearer_display_name() + " has submitted to you as their \"" + honorific + "\".", ["OK"]);
+                dialog_to(llGetOwner(), "You have submitted to " + candidate_display_name(new_owner) + " as your " + honorific + ".", ["OK"]);
                 UiContext = "";
                 UiParam1 = "";
                 UiParam2 = "";
                 UiData = "";
-                key priorUser = User;
+                key prior_user = User;
                 User = NULL_KEY;
                 reset_listen();
-                if (priorUser != NULL_KEY){
-                    ui_return_root(priorUser);
+                if (prior_user != NULL_KEY){
+                    ui_return_root(prior_user);
                 }
                 return;
             }
@@ -591,15 +681,20 @@ default{
         }
 
         if (UiContext == "transfer_select"){
+            if (id != User){
+                llRegionSayTo(id, 0, "This is not your menu session.");
+                return;
+            }
+            
             list keys = llParseString2List(UiData, [","], []);
             integer idx = (integer)message - 1;
             if (idx >= 0 && idx < llGetListLength(keys)){
-                key newOwner = (key)llList2String(keys, idx);
-                UiParam1 = (string)newOwner;
+                key new_owner = (key)llList2String(keys, idx);
+                UiParam1 = (string)new_owner;
                 list honors = owner_honorifics();
                 string body = "You have been offered ownership of " + wearer_display_name() + ".\nChoose the honorific you wish to be called.";
                 UiContext = "transfer_hon";
-                dialog_to(newOwner, body, honors);
+                dialog_to(new_owner, body, honors);
                 return;
             }
             show_menu(User);
@@ -607,13 +702,19 @@ default{
         }
         
         if (UiContext == "transfer_hon"){
+            key expected_candidate = (key)UiParam1;
+            if (id != expected_candidate){
+                llRegionSayTo(id, 0, "This dialog is not for you.");
+                return;
+            }
+            
             list honors = owner_honorifics();
             integer sel = llListFindList(honors, [message]);
             if (sel != -1){
                 UiParam2 = llList2String(honors, sel);
                 UiContext = "transfer_confirm";
                 string body = "You are about to take ownership of " + wearer_display_name() + " as their " + UiParam2 + ".\nAccept?";
-                dialog_to(id, body, ["Yes","No","Cancel"]);
+                dialog_to(id, body, ["Yes", "No", "Cancel"]);
                 return;
             }
             dialog_to(id, "Please choose an honorific.", honors);
@@ -621,16 +722,22 @@ default{
         }
         
         if (UiContext == "transfer_confirm"){
+            key expected_candidate = (key)UiParam1;
+            if (id != expected_candidate){
+                llRegionSayTo(id, 0, "This dialog is not for you.");
+                return;
+            }
+            
             if (message == "Yes"){
-                key newOwner = (key)UiParam1;
-                string hon  = UiParam2;
-                key oldOwner = CollarOwner;
-                CollarOwner = newOwner;
-                CollarOwnerHonorific = hon;
+                key new_owner = (key)UiParam1;
+                string honorific = UiParam2;
+                key old_owner = CollarOwner;
+                CollarOwner = new_owner;
+                CollarOwnerHonorific = honorific;
                 request_owner_name_cache();
                 push_settings();
-                dialog_to(oldOwner, "You have transferred your sub " + wearer_display_name() + " to " + candidate_display_name(newOwner) + " as their " + hon + ".", ["OK"]);
-                dialog_to(newOwner, "You are now the owner of " + wearer_display_name() + " as their " + hon + ".", ["OK"]);
+                dialog_to(old_owner, "You have transferred your sub " + wearer_display_name() + " to " + candidate_display_name(new_owner) + " as their " + honorific + ".", ["OK"]);
+                dialog_to(new_owner, "You are now the owner of " + wearer_display_name() + " as their " + honorific + ".", ["OK"]);
                 UiContext = "menu";
                 show_menu(User);
                 return;
@@ -640,10 +747,15 @@ default{
         }
 
         if (UiContext == "release_owner_confirm"){
+            if (id != CollarOwner){
+                llRegionSayTo(id, 0, "This dialog is not for you.");
+                return;
+            }
+            
             if (message == "Yes"){
                 UiContext = "release_wearer_confirm";
                 string body = "You have been released as " + CollarOwnerHonorific + " " + owner_display_name() + "'s submissive.\nConfirm freedom?";
-                dialog_to(llGetOwner(), body, ["Yes","No","Cancel"]);
+                dialog_to(llGetOwner(), body, ["Yes", "No", "Cancel"]);
                 return;
             }
             show_menu(User);
@@ -651,15 +763,20 @@ default{
         }
         
         if (UiContext == "release_wearer_confirm"){
+            if (id != llGetOwner()){
+                llRegionSayTo(id, 0, "This dialog is not for you.");
+                return;
+            }
+            
             if (message == "Yes"){
-                key old = CollarOwner;
-                string oldHon = CollarOwnerHonorific;
+                key old_owner = CollarOwner;
+                string old_honorific = CollarOwnerHonorific;
                 CollarOwner = NULL_KEY;
                 CollarOwnerHonorific = "";
                 request_owner_name_cache();
                 push_settings();
-                dialog_to(old, wearer_display_name() + " is now free.", ["OK"]);
-                dialog_to(llGetOwner(), "You have been released as " + oldHon + " " + candidate_display_name(old) + "'s submissive.\nYou are now free.", ["OK"]);
+                dialog_to(old_owner, wearer_display_name() + " is now free.", ["OK"]);
+                dialog_to(llGetOwner(), "You have been released as " + old_honorific + " " + candidate_display_name(old_owner) + "'s submissive.\nYou are now free.", ["OK"]);
                 UiContext = "menu";
                 show_menu(User);
                 return;
@@ -669,6 +786,11 @@ default{
         }
 
         if (UiContext == "runaway_confirm"){
+            if (id != llGetOwner()){
+                llRegionSayTo(id, 0, "This dialog is not for you.");
+                return;
+            }
+            
             if (message == "Yes"){
                 CollarOwner = NULL_KEY;
                 CollarOwnerHonorific = "";
