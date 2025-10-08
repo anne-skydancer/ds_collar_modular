@@ -1,29 +1,37 @@
 /* =============================================================
-   MODULE:  ds_collar_kmod_auth.lsl (OPTIMIZED)
-   CHANGES:
-   - Removed list_contains() wrapper - use ~llListFindList() directly (6KB savings)
-   - Cache JSON parsing results (2KB savings)
+   MODULE:  ds_collar_kmod_auth.lsl  (Authoritative ACL + Policies)
+   ROLE  :  Sole source of truth for ACL + policy flags per toucher
+   OPTIMIZATIONS:
+     - Single-pass JSON construction (reduced memory allocations)
+     - Cached string constants (reduced string operations)
+     - Streamlined boolean logic
+     - Optimized helper functions
+     - Early returns for performance
    ============================================================= */
 
 integer DEBUG = FALSE;
 integer logd(string s){ if (DEBUG) llOwnerSay("[AUTH] " + s); return 0; }
 
+/* ---------- Protocol (cached constants) ---------- */
 string MSG_SETTINGS_GET   = "settings_get";
 string MSG_SETTINGS_SYNC  = "settings_sync";
 string MSG_ACL_QUERY      = "acl_query";
 string MSG_ACL_RESULT     = "acl_result";
 
+/* ---------- Link numbers ---------- */
 integer ACL_QUERY_NUM      = 700;
 integer ACL_RESULT_NUM     = 710;
 integer SETTINGS_QUERY_NUM = 800;
 integer SETTINGS_SYNC_NUM  = 870;
 
+/* ---------- Settings keys ---------- */
 string KEY_OWNER_KEY     = "owner_key";
 string KEY_TRUSTEES      = "trustees";
 string KEY_BLACKLIST     = "blacklist";
 string KEY_PUBLIC_ACCESS = "public_mode";
 string KEY_TPE_MODE      = "tpe_mode";
 
+/* ---------- ACL constants ---------- */
 integer ACL_BLACKLIST     = -1;
 integer ACL_NOACCESS      = 0;
 integer ACL_PUBLIC        = 1;
@@ -32,194 +40,183 @@ integer ACL_TRUSTEE       = 3;
 integer ACL_UNOWNED       = 4;
 integer ACL_PRIMARY_OWNER = 5;
 
+/* ---------- Cached settings ---------- */
 key     OwnerKey          = NULL_KEY;
 list    TrusteeList       = [];
 list    Blacklist         = [];
 integer PublicMode        = FALSE;
 integer TpeMode           = FALSE;
-
 integer SettingsReady     = FALSE;
 list    PendingQueries    = [];
 
-// OPTIMIZATION: Removed wrapper functions, use llListFindList directly
+/* Cache wearer key to avoid repeated llGetOwner() calls */
+key     WearerKey         = NULL_KEY;
 
-integer is_json_obj(string s){ if (llGetSubString(s,0,0) == "{") return TRUE; return FALSE; }
-integer is_json_arr(string s){ if (llGetSubString(s,0,0) == "[") return TRUE; return FALSE; }
+/* ---------- Optimized Helpers ---------- */
+// Fast JSON validity check - checks first character only
+integer is_json_obj(string s){ return llGetSubString(s,0,0) == "{"; }
+integer is_json_arr(string s){ return llGetSubString(s,0,0) == "["; }
 
-list json_arr_to_list(string s){ if (!is_json_arr(s)) return []; return llJson2List(s); }
+// Optimized JSON array to list conversion
+list json_arr_to_list(string s){
+    if (llGetSubString(s,0,0) != "[") return [];
+    return llJson2List(s);
+}
 
+// Fast list membership check using ~ instead of llListFindList
+integer list_has_key(list L, key k){
+    return ~llListFindList(L, [(string)k]);
+}
+
+/* ---------- Settings intake ---------- */
 integer apply_settings_sync(string sync_json){
-    // OPTIMIZED: Cache JSON parsing
-    string type = llJsonGetValue(sync_json, ["type"]);
-    if (type != MSG_SETTINGS_SYNC) return 0;
+    // Early validation with single JSON_INVALID check
+    string msg_type = llJsonGetValue(sync_json, ["type"]);
+    if (msg_type == JSON_INVALID || msg_type != MSG_SETTINGS_SYNC) return 0;
     
     string kv = llJsonGetValue(sync_json, ["kv"]);
     if (!is_json_obj(kv)) return 0;
 
-    // Defaults
+    // Reset to defaults
     OwnerKey     = NULL_KEY;
     TrusteeList  = [];
     Blacklist    = [];
     PublicMode   = FALSE;
     TpeMode      = FALSE;
 
-    // OPTIMIZED: Parse once per key
-    string owner_str = llJsonGetValue(kv, [KEY_OWNER_KEY]);
-    if (owner_str != JSON_INVALID) OwnerKey = (key)owner_str;
+    // Single-pass extraction with cached lookups
+    string temp_val;
     
-    string trustees_str = llJsonGetValue(kv, [KEY_TRUSTEES]);
-    if (trustees_str != JSON_INVALID) TrusteeList = json_arr_to_list(trustees_str);
+    temp_val = llJsonGetValue(kv, [KEY_OWNER_KEY]);
+    if (temp_val != JSON_INVALID) OwnerKey = (key)temp_val;
     
-    string blacklist_str = llJsonGetValue(kv, [KEY_BLACKLIST]);
-    if (blacklist_str != JSON_INVALID) Blacklist = json_arr_to_list(blacklist_str);
+    temp_val = llJsonGetValue(kv, [KEY_TRUSTEES]);
+    if (temp_val != JSON_INVALID) TrusteeList = json_arr_to_list(temp_val);
     
-    string public_str = llJsonGetValue(kv, [KEY_PUBLIC_ACCESS]);
-    if (public_str != JSON_INVALID) PublicMode = (integer)public_str;
+    temp_val = llJsonGetValue(kv, [KEY_BLACKLIST]);
+    if (temp_val != JSON_INVALID) Blacklist = json_arr_to_list(temp_val);
     
-    string tpe_str = llJsonGetValue(kv, [KEY_TPE_MODE]);
-    if (tpe_str != JSON_INVALID) TpeMode = (integer)tpe_str;
+    temp_val = llJsonGetValue(kv, [KEY_PUBLIC_ACCESS]);
+    if (temp_val != JSON_INVALID) PublicMode = (integer)temp_val;
+    
+    temp_val = llJsonGetValue(kv, [KEY_TPE_MODE]);
+    if (temp_val != JSON_INVALID) TpeMode = (integer)temp_val;
 
     SettingsReady = TRUE;
 
-    // Replay pending queries
+    // Process pending queries with optimized loop
     integer qn = llGetListLength(PendingQueries);
-    integer qi = 0;
-    while (qi < qn){
-        key av = (key)llList2String(PendingQueries, qi);
-        if (av != NULL_KEY){
-            integer lvl = compute_acl_level(av);
-            send_acl_result(av, lvl);
+    if (qn) {
+        integer qi;
+        key av;
+        for (qi = 0; qi < qn; ++qi){
+            av = (key)llList2String(PendingQueries, qi);
+            if (av != NULL_KEY){
+                send_acl_result(av, compute_acl_level(av));
+            }
         }
-        qi = qi + 1;
+        PendingQueries = [];
     }
-    PendingQueries = [];
 
     logd("Settings applied.");
     return 1;
 }
 
 integer request_settings_sync(){
-    string j = llList2Json(JSON_OBJECT,[]);
-    j = llJsonSetValue(j,["type"],MSG_SETTINGS_GET);
-    llMessageLinked(LINK_SET, SETTINGS_QUERY_NUM, j, NULL_KEY);
+    // Single-shot JSON construction
+    llMessageLinked(LINK_SET, SETTINGS_QUERY_NUM, 
+        llList2Json(JSON_OBJECT, ["type", MSG_SETTINGS_GET]), 
+        NULL_KEY);
     return 0;
 }
 
+/* ---------- ACL evaluation ---------- */
 integer compute_acl_level(key av){
-    key wearer = llGetOwner();
-
-    integer ownerSet  = FALSE;
-    integer isOwner   = FALSE;
-    integer isWearer  = FALSE;
-    integer isTrustee = FALSE;
-    integer isBlack   = FALSE;
-
-    if (OwnerKey != NULL_KEY) ownerSet = TRUE;
-    if (av == OwnerKey && ownerSet) isOwner = TRUE;
-    if (av == wearer) isWearer = TRUE;
+    // Fast path: check owner first (most privileged)
+    if (av == OwnerKey && OwnerKey != NULL_KEY) return ACL_PRIMARY_OWNER;
     
-    // OPTIMIZED: Direct use of llListFindList
-    if (~llListFindList(TrusteeList, [(string)av])) isTrustee = TRUE;
-
-    if (!isOwner && !isWearer && !isTrustee){
-        // OPTIMIZED: Direct use of llListFindList
-        if (~llListFindList(Blacklist, [(string)av])) isBlack = TRUE;
-    }
-
-    if (isOwner) return ACL_PRIMARY_OWNER;
-    if (isWearer){
+    // Check if wearer
+    integer is_wearer = (av == WearerKey);
+    if (is_wearer){
         if (TpeMode) return ACL_NOACCESS;
-        if (ownerSet)   return ACL_OWNED;
-        return ACL_UNOWNED;
+        return (OwnerKey != NULL_KEY) ? ACL_OWNED : ACL_UNOWNED;
     }
-    if (isTrustee) return ACL_TRUSTEE;
-    if (isBlack)   return ACL_BLACKLIST;
-
-    if (PublicMode) return ACL_PUBLIC;
-    return ACL_BLACKLIST;
+    
+    // Check trustee
+    if (list_has_key(TrusteeList, av)) return ACL_TRUSTEE;
+    
+    // Check blacklist
+    if (list_has_key(Blacklist, av)) return ACL_BLACKLIST;
+    
+    // Public or blacklist based on public mode
+    return PublicMode ? ACL_PUBLIC : ACL_BLACKLIST;
 }
 
+/* ---------- Central policy emission ---------- */
 integer send_acl_result(key av, integer level){
-    key wearer = llGetOwner();
-    integer isWearer = FALSE;
-    if (av == wearer) isWearer = TRUE;
+    integer is_wearer = (av == WearerKey);
+    integer owner_set = (OwnerKey != NULL_KEY);
 
-    integer ownerSet = FALSE;
-    if (OwnerKey != NULL_KEY) ownerSet = TRUE;
+    // Compute policy flags with optimized boolean logic
+    integer policy_tpe = is_wearer && TpeMode;
+    integer policy_owned_only = is_wearer && owner_set && !TpeMode;
+    integer policy_wearer_unowned = is_wearer && !owner_set && !TpeMode;
+    integer policy_trustee_access = (is_wearer && !owner_set) || (level == ACL_TRUSTEE);
+    integer policy_public_only = !is_wearer && PublicMode;
+    integer policy_primary_owner = level == ACL_PRIMARY_OWNER;
 
-    integer policy_tpe            = 0;
-    integer policy_public_only    = 0;
-    integer policy_owned_only     = 0;
-    integer policy_trustee_access = 0;
-    integer policy_wearer_unowned = 0;
-    integer policy_primary_owner  = 0;
-
-    if (isWearer){
-        if (TpeMode) policy_tpe = 1;
-        else {
-            if (ownerSet) policy_owned_only = 1;
-            else policy_wearer_unowned = 1;
-        }
-        if (!ownerSet) policy_trustee_access = 1;
-    } else {
-        if (PublicMode) policy_public_only = 1;
-        if (level == ACL_TRUSTEE) policy_trustee_access = 1;
-        if (level == ACL_PRIMARY_OWNER) policy_primary_owner = 1;
-    }
-
-    string j = llList2Json(JSON_OBJECT,[]);
-    j = llJsonSetValue(j,["type"],      MSG_ACL_RESULT);
-    j = llJsonSetValue(j,["avatar"],    (string)av);
-    j = llJsonSetValue(j,["level"],     (string)level);
-    j = llJsonSetValue(j,["is_wearer"], (string)isWearer);
-    j = llJsonSetValue(j,["owner_set"], (string)ownerSet);
-    j = llJsonSetValue(j,["policy_tpe"],            (string)policy_tpe);
-    j = llJsonSetValue(j,["policy_public_only"],    (string)policy_public_only);
-    j = llJsonSetValue(j,["policy_owned_only"],     (string)policy_owned_only);
-    j = llJsonSetValue(j,["policy_trustee_access"], (string)policy_trustee_access);
-    j = llJsonSetValue(j,["policy_wearer_unowned"], (string)policy_wearer_unowned);
-    j = llJsonSetValue(j,["policy_primary_owner"],  (string)policy_primary_owner);
+    // Single-pass JSON construction - all values in one llList2Json call
+    string j = llList2Json(JSON_OBJECT, [
+        "type", MSG_ACL_RESULT,
+        "avatar", (string)av,
+        "level", (string)level,
+        "is_wearer", (string)is_wearer,
+        "owner_set", (string)owner_set,
+        "policy_tpe", (string)policy_tpe,
+        "policy_public_only", (string)policy_public_only,
+        "policy_owned_only", (string)policy_owned_only,
+        "policy_trustee_access", (string)policy_trustee_access,
+        "policy_wearer_unowned", (string)policy_wearer_unowned,
+        "policy_primary_owner", (string)policy_primary_owner
+    ]);
 
     llMessageLinked(LINK_SET, ACL_RESULT_NUM, j, NULL_KEY);
     return 0;
 }
 
+/* ---------- Events ---------- */
 default{
     state_entry(){
         SettingsReady  = FALSE;
         PendingQueries = [];
+        WearerKey      = llGetOwner();  // Cache wearer key
         request_settings_sync();
     }
 
     link_message(integer sender, integer num, string msg, key id){
-        if (num == SETTINGS_SYNC_NUM){
-            apply_settings_sync(msg);
-            return;
-        }
-
+        // Fast path: handle most common case first
         if (num == ACL_QUERY_NUM){
-            // OPTIMIZED: Cache JSON values
-            string type = llJsonGetValue(msg,["type"]);
-            if (type != MSG_ACL_QUERY) return;
+            string msg_type = llJsonGetValue(msg, ["type"]);
+            if (msg_type != MSG_ACL_QUERY) return;
             
-            string av_str = llJsonGetValue(msg,["avatar"]);
-            if (av_str == JSON_INVALID) return;
-
-            key av = (key)av_str;
+            key av = (key)llJsonGetValue(msg, ["avatar"]);
             if (av == NULL_KEY) return;
 
+            // Queue if not ready
             if (!SettingsReady){
-                // OPTIMIZED: Direct use of llListFindList
-                if (!~llListFindList(PendingQueries, [(string)av])){
+                if (!list_has_key(PendingQueries, av)){
                     PendingQueries += [(string)av];
                 }
                 return;
             }
 
-            integer lvl = compute_acl_level(av);
-            send_acl_result(av, lvl);
+            // Process immediately
+            send_acl_result(av, compute_acl_level(av));
             return;
+        }
+
+        if (num == SETTINGS_SYNC_NUM){
+            apply_settings_sync(msg);
         }
     }
 }
-
