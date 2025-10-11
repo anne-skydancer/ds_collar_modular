@@ -14,9 +14,10 @@ This project replaces the old monolithic collars with a clean kernel + plugin ar
 - **JSON ABI** — all link messages use structured JSON; future-proof and explicit.  
 - **Access Control (ACL)** — unified ACL resolution with support for owners, trustees, public access, and blacklist.  
 - **RLVa Integration** — optional plugins add RLVa restrictions and relay support.  
-- **UI Frontend / Backend split** — responsive dialogs with ACL-filtered menus.  
+- **UI** — responsive dialogs with ACL-filtered menus.  
 - **Heartbeat & auto-recover** — kernel pings all plugins, re-registers on silence.  
-- **Safe listeners** — one listener per user session, never leaking channels.  
+- **Safe listeners** — one listener per user session, never leaking channels.
+- **Chat command ready** Ready to accept commands issued in local chat or through a listener on channel 1.  
 
 ---
 
@@ -71,3 +72,4 @@ ds_collar_modular/
 ## 📜 License
 
 MIT License – see [LICENSE](./LICENSE) for details.
+
