@@ -1,6 +1,7 @@
 /* =============================================================
    PLUGIN: ds_collar_plugin_public.lsl (Optimized)
    PURPOSE: Manage Public Access (enable/disable) with strict ACL
+   NOW WITH: Multi-owner mode support
             - New kernel JSON register + heartbeat + soft-reset
             - Settings JSON key "public_mode" (scalar "0"/"1")
             - Animate/Status-style UI (Back centered)
@@ -61,13 +62,15 @@ list ALLOWED_ACL_LEVELS = [ACL_TRUSTEE, ACL_UNOWNED, ACL_PRIMARY_OWNER];
 string  PLUGIN_CONTEXT   = "core_public";
 string  ROOT_CONTEXT     = "core_root";
 string  PLUGIN_LABEL     = "Public";
-integer PluginSn         = 0;  /* Mutable: PascalCase per style guide */
-integer PLUGIN_MIN_ACL   = 3;  /* kernel-side filter: 3+ covers 3,4,5 */
+integer PluginSn         = 0;
+integer PLUGIN_MIN_ACL   = 3;
 
 /* ---------- Settings ---------- */
-string KEY_PUBLIC_MODE   = "public_mode";
-string KEY_OWNER_KEY     = "owner_key";
-string KEY_OWNER_LEGACY  = "owner";
+string KEY_MULTI_OWNER_MODE = "multi_owner_mode";
+string KEY_PUBLIC_MODE      = "public_mode";
+string KEY_OWNER_KEY        = "owner_key";
+string KEY_OWNER_KEYS       = "owner_keys";
+string KEY_OWNER_LEGACY     = "owner";
 
 /* ---------- UI/session state (PascalCase globals) ---------- */
 integer DIALOG_TIMEOUT_SEC = 180;
@@ -81,9 +84,11 @@ integer AclPending = FALSE;
 integer AclLevel   = ACL_NOACCESS;
 
 /* ---------- Plugin state ---------- */
-integer PublicAccess = FALSE;
-key     CollarOwner  = NULL_KEY;
-integer OwnerPresent = FALSE;
+integer MultiOwnerMode = FALSE;
+integer PublicAccess   = FALSE;
+key     CollarOwner    = NULL_KEY;
+list    CollarOwners   = [];
+integer OwnerPresent   = FALSE;
 
 /* ========================== Helpers ========================== */
 integer json_has(string j, list path) { 
@@ -93,6 +98,16 @@ integer json_has(string j, list path) {
 integer logd(string s) { 
     if (DEBUG) llOwnerSay("[PUBLIC] " + s); 
     return 0; 
+}
+
+integer has_owner() {
+    if (MultiOwnerMode) {
+        if (llGetListLength(CollarOwners) > 0) return TRUE;
+    }
+    else {
+        if (CollarOwner != NULL_KEY) return TRUE;
+    }
+    return FALSE;
 }
 
 /* ---------- ACL ---------- */
@@ -131,7 +146,7 @@ integer register_plugin() {
     j = llJsonSetValue(j, ["audience"], audience);
 
     llMessageLinked(LINK_SET, K_PLUGIN_REG_REPLY, j, NULL_KEY);
-    logd("Registered (audience=" + audience + ", owner_present=" + (string)OwnerPresent + ")");
+    logd("Registered (audience=" + audience + ", owner_present=" + (string)OwnerPresent + ", multi_owner=" + (string)MultiOwnerMode + ")");
     return 0;
 }
 
@@ -255,38 +270,67 @@ integer apply_settings_sync(string payload) {
     }
 
     /* Track owner state for dynamic audience registration */
-    integer saw_owner = FALSE;
-    key new_owner = CollarOwner;
+    integer prev_mode = MultiOwnerMode;
+    integer prev_present = OwnerPresent;
+    key prev_owner = CollarOwner;
+    list prev_owners = CollarOwners;
 
-    if (json_has(body, [KEY_OWNER_KEY])) {
-        new_owner = (key)llJsonGetValue(body, [KEY_OWNER_KEY]);
-        saw_owner = TRUE;
-    } else if (json_has(body, [KEY_OWNER_LEGACY])) {
-        new_owner = (key)llJsonGetValue(body, [KEY_OWNER_LEGACY]);
-        saw_owner = TRUE;
+    /* Read multi-owner mode */
+    if (json_has(body, [KEY_MULTI_OWNER_MODE])) {
+        MultiOwnerMode = (integer)llJsonGetValue(body, [KEY_MULTI_OWNER_MODE]);
     }
 
-    if (saw_owner) {
-        key prev_owner = CollarOwner;
-        integer prev_present = OwnerPresent;
-
-        CollarOwner = new_owner;
-        OwnerPresent = (CollarOwner != NULL_KEY);
-
-        /* Re-register if owner presence state changed (affects audience field) */
-        if (prev_present != OwnerPresent) {
-            if (OwnerPresent) {
-                logd("Collar now owned. Re-registering with audience=non_wearer_only.");
-            } else {
-                logd("Collar now unowned. Re-registering with audience=all.");
+    /* Read owner data based on mode */
+    if (MultiOwnerMode) {
+        if (json_has(body, [KEY_OWNER_KEYS])) {
+            string owner_keys_json = llJsonGetValue(body, [KEY_OWNER_KEYS]);
+            if (llGetSubString(owner_keys_json, 0, 0) == "[") {
+                CollarOwners = llJson2List(owner_keys_json);
             }
-            register_plugin();
         }
-        /* Also re-register if owner identity changed (same presence, new owner) */
-        else if (CollarOwner != prev_owner && CollarOwner != NULL_KEY) {
-            logd("Owner identity changed. Refreshing registration metadata.");
-            register_plugin();
+    }
+    else {
+        if (json_has(body, [KEY_OWNER_KEY])) {
+            CollarOwner = (key)llJsonGetValue(body, [KEY_OWNER_KEY]);
+        } 
+        else if (json_has(body, [KEY_OWNER_LEGACY])) {
+            CollarOwner = (key)llJsonGetValue(body, [KEY_OWNER_LEGACY]);
         }
+    }
+
+    /* Update presence flag */
+    OwnerPresent = has_owner();
+
+    /* Determine if we need to re-register */
+    integer needs_reregister = FALSE;
+
+    /* Mode changed */
+    if (prev_mode != MultiOwnerMode) {
+        needs_reregister = TRUE;
+        logd("Owner mode changed: multi_owner=" + (string)MultiOwnerMode);
+    }
+    /* Owner presence changed */
+    else if (prev_present != OwnerPresent) {
+        needs_reregister = TRUE;
+        if (OwnerPresent) {
+            logd("Collar now owned. Re-registering with audience=non_wearer_only.");
+        } else {
+            logd("Collar now unowned. Re-registering with audience=all.");
+        }
+    }
+    /* Owner identity changed in single-owner mode */
+    else if (!MultiOwnerMode && CollarOwner != prev_owner && CollarOwner != NULL_KEY) {
+        needs_reregister = TRUE;
+        logd("Owner identity changed. Refreshing registration metadata.");
+    }
+    /* Owner list changed in multi-owner mode */
+    else if (MultiOwnerMode && llList2CSV(CollarOwners) != llList2CSV(prev_owners)) {
+        needs_reregister = TRUE;
+        logd("Owner list changed. Refreshing registration metadata.");
+    }
+
+    if (needs_reregister) {
+        register_plugin();
     }
 
     return 0;
@@ -297,8 +341,10 @@ default {
     state_entry() {
         PluginSn = (integer)(llFrand(1.0e9));
 
+        MultiOwnerMode = FALSE;
         PublicAccess = FALSE;
         CollarOwner = NULL_KEY;
+        CollarOwners = [];
         OwnerPresent = FALSE;
 
         notify_soft_reset();
@@ -389,7 +435,7 @@ default {
             if (who != User) return;
 
             AclPending = FALSE;
-            AclLevel = lvl;  /* Store ACL level for defense-in-depth */
+            AclLevel = lvl;
 
             if (acl_is_allowed(AclLevel)) {
                 show_main_menu(User);
