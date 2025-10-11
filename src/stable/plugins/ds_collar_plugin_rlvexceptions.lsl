@@ -48,7 +48,7 @@ string  PLUGIN_CONTEXT       = "core_rlv_exceptions";
 string  ROOT_CONTEXT         = "core_root";
 integer PLUGIN_SN            = 0;
 string  PLUGIN_LABEL         = "Exceptions";
-integer PLUGIN_MIN_ACL       = 1;
+integer PLUGIN_MIN_ACL       = 3;
 
 /* ---------- ACL levels ---------- */
 integer ACL_BLACKLIST        = -1;
@@ -60,7 +60,7 @@ integer ACL_UNOWNED          = 4;
 integer ACL_PRIMARY_OWNER    = 5;
 
 /* Allowed ACLs for opening UI */
-list    ALLOWED_ACL_LEVELS   = [ACL_OWNED, ACL_TRUSTEE, ACL_UNOWNED, ACL_PRIMARY_OWNER];
+list    ALLOWED_ACL_LEVELS   = [ACL_TRUSTEE, ACL_UNOWNED, ACL_PRIMARY_OWNER];
 
 /* ---------- Submenu context labels ---------- */
 string CTX_MAIN              = "main";
