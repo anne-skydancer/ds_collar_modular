@@ -1,15 +1,23 @@
 /* =============================================================
    MODULE: ds_collar_kmod_bootstrap.lsl (authoritative + light resync)
    ROLE  : Coordinated startup on rez/attach/login
-   OPTIMIZATIONS:
-     - Fixed timer/resync bug (timer now persists when needed)
-     - Naming conventions corrected (PascalCase for state vars)
-     - Dynamic timer intervals (reduces CPU usage by 70%)
-     - Cached wearer key (eliminates repeated llGetOwner calls)
-     - Optimized list searches (bitwise NOT pattern)
-     - Streamlined string concatenation
-     - Single-pass JSON construction
-     - Improved RLV settle/timeout logic
+   NOW WITH: Multi-owner mode support
+           - IM "DS Collar starting up.\nPlease wait"
+           - Kernel soft reset → plugins re-register
+           - Requests SETTINGS + ACL + PLUGIN LIST
+           - RLV status via @versionnew on channels:
+              * 4711
+              * relay -1812221819 (and opposite sign)
+             - 30s initial delay, 90s total probe window, retries every 4s
+             - Accepts replies from wearer or NULL_KEY
+             - Follow-up "RLV update: ..." is DEBUG-ONLY (not sent to wearer)
+           - No full bootstrap on region/teleport; optional light resync available
+   PATCH : Ownership line mirrors Status plugin:
+           * Resolve PO name offline via dataserver:
+               - llRequestDisplayName(owner)
+               - Fallback: llRequestAgentData(owner, DATA_NAME)
+           * Follow-up Ownership line after name resolves (one-time)
+           * Multi-owner support: displays all owners with their names
    ============================================================= */
 
 integer DEBUG = TRUE;
@@ -18,20 +26,18 @@ integer DEBUG = TRUE;
 integer K_SOFT_RESET          = 503;
 integer K_PLUGIN_LIST         = 600;
 integer K_PLUGIN_LIST_REQUEST = 601;
+
 integer K_SETTINGS_QUERY      = 800;
 integer K_SETTINGS_SYNC       = 870;
+
 integer AUTH_QUERY_NUM        = 700;
 integer AUTH_RESULT_NUM       = 710;
 
-/* ---------- RLV probe config (constants) ---------- */
+/* ---------- RLV probe config ---------- */
 integer RLV_BLOCKS_STARTUP        = FALSE;
 integer RLV_PROBE_WINDOW_SEC      = 90;
 integer RLV_INITIAL_DELAY_SEC     = 1;
-integer RLV_SETTLE_SEC            = 1;        /* Changed to integer */
-integer RLV_MAX_RETRIES           = 8;
-integer RLV_RETRY_EVERY           = 4;
 
-/* Probe which channels? */
 integer USE_OWNER_CHAN            = FALSE;
 integer USE_FIXED_4711            = TRUE;
 integer USE_RELAY_CHAN            = TRUE;
@@ -41,203 +47,211 @@ integer PROBE_RELAY_BOTH_SIGNS    = TRUE;
 /* ---------- Optional light resync on region change ---------- */
 integer RESYNC_ON_REGION_CHANGE   = FALSE;
 integer RESYNC_GRACE_SEC          = 5;
+integer REGION_RESYNC_DUE         = 0;
 
-/* ---------- Startup tuning (constants) ---------- */
-integer STARTUP_TIMEOUT_SEC       = 15;
-float   POLL_RETRY_SEC            = 0.6;
-integer QUIET_AFTER_LIST_SEC      = 1;
+/* ---------- RLV probe state/results ---------- */
+integer RLV_READY         = FALSE;
+integer RLV_ACTIVE        = FALSE;
+string  RLV_VERSTR        = "";
+list    RLV_CHANS         = [];
+list    RLV_LISTENS       = [];
+integer RLV_WAIT_UNTIL    = 0;
+integer RLV_SETTLE_UNTIL  = 0;
+float   RLV_SETTLE_SEC    = 1.0;
+integer RLV_MAX_RETRIES   = 8;
+integer RLV_RETRY_EVERY   = 4;
+integer RLV_RETRIES       = 0;
+integer RLV_NEXT_SEND_AT  = 0;
+integer RLV_EMITTED_FINAL = FALSE;
+string  RLV_RESULT_LINE   = "";
+integer RLV_RESP_CHAN     = 0;
+integer RLV_PROBING       = FALSE;
 
-/* ---------- Magic words (constants) ---------- */
+/* ---------- Magic words ---------- */
 string MSG_KERNEL_SOFT_RST = "kernel_soft_reset";
 string MSG_PLUGIN_LIST     = "plugin_list";
 string MSG_SETTINGS_SYNC   = "settings_sync";
 string MSG_ACL_RESULT      = "acl_result";
 
-/* ---------- Settings keys (constants) ---------- */
-string KEY_OWNER_KEY = "owner_key";
-string KEY_OWNER_HON = "owner_hon";
+/* ---------- Settings keys ---------- */
+string KEY_MULTI_OWNER_MODE = "multi_owner_mode";
+string KEY_OWNER_KEY        = "owner_key";
+string KEY_OWNER_KEYS       = "owner_keys";
+string KEY_OWNER_HON        = "owner_hon";
+string KEY_OWNER_HONS       = "owner_honorifics";
 
-/* ---------- RLV probe state (PascalCase globals) ---------- */
-integer RlvReady         = FALSE;
-integer RlvActive        = FALSE;
-string  RlvVerStr        = "";
-list    RlvChans         = [];
-list    RlvListens       = [];
-integer RlvWaitUntil     = 0;
-integer RlvSettleUntil   = 0;
-integer RlvRetries       = 0;
-integer RlvNextSendAt    = 0;
-integer RlvEmittedFinal  = FALSE;
-string  RlvResultLine    = "";
-integer RlvRespChan      = 0;
-integer RlvProbing       = FALSE;
+/* ---------- Startup tuning ---------- */
+integer STARTUP_TIMEOUT_SEC  = 15;
+float   POLL_RETRY_SEC       = 0.6;
+integer QUIET_AFTER_LIST_SEC = 1;
 
-/* ---------- Bootstrap state (PascalCase globals) ---------- */
-integer BootActive       = FALSE;
-integer BootDeadline     = 0;
-integer SettingsReady    = FALSE;
-integer AclReady         = FALSE;
-integer LastListTs       = 0;
-integer RegionResyncDue  = 0;
+/* ---------- State ---------- */
+integer BOOT_ACTIVE    = FALSE;
+integer BOOT_DEADLINE  = 0;
+integer SETTINGS_READY = FALSE;
+integer ACL_READY      = FALSE;
+integer LAST_LIST_TS   = 0;
 
-/* ---------- Ownership state (PascalCase globals) ---------- */
-key     OwnerKey         = NULL_KEY;
-string  OwnerHon         = "";
-string  OwnerDisp        = "";
-string  OwnerLegacy      = "";
-key     OwnerDispReq     = NULL_KEY;
-key     OwnerNameReq     = NULL_KEY;
-integer OwnershipSent    = FALSE;
-integer OwnershipRefreshed = FALSE;
+/* ---------- Ownership (patched to support multi-owner) ---------- */
+integer MultiOwnerMode      = FALSE;
+key     OWNER_KEY           = NULL_KEY;
+list    OwnerKeys           = [];
+string  OWNER_HON           = "";
+list    OwnerHonorifics     = [];
 
-/* ---------- Cached wearer key (optimization) ---------- */
-key     WearerKey        = NULL_KEY;
+/* Single-owner name cache */
+string  OWNER_DISP          = "";
+string  OWNER_LEGACY        = "";
+key     OWNER_DISP_REQ      = NULL_KEY;
+key     OWNER_NAME_REQ      = NULL_KEY;
+
+/* Multi-owner name cache */
+list    OwnerDisplayNames   = [];
+list    OwnerNameQueries    = [];
+
+/* One-time ownership line follow-up after resolution */
+integer OWNERSHIP_SENT      = FALSE;
+integer OWNERSHIP_REFRESHED = FALSE;
 
 /* ===================== Helpers ===================== */
-integer now(){ return llGetUnixTime(); }
-integer isAttached(){ return (integer)llGetAttached() != 0; }
+integer now()         { return llGetUnixTime(); }
+integer isAttached()  { return (integer)llGetAttached() != 0; }
+key     wearer()      { return llGetOwner(); }
 string  trim(string s){ return llStringTrim(s, STRING_TRIM); }
 
 integer sendIM(string msg){
-    if (WearerKey != NULL_KEY){
-        if (msg != "") llInstantMessage(WearerKey, msg);
+    key w = wearer();
+    if (w != NULL_KEY){
+        if (msg != "") llInstantMessage(w, msg);
     }
     return TRUE;
 }
 
-/* Optimized integer list join */
 string joinIntList(list xs, string sep){
-    integer n = llGetListLength(xs);
-    if (n == 0) return "";
-    if (n == 1) return (string)llList2Integer(xs, 0);
-    
-    integer i;
-    string out = (string)llList2Integer(xs, 0);
-    for (i = 1; i < n; ++i){
-        out += sep + (string)llList2Integer(xs, i);
+    integer i = 0; integer n = llGetListLength(xs);
+    string out = "";
+    while (i < n){
+        if (i != 0) out += sep;
+        out += (string)llList2Integer(xs, i);
+        i += 1;
     }
     return out;
 }
 
-/* Optimized add probe channel with bitwise NOT check */
+integer ocOwnerChannel(){
+    key w = wearer();
+    string s = (string)w;
+    integer ch = (integer)("0x" + llGetSubString(s, -8, -1));
+    ch = ch & 0x3FFFFFFF;
+    if (ch == 0) ch = 0x100;
+    ch = -ch;
+    return ch;
+}
+
 integer addProbeChannel(integer ch){
     if (ch == 0) return FALSE;
-    if (~llListFindList(RlvChans, [ch])) return FALSE;  /* Already exists */
-    
+    if (llListFindList(RLV_CHANS, [ch]) != -1) return FALSE;
     integer h = llListen(ch, "", NULL_KEY, "");
-    RlvChans   += [ch];
-    RlvListens += [h];
-    
+    RLV_CHANS   = RLV_CHANS + [ch];
+    RLV_LISTENS = RLV_LISTENS + [h];
     if (DEBUG) llOwnerSay("[BOOT] RLV probe channel added: " + (string)ch + " (listen " + (string)h + ")");
     return TRUE;
 }
 
 integer clearProbeChannels(){
-    integer i;
-    integer n = llGetListLength(RlvListens);
-    for (i = 0; i < n; ++i){
-        integer h = llList2Integer(RlvListens, i);
+    integer i = 0; integer n = llGetListLength(RLV_LISTENS);
+    while (i < n){
+        integer h = llList2Integer(RLV_LISTENS, i);
         if (h) llListenRemove(h);
+        i += 1;
     }
-    RlvChans = [];
-    RlvListens = [];
+    RLV_CHANS = [];
+    RLV_LISTENS = [];
     return TRUE;
 }
 
 integer rlvPending(){
-    if (RlvReady) return FALSE;
-    if (llGetListLength(RlvChans) > 0) return TRUE;
-    if (RlvWaitUntil != 0) return TRUE;
+    if (RLV_READY) return FALSE;
+    if (llGetListLength(RLV_CHANS) > 0) return TRUE;
+    if (RLV_WAIT_UNTIL != 0) return TRUE;
     return FALSE;
 }
 
 integer stopRlvProbe(){
     clearProbeChannels();
-    RlvWaitUntil = 0;
-    RlvSettleUntil = 0;
-    RlvNextSendAt = 0;
-    RlvProbing = FALSE;
+    RLV_WAIT_UNTIL = 0;
+    RLV_SETTLE_UNTIL = 0;
+    RLV_NEXT_SEND_AT = 0;
+    RLV_PROBING = FALSE;
     return TRUE;
 }
 
 integer sendRlvQueries(){
-    integer i;
-    integer n = llGetListLength(RlvChans);
-    for (i = 0; i < n; ++i){
-        integer ch = llList2Integer(RlvChans, i);
+    integer i = 0; integer n = llGetListLength(RLV_CHANS);
+    while (i < n){
+        integer ch = llList2Integer(RLV_CHANS, i);
         llOwnerSay("@versionnew=" + (string)ch);
+        i += 1;
     }
-    
-    if (DEBUG){
-        llOwnerSay("[BOOT] RLV @versionnew sent (try " + (string)(RlvRetries + 1) + 
-                   ") on [" + joinIntList(RlvChans, ", ") + "]");
-    }
+    if (DEBUG) llOwnerSay("[BOOT] RLV @versionnew sent (try " + (string)(RLV_RETRIES + 1) + ") on [" + joinIntList(RLV_CHANS, ", ") + "]");
     return TRUE;
 }
 
-/* DEBUG-only follow-up line */
 integer buildAndSendRlvLine(){
-    if (RlvActive){
-        RlvResultLine = "[BOOT] RLV update: active";
-        if (RlvVerStr != "") RlvResultLine += " (" + RlvVerStr + ")";
+    if (RLV_ACTIVE){
+        RLV_RESULT_LINE = "[BOOT] RLV update: active";
+        if (RLV_VERSTR != "") RLV_RESULT_LINE += " (" + RLV_VERSTR + ")";
     } else {
-        RlvResultLine = "[BOOT] RLV update: inactive";
+        RLV_RESULT_LINE = "[BOOT] RLV update: inactive";
     }
-    
-    if (!RlvEmittedFinal){
-        if (DEBUG) llOwnerSay(RlvResultLine);
-        RlvEmittedFinal = TRUE;
+    if (!RLV_EMITTED_FINAL){
+        if (DEBUG) llOwnerSay(RLV_RESULT_LINE);
+        RLV_EMITTED_FINAL = TRUE;
     }
     return TRUE;
 }
 
 /* ---------- RLV probe lifecycle ---------- */
 integer startRlvProbe(){
-    if (RlvProbing){
+    if (RLV_PROBING){
         if (DEBUG) llOwnerSay("[BOOT] RLV probe already active; skipping");
         return FALSE;
     }
-    
     if (!isAttached()){
-        /* Rezzed: no viewer to talk to */
-        RlvReady = TRUE;
-        RlvActive = FALSE;
-        RlvVerStr = "";
-        RlvRetries = 0;
-        RlvNextSendAt = 0;
-        RlvEmittedFinal = FALSE;
+        RLV_READY = TRUE; RLV_ACTIVE = FALSE; RLV_VERSTR = "";
+        RLV_RETRIES = 0; RLV_NEXT_SEND_AT = 0; RLV_EMITTED_FINAL = FALSE;
         return FALSE;
     }
 
-    RlvProbing = TRUE;
-    RlvRespChan = 0;
+    RLV_PROBING = TRUE; RLV_RESP_CHAN = 0;
     stopRlvProbe();
     clearProbeChannels();
 
+    if (USE_OWNER_CHAN) addProbeChannel(ocOwnerChannel());
     if (USE_FIXED_4711) addProbeChannel(4711);
     if (USE_RELAY_CHAN){
         if (RELAY_CHAN != 0){
             addProbeChannel(RELAY_CHAN);
             if (PROBE_RELAY_BOTH_SIGNS){
                 integer alt = -RELAY_CHAN;
-                if (alt != 0 && alt != RELAY_CHAN){
-                    addProbeChannel(alt);
+                if (alt != 0){
+                    if (alt != RELAY_CHAN) addProbeChannel(alt);
                 }
             }
         }
     }
 
-    RlvWaitUntil   = now() + RLV_PROBE_WINDOW_SEC;
-    RlvSettleUntil = 0;
-    RlvRetries     = 0;
-    RlvNextSendAt  = now() + RLV_INITIAL_DELAY_SEC;
-    RlvEmittedFinal= FALSE;
-    RlvReady       = FALSE;
-    RlvActive      = FALSE;
-    RlvVerStr      = "";
+    RLV_WAIT_UNTIL   = now() + RLV_PROBE_WINDOW_SEC;
+    RLV_SETTLE_UNTIL = 0;
+    RLV_RETRIES      = 0;
+    RLV_NEXT_SEND_AT = now() + RLV_INITIAL_DELAY_SEC;
+    RLV_EMITTED_FINAL= FALSE;
+    RLV_READY        = FALSE;
+    RLV_ACTIVE       = FALSE;
+    RLV_VERSTR       = "";
 
     if (DEBUG){
-        llOwnerSay("[BOOT] RLV probe channels → [" + joinIntList(RlvChans, ", ") + "]");
+        llOwnerSay("[BOOT] RLV probe channels → [" + joinIntList(RLV_CHANS, ", ") + "]");
         llOwnerSay("[BOOT] RLV first send after " + (string)RLV_INITIAL_DELAY_SEC + "s");
     }
     return TRUE;
@@ -245,179 +259,256 @@ integer startRlvProbe(){
 
 /* ---------- Kernel helpers ---------- */
 integer broadcastSoftReset(){
-    llMessageLinked(LINK_SET, K_SOFT_RESET, 
-        llList2Json(JSON_OBJECT, ["type", MSG_KERNEL_SOFT_RST]), 
-        NULL_KEY);
+    llMessageLinked(LINK_SET, K_SOFT_RESET, "{\"type\":\"kernel_soft_reset\"}", NULL_KEY);
     return TRUE;
 }
-
 integer askSettings(){
-    llMessageLinked(LINK_SET, K_SETTINGS_QUERY, 
-        llList2Json(JSON_OBJECT, ["type", "settings_get"]), 
-        NULL_KEY);
+    llMessageLinked(LINK_SET, K_SETTINGS_QUERY, "{\"type\":\"settings_get\"}", NULL_KEY);
     return TRUE;
 }
-
 integer askACL(){
-    llMessageLinked(LINK_SET, AUTH_QUERY_NUM, 
-        llList2Json(JSON_OBJECT, ["type", "acl_query", "avatar", (string)WearerKey]),
-        NULL_KEY);
+    string j = llList2Json(JSON_OBJECT, ["type","acl_query","avatar",(string)wearer()]);
+    llMessageLinked(LINK_SET, AUTH_QUERY_NUM, j, NULL_KEY);
     return TRUE;
 }
-
 integer askPluginList(){
     llMessageLinked(LINK_SET, K_PLUGIN_LIST_REQUEST, "", NULL_KEY);
     return TRUE;
 }
 
-/* ---------- Owner name resolution ---------- */
+/* ---------- Owner name resolution (patched for multi-owner) ---------- */
 integer requestOwnerNames(){
-    if (OwnerKey == NULL_KEY) return FALSE;
-
-    OwnerDisp   = "";
-    OwnerLegacy = "";
-    OwnerDispReq = llRequestDisplayName(OwnerKey);
-    OwnerNameReq = llRequestAgentData(OwnerKey, DATA_NAME);
+    if (MultiOwnerMode){
+        OwnerDisplayNames = [];
+        OwnerNameQueries = [];
+        integer i = 0;
+        while (i < llGetListLength(OwnerKeys)){
+            key owner = (key)llList2String(OwnerKeys, i);
+            key query = llRequestDisplayName(owner);
+            OwnerNameQueries += [query];
+            OwnerDisplayNames += ["(fetching…)"];
+            i += 1;
+        }
+    }
+    else {
+        if (OWNER_KEY == NULL_KEY) return FALSE;
+        OWNER_DISP   = "";
+        OWNER_LEGACY = "";
+        OWNER_DISP_REQ = llRequestDisplayName(OWNER_KEY);
+        OWNER_NAME_REQ = llRequestAgentData(OWNER_KEY, DATA_NAME);
+    }
     return TRUE;
 }
 
 string ownerDisplayLabel(){
-    string nm;
-    if (OwnerDisp != "") nm = OwnerDisp;
-    else if (OwnerLegacy != "") nm = OwnerLegacy;
+    if (MultiOwnerMode){
+        return "(see below)";
+    }
+    
+    string nm = "";
+    if (OWNER_DISP != "") nm = OWNER_DISP;
+    else if (OWNER_LEGACY != "") nm = OWNER_LEGACY;
     else nm = "(fetching…)";
 
-    if (OwnerHon != ""){
-        return OwnerHon + " " + nm;
+    string hon = OWNER_HON;
+    string out = "";
+    if (hon != ""){
+        out = hon + " " + nm;
+    } else {
+        out = nm;
     }
-    return nm;
+    return out;
 }
 
 integer parseSettingsKv(string kv){
     string v;
 
-    v = llJsonGetValue(kv, [KEY_OWNER_KEY]);
-    if (v != JSON_INVALID){
-        OwnerKey = (key)v;
-    } else {
-        OwnerKey = NULL_KEY;
+    /* Read multi-owner mode */
+    v = llJsonGetValue(kv, [KEY_MULTI_OWNER_MODE]);
+    if (v != JSON_INVALID) MultiOwnerMode = ((integer)v != 0);
+    else MultiOwnerMode = FALSE;
+
+    /* Read owner data based on mode */
+    if (MultiOwnerMode){
+        v = llJsonGetValue(kv, [KEY_OWNER_KEYS]);
+        if (v != JSON_INVALID && llGetSubString(v, 0, 0) == "["){
+            OwnerKeys = llJson2List(v);
+        } else {
+            OwnerKeys = [];
+        }
+        OWNER_KEY = NULL_KEY;
+        
+        v = llJsonGetValue(kv, [KEY_OWNER_HONS]);
+        if (v != JSON_INVALID && llGetSubString(v, 0, 0) == "["){
+            OwnerHonorifics = llJson2List(v);
+        } else {
+            OwnerHonorifics = [];
+        }
+    }
+    else {
+        v = llJsonGetValue(kv, [KEY_OWNER_KEY]);
+        if (v != JSON_INVALID) OWNER_KEY = (key)v;
+        else OWNER_KEY = NULL_KEY;
+        
+        OwnerKeys = [];
+        OwnerHonorifics = [];
     }
 
     v = llJsonGetValue(kv, [KEY_OWNER_HON]);
-    if (v != JSON_INVALID){
-        OwnerHon = v;
-    } else {
-        OwnerHon = "";
-    }
+    if (v != JSON_INVALID) OWNER_HON = v;
+    else OWNER_HON = "";
 
-    if (OwnerKey != NULL_KEY){
-        requestOwnerNames();
-    } else {
-        OwnerDisp = "";
-        OwnerLegacy = "";
+    /* Request names based on mode */
+    if (MultiOwnerMode){
+        if (llGetListLength(OwnerKeys) > 0){
+            requestOwnerNames();
+        }
     }
+    else {
+        if (OWNER_KEY != NULL_KEY){
+            requestOwnerNames();
+        }
+    }
+    
     return TRUE;
 }
 
 integer readyEnough(){
-    integer have_settings = SettingsReady;
-    integer have_acl = AclReady;
-    integer list_quiet = FALSE;
+    integer haveSettings = SETTINGS_READY;
+    integer haveACL      = ACL_READY;
+    integer listQuiet    = FALSE;
 
-    if (LastListTs != 0){
-        if ((now() - LastListTs) >= QUIET_AFTER_LIST_SEC){
-            list_quiet = TRUE;
-        }
+    if (LAST_LIST_TS != 0){
+        if ((now() - LAST_LIST_TS) >= QUIET_AFTER_LIST_SEC) listQuiet = TRUE;
     }
 
     if (RLV_BLOCKS_STARTUP){
-        if (!RlvReady) return FALSE;
+        if (!RLV_READY) return FALSE;
     }
 
-    if (have_settings && have_acl && list_quiet) return TRUE;
+    if (haveSettings && haveACL && listQuiet) return TRUE;
     return FALSE;
 }
 
-/* Optimized string construction for summary lines */
 integer emitRlvLine(){
-    string line2;
-    if (RlvReady){
-        if (RlvActive){
-            line2 = "RLV: active";
-            if (RlvVerStr != ""){
-                line2 += " (" + RlvVerStr + ")";
-            }
+    string line2 = "RLV: ";
+    if (RLV_READY){
+        if (RLV_ACTIVE){
+            line2 += "active";
+            if (RLV_VERSTR != "") line2 += " (" + RLV_VERSTR + ")";
         } else {
-            line2 = "RLV: inactive";
+            line2 += "inactive";
         }
     } else {
-        line2 = "RLV: probing…";
+        line2 += "probing…";
     }
     sendIM(line2);
     return TRUE;
 }
 
 integer sendOwnershipLine(){
-    string line3;
-    if (OwnerKey != NULL_KEY){
-        line3 = "Ownership: owned by " + ownerDisplayLabel();
-    } else {
-        line3 = "Ownership: unowned";
+    string line3 = "Ownership: ";
+    
+    if (MultiOwnerMode){
+        integer owner_count = llGetListLength(OwnerKeys);
+        if (owner_count > 0){
+            if (owner_count == 1){
+                line3 += "owned by ";
+            }
+            else {
+                line3 += "owned by ";
+            }
+            
+            integer i = 0;
+            while (i < owner_count){
+                if (i != 0){
+                    line3 += ", ";
+                }
+                
+                string display_name = "(fetching…)";
+                if (i < llGetListLength(OwnerDisplayNames)){
+                    display_name = llList2String(OwnerDisplayNames, i);
+                }
+                
+                /* Check for individual honorific first, then fall back to shared */
+                string honorific = "";
+                if (i < llGetListLength(OwnerHonorifics)){
+                    honorific = llList2String(OwnerHonorifics, i);
+                }
+                
+                if (honorific != ""){
+                    line3 += honorific + " " + display_name;
+                }
+                else if (OWNER_HON != ""){
+                    line3 += OWNER_HON + " " + display_name;
+                }
+                else {
+                    line3 += display_name;
+                }
+                
+                i += 1;
+            }
+        }
+        else {
+            line3 += "unowned";
+        }
     }
+    else {
+        if (OWNER_KEY != NULL_KEY){
+            string disp = ownerDisplayLabel();
+            line3 += "owned by " + disp;
+        } else {
+            line3 += "unowned";
+        }
+    }
+    
     sendIM(line3);
     return TRUE;
 }
 
-/* Optimized summary emission */
-integer emitSummary(integer completed, integer timed_out){
-    string line1;
-    if (completed){
-        line1 = "Restart: completed";
-    } else if (timed_out){
-        line1 = "Restart: timed out (some modules may still be loading)";
-    } else {
-        line1 = "Restart: in progress";
-    }
+integer emitSummary(integer completed, integer timedOut){
+    string line1 = "Restart: ";
+    if (completed) line1 += "completed";
+    else if (timedOut) line1 += "timed out (some modules may still be loading)";
+    else line1 += "in progress";
 
     sendIM(line1);
     emitRlvLine();
     sendOwnershipLine();
-    OwnershipSent = TRUE;
+    OWNERSHIP_SENT = TRUE;
+
     sendIM("Collar startup complete.");
     return TRUE;
 }
 
 /* ---------- Bootstrap lifecycle ---------- */
 integer startBootstrap(){
-    if (BootActive) return FALSE;
+    if (BOOT_ACTIVE) return FALSE;
 
-    /* Reset all state */
-    SettingsReady = FALSE;
-    AclReady = FALSE;
-    LastListTs = 0;
+    SETTINGS_READY = FALSE;
+    ACL_READY      = FALSE;
+    LAST_LIST_TS   = 0;
 
-    RlvReady = FALSE;
-    RlvActive = FALSE;
-    RlvVerStr = "";
-    RlvRetries = 0;
-    RlvNextSendAt = 0;
-    RlvEmittedFinal = FALSE;
-    RlvSettleUntil = 0;
-    RlvWaitUntil = 0;
-    RlvRespChan = 0;
-    RlvProbing = FALSE;
+    RLV_READY = FALSE; RLV_ACTIVE = FALSE; RLV_VERSTR = "";
+    RLV_RETRIES = 0; RLV_NEXT_SEND_AT = 0; RLV_EMITTED_FINAL = FALSE;
+    RLV_SETTLE_UNTIL = 0; RLV_WAIT_UNTIL = 0; RLV_RESP_CHAN = 0; RLV_PROBING = FALSE;
 
-    OwnerKey = NULL_KEY;
-    OwnerHon = "";
-    OwnerDisp = "";
-    OwnerLegacy = "";
-    OwnerDispReq = NULL_KEY;
-    OwnerNameReq = NULL_KEY;
-    OwnershipSent = FALSE;
-    OwnershipRefreshed = FALSE;
+    MultiOwnerMode = FALSE;
+    OWNER_KEY = NULL_KEY;
+    OwnerKeys = [];
+    OWNER_HON = "";
+    OwnerHonorifics = [];
+    OWNER_DISP = "";
+    OWNER_LEGACY = "";
+    OWNER_DISP_REQ = NULL_KEY;
+    OWNER_NAME_REQ = NULL_KEY;
+    OwnerDisplayNames = [];
+    OwnerNameQueries = [];
+    OWNERSHIP_SENT = FALSE;
+    OWNERSHIP_REFRESHED = FALSE;
 
-    BootActive = TRUE;
-    BootDeadline = now() + STARTUP_TIMEOUT_SEC;
+    BOOT_ACTIVE  = TRUE;
+    BOOT_DEADLINE= now() + STARTUP_TIMEOUT_SEC;
 
     sendIM("DS Collar starting up.\nPlease wait");
 
@@ -425,201 +516,189 @@ integer startBootstrap(){
     askSettings();
     askACL();
     askPluginList();
+
     startRlvProbe();
 
     llSetTimerEvent(POLL_RETRY_SEC);
     return TRUE;
 }
 
-/* Dynamic timer interval calculation */
-float getTimerInterval(){
-    /* Fast polling during bootstrap */
-    if (BootActive) return POLL_RETRY_SEC;
-    
-    /* Active RLV probing needs fast polling */
-    if (rlvPending()) return POLL_RETRY_SEC;
-    
-    /* Region resync enabled: moderate polling */
-    if (RESYNC_ON_REGION_CHANGE) return 2.0;
-    
-    /* Idle state: no timer needed */
-    return 0.0;
-}
-
 /* =========================== EVENTS =========================== */
 default{
     state_entry(){
-        WearerKey = llGetOwner();
         startBootstrap();
     }
 
-    on_rez(integer sp){
-        llResetScript();
-    }
-
-    attach(key id){
-        /* Always reset on attach (id is always valid in attach event) */
-        llResetScript();
-    }
+    on_rez(integer sp){ llResetScript(); }
+    attach(key id){ if (id) llResetScript(); }
 
     changed(integer c){
-        if (c & CHANGED_OWNER){
-            llResetScript();
-        }
-        
+        if (c & CHANGED_OWNER) llResetScript();
         if ((c & CHANGED_REGION) && RESYNC_ON_REGION_CHANGE){
-            RegionResyncDue = now() + RESYNC_GRACE_SEC;
-            /* Ensure timer is running for resync check */
-            float current_interval = getTimerInterval();
-            if (current_interval == 0.0){
-                llSetTimerEvent(2.0);
-            }
+            REGION_RESYNC_DUE = now() + RESYNC_GRACE_SEC;
         }
     }
 
     listen(integer chan, string name, key id, string text){
-        /* Accept from wearer or NULL_KEY (for RLV relay compatibility) */
-        if (id != WearerKey && id != NULL_KEY) return;
+        integer ok = FALSE;
+        if (id == wearer()) ok = TRUE;
+        else if (id == NULL_KEY) ok = TRUE;
+
+        if (!ok) return;
         if (!rlvPending()) return;
 
-        RlvActive = TRUE;
-        RlvReady = TRUE;
-        RlvRespChan = chan;
+        RLV_ACTIVE = TRUE;
+        RLV_READY  = TRUE;
+        RLV_RESP_CHAN = chan;
 
-        if (text != "") RlvVerStr = trim(text);
+        if (text != "") RLV_VERSTR = trim(text);
 
-        /* Keep channels open briefly to catch other viewers */
-        RlvSettleUntil = now() + RLV_SETTLE_SEC;
+        RLV_SETTLE_UNTIL = now() + (integer)RLV_SETTLE_SEC;
+
         buildAndSendRlvLine();
     }
 
     link_message(integer sender, integer num, string str, key id){
         if (num == K_PLUGIN_LIST){
-            LastListTs = now();
+            LAST_LIST_TS = now();
             return;
         }
 
         if (num == K_SETTINGS_SYNC){
-            string msg_type = llJsonGetValue(str, ["type"]);
-            if (msg_type == MSG_SETTINGS_SYNC){
-                string kv = llJsonGetValue(str, ["kv"]);
-                if (kv != JSON_INVALID){
-                    parseSettingsKv(kv);
-                    SettingsReady = TRUE;
+            string t = llJsonGetValue(str, ["type"]);
+            if (t != JSON_INVALID){
+                if (t == MSG_SETTINGS_SYNC){
+                    string kv = llJsonGetValue(str, ["kv"]);
+                    if (kv != JSON_INVALID){
+                        parseSettingsKv(kv);
+                        SETTINGS_READY = TRUE;
+                    }
                 }
             }
             return;
         }
 
         if (num == AUTH_RESULT_NUM){
-            string msg_type = llJsonGetValue(str, ["type"]);
-            if (msg_type == MSG_ACL_RESULT){
-                AclReady = TRUE;
+            string t2 = llJsonGetValue(str, ["type"]);
+            if (t2 != JSON_INVALID){
+                if (t2 == MSG_ACL_RESULT){
+                    ACL_READY = TRUE;
+                }
             }
+            return;
+        }
+
+        if (num == K_SOFT_RESET){
             return;
         }
     }
 
     dataserver(key query_id, string data){
-        integer changed_name = FALSE;
+        integer changedName = FALSE;
 
-        if (query_id == OwnerDispReq){
-            OwnerDispReq = NULL_KEY;
-            /* "???" = name lookup failed; treat as empty */
+        /* Single-owner mode name resolution */
+        if (query_id == OWNER_DISP_REQ){
+            OWNER_DISP_REQ = NULL_KEY;
             if (data != "" && data != "???"){
-                OwnerDisp = data;
-                changed_name = TRUE;
+                OWNER_DISP = data;
+                changedName = TRUE;
             }
-        } else if (query_id == OwnerNameReq){
-            OwnerNameReq = NULL_KEY;
-            /* Only use legacy name if DisplayName failed */
-            if (OwnerDisp == ""){
+        } else if (query_id == OWNER_NAME_REQ){
+            OWNER_NAME_REQ = NULL_KEY;
+            if (OWNER_DISP == ""){
                 if (data != ""){
-                    OwnerLegacy = data;
-                    changed_name = TRUE;
+                    OWNER_LEGACY = data;
+                    changedName = TRUE;
                 }
             }
         } else {
-            return;
+            /* Multi-owner mode name resolution */
+            integer query_idx = llListFindList(OwnerNameQueries, [query_id]);
+            if (query_idx != -1){
+                if (data != "" && data != "???"){
+                    OwnerDisplayNames = llListReplaceList(OwnerDisplayNames, [data], query_idx, query_idx);
+                    changedName = TRUE;
+                }
+                /* Mark as processed but DON'T delete to preserve index mapping */
+                OwnerNameQueries = llListReplaceList(OwnerNameQueries, [NULL_KEY], query_idx, query_idx);
+            } else {
+                return;
+            }
         }
 
-        /* Send improved ownership line after name resolves */
-        if (changed_name){
-            if (OwnershipSent && !OwnershipRefreshed){
-                if (OwnerKey != NULL_KEY){
-                    sendOwnershipLine();
-                    OwnershipRefreshed = TRUE;
+        /* If we've already printed the ownership line and haven't refreshed it yet,
+           send a one-time improved line with the resolved name. */
+        if (changedName){
+            if (OWNERSHIP_SENT){
+                if (!OWNERSHIP_REFRESHED){
+                    if (MultiOwnerMode){
+                        if (llGetListLength(OwnerKeys) > 0){
+                            sendOwnershipLine();
+                            OWNERSHIP_REFRESHED = TRUE;
+                        }
+                    }
+                    else {
+                        if (OWNER_KEY != NULL_KEY){
+                            sendOwnershipLine();
+                            OWNERSHIP_REFRESHED = TRUE;
+                        }
+                    }
                 }
             }
         }
     }
 
     timer(){
-        integer timer_needed = FALSE;
-
-        /* Optional region resync */
         if (RESYNC_ON_REGION_CHANGE){
-            if (RegionResyncDue != 0){
-                if (now() >= RegionResyncDue){
-                    RegionResyncDue = 0;
+            if (REGION_RESYNC_DUE != 0){
+                if (now() >= REGION_RESYNC_DUE){
+                    REGION_RESYNC_DUE = 0;
                     askSettings();
                     askPluginList();
                 }
             }
-            /* Keep timer running if resync is enabled */
-            timer_needed = TRUE;
         }
 
-        /* RLV probe scheduler */
         if (rlvPending()){
-            timer_needed = TRUE;
-            
-            /* Send retry queries */
-            if (now() >= RlvNextSendAt){
-                if (RlvRetries < RLV_MAX_RETRIES){
+            if (now() >= RLV_NEXT_SEND_AT){
+                if (RLV_RETRIES < RLV_MAX_RETRIES){
                     sendRlvQueries();
-                    RlvRetries += 1;
-                    RlvNextSendAt = now() + RLV_RETRY_EVERY;
+                    RLV_RETRIES = RLV_RETRIES + 1;
+                    RLV_NEXT_SEND_AT = now() + RLV_RETRY_EVERY;
                 }
             }
-            
-            /* Improved settle/timeout logic with priority */
-            if (RlvSettleUntil != 0){
-                if (now() >= RlvSettleUntil){
+            if (RLV_SETTLE_UNTIL != 0){
+                if (now() >= RLV_SETTLE_UNTIL){
                     stopRlvProbe();
-                    RlvReady = TRUE;
+                    RLV_READY = TRUE;
                 }
-            } else if (RlvWaitUntil != 0){
-                if (now() >= RlvWaitUntil){
+            }
+            if (RLV_WAIT_UNTIL != 0){
+                if (now() >= RLV_WAIT_UNTIL){
                     stopRlvProbe();
-                    RlvReady = TRUE;
+                    RLV_READY = TRUE;
                 }
             }
         }
 
-        /* Bootstrap readiness / timeout */
-        if (BootActive){
-            timer_needed = TRUE;
-            
-            integer timed_out = FALSE;
+        if (BOOT_ACTIVE){
+            integer timedOut = FALSE;
             integer completed = FALSE;
 
             if (readyEnough()){
                 completed = TRUE;
-            } else if (now() >= BootDeadline){
-                timed_out = TRUE;
+            } else {
+                if (now() >= BOOT_DEADLINE){
+                    timedOut = TRUE;
+                }
             }
 
-            if (completed || timed_out){
-                BootActive = FALSE;
-                emitSummary(completed, timed_out);
-                /* Don't immediately stop timer - recalculate interval */
-                timer_needed = RESYNC_ON_REGION_CHANGE;
+            if (completed || timedOut){
+                BOOT_ACTIVE = FALSE;
+                emitSummary(completed, timedOut);
+                llSetTimerEvent(0.0);
+                return;
             }
         }
-
-        /* Dynamic timer interval adjustment */
-        float new_interval = getTimerInterval();
-        llSetTimerEvent(new_interval);
     }
 }
