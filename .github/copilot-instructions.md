@@ -1,1141 +1,2303 @@
-# VS Code Copilot Instructions for DS Collar v2.0 Development
+\# VS Code Copilot Instructions for DS Collar v2.0 Development
 
-## Language: Linden Scripting Language (LSL)
 
-You are assisting with **Linden Scripting Language (LSL)** development for Second Life/OpenSim. LSL is NOT JavaScript, C, or any other language. Follow these rules strictly.
+
+\## Language: Linden Scripting Language (LSL)
+
+
+
+You are assisting with \*\*Linden Scripting Language (LSL)\*\* development for Second Life/OpenSim. LSL is NOT JavaScript, C, or any other language. Follow these rules strictly.
+
+
 
 ---
 
-## CRITICAL LSL LANGUAGE CONSTRAINTS
 
-### Syntax Limitations (NEVER suggest these)
 
-❌ **NO ternary operator**: `condition ? true_val : false_val`
-✅ **USE**: if/else blocks or boolean expressions
+\## CRITICAL LSL LANGUAGE CONSTRAINTS
 
-❌ **NO "key" as variable name**: It's a reserved type
-✅ **USE**: Different names like `avatar_key`, `target_key`, `user_key`
 
-❌ **NO "continue" in loops**: Not supported in LSL
-✅ **USE**: Conditional logic or loop restructuring
 
-### CRITICAL LSL Structure Rules
+\### Syntax Limitations (NEVER suggest these)
 
-⚠️ **ALL helper functions MUST be defined BEFORE the default state**
+
+
+âŒ \*\*NO ternary operator\*\*: `condition ? true\_val : false\_val`
+
+âœ… \*\*USE\*\*: if/else blocks or boolean expressions
+
+
+
+âŒ \*\*NO "key" as variable name\*\*: It's a reserved type
+
+âœ… \*\*USE\*\*: Different names like `avatar\_key`, `target\_key`, `user\_key`
+
+
+
+âŒ \*\*NO "continue" in loops\*\*: Not supported in LSL
+
+âœ… \*\*USE\*\*: Conditional logic or loop restructuring
+
+
+
+\### CRITICAL LSL Structure Rules
+
+
+
+âš ï¸ \*\*ALL helper functions MUST be defined BEFORE the default state\*\*
+
 ```lsl
-// ✅ CORRECT ORDER:
+
+// âœ… CORRECT ORDER:
+
 integer DEBUG = TRUE;
+
 string CONSTANT = "value";
 
+
+
 // Helper functions go here
-integer my_helper(string arg) {
-    return 0;
+
+integer my\_helper(string arg) {
+
+&nbsp;   return 0;
+
 }
 
-string another_helper() {
-    return "value";
+
+
+string another\_helper() {
+
+&nbsp;   return "value";
+
 }
+
+
 
 // Default state comes LAST
+
 default {
-    state_entry() {
-        // Can call helpers defined above
-        my_helper("test");
-    }
+
+&nbsp;   state\_entry() {
+
+&nbsp;       // Can call helpers defined above
+
+&nbsp;       my\_helper("test");
+
+&nbsp;   }
+
 }
 
-// ❌ WRONG - Function after state:
+
+
+// âŒ WRONG - Function after state:
+
 default {
-    state_entry() { }
+
+&nbsp;   state\_entry() { }
+
 }
 
-integer my_helper() { }  // ERROR: Functions cannot be defined after states
+
+
+integer my\_helper() { }  // ERROR: Functions cannot be defined after states
+
 ```
 
-### Reserved Terms (NEVER use as variable names)
+
+
+\### Reserved Terms (NEVER use as variable names)
+
+
 
 LSL has many reserved words that cannot be used as variable names:
 
-❌ **NEVER use these as variable names:**
+
+
+âŒ \*\*NEVER use these as variable names:\*\*
+
 ```lsl
+
 // Reserved types
+
 key, integer, float, string, vector, rotation, list, quaternion
 
+
+
 // Reserved keywords  
+
 if, else, for, do, while, return, state, jump, default
 
+
+
 // Event names
-state_entry, state_exit, touch_start, touch_end, touch, timer, 
-listen, collision_start, collision_end, collision, dataserver,
-email, http_response, http_request, changed, attach, run_time_permissions,
-sensor, no_sensor, control, at_target, not_at_target, at_rot_target,
-not_at_rot_target, money, moving_end, moving_start, object_rez,
-on_rez, remote_data, link_message, land_collision_start, 
-land_collision_end, land_collision, path_update, transaction_result
+
+state\_entry, state\_exit, touch\_start, touch\_end, touch, timer, 
+
+listen, collision\_start, collision\_end, collision, dataserver,
+
+email, http\_response, http\_request, changed, attach, run\_time\_permissions,
+
+sensor, no\_sensor, control, at\_target, not\_at\_target, at\_rot\_target,
+
+not\_at\_rot\_target, money, moving\_end, moving\_start, object\_rez,
+
+on\_rez, remote\_data, link\_message, land\_collision\_start, 
+
+land\_collision\_end, land\_collision, path\_update, transaction\_result
+
+
 
 // Common function names that might be tempting
+
 event, message, data, time, type
+
 ```
 
-✅ **DO use descriptive alternatives:**
+
+
+âœ… \*\*DO use descriptive alternatives:\*\*
+
 ```lsl
+
 // Instead of:          Use:
-key key;              key avatar_key;
-string type;          string msg_type;
-string message;       string chat_msg;
-integer event;        integer event_type;
-string data;          string response_data;
-float time;           float elapsed_time;
+
+key key;              key avatar\_key;
+
+string type;          string msg\_type;
+
+string message;       string chat\_msg;
+
+integer event;        integer event\_type;
+
+string data;          string response\_data;
+
+float time;           float elapsed\_time;
+
 ```
 
-❌ **NO switch/case statements**: Not in LSL
-✅ **USE**: if/else if chains
 
-❌ **NO try/catch**: No exception handling
-✅ **USE**: Defensive checks before operations
 
-❌ **NO classes/objects**: LSL is procedural
-✅ **USE**: Functions and global state
+âŒ \*\*NO switch/case statements\*\*: Not in LSL
 
-❌ **NO foreach loops**: Not supported
-✅ **USE**: while loops with counters
+âœ… \*\*USE\*\*: if/else if chains
 
-❌ **NO default parameters**: Functions don't support them
-✅ **USE**: Function overloading or NULL_KEY checks
 
-❌ **NO array literals**: `[1, 2, 3]` is for lists only
-✅ **USE**: Lists for collections
 
-❌ **NO string interpolation**: `"Hello ${name}"`
-✅ **USE**: Concatenation with `+`
+âŒ \*\*NO try/catch\*\*: No exception handling
 
-### Script Structure Requirements
+âœ… \*\*USE\*\*: Defensive checks before operations
 
-**CRITICAL: Function Definition Order**
+
+
+âŒ \*\*NO classes/objects\*\*: LSL is procedural
+
+âœ… \*\*USE\*\*: Functions and global state
+
+
+
+âŒ \*\*NO foreach loops\*\*: Not supported
+
+âœ… \*\*USE\*\*: while loops with counters
+
+
+
+âŒ \*\*NO default parameters\*\*: Functions don't support them
+
+âœ… \*\*USE\*\*: Function overloading or NULL\_KEY checks
+
+
+
+âŒ \*\*NO array literals\*\*: `\[1, 2, 3]` is for lists only
+
+âœ… \*\*USE\*\*: Lists for collections
+
+
+
+âŒ \*\*NO string interpolation\*\*: `"Hello ${name}"`
+
+âœ… \*\*USE\*\*: Concatenation with `+`
+
+
+
+\### Script Structure Requirements
+
+
+
+\*\*CRITICAL: Function Definition Order\*\*
+
+
 
 In LSL, ALL function definitions MUST appear BEFORE any state definitions:
 
+
+
 ```lsl
-/* ✅ CORRECT STRUCTURE */
+
+/\* âœ… CORRECT STRUCTURE \*/
+
+
 
 // 1. Global variables and constants at top
+
 integer DEBUG = TRUE;
-string PLUGIN_CONTEXT = "example";
+
+string PLUGIN\_CONTEXT = "example";
+
+
 
 // 2. ALL helper functions next
+
 integer logd(string msg) {
-    if (DEBUG) llOwnerSay(msg);
-    return FALSE;
+
+&nbsp;   if (DEBUG) llOwnerSay(msg);
+
+&nbsp;   return FALSE;
+
 }
 
-integer json_has(string j, list path) {
-    return (llJsonGetValue(j, path) != JSON_INVALID);
+
+
+integer json\_has(string j, list path) {
+
+&nbsp;   return (llJsonGetValue(j, path) != JSON\_INVALID);
+
 }
 
-string generate_id() {
-    return PLUGIN_CONTEXT + "_" + (string)llGetUnixTime();
+
+
+string generate\_id() {
+
+&nbsp;   return PLUGIN\_CONTEXT + "\_" + (string)llGetUnixTime();
+
 }
+
+
 
 // 3. States LAST (default state must exist)
-default {
-    state_entry() {
-        logd("Started");  // Can call helpers defined above
-    }
-    
-    link_message(integer sender, integer num, string msg, key id) {
-        if (json_has(msg, ["type"])) {  // Can call helpers
-            // Process message
-        }
-    }
-}
-
-/* ❌ WRONG - THIS WILL CAUSE COMPILATION ERRORS */
 
 default {
-    state_entry() {
-        my_helper();  // ERROR: my_helper not defined yet
-    }
+
+&nbsp;   state\_entry() {
+
+&nbsp;       logd("Started");  // Can call helpers defined above
+
+&nbsp;   }
+
+&nbsp;   
+
+&nbsp;   link\_message(integer sender, integer num, string msg, key id) {
+
+&nbsp;       if (json\_has(msg, \["type"])) {  // Can call helpers
+
+&nbsp;           // Process message
+
+&nbsp;       }
+
+&nbsp;   }
+
 }
+
+
+
+/\* âŒ WRONG - THIS WILL CAUSE COMPILATION ERRORS \*/
+
+
+
+default {
+
+&nbsp;   state\_entry() {
+
+&nbsp;       my\_helper();  // ERROR: my\_helper not defined yet
+
+&nbsp;   }
+
+}
+
+
 
 // Functions after states - COMPILER ERROR
-integer my_helper() {
-    return 0;
+
+integer my\_helper() {
+
+&nbsp;   return 0;
+
 }
+
 ```
 
-**Key Points:**
-- Functions cannot be defined inside states (unlike C/JavaScript)
-- Functions cannot be defined after states
-- All functions must be at script global scope
-- Default state is required and must come after all functions
 
-### Additional Reserved Terms to Avoid
+
+\*\*Key Points:\*\*
+
+\- Functions cannot be defined inside states (unlike C/JavaScript)
+
+\- Functions cannot be defined after states
+
+\- All functions must be at script global scope
+
+\- Default state is required and must come after all functions
+
+
+
+\### Additional Reserved Terms to Avoid
+
+
 
 Beyond basic types, avoid these as variable names:
 
-❌ **Event handler names:**
+
+
+âŒ \*\*Event handler names:\*\*
+
 ```lsl
+
 // Don't use as variables:
+
 collision, touch, timer, listen, sensor, dataserver, changed,
-attach, money, email, http_response, control, link_message
+
+attach, money, email, http\_response, control, link\_message
+
 ```
 
-❌ **Common constants (case-sensitive, but avoid similar names):**
+
+
+âŒ \*\*Common constants (case-sensitive, but avoid similar names):\*\*
+
 ```lsl
+
 // Don't shadow these:
-TRUE, FALSE, PI, TWO_PI, PI_BY_TWO, DEG_TO_RAD, RAD_TO_DEG,
-ZERO_VECTOR, ZERO_ROTATION, NULL_KEY
+
+TRUE, FALSE, PI, TWO\_PI, PI\_BY\_TWO, DEG\_TO\_RAD, RAD\_TO\_DEG,
+
+ZERO\_VECTOR, ZERO\_ROTATION, NULL\_KEY
+
 ```
 
-❌ **Ambiguous names that might confuse:**
+
+
+âŒ \*\*Ambiguous names that might confuse:\*\*
+
 ```lsl
+
 // Avoid:                     Use instead:
-string event;               string event_type;
-string message;             string chat_message;
-key key;                    key avatar_key;
-string type;                string msg_type;
-string data;                string payload_data;
-list list;                  list item_list;
-integer state;              integer current_state;
+
+string event;               string event\_type;
+
+string message;             string chat\_message;
+
+key key;                    key avatar\_key;
+
+string type;                string msg\_type;
+
+string data;                string payload\_data;
+
+list list;                  list item\_list;
+
+integer state;              integer current\_state;
+
 ```
 
-### LSL-Specific Types
+
+
+\### LSL-Specific Types
+
+
 
 ```lsl
+
 // LSL has these primitive types:
+
 integer   // 32-bit signed
+
 float     // 32-bit float
+
 string    // UTF-8 string
+
 key       // UUID (00000000-0000-0000-0000-000000000000)
+
 vector    // <x, y, z>
+
 rotation  // <x, y, z, s>
+
 list      // Heterogeneous list
 
+
+
 // Special constants
-NULL_KEY          // 00000000-0000-0000-0000-000000000000
-ZERO_VECTOR       // <0.0, 0.0, 0.0>
-ZERO_ROTATION     // <0.0, 0.0, 0.0, 1.0>
+
+NULL\_KEY          // 00000000-0000-0000-0000-000000000000
+
+ZERO\_VECTOR       // <0.0, 0.0, 0.0>
+
+ZERO\_ROTATION     // <0.0, 0.0, 0.0, 1.0>
+
 ```
+
+
 
 ---
 
-## DS COLLAR V2.0 ARCHITECTURE RULES
 
-### Channel Constants (ALWAYS use these)
+
+\## DS COLLAR V2.0 ARCHITECTURE RULES
+
+
+
+\### Channel Constants (ALWAYS use these)
+
+
 
 ```lsl
+
 // NEVER hardcode channel numbers
+
 // ALWAYS use these constants:
-integer KERNEL_LIFECYCLE = 500;
-integer AUTH_BUS = 700;
-integer SETTINGS_BUS = 800;
-integer UI_BUS = 900;
-integer DIALOG_BUS = 950;
+
+integer KERNEL\_LIFECYCLE = 500;
+
+integer AUTH\_BUS = 700;
+
+integer SETTINGS\_BUS = 800;
+
+integer UI\_BUS = 900;
+
+integer DIALOG\_BUS = 950;
+
 ```
 
-### Message Format (ALWAYS follow this)
+
+
+\### Message Format (ALWAYS follow this)
+
+
 
 ```lsl
+
 // ALL messages MUST be JSON with "type" field
-// ✅ CORRECT:
-string msg = llList2Json(JSON_OBJECT, [
-    "type", "message_type",
-    "field1", "value1",
-    "field2", "value2"
-]);
-llMessageLinked(LINK_SET, CHANNEL_CONSTANT, msg, NULL_KEY);
 
-// ❌ WRONG:
-llMessageLinked(LINK_SET, 500, "some_string", NULL_KEY);
+// âœ… CORRECT:
+
+string msg = llList2Json(JSON\_OBJECT, \[
+
+&nbsp;   "type", "message\_type",
+
+&nbsp;   "field1", "value1",
+
+&nbsp;   "field2", "value2"
+
+]);
+
+llMessageLinked(LINK\_SET, CHANNEL\_CONSTANT, msg, NULL\_KEY);
+
+
+
+// âŒ WRONG:
+
+llMessageLinked(LINK\_SET, 500, "some\_string", NULL\_KEY);
+
 ```
 
-### Naming Conventions (ALWAYS follow)
+
+
+\### Naming Conventions (ALWAYS follow)
+
+
 
 ```lsl
+
 // PascalCase for globals
+
 integer GlobalVariable = 0;
+
 string GlobalString = "";
-list GlobalList = [];
+
+list GlobalList = \[];
+
+
 
 // ALL CAPS for constants
-integer CONSTANT_VALUE = 100;
-string CONSTANT_STRING = "value";
 
-// snake_case for locals
-some_function() {
-    integer local_var = 0;
-    string local_string = "";
-    key local_key = NULL_KEY;
+integer CONSTANT\_VALUE = 100;
+
+string CONSTANT\_STRING = "value";
+
+
+
+// snake\_case for locals
+
+some\_function() {
+
+&nbsp;   integer local\_var = 0;
+
+&nbsp;   string local\_string = "";
+
+&nbsp;   key local\_key = NULL\_KEY;
+
 }
+
 ```
+
+
 
 ---
 
-## PLUGIN DEVELOPMENT RULES
 
-### 1. ALWAYS Start from Template
+
+\## PLUGIN DEVELOPMENT RULES
+
+
+
+\### 1. ALWAYS Start from Template
+
+
 
 When creating a new plugin:
-1. Copy `ds_collar_plugin_template_v2.lsl`
-2. Set plugin identity constants
-3. Follow template structure exactly
-4. Don't remove template patterns
 
-### 2. Plugin Identity Block
+1\. Copy `ds\_collar\_plugin\_template\_v2.lsl`
+
+2\. Set plugin identity constants
+
+3\. Follow template structure exactly
+
+4\. Don't remove template patterns
+
+
+
+\### 2. Plugin Identity Block
+
+
 
 ```lsl
+
 // ALWAYS include at top of plugin:
-string PLUGIN_CONTEXT = "unique_name";     // NO spaces, lowercase
-string PLUGIN_LABEL = "Display Name";     // What users see
-integer PLUGIN_MIN_ACL = 3;               // 1-5, see ACL table
+
+string PLUGIN\_CONTEXT = "unique\_name";     // NO spaces, lowercase
+
+string PLUGIN\_LABEL = "Display Name";     // What users see
+
+integer PLUGIN\_MIN\_ACL = 3;               // 1-5, see ACL table
+
 ```
 
-### 3. Required Functions (NEVER omit)
+
+
+\### 3. Required Functions (NEVER omit)
+
+
 
 ```lsl
+
 // Lifecycle (REQUIRED)
-register_self()        // Send registration to kernel
-send_pong()           // Respond to heartbeat
+
+register\_self()        // Send registration to kernel
+
+send\_pong()           // Respond to heartbeat
+
+
 
 // Settings (REQUIRED)
-apply_settings_sync(string msg)    // Handle full settings load
-apply_settings_delta(string msg)   // Handle incremental updates
+
+apply\_settings\_sync(string msg)    // Handle full settings load
+
+apply\_settings\_delta(string msg)   // Handle incremental updates
+
+
 
 // ACL (REQUIRED)
-request_acl(key user)              // Query user's access level
-handle_acl_result(string msg)      // Process ACL response
+
+request\_acl(key user)              // Query user's access level
+
+handle\_acl\_result(string msg)      // Process ACL response
+
+
 
 // UI (REQUIRED if plugin has menus)
-show_main_menu()                   // Display primary menu
-handle_button_click(string button) // Process button clicks
-return_to_root()                   // Return to collar root menu
-cleanup_session()                  // Clear user session state
+
+show\_main\_menu()                   // Display primary menu
+
+handle\_button\_click(string button) // Process button clicks
+
+return\_to\_root()                   // Return to collar root menu
+
+cleanup\_session()                  // Clear user session state
+
+
 
 // Message Router (REQUIRED)
-link_message(integer sender, integer num, string msg, key id) {
-    // MUST check for "type" field
-    // MUST route by channel number
+
+link\_message(integer sender, integer num, string msg, key id) {
+
+&nbsp;   // MUST check for "type" field
+
+&nbsp;   // MUST route by channel number
+
 }
+
 ```
 
-### 4. Session Management Pattern
+
+
+\### 4. Session Management Pattern
+
+
 
 ```lsl
+
 // ALWAYS maintain session state:
-key CurrentUser = NULL_KEY;
+
+key CurrentUser = NULL\_KEY;
+
 integer UserAcl = -999;
+
 string SessionId = "";
+
+
 
 // ALWAYS generate unique session IDs:
-string generate_session_id() {
-    return PLUGIN_CONTEXT + "_" + (string)llGetUnixTime();
+
+string generate\_session\_id() {
+
+&nbsp;   return PLUGIN\_CONTEXT + "\_" + (string)llGetUnixTime();
+
 }
+
+
 
 // ALWAYS cleanup on exit/timeout:
-cleanup_session() {
-    CurrentUser = NULL_KEY;
-    UserAcl = -999;
-    SessionId = "";
+
+cleanup\_session() {
+
+&nbsp;   CurrentUser = NULL\_KEY;
+
+&nbsp;   UserAcl = -999;
+
+&nbsp;   SessionId = "";
+
 }
+
 ```
 
-### 5. Dialog Pattern (NEVER use llListen directly)
+
+
+\### 5. Dialog Pattern (NEVER use llListen directly)
+
+**CRITICAL: llDialog Button Layout**
+
+⚠️ llDialog builds button grids from **BOTTOM-LEFT to TOP-RIGHT**:
+- Buttons are arranged in a 3x4 grid (12 buttons max)
+- First button goes in BOTTOM-LEFT corner
+- Fills LEFT-TO-RIGHT across bottom row
+- Then moves up to next row
+- Any dialog design MUST account for this layout
+
+```
+Visual layout for 9 buttons:
+[7] [8] [9]     ← Top row (buttons 7-9)
+[4] [5] [6]     ← Middle row (buttons 4-6)
+[1] [2] [3]     ← Bottom row (buttons 1-3)
+```
+
+Example: To center a "Back" button at the bottom:
+```lsl
+list buttons = [" ", "Back", " "];  // [empty] [Back] [empty] = centered bottom
+```
+
+
+
 
 ```lsl
-// ❌ WRONG - Don't manage listens yourself:
+
+// âŒ WRONG - Don't manage listens yourself:
+
 integer Listen = llListen(chan, "", user, "");
 
-// ✅ CORRECT - Use dialog module:
-show_main_menu() {
-    SessionId = generate_session_id();
-    
-    list buttons = ["Button1", "Button2", "Back"];
-    
-    string msg = llList2Json(JSON_OBJECT, [
-        "type", "dialog_open",
-        "session_id", SessionId,
-        "user", (string)CurrentUser,
-        "title", "Menu Title",
-        "message", "Select an option:",
-        "buttons", llList2Json(JSON_ARRAY, buttons),
-        "timeout", 60
-    ]);
-    
-    llMessageLinked(LINK_SET, DIALOG_BUS, msg, NULL_KEY);
+
+
+// âœ… CORRECT - Use dialog module:
+
+show\_main\_menu() {
+
+&nbsp;   SessionId = generate\_session\_id();
+
+&nbsp;   
+
+&nbsp;   list buttons = \["Button1", "Button2", "Back"];
+
+&nbsp;   
+
+&nbsp;   string msg = llList2Json(JSON\_OBJECT, \[
+
+&nbsp;       "type", "dialog\_open",
+
+&nbsp;       "session\_id", SessionId,
+
+&nbsp;       "user", (string)CurrentUser,
+
+&nbsp;       "title", "Menu Title",
+
+&nbsp;       "message", "Select an option:",
+
+&nbsp;       "buttons", llList2Json(JSON\_ARRAY, buttons),
+
+&nbsp;       "timeout", 60
+
+&nbsp;   ]);
+
+&nbsp;   
+
+&nbsp;   llMessageLinked(LINK\_SET, DIALOG\_BUS, msg, NULL\_KEY);
+
 }
+
 ```
 
-### 6. Settings Persistence Pattern
+
+
+\### 6. Settings Persistence Pattern
+
+
 
 ```lsl
+
 // ALWAYS use settings module for persistence:
 
+
+
 // Scalar value:
-persist_setting(string new_value) {
-    string msg = llList2Json(JSON_OBJECT, [
-        "type", "set",
-        "key", KEY_YOUR_SETTING,
-        "value", new_value
-    ]);
-    llMessageLinked(LINK_SET, SETTINGS_BUS, msg, NULL_KEY);
+
+persist\_setting(string new\_value) {
+
+&nbsp;   string msg = llList2Json(JSON\_OBJECT, \[
+
+&nbsp;       "type", "set",
+
+&nbsp;       "key", KEY\_YOUR\_SETTING,
+
+&nbsp;       "value", new\_value
+
+&nbsp;   ]);
+
+&nbsp;   llMessageLinked(LINK\_SET, SETTINGS\_BUS, msg, NULL\_KEY);
+
 }
+
+
 
 // Add to list:
-add_to_list(string element) {
-    string msg = llList2Json(JSON_OBJECT, [
-        "type", "list_add",
-        "key", KEY_YOUR_LIST,
-        "elem", element
-    ]);
-    llMessageLinked(LINK_SET, SETTINGS_BUS, msg, NULL_KEY);
+
+add\_to\_list(string element) {
+
+&nbsp;   string msg = llList2Json(JSON\_OBJECT, \[
+
+&nbsp;       "type", "list\_add",
+
+&nbsp;       "key", KEY\_YOUR\_LIST,
+
+&nbsp;       "elem", element
+
+&nbsp;   ]);
+
+&nbsp;   llMessageLinked(LINK\_SET, SETTINGS\_BUS, msg, NULL\_KEY);
+
 }
+
+
 
 // Remove from list:
-remove_from_list(string element) {
-    string msg = llList2Json(JSON_OBJECT, [
-        "type", "list_remove",
-        "key", KEY_YOUR_LIST,
-        "elem", element
-    ]);
-    llMessageLinked(LINK_SET, SETTINGS_BUS, msg, NULL_KEY);
+
+remove\_from\_list(string element) {
+
+&nbsp;   string msg = llList2Json(JSON\_OBJECT, \[
+
+&nbsp;       "type", "list\_remove",
+
+&nbsp;       "key", KEY\_YOUR\_LIST,
+
+&nbsp;       "elem", element
+
+&nbsp;   ]);
+
+&nbsp;   llMessageLinked(LINK\_SET, SETTINGS\_BUS, msg, NULL\_KEY);
+
 }
+
 ```
 
-### 7. ACL Validation Pattern
+
+
+\### 7. ACL Validation Pattern
+
+
 
 ```lsl
+
 // ALWAYS check ACL before operations:
-handle_acl_result(string msg) {
-    if (!json_has(msg, ["avatar"])) return;
-    if (!json_has(msg, ["level"])) return;
-    
-    key avatar = (key)llJsonGetValue(msg, ["avatar"]);
-    if (avatar != CurrentUser) return;
-    
-    integer level = (integer)llJsonGetValue(msg, ["level"]);
-    UserAcl = level;
-    
-    // Check minimum access
-    if (level < PLUGIN_MIN_ACL) {
-        llRegionSayTo(CurrentUser, 0, "Access denied.");
-        cleanup_session();
-        return;
-    }
-    
-    // User has access
-    show_main_menu();
+
+handle\_acl\_result(string msg) {
+
+&nbsp;   if (!json\_has(msg, \["avatar"])) return;
+
+&nbsp;   if (!json\_has(msg, \["level"])) return;
+
+&nbsp;   
+
+&nbsp;   key avatar = (key)llJsonGetValue(msg, \["avatar"]);
+
+&nbsp;   if (avatar != CurrentUser) return;
+
+&nbsp;   
+
+&nbsp;   integer level = (integer)llJsonGetValue(msg, \["level"]);
+
+&nbsp;   UserAcl = level;
+
+&nbsp;   
+
+&nbsp;   // Check minimum access
+
+&nbsp;   if (level < PLUGIN\_MIN\_ACL) {
+
+&nbsp;       llRegionSayTo(CurrentUser, 0, "Access denied.");
+
+&nbsp;       cleanup\_session();
+
+&nbsp;       return;
+
+&nbsp;   }
+
+&nbsp;   
+
+&nbsp;   // User has access
+
+&nbsp;   show\_main\_menu();
+
 }
+
 ```
 
-### 8. Link Message Router Pattern
+
+
+\### 8. Link Message Router Pattern
+
+
 
 ```lsl
-// ALWAYS structure link_message this way:
-link_message(integer sender, integer num, string msg, key id) {
-    // FIRST: Validate JSON
-    if (!json_has(msg, ["type"])) return;
-    string msg_type = llJsonGetValue(msg, ["type"]);
-    
-    // SECOND: Route by channel (fast integer comparison)
-    if (num == KERNEL_LIFECYCLE) {
-        if (msg_type == "register_now") register_self();
-        else if (msg_type == "ping") send_pong();
-        else if (msg_type == "soft_reset") llResetScript();
-    }
-    else if (num == SETTINGS_BUS) {
-        if (msg_type == "settings_sync") apply_settings_sync(msg);
-        else if (msg_type == "settings_delta") apply_settings_delta(msg);
-    }
-    else if (num == AUTH_BUS) {
-        if (msg_type == "acl_result") handle_acl_result(msg);
-    }
-    else if (num == UI_BUS) {
-        if (msg_type == "start") handle_start(msg);
-    }
-    else if (num == DIALOG_BUS) {
-        if (msg_type == "dialog_response") handle_dialog_response(msg);
-        else if (msg_type == "dialog_timeout") handle_dialog_timeout(msg);
-    }
+
+// ALWAYS structure link\_message this way:
+
+link\_message(integer sender, integer num, string msg, key id) {
+
+&nbsp;   // FIRST: Validate JSON
+
+&nbsp;   if (!json\_has(msg, \["type"])) return;
+
+&nbsp;   string msg\_type = llJsonGetValue(msg, \["type"]);
+
+&nbsp;   
+
+&nbsp;   // SECOND: Route by channel (fast integer comparison)
+
+&nbsp;   if (num == KERNEL\_LIFECYCLE) {
+
+&nbsp;       if (msg\_type == "register\_now") register\_self();
+
+&nbsp;       else if (msg\_type == "ping") send\_pong();
+
+&nbsp;       else if (msg\_type == "soft\_reset") llResetScript();
+
+&nbsp;   }
+
+&nbsp;   else if (num == SETTINGS\_BUS) {
+
+&nbsp;       if (msg\_type == "settings\_sync") apply\_settings\_sync(msg);
+
+&nbsp;       else if (msg\_type == "settings\_delta") apply\_settings\_delta(msg);
+
+&nbsp;   }
+
+&nbsp;   else if (num == AUTH\_BUS) {
+
+&nbsp;       if (msg\_type == "acl\_result") handle\_acl\_result(msg);
+
+&nbsp;   }
+
+&nbsp;   else if (num == UI\_BUS) {
+
+&nbsp;       if (msg\_type == "start") handle\_start(msg);
+
+&nbsp;   }
+
+&nbsp;   else if (num == DIALOG\_BUS) {
+
+&nbsp;       if (msg\_type == "dialog\_response") handle\_dialog\_response(msg);
+
+&nbsp;       else if (msg\_type == "dialog\_timeout") handle\_dialog\_timeout(msg);
+
+&nbsp;   }
+
 }
+
 ```
+
+
 
 ---
 
-## CODE QUALITY RULES
 
-### JSON Handling
+
+\## CODE QUALITY RULES
+
+
+
+\### JSON Handling
+
+
 
 ```lsl
+
 // ALWAYS check JSON fields exist:
-integer json_has(string j, list path) {
-    return (llJsonGetValue(j, path) != JSON_INVALID);
+
+integer json\_has(string j, list path) {
+
+&nbsp;   return (llJsonGetValue(j, path) != JSON\_INVALID);
+
 }
+
+
 
 // ALWAYS validate before accessing:
-if (json_has(msg, ["field"])) {
-    string value = llJsonGetValue(msg, ["field"]);
+
+if (json\_has(msg, \["field"])) {
+
+&nbsp;   string value = llJsonGetValue(msg, \["field"]);
+
 }
+
+
 
 // Check if string is JSON array:
-integer is_json_arr(string s) {
-    return (llGetSubString(s, 0, 0) == "[");
+
+integer is\_json\_arr(string s) {
+
+&nbsp;   return (llGetSubString(s, 0, 0) == "\[");
+
 }
+
 ```
 
-### Loop Patterns
+
+
+\### Loop Patterns
+
+
 
 ```lsl
-// ✅ CORRECT LSL loop:
+
+// âœ… CORRECT LSL loop:
+
 integer i = 0;
+
 integer len = llGetListLength(myList);
+
 while (i < len) {
-    string item = llList2String(myList, i);
-    // Process item
-    i += 1;  // MUST increment manually
+
+&nbsp;   string item = llList2String(myList, i);
+
+&nbsp;   // Process item
+
+&nbsp;   i += 1;  // MUST increment manually
+
 }
 
-// ❌ WRONG - No foreach in LSL:
+
+
+// âŒ WRONG - No foreach in LSL:
+
 foreach (item in myList) { }
 
-// ❌ WRONG - No continue in LSL:
+
+
+// âŒ WRONG - No continue in LSL:
+
 while (i < len) {
-    if (skip_condition) continue;  // ERROR
-    i += 1;
+
+&nbsp;   if (skip\_condition) continue;  // ERROR
+
+&nbsp;   i += 1;
+
 }
 
-// ✅ CORRECT - Use conditional:
+
+
+// âœ… CORRECT - Use conditional:
+
 while (i < len) {
-    if (!skip_condition) {
-        // Process
-    }
-    i += 1;
+
+&nbsp;   if (!skip\_condition) {
+
+&nbsp;       // Process
+
+&nbsp;   }
+
+&nbsp;   i += 1;
+
 }
+
 ```
 
-### Conditional Patterns
+
+
+\### Conditional Patterns
+
+
 
 ```lsl
-// ❌ WRONG - No ternary in LSL:
+
+// âŒ WRONG - No ternary in LSL:
+
 string result = condition ? "yes" : "no";
 
-// ✅ CORRECT - Use if/else:
+
+
+// âœ… CORRECT - Use if/else:
+
 string result;
+
 if (condition) {
-    result = "yes";
-}
-else {
-    result = "no";
+
+&nbsp;   result = "yes";
+
 }
 
-// ✅ ALSO CORRECT - Boolean trick for binary values:
+else {
+
+&nbsp;   result = "no";
+
+}
+
+
+
+// âœ… ALSO CORRECT - Boolean trick for binary values:
+
 integer result = (integer)condition;  // 1 or 0
+
 ```
 
-### String Operations
+
+
+\### String Operations
+
+
 
 ```lsl
-// ❌ WRONG - No interpolation:
+
+// âŒ WRONG - No interpolation:
+
 string msg = `Hello ${name}`;
 
-// ✅ CORRECT - Concatenation:
+
+
+// âœ… CORRECT - Concatenation:
+
 string msg = "Hello " + name;
 
+
+
 // String functions:
+
 llSubStringIndex(haystack, needle)  // Find position
+
 llGetSubString(str, start, end)     // Extract substring
-llStringTrim(str, STRING_TRIM)      // Trim whitespace
+
+llStringTrim(str, STRING\_TRIM)      // Trim whitespace
+
 ```
 
-### List Operations
+
+
+\### List Operations
+
+
 
 ```lsl
+
 // Create list:
-list myList = ["item1", "item2", "item3"];
+
+list myList = \["item1", "item2", "item3"];
+
+
 
 // Access:
+
 string item = llList2String(myList, index);
+
 integer val = llList2Integer(myList, index);
+
 key k = llList2Key(myList, index);
 
+
+
 // Modify:
-myList += [new_item];                              // Append
-myList = [new_item] + myList;                      // Prepend
-myList = llListReplaceList(myList, [new], idx, idx); // Replace
+
+myList += \[new\_item];                              // Append
+
+myList = \[new\_item] + myList;                      // Prepend
+
+myList = llListReplaceList(myList, \[new], idx, idx); // Replace
+
 myList = llDeleteSubList(myList, idx, idx);        // Delete
 
+
+
 // Search:
-integer idx = llListFindList(myList, [search_item]);
+
+integer idx = llListFindList(myList, \[search\_item]);
+
+
 
 // Convert to JSON:
-string json = llList2Json(JSON_ARRAY, myList);
+
+string json = llList2Json(JSON\_ARRAY, myList);
+
+
 
 // Convert from JSON:
-list result = llJson2List(json_string);
+
+list result = llJson2List(json\_string);
+
 ```
+
+
 
 ---
 
-## DEBUGGING RULES
 
-### Debug Logging Pattern
+
+\## DEBUGGING RULES
+
+
+
+\### Debug Logging Pattern
+
+
 
 ```lsl
+
 // ALWAYS include debug flag:
+
 integer DEBUG = FALSE;  // Set TRUE during development
 
+
+
 // ALWAYS use this helper:
+
 integer logd(string msg) {
-    if (DEBUG) llOwnerSay("[" + PLUGIN_LABEL + "] " + msg);
-    return FALSE;  // Allows: if (condition) return logd("msg");
+
+&nbsp;   if (DEBUG) llOwnerSay("\[" + PLUGIN\_LABEL + "] " + msg);
+
+&nbsp;   return FALSE;  // Allows: if (condition) return logd("msg");
+
 }
+
+
 
 // Use liberally:
+
 logd("Function called");
+
 logd("Variable value: " + (string)var);
+
 logd("Received message: " + msg);
+
 ```
 
-### Error Checking Pattern
+
+
+\### Error Checking Pattern
+
+
 
 ```lsl
+
 // ALWAYS validate inputs:
-some_function(key user) {
-    if (user == NULL_KEY) {
-        logd("ERROR: Invalid user key");
-        return;
-    }
-    
-    // Proceed with operation
+
+some\_function(key user) {
+
+&nbsp;   if (user == NULL\_KEY) {
+
+&nbsp;       logd("ERROR: Invalid user key");
+
+&nbsp;       return;
+
+&nbsp;   }
+
+&nbsp;   
+
+&nbsp;   // Proceed with operation
+
 }
+
+
 
 // ALWAYS check JSON structure:
-handle_message(string msg) {
-    if (!json_has(msg, ["type"])) {
-        logd("ERROR: Missing type field");
-        return;
-    }
-    
-    string msg_type = llJsonGetValue(msg, ["type"]);
-    // Proceed
+
+handle\_message(string msg) {
+
+&nbsp;   if (!json\_has(msg, \["type"])) {
+
+&nbsp;       logd("ERROR: Missing type field");
+
+&nbsp;       return;
+
+&nbsp;   }
+
+&nbsp;   
+
+&nbsp;   string msg\_type = llJsonGetValue(msg, \["type"]);
+
+&nbsp;   // Proceed
+
 }
+
 ```
+
+
 
 ---
 
-## PERFORMANCE RULES
 
-### Memory Management
+
+\## PERFORMANCE RULES
+
+
+
+\### Memory Management
+
+
 
 ```lsl
+
 // Lists are memory-heavy. Be conservative:
-list cache = [];  // Grows memory usage
+
+list cache = \[];  // Grows memory usage
+
+
 
 // Stride patterns for structured lists:
-list owner_data = [uuid, "name", level, uuid, "name", level];
+
+list owner\_data = \[uuid, "name", level, uuid, "name", level];
+
 integer STRIDE = 3;
 
+
+
 integer i = 0;
-while (i < llGetListLength(owner_data)) {
-    key uuid = llList2Key(owner_data, i);
-    string name = llList2String(owner_data, i + 1);
-    integer level = llList2Integer(owner_data, i + 2);
-    i += STRIDE;
+
+while (i < llGetListLength(owner\_data)) {
+
+&nbsp;   key uuid = llList2Key(owner\_data, i);
+
+&nbsp;   string name = llList2String(owner\_data, i + 1);
+
+&nbsp;   integer level = llList2Integer(owner\_data, i + 2);
+
+&nbsp;   i += STRIDE;
+
 }
+
 ```
 
-### Script Time
+
+
+\### Script Time
+
+
 
 ```lsl
+
 // Expensive operations (avoid in hot paths):
+
 llSensor()             // Full region scan
+
 llGetObjectDetails()   // External query
+
 llRequestAgentData()   // External query
+
 llParseString2List()   // String manipulation
 
+
+
 // Cheap operations:
+
 llGetUnixTime()        // Fast
+
 llGetListLength()      // Fast
+
 llListFindList()       // Fast for small lists
+
 Integer comparison     // Very fast
+
 ```
 
-### Efficient Patterns
+
+
+\### Efficient Patterns
+
+
 
 ```lsl
-// ✅ GOOD - Early return:
-if (condition_fail) return;
+
+// âœ… GOOD - Early return:
+
+if (condition\_fail) return;
+
 // Rest of function
 
-// ❌ BAD - Deep nesting:
+
+
+// âŒ BAD - Deep nesting:
+
 if (condition1) {
-    if (condition2) {
-        if (condition3) {
-            // Code buried deep
-        }
-    }
+
+&nbsp;   if (condition2) {
+
+&nbsp;       if (condition3) {
+
+&nbsp;           // Code buried deep
+
+&nbsp;       }
+
+&nbsp;   }
+
 }
 
-// ✅ GOOD - Cache list length:
+
+
+// âœ… GOOD - Cache list length:
+
 integer len = llGetListLength(myList);
+
 while (i < len) { }
 
-// ❌ BAD - Recalculate every iteration:
+
+
+// âŒ BAD - Recalculate every iteration:
+
 while (i < llGetListLength(myList)) { }
+
 ```
+
+
 
 ---
 
-## SECURITY RULES
 
-### Always Reset on Owner Change
+
+\## SECURITY RULES
+
+
+
+\### Always Reset on Owner Change
+
+
 
 ```lsl
+
 // REQUIRED in every script:
+
 changed(integer change) {
-    if (change & CHANGED_OWNER) {
-        llResetScript();
-    }
+
+&nbsp;   if (change \& CHANGED\_OWNER) {
+
+&nbsp;       llResetScript();
+
+&nbsp;   }
+
 }
+
 ```
 
-### Validate User Input
+
+
+\### Validate User Input
+
+
 
 ```lsl
+
 // ALWAYS validate before persistence:
-set_value(string user_input) {
-    // Check length
-    if (llStringLength(user_input) > MAX_LENGTH) {
-        return;
-    }
-    
-    // Sanitize if needed
-    user_input = llStringTrim(user_input, STRING_TRIM);
-    
-    // Then persist
-    persist_setting(user_input);
+
+set\_value(string user\_input) {
+
+&nbsp;   // Check length
+
+&nbsp;   if (llStringLength(user\_input) > MAX\_LENGTH) {
+
+&nbsp;       return;
+
+&nbsp;   }
+
+&nbsp;   
+
+&nbsp;   // Sanitize if needed
+
+&nbsp;   user\_input = llStringTrim(user\_input, STRING\_TRIM);
+
+&nbsp;   
+
+&nbsp;   // Then persist
+
+&nbsp;   persist\_setting(user\_input);
+
 }
+
 ```
 
-### Range Checking
+
+
+\### Range Checking
+
+
 
 ```lsl
+
 // ALWAYS check distance for touch/sensor:
-touch_start(integer num) {
-    key user = llDetectedKey(0);
-    vector touch_pos = llDetectedPos(0);
-    float distance = llVecDist(touch_pos, llGetPos());
-    
-    if (distance > MAX_RANGE) {
-        logd("Touch too far away");
-        return;
-    }
-    
-    // Process touch
+
+touch\_start(integer num) {
+
+&nbsp;   key user = llDetectedKey(0);
+
+&nbsp;   vector touch\_pos = llDetectedPos(0);
+
+&nbsp;   float distance = llVecDist(touch\_pos, llGetPos());
+
+&nbsp;   
+
+&nbsp;   if (distance > MAX\_RANGE) {
+
+&nbsp;       logd("Touch too far away");
+
+&nbsp;       return;
+
+&nbsp;   }
+
+&nbsp;   
+
+&nbsp;   // Process touch
+
 }
+
 ```
+
+
 
 ---
 
-## COMMON PITFALLS TO AVOID
 
-### 0. Function Placement (CRITICAL)
 
-❌ **DON'T**: Define functions after states
+\## COMMON PITFALLS TO AVOID
+
+
+
+\### 0. Function Placement (CRITICAL)
+
+
+
+âŒ \*\*DON'T\*\*: Define functions after states
+
 ```lsl
+
 default {
-    state_entry() {
-        my_helper();  // Compiler error - not defined yet
-    }
+
+&nbsp;   state\_entry() {
+
+&nbsp;       my\_helper();  // Compiler error - not defined yet
+
+&nbsp;   }
+
 }
 
-integer my_helper() {
-    return 0;
+
+
+integer my\_helper() {
+
+&nbsp;   return 0;
+
 }
+
 ```
 
-❌ **DON'T**: Define functions inside states
+
+
+âŒ \*\*DON'T\*\*: Define functions inside states
+
 ```lsl
+
 default {
-    integer my_helper() {  // Syntax error - not allowed
-        return 0;
-    }
-    
-    state_entry() {
-        my_helper();
-    }
+
+&nbsp;   integer my\_helper() {  // Syntax error - not allowed
+
+&nbsp;       return 0;
+
+&nbsp;   }
+
+&nbsp;   
+
+&nbsp;   state\_entry() {
+
+&nbsp;       my\_helper();
+
+&nbsp;   }
+
 }
+
 ```
 
-✅ **DO**: Define ALL functions before default state
+
+
+âœ… \*\*DO\*\*: Define ALL functions before default state
+
 ```lsl
+
 // Helpers first
-integer my_helper() {
-    return 0;
+
+integer my\_helper() {
+
+&nbsp;   return 0;
+
 }
 
-string another_helper() {
-    return "value";
+
+
+string another\_helper() {
+
+&nbsp;   return "value";
+
 }
+
+
 
 // States last
+
 default {
-    state_entry() {
-        my_helper();  // Works correctly
-    }
+
+&nbsp;   state\_entry() {
+
+&nbsp;       my\_helper();  // Works correctly
+
+&nbsp;   }
+
 }
+
 ```
 
-### 1. Channel Number Mistakes
 
-❌ **DON'T**: Hardcode channels
+
+\### 1. Channel Number Mistakes
+
+
+
+âŒ \*\*DON'T\*\*: Hardcode channels
+
 ```lsl
-llMessageLinked(LINK_SET, 800, msg, NULL_KEY);
+
+llMessageLinked(LINK\_SET, 800, msg, NULL\_KEY);
+
 ```
 
-✅ **DO**: Use constants
+
+
+âœ… \*\*DO\*\*: Use constants
+
 ```lsl
-llMessageLinked(LINK_SET, SETTINGS_BUS, msg, NULL_KEY);
+
+llMessageLinked(LINK\_SET, SETTINGS\_BUS, msg, NULL\_KEY);
+
 ```
 
-### 2. Channel Number Mistakes
 
-❌ **DON'T**: Hardcode channels
+
+\### 2. Channel Number Mistakes
+
+
+
+âŒ \*\*DON'T\*\*: Hardcode channels
+
 ```lsl
-llMessageLinked(LINK_SET, 800, msg, NULL_KEY);
+
+llMessageLinked(LINK\_SET, 800, msg, NULL\_KEY);
+
 ```
 
-✅ **DO**: Use constants
+
+
+âœ… \*\*DO\*\*: Use constants
+
 ```lsl
-llMessageLinked(LINK_SET, SETTINGS_BUS, msg, NULL_KEY);
+
+llMessageLinked(LINK\_SET, SETTINGS\_BUS, msg, NULL\_KEY);
+
 ```
 
-### 3. Missing Type Field
 
-❌ **DON'T**: Omit "type"
+
+\### 3. Missing Type Field
+
+
+
+âŒ \*\*DON'T\*\*: Omit "type"
+
 ```lsl
-string msg = llList2Json(JSON_OBJECT, ["key", "value"]);
+
+string msg = llList2Json(JSON\_OBJECT, \["key", "value"]);
+
 ```
 
-✅ **DO**: Always include "type"
+
+
+âœ… \*\*DO\*\*: Always include "type"
+
 ```lsl
-string msg = llList2Json(JSON_OBJECT, [
-    "type", "message_type",
-    "key", "value"
+
+string msg = llList2Json(JSON\_OBJECT, \[
+
+&nbsp;   "type", "message\_type",
+
+&nbsp;   "key", "value"
+
 ]);
+
 ```
 
-### 4. Direct Listen Management
 
-❌ **DON'T**: Create your own listens
+
+\### 4. Direct Listen Management
+
+
+
+âŒ \*\*DON'T\*\*: Create your own listens
+
 ```lsl
+
 integer chan = -1000000;
+
 integer handle = llListen(chan, "", user, "");
+
 llDialog(user, msg, buttons, chan);
+
 ```
 
-✅ **DO**: Use dialog module
+
+
+âœ… \*\*DO\*\*: Use dialog module
+
 ```lsl
-string msg = llList2Json(JSON_OBJECT, [
-    "type", "dialog_open",
-    "session_id", SessionId,
-    // ... rest of dialog
+
+string msg = llList2Json(JSON\_OBJECT, \[
+
+&nbsp;   "type", "dialog\_open",
+
+&nbsp;   "session\_id", SessionId,
+
+&nbsp;   // ... rest of dialog
+
 ]);
-llMessageLinked(LINK_SET, DIALOG_BUS, msg, NULL_KEY);
+
+llMessageLinked(LINK\_SET, DIALOG\_BUS, msg, NULL\_KEY);
+
 ```
 
-### 5. Skipping Session Cleanup
 
-❌ **DON'T**: Leave sessions hanging
+
+\### 5. Skipping Session Cleanup
+
+
+
+âŒ \*\*DON'T\*\*: Leave sessions hanging
+
 ```lsl
-handle_button_click(string button) {
-    if (button == "Close") {
-        // Just return, no cleanup
-        return;
-    }
+
+handle\_button\_click(string button) {
+
+&nbsp;   if (button == "Close") {
+
+&nbsp;       // Just return, no cleanup
+
+&nbsp;       return;
+
+&nbsp;   }
+
 }
+
 ```
 
-✅ **DO**: Always cleanup
+
+
+âœ… \*\*DO\*\*: Always cleanup
+
 ```lsl
-handle_button_click(string button) {
-    if (button == "Close") {
-        cleanup_session();
-        return;
-    }
+
+handle\_button\_click(string button) {
+
+&nbsp;   if (button == "Close") {
+
+&nbsp;       cleanup\_session();
+
+&nbsp;       return;
+
+&nbsp;   }
+
 }
+
 ```
 
-### 6. Ignoring Settings Delta
 
-❌ **DON'T**: Only handle sync
+
+\### 6. Ignoring Settings Delta
+
+
+
+âŒ \*\*DON'T\*\*: Only handle sync
+
 ```lsl
-// Only implements apply_settings_sync()
+
+// Only implements apply\_settings\_sync()
+
 ```
 
-✅ **DO**: Handle both sync and delta
+
+
+âœ… \*\*DO\*\*: Handle both sync and delta
+
 ```lsl
-apply_settings_sync(string msg) { /* ... */ }
-apply_settings_delta(string msg) { /* ... */ }
+
+apply\_settings\_sync(string msg) { /\* ... \*/ }
+
+apply\_settings\_delta(string msg) { /\* ... \*/ }
+
 ```
+
+
 
 ---
 
-## WHEN GENERATING CODE
 
-1. **ALWAYS** check if you're suggesting LSL-incompatible syntax
-2. **ALWAYS** use the template patterns for plugins
-3. **ALWAYS** use channel constants, never hardcode
-4. **ALWAYS** include "type" field in JSON messages
-5. **ALWAYS** follow the naming conventions
-6. **ALWAYS** validate JSON before accessing fields
-7. **ALWAYS** handle both settings sync and delta
-8. **ALWAYS** cleanup sessions properly
-9. **ALWAYS** use dialog module, never direct llListen
-10. **ALWAYS** check ACL before operations
+
+\## WHEN GENERATING CODE
+
+
+
+1\. \*\*ALWAYS\*\* check if you're suggesting LSL-incompatible syntax
+
+2\. \*\*ALWAYS\*\* use the template patterns for plugins
+
+3\. \*\*ALWAYS\*\* use channel constants, never hardcode
+
+4\. \*\*ALWAYS\*\* include "type" field in JSON messages
+
+5\. \*\*ALWAYS\*\* follow the naming conventions
+
+6\. \*\*ALWAYS\*\* validate JSON before accessing fields
+
+7\. \*\*ALWAYS\*\* handle both settings sync and delta
+
+8\. \*\*ALWAYS\*\* cleanup sessions properly
+
+9\. \*\*ALWAYS\*\* use dialog module, never direct llListen
+
+10\. \*\*ALWAYS\*\* check ACL before operations
+
+
 
 ---
 
-## QUICK REFERENCE
 
-### ACL Levels
+
+\## QUICK REFERENCE
+
+
+
+\### ACL Levels
+
 ```
+
 -1 = Blacklisted
- 0 = No Access
- 1 = Public
- 2 = Owned (wearer when owner set)
- 3 = Trustee
- 4 = Unowned (wearer when no owner)
- 5 = Primary Owner
+
+&nbsp;0 = No Access
+
+&nbsp;1 = Public
+
+&nbsp;2 = Owned (wearer when owner set)
+
+&nbsp;3 = Trustee
+
+&nbsp;4 = Unowned (wearer when no owner)
+
+&nbsp;5 = Primary Owner
+
 ```
 
-### Channels
-```
-500 = KERNEL_LIFECYCLE
-700 = AUTH_BUS
-800 = SETTINGS_BUS
-900 = UI_BUS
-950 = DIALOG_BUS
+
+
+\### Channels
+
 ```
 
-### Common Message Types
+500 = KERNEL\_LIFECYCLE
+
+700 = AUTH\_BUS
+
+800 = SETTINGS\_BUS
+
+900 = UI\_BUS
+
+950 = DIALOG\_BUS
+
 ```
-Lifecycle: register_now, register, ping, pong, soft_reset
-Auth: acl_query, acl_result
-Settings: settings_get, settings_sync, settings_delta, set, list_add, list_remove
+
+
+
+\### Common Message Types
+
+```
+
+Lifecycle: register\_now, register, ping, pong, soft\_reset
+
+Auth: acl\_query, acl\_result
+
+Settings: settings\_get, settings\_sync, settings\_delta, set, list\_add, list\_remove
+
 UI: start, return, close
-Dialog: dialog_open, dialog_response, dialog_timeout, dialog_close
+
+Dialog: dialog\_open, dialog\_response, dialog\_timeout, dialog\_close
+
 ```
+
+
 
 ---
 
-## EXAMPLE: Well-Formed Plugin Snippet
+
+
+\## EXAMPLE: Well-Formed Plugin Snippet
+
+
 
 ```lsl
-/* Plugin Identity */
-string PLUGIN_CONTEXT = "example";
-string PLUGIN_LABEL = "Example";
-integer PLUGIN_MIN_ACL = 3;
 
-/* Channels */
-integer KERNEL_LIFECYCLE = 500;
-integer SETTINGS_BUS = 800;
-integer DIALOG_BUS = 950;
+/\* Plugin Identity \*/
 
-/* Settings */
-string KEY_EXAMPLE_ENABLED = "example_enabled";
+string PLUGIN\_CONTEXT = "example";
 
-/* State */
+string PLUGIN\_LABEL = "Example";
+
+integer PLUGIN\_MIN\_ACL = 3;
+
+
+
+/\* Channels \*/
+
+integer KERNEL\_LIFECYCLE = 500;
+
+integer SETTINGS\_BUS = 800;
+
+integer DIALOG\_BUS = 950;
+
+
+
+/\* Settings \*/
+
+string KEY\_EXAMPLE\_ENABLED = "example\_enabled";
+
+
+
+/\* State \*/
+
 integer ExampleEnabled = TRUE;
-key CurrentUser = NULL_KEY;
+
+key CurrentUser = NULL\_KEY;
+
 string SessionId = "";
+
 integer DEBUG = FALSE;
 
-/* Helpers */
+
+
+/\* Helpers \*/
+
 integer logd(string msg) {
-    if (DEBUG) llOwnerSay("[" + PLUGIN_LABEL + "] " + msg);
-    return FALSE;
+
+&nbsp;   if (DEBUG) llOwnerSay("\[" + PLUGIN\_LABEL + "] " + msg);
+
+&nbsp;   return FALSE;
+
 }
 
-integer json_has(string j, list path) {
-    return (llJsonGetValue(j, path) != JSON_INVALID);
+
+
+integer json\_has(string j, list path) {
+
+&nbsp;   return (llJsonGetValue(j, path) != JSON\_INVALID);
+
 }
 
-string generate_session_id() {
-    return PLUGIN_CONTEXT + "_" + (string)llGetUnixTime();
+
+
+string generate\_session\_id() {
+
+&nbsp;   return PLUGIN\_CONTEXT + "\_" + (string)llGetUnixTime();
+
 }
 
-/* Settings */
-apply_settings_sync(string msg) {
-    if (!json_has(msg, ["kv"])) return;
-    string kv_json = llJsonGetValue(msg, ["kv"]);
-    
-    ExampleEnabled = TRUE;
-    if (json_has(kv_json, [KEY_EXAMPLE_ENABLED])) {
-        ExampleEnabled = (integer)llJsonGetValue(kv_json, [KEY_EXAMPLE_ENABLED]);
-    }
-    
-    logd("Settings sync applied");
+
+
+/\* Settings \*/
+
+apply\_settings\_sync(string msg) {
+
+&nbsp;   if (!json\_has(msg, \["kv"])) return;
+
+&nbsp;   string kv\_json = llJsonGetValue(msg, \["kv"]);
+
+&nbsp;   
+
+&nbsp;   ExampleEnabled = TRUE;
+
+&nbsp;   if (json\_has(kv\_json, \[KEY\_EXAMPLE\_ENABLED])) {
+
+&nbsp;       ExampleEnabled = (integer)llJsonGetValue(kv\_json, \[KEY\_EXAMPLE\_ENABLED]);
+
+&nbsp;   }
+
+&nbsp;   
+
+&nbsp;   logd("Settings sync applied");
+
 }
 
-/* UI */
-show_main_menu() {
-    SessionId = generate_session_id();
-    
-    list buttons = ["Toggle", "Back"];
-    
-    string msg = llList2Json(JSON_OBJECT, [
-        "type", "dialog_open",
-        "session_id", SessionId,
-        "user", (string)CurrentUser,
-        "title", PLUGIN_LABEL,
-        "message", "Status: " + (string)ExampleEnabled,
-        "buttons", llList2Json(JSON_ARRAY, buttons),
-        "timeout", 60
-    ]);
-    
-    llMessageLinked(LINK_SET, DIALOG_BUS, msg, NULL_KEY);
+
+
+/\* UI \*/
+
+show\_main\_menu() {
+
+&nbsp;   SessionId = generate\_session\_id();
+
+&nbsp;   
+
+&nbsp;   list buttons = \["Toggle", "Back"];
+
+&nbsp;   
+
+&nbsp;   string msg = llList2Json(JSON\_OBJECT, \[
+
+&nbsp;       "type", "dialog\_open",
+
+&nbsp;       "session\_id", SessionId,
+
+&nbsp;       "user", (string)CurrentUser,
+
+&nbsp;       "title", PLUGIN\_LABEL,
+
+&nbsp;       "message", "Status: " + (string)ExampleEnabled,
+
+&nbsp;       "buttons", llList2Json(JSON\_ARRAY, buttons),
+
+&nbsp;       "timeout", 60
+
+&nbsp;   ]);
+
+&nbsp;   
+
+&nbsp;   llMessageLinked(LINK\_SET, DIALOG\_BUS, msg, NULL\_KEY);
+
 }
 
-/* Events */
+
+
+/\* Events \*/
+
 default {
-    link_message(integer sender, integer num, string msg, key id) {
-        if (!json_has(msg, ["type"])) return;
-        string msg_type = llJsonGetValue(msg, ["type"]);
-        
-        if (num == SETTINGS_BUS) {
-            if (msg_type == "settings_sync") {
-                apply_settings_sync(msg);
-            }
-        }
-    }
+
+&nbsp;   link\_message(integer sender, integer num, string msg, key id) {
+
+&nbsp;       if (!json\_has(msg, \["type"])) return;
+
+&nbsp;       string msg\_type = llJsonGetValue(msg, \["type"]);
+
+&nbsp;       
+
+&nbsp;       if (num == SETTINGS\_BUS) {
+
+&nbsp;           if (msg\_type == "settings\_sync") {
+
+&nbsp;               apply\_settings\_sync(msg);
+
+&nbsp;           }
+
+&nbsp;       }
+
+&nbsp;   }
+
 }
+
 ```
+
+
 
 This snippet follows ALL the rules: proper naming, channel constants, JSON validation, template patterns, and LSL-compatible syntax.
 
+
+
 ---
 
-## SCRIPT STRUCTURE TEMPLATE
+
+
+\## SCRIPT STRUCTURE TEMPLATE
+
+
 
 Every LSL script for DS Collar v2.0 should follow this exact order:
 
+
+
 ```lsl
-/* =============================================================================
-   HEADER COMMENT
-   ============================================================================= */
 
-/* ═══════════════════════════════════════════════════════════
-   SECTION 1: CHANNEL CONSTANTS
-   ═══════════════════════════════════════════════════════════ */
-integer KERNEL_LIFECYCLE = 500;
-integer AUTH_BUS = 700;
-integer SETTINGS_BUS = 800;
-integer UI_BUS = 900;
-integer DIALOG_BUS = 950;
+/\* =============================================================================
 
-/* ═══════════════════════════════════════════════════════════
-   SECTION 2: PLUGIN IDENTITY
-   ═══════════════════════════════════════════════════════════ */
-string PLUGIN_CONTEXT = "example";
-string PLUGIN_LABEL = "Example";
-integer PLUGIN_MIN_ACL = 3;
+&nbsp;  HEADER COMMENT
 
-/* ═══════════════════════════════════════════════════════════
-   SECTION 3: CONSTANTS
-   ═══════════════════════════════════════════════════════════ */
+&nbsp;  ============================================================================= \*/
+
+
+
+/\* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+
+&nbsp;  SECTION 1: CHANNEL CONSTANTS
+
+&nbsp;  â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• \*/
+
+integer KERNEL\_LIFECYCLE = 500;
+
+integer AUTH\_BUS = 700;
+
+integer SETTINGS\_BUS = 800;
+
+integer UI\_BUS = 900;
+
+integer DIALOG\_BUS = 950;
+
+
+
+/\* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+
+&nbsp;  SECTION 2: PLUGIN IDENTITY
+
+&nbsp;  â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• \*/
+
+string PLUGIN\_CONTEXT = "example";
+
+string PLUGIN\_LABEL = "Example";
+
+integer PLUGIN\_MIN\_ACL = 3;
+
+
+
+/\* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+
+&nbsp;  SECTION 3: CONSTANTS
+
+&nbsp;  â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• \*/
+
 integer DEBUG = FALSE;
-string KEY_SETTING = "setting";
 
-/* ═══════════════════════════════════════════════════════════
-   SECTION 4: GLOBAL STATE VARIABLES
-   ═══════════════════════════════════════════════════════════ */
+string KEY\_SETTING = "setting";
+
+
+
+/\* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+
+&nbsp;  SECTION 4: GLOBAL STATE VARIABLES
+
+&nbsp;  â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• \*/
+
 integer SettingValue = 0;
-key CurrentUser = NULL_KEY;
+
+key CurrentUser = NULL\_KEY;
+
 string SessionId = "";
 
-/* ═══════════════════════════════════════════════════════════
-   SECTION 5: HELPER FUNCTIONS (MUST BE BEFORE STATES)
-   ═══════════════════════════════════════════════════════════ */
+
+
+/\* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+
+&nbsp;  SECTION 5: HELPER FUNCTIONS (MUST BE BEFORE STATES)
+
+&nbsp;  â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• \*/
+
 integer logd(string msg) {
-    if (DEBUG) llOwnerSay("[" + PLUGIN_LABEL + "] " + msg);
-    return FALSE;
+
+&nbsp;   if (DEBUG) llOwnerSay("\[" + PLUGIN\_LABEL + "] " + msg);
+
+&nbsp;   return FALSE;
+
 }
 
-integer json_has(string j, list path) {
-    return (llJsonGetValue(j, path) != JSON_INVALID);
+
+
+integer json\_has(string j, list path) {
+
+&nbsp;   return (llJsonGetValue(j, path) != JSON\_INVALID);
+
 }
 
-string generate_session_id() {
-    return PLUGIN_CONTEXT + "_" + (string)llGetUnixTime();
+
+
+string generate\_session\_id() {
+
+&nbsp;   return PLUGIN\_CONTEXT + "\_" + (string)llGetUnixTime();
+
 }
+
+
 
 // More helper functions here...
 
-register_self() {
-    string msg = llList2Json(JSON_OBJECT, [
-        "type", "register",
-        "context", PLUGIN_CONTEXT,
-        "label", PLUGIN_LABEL,
-        "min_acl", PLUGIN_MIN_ACL,
-        "script", llGetScriptName()
-    ]);
-    llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, msg, NULL_KEY);
+
+
+register\_self() {
+
+&nbsp;   string msg = llList2Json(JSON\_OBJECT, \[
+
+&nbsp;       "type", "register",
+
+&nbsp;       "context", PLUGIN\_CONTEXT,
+
+&nbsp;       "label", PLUGIN\_LABEL,
+
+&nbsp;       "min\_acl", PLUGIN\_MIN\_ACL,
+
+&nbsp;       "script", llGetScriptName()
+
+&nbsp;   ]);
+
+&nbsp;   llMessageLinked(LINK\_SET, KERNEL\_LIFECYCLE, msg, NULL\_KEY);
+
 }
 
-apply_settings_sync(string msg) {
-    // Settings handler
+
+
+apply\_settings\_sync(string msg) {
+
+&nbsp;   // Settings handler
+
 }
 
-show_main_menu() {
-    // UI handler
+
+
+show\_main\_menu() {
+
+&nbsp;   // UI handler
+
 }
+
+
 
 // All other functions...
 
-/* ═══════════════════════════════════════════════════════════
-   SECTION 6: STATES (MUST BE LAST, DEFAULT REQUIRED)
-   ═══════════════════════════════════════════════════════════ */
+
+
+/\* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+
+&nbsp;  SECTION 6: STATES (MUST BE LAST, DEFAULT REQUIRED)
+
+&nbsp;  â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• \*/
+
 default
+
 {
-    state_entry() {
-        logd("Script started");
-    }
-    
-    on_rez(integer start_param) {
-        llResetScript();
-    }
-    
-    link_message(integer sender, integer num, string msg, key id) {
-        if (!json_has(msg, ["type"])) return;
-        string msg_type = llJsonGetValue(msg, ["type"]);
-        
-        if (num == KERNEL_LIFECYCLE) {
-            // Handle lifecycle
-        }
-        else if (num == SETTINGS_BUS) {
-            // Handle settings
-        }
-        // More handlers...
-    }
-    
-    changed(integer change) {
-        if (change & CHANGED_OWNER) {
-            llResetScript();
-        }
-    }
+
+&nbsp;   state\_entry() {
+
+&nbsp;       logd("Script started");
+
+&nbsp;   }
+
+&nbsp;   
+
+&nbsp;   on\_rez(integer start\_param) {
+
+&nbsp;       llResetScript();
+
+&nbsp;   }
+
+&nbsp;   
+
+&nbsp;   link\_message(integer sender, integer num, string msg, key id) {
+
+&nbsp;       if (!json\_has(msg, \["type"])) return;
+
+&nbsp;       string msg\_type = llJsonGetValue(msg, \["type"]);
+
+&nbsp;       
+
+&nbsp;       if (num == KERNEL\_LIFECYCLE) {
+
+&nbsp;           // Handle lifecycle
+
+&nbsp;       }
+
+&nbsp;       else if (num == SETTINGS\_BUS) {
+
+&nbsp;           // Handle settings
+
+&nbsp;       }
+
+&nbsp;       // More handlers...
+
+&nbsp;   }
+
+&nbsp;   
+
+&nbsp;   changed(integer change) {
+
+&nbsp;       if (change \& CHANGED\_OWNER) {
+
+&nbsp;           llResetScript();
+
+&nbsp;       }
+
+&nbsp;   }
+
 }
 
+
+
 // NO CODE AFTER THIS POINT - COMPILER ERROR
+
 ```
 
-**Critical Rules:**
-1. ✅ Constants at top
-2. ✅ ALL functions defined before states
-3. ✅ Default state required
-4. ✅ Nothing after states
-5. ❌ No functions inside states
-6. ❌ No functions after states
+
+
+\*\*Critical Rules:\*\*
+
+1\. âœ… Constants at top
+
+2\. âœ… ALL functions defined before states
+
+3\. âœ… Default state required
+
+4\. âœ… Nothing after states
+
+5\. âŒ No functions inside states
+
+6\. âŒ No functions after states
+
+
 
 ---
+
+
 
 Remember: LSL is NOT JavaScript/C/C++. Always validate your suggestions against LSL's actual syntax and capabilities!
