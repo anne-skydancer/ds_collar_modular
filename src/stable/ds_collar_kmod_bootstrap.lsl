@@ -1,19 +1,19 @@
 /* =============================================================================
-   MODULE: ds_collar_kmod_bootstrap.lsl (v2.0 - Consolidated ABI)
+   MODULE: ds_collar_kmod_bootstrap.lsl (v2.1 - Enhanced Startup)
    
    ROLE: Startup coordination, RLV detection, owner name resolution
+   
+   FEATURES:
+   - IM notifications during startup (visible to wearer)
+   - Multi-channel RLV detection (4711, relay channels)
+   - Accepts RLV responses from wearer OR NULL_KEY
+   - Progressive status updates
+   - Retry logic for RLV detection
    
    CHANNELS:
    - 500 (KERNEL_LIFECYCLE): Soft reset coordination
    - 700 (AUTH_BUS): ACL queries for wearer
    - 800 (SETTINGS_BUS): Initial settings request
-   
-   STARTUP SEQUENCE:
-   1. Detect RLV capabilities
-   2. Request settings sync
-   3. Query wearer ACL
-   4. Resolve owner display names
-   5. Signal ready state
    ============================================================================= */
 
 integer DEBUG = TRUE;
@@ -28,8 +28,16 @@ integer SETTINGS_BUS = 800;
 /* ═══════════════════════════════════════════════════════════
    RLV DETECTION CONFIG
    ═══════════════════════════════════════════════════════════ */
-integer RLV_PROBE_TIMEOUT_SEC = 5;
-integer RLV_CHANNEL = -1812221819;  // Standard RLV relay channel
+integer RLV_PROBE_TIMEOUT_SEC = 30;
+integer RLV_RETRY_INTERVAL_SEC = 4;
+integer RLV_MAX_RETRIES = 8;
+integer RLV_INITIAL_DELAY_SEC = 1;
+
+// Probe multiple channels for better compatibility
+integer USE_FIXED_4711 = TRUE;
+integer USE_RELAY_CHAN = TRUE;
+integer RELAY_CHAN = -1812221819;
+integer PROBE_RELAY_BOTH_SIGNS = TRUE;  // Also try positive relay channel
 
 /* ═══════════════════════════════════════════════════════════
    SETTINGS KEYS
@@ -37,6 +45,8 @@ integer RLV_CHANNEL = -1812221819;  // Standard RLV relay channel
 string KEY_MULTI_OWNER_MODE = "multi_owner_mode";
 string KEY_OWNER_KEY = "owner_key";
 string KEY_OWNER_KEYS = "owner_keys";
+string KEY_OWNER_HON = "owner_hon";
+string KEY_OWNER_HONS = "owner_honorifics";
 
 /* ═══════════════════════════════════════════════════════════
    STATE
@@ -44,20 +54,26 @@ string KEY_OWNER_KEYS = "owner_keys";
 integer BootstrapComplete = FALSE;
 
 // RLV detection
+list RlvChannels = [];          // List of channels we're listening on
+list RlvListenHandles = [];     // Corresponding listen handles
 integer RlvProbing = FALSE;
-integer RlvListenHandle = 0;
-integer RlvProbeDeadline = 0;
 integer RlvActive = FALSE;
 string RlvVersion = "";
+integer RlvProbeDeadline = 0;
+integer RlvNextRetry = 0;
+integer RlvRetryCount = 0;
+integer RlvReady = FALSE;
 
 // Settings
 integer SettingsReceived = FALSE;
 integer MultiOwnerMode = FALSE;
 key OwnerKey = NULL_KEY;
 list OwnerKeys = [];
+string OwnerHonorific = "";
+list OwnerHonorifics = [];
 
 // Name resolution
-list OwnerNameQueries = [];  // [query_id, owner_key, query_id, owner_key, ...]
+list OwnerNameQueries = [];
 integer NAME_QUERY_STRIDE = 2;
 list OwnerDisplayNames = [];
 
@@ -81,42 +97,105 @@ integer now() {
     return llGetUnixTime();
 }
 
+sendIM(string msg) {
+    key wearer = llGetOwner();
+    if (wearer != NULL_KEY && msg != "") {
+        llInstantMessage(wearer, msg);
+    }
+}
+
+integer isAttached() {
+    return ((integer)llGetAttached() != 0);
+}
+
 /* ═══════════════════════════════════════════════════════════
-   RLV DETECTION
+   RLV DETECTION - Multi-Channel Approach
    ═══════════════════════════════════════════════════════════ */
 
+addProbeChannel(integer ch) {
+    if (ch == 0) return;
+    if (llListFindList(RlvChannels, [ch]) != -1) return;  // Already added
+    
+    integer handle = llListen(ch, "", NULL_KEY, "");  // Accept from anyone (NULL_KEY important!)
+    RlvChannels += [ch];
+    RlvListenHandles += [handle];
+    logd("RLV probe channel added: " + (string)ch);
+}
+
+clearProbeChannels() {
+    integer i = 0;
+    integer len = llGetListLength(RlvListenHandles);
+    while (i < len) {
+        integer handle = llList2Integer(RlvListenHandles, i);
+        if (handle) llListenRemove(handle);
+        i += 1;
+    }
+    RlvChannels = [];
+    RlvListenHandles = [];
+}
+
+sendRlvQueries() {
+    integer i = 0;
+    integer len = llGetListLength(RlvChannels);
+    while (i < len) {
+        integer ch = llList2Integer(RlvChannels, i);
+        llOwnerSay("@versionnew=" + (string)ch);
+        i += 1;
+    }
+    logd("RLV @versionnew sent (attempt " + (string)(RlvRetryCount + 1) + ")");
+}
+
 start_rlv_probe() {
-    if (RlvProbing) return;
+    if (RlvProbing) {
+        logd("RLV probe already active");
+        return;
+    }
+    
+    if (!isAttached()) {
+        // Not attached, can't detect RLV
+        RlvReady = TRUE;
+        RlvActive = FALSE;
+        RlvVersion = "";
+        logd("Not attached, skipping RLV detection");
+        return;
+    }
     
     RlvProbing = TRUE;
     RlvActive = FALSE;
     RlvVersion = "";
-    RlvProbeDeadline = now() + RLV_PROBE_TIMEOUT_SEC;
+    RlvRetryCount = 0;
+    RlvReady = FALSE;
     
-    // Open listen
-    if (RlvListenHandle != 0) {
-        llListenRemove(RlvListenHandle);
+    clearProbeChannels();
+    
+    // Set up multiple probe channels
+    if (USE_FIXED_4711) addProbeChannel(4711);
+    if (USE_RELAY_CHAN) {
+        addProbeChannel(RELAY_CHAN);
+        if (PROBE_RELAY_BOTH_SIGNS) {
+            addProbeChannel(-RELAY_CHAN);  // Try opposite sign too
+        }
     }
-    RlvListenHandle = llListen(RLV_CHANNEL, "", NULL_KEY, "");
     
-    // Send probe
-    llOwnerSay("@versionnew=" + (string)RLV_CHANNEL);
+    RlvProbeDeadline = now() + RLV_PROBE_TIMEOUT_SEC;
+    RlvNextRetry = now() + RLV_INITIAL_DELAY_SEC;  // Initial delay before first probe
     
-    logd("RLV probe started");
+    logd("RLV probe started on " + (string)llGetListLength(RlvChannels) + " channels");
+    sendIM("Detecting RLV...");
 }
 
 stop_rlv_probe() {
-    if (RlvListenHandle != 0) {
-        llListenRemove(RlvListenHandle);
-        RlvListenHandle = 0;
-    }
+    clearProbeChannels();
     RlvProbing = FALSE;
+    RlvReady = TRUE;
     
     if (RlvActive) {
         logd("RLV detected: " + RlvVersion);
+        sendIM("RLV: " + RlvVersion);
     }
     else {
         logd("RLV not detected");
+        sendIM("RLV: Not detected");
     }
 }
 
@@ -141,6 +220,8 @@ apply_settings_sync(string msg) {
     MultiOwnerMode = FALSE;
     OwnerKey = NULL_KEY;
     OwnerKeys = [];
+    OwnerHonorific = "";
+    OwnerHonorifics = [];
     
     // Load
     if (json_has(kv_json, [KEY_MULTI_OWNER_MODE])) {
@@ -155,6 +236,17 @@ apply_settings_sync(string msg) {
         string owner_keys_json = llJsonGetValue(kv_json, [KEY_OWNER_KEYS]);
         if (is_json_arr(owner_keys_json)) {
             OwnerKeys = llJson2List(owner_keys_json);
+        }
+    }
+    
+    if (json_has(kv_json, [KEY_OWNER_HON])) {
+        OwnerHonorific = llJsonGetValue(kv_json, [KEY_OWNER_HON]);
+    }
+    
+    if (json_has(kv_json, [KEY_OWNER_HONS])) {
+        string hon_json = llJsonGetValue(kv_json, [KEY_OWNER_HONS]);
+        if (is_json_arr(hon_json)) {
+            OwnerHonorifics = llJson2List(hon_json);
         }
     }
     
@@ -250,53 +342,60 @@ check_bootstrap_complete() {
     if (BootstrapComplete) return;
     
     // Check all conditions
-    if (!RlvProbing && SettingsReceived && llGetListLength(OwnerNameQueries) == 0) {
+    if (RlvReady && SettingsReceived && llGetListLength(OwnerNameQueries) == 0) {
         BootstrapComplete = TRUE;
         logd("Bootstrap complete");
         
-        // Announce status
+        // Announce final status
         announce_status();
     }
 }
 
 announce_status() {
-    string status = "Collar initialized";
-    
-    if (RlvActive) {
-        status += " [RLV: " + RlvVersion + "]";
-    }
-    else {
-        status += " [RLV: not detected]";
-    }
-    
+    // Ownership status
     if (MultiOwnerMode) {
         integer owner_count = llGetListLength(OwnerKeys);
         if (owner_count > 0) {
-            status += " | Owners: ";
+            sendIM("Mode: Multi-Owner (" + (string)owner_count + ")");
             integer i = 0;
-            while (i < owner_count && i < 3) {  // Show max 3 names
-                if (i > 0) status += ", ";
-                status += llList2String(OwnerDisplayNames, i);
+            while (i < owner_count && i < 5) {
+                string hon = "";
+                if (i < llGetListLength(OwnerHonorifics)) {
+                    hon = llList2String(OwnerHonorifics, i);
+                }
+                string display = llList2String(OwnerDisplayNames, i);
+                if (hon != "") {
+                    sendIM("  " + hon + ": " + display);
+                }
+                else {
+                    sendIM("  Owner " + (string)(i + 1) + ": " + display);
+                }
                 i += 1;
             }
-            if (owner_count > 3) {
-                status += " (+" + (string)(owner_count - 3) + " more)";
+            if (owner_count > 5) {
+                sendIM("  (+" + (string)(owner_count - 5) + " more)");
             }
         }
         else {
-            status += " | No owner set";
+            sendIM("Status: Uncommitted");
         }
     }
     else {
         if (OwnerKey != NULL_KEY) {
-            status += " | Owner: " + llList2String(OwnerDisplayNames, 0);
+            string display = llList2String(OwnerDisplayNames, 0);
+            if (OwnerHonorific != "") {
+                sendIM("Owner: " + OwnerHonorific + " (" + display + ")");
+            }
+            else {
+                sendIM("Owner: " + display);
+            }
         }
         else {
-            status += " | No owner set";
+            sendIM("Status: Uncommitted");
         }
     }
     
-    llOwnerSay(status);
+    sendIM("Collar startup complete.");
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -310,6 +409,7 @@ default
         SettingsReceived = FALSE;
         
         logd("Bootstrap started");
+        sendIM("DS Collar starting up. Please wait...");
         
         // Start RLV detection
         start_rlv_probe();
@@ -317,7 +417,7 @@ default
         // Request settings
         request_settings();
         
-        // Start timer for RLV probe timeout
+        // Start timer for RLV probe management
         llSetTimerEvent(1.0);
     }
     
@@ -331,29 +431,49 @@ default
     }
     
     timer() {
-        // Check RLV probe timeout
-        if (RlvProbing && now() >= RlvProbeDeadline) {
-            stop_rlv_probe();
-            check_bootstrap_complete();
+        // Handle RLV probe retries
+        if (RlvProbing && !RlvReady) {
+            integer current_time = now();
+            
+            // Check if we should send another query
+            if (current_time >= RlvNextRetry) {
+                if (RlvRetryCount < RLV_MAX_RETRIES) {
+                    sendRlvQueries();
+                    RlvRetryCount += 1;
+                    RlvNextRetry = current_time + RLV_RETRY_INTERVAL_SEC;
+                }
+            }
+            
+            // Check for timeout
+            if (current_time >= RlvProbeDeadline) {
+                logd("RLV probe timed out");
+                stop_rlv_probe();
+                check_bootstrap_complete();
+            }
         }
         
         // Stop timer if bootstrap complete
-        if (BootstrapComplete) {
+        if (BootstrapComplete && !RlvProbing) {
             llSetTimerEvent(0.0);
         }
     }
     
     listen(integer channel, string name, key id, string message) {
-        if (channel == RLV_CHANNEL && RlvProbing) {
-            // RLV response format: "RestrainedLove viewer v1.23.4 (RLVa 1.2.3)"
-            if (llSubStringIndex(message, "RestrainedLove") == 0 ||
-                llSubStringIndex(message, "RLV") == 0) {
-                RlvActive = TRUE;
-                RlvVersion = message;
-                stop_rlv_probe();
-                check_bootstrap_complete();
-            }
-        }
+        // Check if this is one of our probe channels
+        if (llListFindList(RlvChannels, [channel]) == -1) return;
+        
+        // Accept replies from wearer OR NULL_KEY (some viewers use NULL_KEY for RLV)
+        key wearer = llGetOwner();
+        if (id != wearer && id != NULL_KEY) return;
+        
+        // Any reply means RLV is active
+        RlvActive = TRUE;
+        RlvVersion = llStringTrim(message, STRING_TRIM);
+        logd("RLV reply on channel " + (string)channel + " from " + (string)id + ": " + RlvVersion);
+        
+        // Stop probing immediately
+        stop_rlv_probe();
+        check_bootstrap_complete();
     }
     
     dataserver(key query_id, string data) {
@@ -375,7 +495,7 @@ default
         
         /* ===== KERNEL LIFECYCLE ===== */
         else if (num == KERNEL_LIFECYCLE) {
-            if (msg_type == "soft_reset") {
+            if (msg_type == "soft_reset" || msg_type == "soft_reset_all") {
                 llResetScript();
             }
         }
@@ -384,16 +504,6 @@ default
     changed(integer change) {
         if (change & CHANGED_OWNER) {
             llResetScript();
-        }
-        
-        if (change & CHANGED_REGION || change & CHANGED_TELEPORT) {
-            // Re-probe RLV on region change
-            if (BootstrapComplete) {
-                logd("Region change detected, re-probing RLV");
-                BootstrapComplete = FALSE;
-                start_rlv_probe();
-                llSetTimerEvent(1.0);
-            }
         }
     }
 }
