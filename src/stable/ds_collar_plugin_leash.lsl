@@ -1,14 +1,14 @@
 /* =============================================================================
-   DS Collar - Leash Plugin (v2.7 OFFER DIALOG)
+   DS Collar - Leash Plugin (v1.0 OFFER DIALOG)
    
    ROLE: User interface and configuration for leashing system
    
-   CHANGES v2.7:
+   CHANGES v1.0:
    - Added offer acceptance dialog (targets can Accept/Decline offers)
    - Handles offer_pending messages from kernel module
    - Manages offer dialog state separately from menu dialogs
    
-   CHANGES v2.6:
+   CHANGES v1.0:
    - Removed wasteful button reversal logic - buttons now built in correct order
    - Added IsOfferMode flag to distinguish Offer from Pass actions
    - ACL 2 no longer gets "Get Holder" button (unnecessary for owned wearers)
@@ -63,7 +63,7 @@ string SensorMode = "";
 list SensorCandidates = [];
 integer IsOfferMode = FALSE;  // TRUE if ACL 2 offering, FALSE if higher ACL passing
 
-// Offer dialog state (NEW v2.7)
+// Offer dialog state (NEW v1.0)
 string OfferDialogSession = "";
 key OfferTarget = NULL_KEY;
 key OfferOriginator = NULL_KEY;
@@ -198,7 +198,7 @@ show_pass_menu() {
     llSensor("", NULL_KEY, AGENT, 96.0, PI);
 }
 
-// ===== OFFER DIALOG (NEW v2.7) =====
+// ===== OFFER DIALOG (NEW v1.0) =====
 show_offer_dialog(key target, key originator) {
     OfferDialogSession = generate_session_id();
     OfferTarget = target;
@@ -447,7 +447,7 @@ default
         cleanup_session();
         register_self();
         query_state();
-        logd("Leash UI ready (v2.7 OFFER DIALOG)");
+        logd("Leash UI ready (v1.0 OFFER DIALOG)");
     }
     
     on_rez(integer start_param) {

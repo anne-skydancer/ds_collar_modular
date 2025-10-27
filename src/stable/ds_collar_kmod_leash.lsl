@@ -1,38 +1,38 @@
 /* =============================================================================
-   DS Collar - Leash Kernel Module (v2.9 OFFER DIALOG)
+   DS Collar - Leash Kernel Module (v1.0 OFFER DIALOG)
    
    ROLE: Leashing engine - provides leash services to plugins
    
-   NEW FEATURES v2.9:
+   NEW FEATURES v1.0:
    - Added offer acceptance dialog for leash offers
    - Target receives Accept/Decline dialog with 60s timeout
    - Originator receives notification of acceptance/decline/timeout
    
-   BUG FIXES v2.8:
+   BUG FIXES v1.0:
    - CRITICAL: Fixed offer/pass target ACL verification deadlock
    - request_acl_for_pass_target now updates PendingActionUser to target
    - Prevents handle_acl_result from rejecting target's ACL response
    
-   NEW FEATURES v2.7:
+   NEW FEATURES v1.0:
    - Added "offer" action for ACL 2 (Owned wearer)
    - Offer allows owned wearer to offer leash when not currently leashed
    - Separate from "pass" action with distinct permissions and behavior
    
-   BUG FIXES v2.6:
+   BUG FIXES v1.0:
    - CRITICAL: Fixed auto-reclip after explicit unleash bug
    - CRITICAL: Fixed LM protocol to send controller UUID instead of wearer UUID
    - Added holder name constant to top for easy maintenance
    - Optimized link_message by checking "type" once at top
    - Added channel constants (LEASH_CHAN_LM, LEASH_CHAN_DS) to top
    
-   SECURITY FIXES v2.3:
+   SECURITY FIXES v1.0:
    - Added yank rate limiting (5s cooldown) to prevent griefing
    - Fixed pass target ACL verification to preserve original passer context
    - Added Y2038 timestamp overflow protection
    - Improved session randomness with multiple entropy sources
    - Added production debug guard (dual-gate logging)
    
-   SECURITY FIXES v2.2:
+   SECURITY FIXES v1.0:
    - Added ACL verification system (no longer trusts plugin flags)
    - Implemented holder detection state machine (no race conditions)
    - Added auto-reclip attempt limiting
@@ -854,7 +854,7 @@ default
         ]), NULL_KEY);
         llSetTimerEvent(FOLLOW_TICK);
         llRequestPermissions(llGetOwner(), PERMISSION_TAKE_CONTROLS);
-        logd("Leash kmod ready (v2.9 OFFER DIALOG)");
+        logd("Leash kmod ready (v1.0 OFFER DIALOG)");
     }
     
     on_rez(integer start_param) {

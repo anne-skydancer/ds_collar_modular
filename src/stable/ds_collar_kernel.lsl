@@ -1,5 +1,5 @@
 /* =============================================================================
-   MODULE: ds_collar_kernel.lsl (v2.0 - Consolidated ABI)
+   MODULE: ds_collar_kernel.lsl (v1.0 - Consolidated ABI)
    SECURITY AUDIT: ALL ISSUES FIXED
    
    ROLE: Plugin registry, lifecycle management, heartbeat monitoring

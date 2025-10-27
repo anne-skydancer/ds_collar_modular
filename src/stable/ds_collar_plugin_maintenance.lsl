@@ -1,5 +1,5 @@
 /* =============================================================================
-   PLUGIN: ds_collar_plugin_maintenance.lsl (v2.0 - Enhanced)
+   PLUGIN: ds_collar_plugin_maintenance.lsl (v1.0 - Enhanced)
    
    PURPOSE: Maintenance and utility functions
    

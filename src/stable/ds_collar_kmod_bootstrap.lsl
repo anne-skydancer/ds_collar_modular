@@ -1,5 +1,5 @@
 /* =============================================================================
-   MODULE: ds_collar_kmod_bootstrap.lsl (v2.3 - Soft Reset Authorization Fix)
+   MODULE: ds_collar_kmod_bootstrap.lsl (v1.0 - Soft Reset Authorization Fix)
    SECURITY AUDIT: MEDIUM-023 FIX APPLIED
    
    ROLE: Startup coordination, RLV detection, owner name resolution
@@ -17,15 +17,15 @@
    - 800 (SETTINGS_BUS): Initial settings request
    
    SECURITY FIXES APPLIED:
-   - [MEDIUM-023] Soft reset authorization validation (v2.3)
+   - [MEDIUM-023] Soft reset authorization validation (v1.0)
    - [MEDIUM] Integer overflow protection for timestamps
    - [LOW] Production mode guards debug logging
    - [ENHANCEMENT] Name resolution timeout added (30s)
    
-   CHANGELOG v2.3:
+   CHANGELOG v1.0:
    - Added 'from' field validation for soft_reset messages
    - Only authorized senders (kernel, maintenance, bootstrap) can trigger reset
-   - Aligns with kernel's security model from v2.0+
+   - Aligns with kernel's security model from v1.0+
    ============================================================================= */
 
 integer DEBUG = FALSE;
@@ -562,7 +562,7 @@ default
         /* ===== KERNEL LIFECYCLE ===== */
         else if (num == KERNEL_LIFECYCLE) {
             if (msg_type == "soft_reset" || msg_type == "soft_reset_all") {
-                // SECURITY FIX (v2.3 - MEDIUM-023): Validate sender authorization
+                // SECURITY FIX (v1.0 - MEDIUM-023): Validate sender authorization
                 if (!json_has(msg, ["from"])) {
                     logd("SECURITY: Rejected soft_reset without 'from' field");
                     return;

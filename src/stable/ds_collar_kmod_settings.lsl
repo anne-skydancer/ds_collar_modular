@@ -1,5 +1,5 @@
 /* =============================================================================
-   MODULE: ds_collar_kmod_settings.lsl (v2.1 - Security Hardened)
+   MODULE: ds_collar_kmod_settings.lsl (v1.0 - Security Hardened)
    SECURITY AUDIT: CRITICAL ISSUES FIXED
    
    ROLE: Persistent key-value store with notecard loading and delta updates
@@ -684,13 +684,13 @@ default
             // Only act if the settings notecard specifically changed
             key current_notecard_key = llGetInventoryKey(NOTECARD_NAME);
             if (current_notecard_key != NotecardKey) {
-                // Notecard was deleted → reset to defaults
+                // Notecard was deleted â†’ reset to defaults
                 if (current_notecard_key == NULL_KEY) {
                     logd("Settings notecard deleted, resetting to defaults");
                     llResetScript();
                 }
                 else {
-                    // Notecard edited or re-added → reload and overlay
+                    // Notecard edited or re-added â†’ reload and overlay
                     logd("Settings notecard changed, reloading settings");
                     NotecardKey = current_notecard_key;
                     start_notecard_reading();

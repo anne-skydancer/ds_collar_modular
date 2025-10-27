@@ -1,5 +1,5 @@
 /* =============================================================================
-   PLUGIN: ds_collar_plugin_status.lsl (v2.0 - Consolidated ABI)
+   PLUGIN: ds_collar_plugin_status.lsl (v1.0 - Consolidated ABI)
    
    PURPOSE: Display collar status information (read-only)
    

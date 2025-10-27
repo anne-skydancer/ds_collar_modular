@@ -1,5 +1,5 @@
 /* =============================================================================
-   MODULE: ds_collar_kmod_auth.lsl (v2.1 - Security Hardened)
+   MODULE: ds_collar_kmod_auth.lsl (v1.0 - Security Hardened)
    SECURITY AUDIT: ACTUAL ISSUES FIXED
    
    ROLE: Authoritative ACL and policy engine

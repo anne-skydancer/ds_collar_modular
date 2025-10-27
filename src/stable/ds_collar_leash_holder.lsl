@@ -1,4 +1,4 @@
-// ds_leash_holder_point.lsl — minimal leash-holder target responder
+// ds_leash_holder_point.lsl -> minimal leash-holder target responder
 // Works with ds_collar_plugin_leash.lsl (LEASH_HOLDER_CHAN must match)
 
 integer DEBUG = FALSE;
@@ -68,7 +68,7 @@ default {
         }
     }
 
-    // Optional: quick debug — touch to print chosen prim key
+    // Optional: quick debug â€” touch to print chosen prim key
     touch_start(integer n) {
         if (!DEBUG) return;
         key k = leashPrimKey();
@@ -94,6 +94,6 @@ default {
         reply = llJsonSetValue(reply, ["session"], (string)session);
 
         llRegionSayTo(collar, LEASH_HOLDER_CHAN, reply);
-        logd("sent target " + (string)targetPrim + " → " + (string)collar + " (sess " + (string)session + ")");
+        logd("sent target " + (string)targetPrim + " â†’ " + (string)collar + " (sess " + (string)session + ")");
     }
 }

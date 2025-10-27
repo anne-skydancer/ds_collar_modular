@@ -1,9 +1,9 @@
 /* =============================================================================
-   MODULE: ds_collar_kmod_remote.lsl (v2.1 SECURITY HARDENING)
+   MODULE: ds_collar_kmod_remote.lsl (v1.0 SECURITY HARDENING)
    
    ROLE: External HUD communication bridge
    
-   SECURITY FIXES v2.1:
+   SECURITY FIXES v1.0:
    - Added ACL verification for menu requests
    - Implemented rate limiting (2s cooldown per user)
    - Added pending query timeout (30s) and max limit (20)
@@ -24,9 +24,9 @@
    - -8675311: Listen for menu request commands
    
    WORKFLOW:
-   1. HUD broadcasts collar scan Ã¢â€ â€™ Collar responds with owner UUID
-   2. HUD sends ACL query Ã¢â€ â€™ Collar queries AUTH Ã¢â€ â€™ Collar responds with level
-   3. HUD sends menu request Ã¢â€ â€™ Collar triggers UI for HUD wearer
+   1. HUD broadcasts collar scan --> Collar responds with owner UUID
+   2. HUD sends ACL query --> Collar queries AUTH --> Collar responds with level
+   3. HUD sends menu request --> Collar triggers UI for HUD wearer
    ============================================================================= */
 
 integer DEBUG = FALSE;

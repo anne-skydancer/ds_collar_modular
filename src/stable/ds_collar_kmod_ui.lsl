@@ -1,5 +1,5 @@
 /* =============================================================================
-   MODULE: ds_collar_kmod_ui.lsl (v2.1 - Security Hardened)
+   MODULE: ds_collar_kmod_ui.lsl (v1.0 - Security Hardened)
    SECURITY AUDIT: ENHANCEMENTS APPLIED
    
    ROLE: Root touch menu with paged plugin list and ACL filtering

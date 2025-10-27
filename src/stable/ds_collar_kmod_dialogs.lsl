@@ -1,5 +1,5 @@
 /* =============================================================================
-   MODULE: ds_collar_kmod_dialogs.lsl (v2.1 - Security Hardened)
+   MODULE: ds_collar_kmod_dialogs.lsl (v1.0 - Security Hardened)
    SECURITY AUDIT: MINOR ENHANCEMENTS APPLIED
    
    ROLE: Centralized dialog management - eliminates per-plugin listen handles
