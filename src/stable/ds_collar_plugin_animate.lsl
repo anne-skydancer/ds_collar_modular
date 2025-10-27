@@ -13,7 +13,7 @@
    TIER: 2 (Medium - list management, paging)
    ============================================================================= */
 
-integer DEBUG = TRUE;
+integer DEBUG = FALSE;
 
 /* ═══════════════════════════════════════════════════════════
    CONSOLIDATED ABI

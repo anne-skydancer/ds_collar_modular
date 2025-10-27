@@ -1,5 +1,6 @@
 /* =============================================================================
-   MODULE: ds_collar_kmod_ui.lsl (v2.0 - Multi-Session Support)
+   MODULE: ds_collar_kmod_ui.lsl (v2.1 - Security Hardened)
+   SECURITY AUDIT: ENHANCEMENTS APPLIED
    
    ROLE: Root touch menu with paged plugin list and ACL filtering
    
@@ -10,9 +11,17 @@
    - 950 (DIALOG_BUS): Dialog display
    
    MULTI-SESSION: Supports multiple concurrent users with independent sessions
+   
+   SECURITY ENHANCEMENTS:
+   - [MEDIUM] Touch range validation fixed (ZERO_VECTOR rejection)
+   - [MEDIUM] ACL re-validation on session return (time-based)
+   - [LOW] Production mode guard for debug
+   - [LOW] Owner change handler
+   - [LOW] Blacklist check in button handler
    ============================================================================= */
 
-integer DEBUG = TRUE;
+integer DEBUG = FALSE;
+integer PRODUCTION = TRUE;  // Set FALSE for development builds
 
 /* ═══════════════════════════════════════════════════════════
    CONSOLIDATED ABI
@@ -39,35 +48,34 @@ integer PLUGIN_CONTEXT = 0;
 integer PLUGIN_LABEL = 1;
 integer PLUGIN_MIN_ACL = 2;
 
-/* Session list stride */
-integer SESSION_STRIDE = 7;
+/* Session list stride - SECURITY FIX: Added SESSION_CREATED_TIME */
+integer SESSION_STRIDE = 8;
 integer SESSION_USER = 0;
 integer SESSION_ACL = 1;
 integer SESSION_IS_BLACKLISTED = 2;
 integer SESSION_PAGE = 3;
 integer SESSION_TOTAL_PAGES = 4;
 integer SESSION_ID = 5;
-integer SESSION_FILTERED_START = 6;  // Pointer to where this session's filtered plugins start in FilteredPluginsData
+integer SESSION_FILTERED_START = 6;
+integer SESSION_CREATED_TIME = 7;  // SECURITY FIX: Timestamp for ACL refresh
 
-integer MAX_SESSIONS = 5;  // Maximum concurrent sessions
+integer MAX_SESSIONS = 5;
+integer SESSION_MAX_AGE = 60;  // Seconds before ACL refresh required
 
 /* ═══════════════════════════════════════════════════════════
    STATE
    ═══════════════════════════════════════════════════════════ */
-list AllPlugins = [];        // All registered plugins (shared)
-
-// Multi-session tracking
-list Sessions = [];          // [user, acl, page, total_pages, session_id, filtered_start, user, acl, ...]
-list FilteredPluginsData = []; // Concatenated filtered plugin lists for all sessions
-
-// Pending ACL queries
-list PendingAcl = [];        // [user, user, ...] users waiting for ACL
+list AllPlugins = [];
+list Sessions = [];
+list FilteredPluginsData = [];
+list PendingAcl = [];
 
 /* ═══════════════════════════════════════════════════════════
    HELPERS
    ═══════════════════════════════════════════════════════════ */
 integer logd(string msg) {
-    if (DEBUG) llOwnerSay("[UI] " + msg);
+    // SECURITY FIX: Production mode guard
+    if (DEBUG && !PRODUCTION) llOwnerSay("[UI] " + msg);
     return FALSE;
 }
 
@@ -100,7 +108,6 @@ integer get_session_filtered_start(integer session_idx) {
 }
 
 integer get_session_filtered_count(integer session_idx) {
-    // Count how many filtered plugins this session has
     integer start = get_session_filtered_start(session_idx);
     integer next_session_idx = session_idx + SESSION_STRIDE;
     
@@ -130,7 +137,6 @@ cleanup_session(key user) {
     integer idx = find_session_idx(user);
     if (idx == -1) return;
     
-    // Remove session's filtered plugins from data
     integer start = get_session_filtered_start(idx);
     integer count = get_session_filtered_count(idx);
     integer end = start + (count * PLUGIN_STRIDE);
@@ -139,7 +145,6 @@ cleanup_session(key user) {
         FilteredPluginsData = llDeleteSubList(FilteredPluginsData, start, end - 1);
     }
     
-    // Update all subsequent sessions' filtered_start pointers
     integer shift_amount = count * PLUGIN_STRIDE;
     integer i = idx + SESSION_STRIDE;
     while (i < llGetListLength(Sessions)) {
@@ -148,29 +153,24 @@ cleanup_session(key user) {
         i += SESSION_STRIDE;
     }
     
-    // Remove session
     Sessions = llDeleteSubList(Sessions, idx, idx + SESSION_STRIDE - 1);
     
     logd("Session cleaned up for " + llKey2Name(user));
 }
 
 create_session(key user, integer acl, integer is_blacklisted) {
-    // Check if session already exists
     integer existing_idx = find_session_idx(user);
     if (existing_idx != -1) {
         logd("Session already exists for " + llKey2Name(user) + ", updating");
         cleanup_session(user);
     }
     
-    // Enforce session limit
     if (llGetListLength(Sessions) / SESSION_STRIDE >= MAX_SESSIONS) {
-        // Remove oldest session
         key oldest_user = llList2Key(Sessions, 0 + SESSION_USER);
         logd("Session limit reached, removing oldest: " + llKey2Name(oldest_user));
         cleanup_session(oldest_user);
     }
     
-    // Filter plugins for this user's ACL
     list filtered = [];
     integer i = 0;
     integer len = llGetListLength(AllPlugins);
@@ -187,13 +187,13 @@ create_session(key user, integer acl, integer is_blacklisted) {
         i += PLUGIN_STRIDE;
     }
     
-    // Add filtered plugins to data pool
     integer filtered_start = llGetListLength(FilteredPluginsData);
     FilteredPluginsData += filtered;
     
-    // Create session with is_blacklisted flag
+    // SECURITY FIX: Add timestamp to session
     string session_id = generate_session_id(user);
-    Sessions += [user, acl, is_blacklisted, 0, 0, session_id, filtered_start];
+    integer created_time = llGetUnixTime();
+    Sessions += [user, acl, is_blacklisted, 0, 0, session_id, filtered_start, created_time];
     
     logd("Created session for " + llKey2Name(user) + " (ACL=" + (string)acl + ", blacklisted=" + (string)is_blacklisted + ", " + 
          (string)(llGetListLength(filtered) / PLUGIN_STRIDE) + " plugins)");
@@ -213,7 +213,6 @@ apply_plugin_list(string plugins_json) {
         return;
     }
     
-    // Count array elements
     integer count = 0;
     while (llJsonValueType(plugins_json, [count]) != JSON_INVALID) {
         count += 1;
@@ -261,26 +260,21 @@ show_root_menu(key user) {
     integer plugin_count = llGetListLength(filtered) / PLUGIN_STRIDE;
     
     if (plugin_count == 0) {
-        // Get user's ACL level and blacklist status to determine appropriate message
         integer user_acl = llList2Integer(Sessions, session_idx + SESSION_ACL);
         integer is_blacklisted = llList2Integer(Sessions, session_idx + SESSION_IS_BLACKLISTED);
         
         if (user_acl == -1) {
             if (is_blacklisted) {
-                // Explicitly blacklisted user
                 llRegionSayTo(user, 0, "You have been barred from using this collar.");
             }
             else {
-                // User with no access (non-public collar)
                 llRegionSayTo(user, 0, "This collar is not available for public use.");
             }
         }
         else if (user_acl == 0) {
-            // Wearer denied access (TPE mode)
             llRegionSayTo(user, 0, "You have relinquished control of the collar.");
         }
         else {
-            // User with valid access (ACL 1+) but no plugins installed
             llRegionSayTo(user, 0, "No plugins are currently installed.");
         }
         
@@ -290,16 +284,13 @@ show_root_menu(key user) {
     
     integer current_page = llList2Integer(Sessions, session_idx + SESSION_PAGE);
     
-    // Calculate pages
     integer total_pages = (plugin_count + MAX_FUNC_BTNS - 1) / MAX_FUNC_BTNS;
     if (current_page >= total_pages) current_page = 0;
     if (current_page < 0) current_page = total_pages - 1;
     
-    // Update session with calculated total_pages
     Sessions = llListReplaceList(Sessions, [total_pages], session_idx + SESSION_TOTAL_PAGES, session_idx + SESSION_TOTAL_PAGES);
     Sessions = llListReplaceList(Sessions, [current_page], session_idx + SESSION_PAGE, session_idx + SESSION_PAGE);
     
-    // Build button list for current page
     list buttons = [];
     integer start_idx = current_page * MAX_FUNC_BTNS * PLUGIN_STRIDE;
     integer end_idx = start_idx + (MAX_FUNC_BTNS * PLUGIN_STRIDE);
@@ -314,13 +305,6 @@ show_root_menu(key user) {
         i += PLUGIN_STRIDE;
     }
     
-    // New layout: Nav buttons in bottom-left, content fills from bottom-right upward
-    // [plugin 8] [plugin 9] [plugin 10]
-    // [plugin 5] [plugin 6] [plugin 7]
-    // [plugin 2] [plugin 3] [plugin 4]
-    // [<<]       [>>]       [plugin 1]
-    
-    // Reverse button order so they display correctly
     list reversed = [];
     i = llGetListLength(buttons) - 1;
     while (i >= 0) {
@@ -328,7 +312,6 @@ show_root_menu(key user) {
         i = i - 1;
     }
     
-    // Add navigation in bottom-left (always show, enables wrap-around)
     reversed = ["<<", ">>", "Close"] + reversed;
     
     string buttons_json = llList2Json(JSON_ARRAY, reversed);
@@ -365,11 +348,18 @@ handle_button_click(key user, string button) {
         return;
     }
     
+    // SECURITY FIX: Check blacklist status
+    integer is_blacklisted = llList2Integer(Sessions, session_idx + SESSION_IS_BLACKLISTED);
+    if (is_blacklisted) {
+        llRegionSayTo(user, 0, "You have been barred from using this collar.");
+        cleanup_session(user);
+        return;
+    }
+    
     integer current_page = llList2Integer(Sessions, session_idx + SESSION_PAGE);
     integer total_pages = llList2Integer(Sessions, session_idx + SESSION_TOTAL_PAGES);
     list filtered = get_session_filtered_plugins(session_idx);
     
-    // Navigation buttons (wrap-around enabled)
     if (button == "<<") {
         current_page -= 1;
         if (current_page < 0) current_page = total_pages - 1;
@@ -391,15 +381,21 @@ handle_button_click(key user, string button) {
         return;
     }
     
-    // Find plugin by label
     integer i = 0;
-    integer len = llGetListLength(filtered);
+    integer len = llGetListLength(AllPlugins);
     while (i < len) {
-        string label = llList2String(filtered, i + PLUGIN_LABEL);
+        string label = llList2String(AllPlugins, i + PLUGIN_LABEL);
         if (label == button) {
-            string context = llList2String(filtered, i + PLUGIN_CONTEXT);
+            string context = llList2String(AllPlugins, i + PLUGIN_CONTEXT);
+            integer min_acl = llList2Integer(AllPlugins, i + PLUGIN_MIN_ACL);
             
-            // Send plugin start message
+            integer user_acl = llList2Integer(Sessions, session_idx + SESSION_ACL);
+            if (user_acl < min_acl) {
+                llRegionSayTo(user, 0, "Access denied.");
+                logd("ACL insufficient: user=" + (string)user_acl + ", required=" + (string)min_acl);
+                return;
+            }
+            
             string msg = llList2Json(JSON_OBJECT, [
                 "type", "start",
                 "context", context,
@@ -409,7 +405,6 @@ handle_button_click(key user, string button) {
             llMessageLinked(LINK_SET, UI_BUS, msg, user);
             logd("Starting plugin: " + context + " for " + llKey2Name(user));
             
-            // DON'T cleanup session - keep it for when plugin returns
             return;
         }
         
@@ -433,7 +428,6 @@ update_plugin_label(string context, string new_label) {
             AllPlugins = llListReplaceList(AllPlugins, [new_label], i + PLUGIN_LABEL, i + PLUGIN_LABEL);
             logd("Updated label for " + context + " to: " + new_label);
             
-            // Update in all active sessions' filtered lists
             integer j = 0;
             while (j < llGetListLength(FilteredPluginsData)) {
                 string filtered_context = llList2String(FilteredPluginsData, j + PLUGIN_CONTEXT);
@@ -465,8 +459,6 @@ handle_plugin_list(string msg) {
     
     string plugins_json = llJsonGetValue(msg, ["plugins"]);
     apply_plugin_list(plugins_json);
-    
-    // Plugin list updates are silent - no automatic UI display
 }
 
 handle_acl_result(string msg) {
@@ -478,24 +470,18 @@ handle_acl_result(string msg) {
     integer level = (integer)llJsonGetValue(msg, ["level"]);
     integer is_blacklisted = (integer)llJsonGetValue(msg, ["is_blacklisted"]);
     
-    // Check if this user is pending ACL
     integer pending_idx = llListFindList(PendingAcl, [avatar]);
     if (pending_idx == -1) return;
     
-    // Remove from pending
     PendingAcl = llDeleteSubList(PendingAcl, pending_idx, pending_idx);
     
     logd("ACL result: " + (string)level + " (blacklisted=" + (string)is_blacklisted + ") for " + llKey2Name(avatar));
     
-    // Create session and show menu
     create_session(avatar, level, is_blacklisted);
     show_root_menu(avatar);
 }
 
 handle_start(string msg, key user_key) {
-    // Handle external start requests (e.g., from remote module)
-    // ONLY process if this is a request for the ROOT menu
-    
     if (!json_has(msg, ["context"])) {
         start_root_session(user_key);
         return;
@@ -507,20 +493,15 @@ handle_start(string msg, key user_key) {
         start_root_session(user_key);
         return;
     }
-    
-    // Plugin-specific start - ignore (plugins handle these)
 }
 
 start_root_session(key user_key) {
-    // Start new session - multiple users can have sessions simultaneously
     logd("External start request from " + llKey2Name(user_key));
     
-    // Add to pending ACL list
     if (llListFindList(PendingAcl, [user_key]) == -1) {
         PendingAcl += [user_key];
     }
     
-    // Request ACL for this user
     string acl_query = llList2Json(JSON_OBJECT, [
         "type", "acl_query",
         "avatar", (string)user_key
@@ -535,14 +516,22 @@ handle_return(string msg) {
     
     logd("Return requested for " + llKey2Name(user_key));
     
-    // Check if session exists
+    // SECURITY FIX: Check session age and re-validate if stale
     integer session_idx = find_session_idx(user_key);
     if (session_idx != -1) {
-        // Session exists, just show menu again
-        show_root_menu(user_key);
+        integer created_time = llList2Integer(Sessions, session_idx + SESSION_CREATED_TIME);
+        integer age = llGetUnixTime() - created_time;
+        
+        if (age > SESSION_MAX_AGE) {
+            logd("Session too old (" + (string)age + "s), re-validating ACL");
+            cleanup_session(user_key);
+            start_root_session(user_key);
+        }
+        else {
+            show_root_menu(user_key);
+        }
     }
     else {
-        // No session, create new one
         start_root_session(user_key);
     }
 }
@@ -566,7 +555,6 @@ handle_dialog_response(string msg) {
     string button = llJsonGetValue(msg, ["button"]);
     key user = (key)llJsonGetValue(msg, ["user"]);
     
-    // Find session by session_id
     integer i = 0;
     while (i < llGetListLength(Sessions)) {
         if (llList2String(Sessions, i + SESSION_ID) == session_id) {
@@ -586,7 +574,6 @@ handle_dialog_timeout(string msg) {
     string session_id = llJsonGetValue(msg, ["session_id"]);
     key user = (key)llJsonGetValue(msg, ["user"]);
     
-    // Find and cleanup session
     integer i = 0;
     while (i < llGetListLength(Sessions)) {
         if (llList2String(Sessions, i + SESSION_ID) == session_id) {
@@ -612,7 +599,6 @@ default
         
         logd("UI module started (multi-session)");
         
-        // Request plugin list
         string request = llList2Json(JSON_OBJECT, [
             "type", "plugin_list_request"
         ]);
@@ -625,16 +611,22 @@ default
             key toucher = llDetectedKey(i);
             vector touch_pos = llDetectedTouchPos(i);
             
-            // Validate touch distance
-            if (touch_pos != ZERO_VECTOR) {
-                float distance = llVecDist(touch_pos, llGetPos());
-                if (distance > TOUCH_RANGE_M) {
-                    i += 1;
-                    jump next_touch;
-                }
+            // SECURITY FIX: Reject invalid touches
+            if (touch_pos == ZERO_VECTOR) {
+                logd("WARNING: Invalid touch position from " + llKey2Name(toucher));
+                i += 1;
+                jump next_touch;
             }
             
-            // Start session for this user (multiple users allowed)
+            // Validate touch distance
+            float distance = llVecDist(touch_pos, llGetPos());
+            if (distance > TOUCH_RANGE_M) {
+                logd("WARNING: Touch outside range (" + (string)distance + "m) from " + llKey2Name(toucher));
+                i += 1;
+                jump next_touch;
+            }
+            
+            // Valid touch - proceed
             start_root_session(toucher);
             logd("Touch from " + llKey2Name(toucher));
             
@@ -648,26 +640,20 @@ default
         
         string msg_type = llJsonGetValue(msg, ["type"]);
         
-        // Filter out noisy messages
         if (msg_type != "ping" && msg_type != "pong" && msg_type != "register" && msg_type != "register_now") {
             logd("Received message: channel=" + (string)num + " type=" + msg_type);
         }
         
-        /* ===== KERNEL LIFECYCLE ===== */
         if (num == KERNEL_LIFECYCLE) {
             if (msg_type == "plugin_list") {
                 handle_plugin_list(msg);
             }
         }
-        
-        /* ===== AUTH BUS ===== */
         else if (num == AUTH_BUS) {
             if (msg_type == "acl_result") {
                 handle_acl_result(msg);
             }
         }
-        
-        /* ===== UI BUS ===== */
         else if (num == UI_BUS) {
             if (msg_type == "start") {
                 handle_start(msg, id);
@@ -679,8 +665,6 @@ default
                 handle_update_label(msg);
             }
         }
-        
-        /* ===== DIALOG BUS ===== */
         else if (num == DIALOG_BUS) {
             if (msg_type == "dialog_response") {
                 handle_dialog_response(msg);
@@ -688,6 +672,13 @@ default
             else if (msg_type == "dialog_timeout") {
                 handle_dialog_timeout(msg);
             }
+        }
+    }
+    
+    // SECURITY FIX: Reset on owner change
+    changed(integer change) {
+        if (change & CHANGED_OWNER) {
+            llResetScript();
         }
     }
 }

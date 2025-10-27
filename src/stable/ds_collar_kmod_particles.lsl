@@ -1,7 +1,20 @@
 /* =============================================================================
-   MODULE: ds_collar_kmod_particles.lsl (v2.0 - Consolidated ABI)
+   MODULE: ds_collar_kmod_particles.lsl (v2.3 SECURITY HARDENING)
    
    ROLE: Visual connection renderer (chains, beams, ropes) + Lockmeister protocol
+   
+   SECURITY FIXES v2.3:
+   - Added needs_timer() helper for proper timer cleanup
+   - Fixed timer not stopping when both sources inactive
+   - Added explicit cleanup before owner change reset
+   - Added production debug guard (dual-gate logging)
+   
+   SECURITY FIXES v2.2:
+   - Lockmeister now requires explicit authorization before accepting responses
+   - Added explicit release command handling
+   - Improved target validation in particles_update
+   - Fixed timer cleanup logic
+   - Enhanced handle validation (must match authorized controller)
    
    PURPOSE: Provides particle system rendering for any plugin that needs
             visual connections between wearer and target (avatar or object).
@@ -13,25 +26,32 @@
    - Parking plugin (chain to post/object)
    
    PROTOCOLS:
-   - DS native (via UI_BUS messages)
-   - Lockmeister v2 (channel -8888)
+   - DS native (via UI_BUS messages) - draws from collar to avatar
+   - Lockmeister v2 (channel -8888) - draws from leashpoint to responding prim
    
    CHANNELS:
    - 900 (UI_BUS): Particle control messages
    - -8888 (Lockmeister): LM protocol compatibility
    
+   CHANGELOG v2.2:
+   - SECURITY: Lockmeister now validates authorization before accepting
+   - Added explicit release command handling
+   - Fixed target validation in particles_update
+   - Improved timer cleanup logic
+   
    ============================================================================= */
 
-integer DEBUG = TRUE;
+integer DEBUG = FALSE;
+integer PRODUCTION = TRUE;  // Set FALSE for development
 
-/* ═══════════════════════════════════════════════════════════
+/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
    CONSOLIDATED ABI
-   ═══════════════════════════════════════════════════════════ */
+   â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
 integer UI_BUS = 900;
 
-/* ═══════════════════════════════════════════════════════════
+/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
    CONSTANTS
-   ═══════════════════════════════════════════════════════════ */
+   â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
 float PARTICLE_UPDATE_RATE = 0.5;  // Update every 0.5 seconds
 
 // Default chain texture
@@ -41,9 +61,9 @@ string CHAIN_TEXTURE = "4d3b6c6f-52e2-da9d-f7be-cccb1e535aca";
 integer LEASH_CHAN_LM = -8888;
 integer LM_PING_INTERVAL = 8;  // Ping every 8 seconds
 
-/* ═══════════════════════════════════════════════════════════
+/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
    STATE
-   ═══════════════════════════════════════════════════════════ */
+   â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
 integer ParticlesActive = FALSE;
 key TargetKey = NULL_KEY;
 string SourcePlugin = "";
@@ -53,14 +73,16 @@ integer LeashpointLink = 0;
 // Lockmeister state
 integer LmListen = 0;
 integer LmActive = FALSE;
-key LmController = NULL_KEY;
+key LmController = NULL_KEY;  // Who is authorized to control the leash
+key LmTargetPrim = NULL_KEY;  // Which prim we're leashing to
 integer LmLastPing = 0;
+integer LmAuthorized = FALSE;  // NEW: Explicit authorization flag
 
-/* ═══════════════════════════════════════════════════════════
+/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
    HELPERS
-   ═══════════════════════════════════════════════════════════ */
+   â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
 integer logd(string msg) {
-    if (DEBUG) llOwnerSay("[PARTICLES] " + msg);
+    if (DEBUG && !PRODUCTION) llOwnerSay("[PARTICLES] " + msg);
     return FALSE;
 }
 
@@ -72,9 +94,16 @@ integer now() {
     return llGetUnixTime();
 }
 
-/* ═══════════════════════════════════════════════════════════
-   LOCKMEISTER PROTOCOL
-   ═══════════════════════════════════════════════════════════ */
+// Helper to determine if timer should be running
+integer needs_timer() {
+    if (LmActive) return TRUE;  // Lockmeister needs pinging
+    if (SourcePlugin != "" && ParticlesActive) return TRUE;  // DS rendering active
+    return FALSE;
+}
+
+/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+   LOCKMEISTER PROTOCOL (IMPROVED SECURITY)
+   â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
 
 open_lm_listen() {
     if (LmListen == 0) {
@@ -110,43 +139,117 @@ lm_ping() {
 
 handle_lm_message(key id, string msg) {
     key owner_key = llGetOwnerKey(id);
-    string wearer = (string)llGetOwner();
     
-    // Check if message starts with wearer UUID
-    if (llGetSubString(msg, 0, 35) != wearer) return;
-    
+    // Lockmeister protocol sends: "<holder_uuid>handle ok" or "<holder_uuid>collar ok"
+    // Or release: "<holder_uuid>handle free" or "<holder_uuid>collar free"
+    // Extract the UUID from the first 36 characters
+    string msg_uuid = llGetSubString(msg, 0, 35);
     string protocol = llGetSubString(msg, 36, -1);
     
-    // Lockmeister response: "collar ok" or "handle ok"
+    // Validate UUID format (basic check)
+    if (llStringLength(msg_uuid) != 36) return;
+    
+    // Verify the UUID in message matches the object owner
+    if ((key)msg_uuid != owner_key) {
+        logd("LM message UUID mismatch: " + msg_uuid + " vs " + (string)owner_key);
+        return;
+    }
+    
+    // Handle explicit release commands
+    if (protocol == "collar free" || protocol == "handle free") {
+        if (LmActive && id == LmTargetPrim) {
+            logd("LM explicit release received from " + (string)id);
+            
+            LmActive = FALSE;
+            LmController = NULL_KEY;
+            LmTargetPrim = NULL_KEY;
+            LmAuthorized = FALSE;
+            close_lm_listen();
+            
+            // Clear particles
+            render_chain_particles(NULL_KEY);
+            
+            // Notify leash plugin
+            llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
+                "type", "lm_released"
+            ]), NULL_KEY);
+            
+            // Stop timer if no other source active
+            if (SourcePlugin == "lockmeister" || SourcePlugin == "") {
+                SourcePlugin = "";
+                TargetKey = NULL_KEY;
+            }
+            if (!needs_timer()) {
+                llSetTimerEvent(0.0);
+                logd("Timer stopped - no active sources");
+            }
+        }
+        return;
+    }
+    
+    // Lockmeister grab response: "collar ok" or "handle ok"
     if (protocol == "collar ok" || protocol == "handle ok") {
-        logd("LM response received from " + llKey2Name(owner_key));
+        // SECURITY: Only accept if Lockmeister mode was explicitly authorized
+        if (!LmAuthorized) {
+            logd("Rejected LM response - not authorized. Call lm_enable first.");
+            return;
+        }
         
-        // Start particles to controller avatar
+        // CRITICAL: Only accept handles belonging to the authorized controller
+        if (LmController != NULL_KEY && owner_key != LmController) {
+            logd("Handle belongs to " + llKey2Name(owner_key) + 
+                 ", but authorized controller is " + llKey2Name(LmController) + " - ignoring");
+            return;
+        }
+        
+        // If we're already locked onto a handle, ONLY accept responses from THAT handle
+        if (LmActive && LmTargetPrim != NULL_KEY) {
+            if (id != LmTargetPrim) {
+                logd("Already locked to " + (string)LmTargetPrim + ", ignoring other handle " + (string)id);
+                return;
+            }
+            // Same handle confirming - just update ping time
+            LmLastPing = now();
+            return;
+        }
+        
+        logd("LM response received from object " + (string)id + " (owner: " + llKey2Name(owner_key) + ")");
+        
+        // Priority check: If DS native is already rendering to a holder prim, don't override
+        if (SourcePlugin == "core_leash" && TargetKey != NULL_KEY) {
+            // Check if current target is a prim (not avatar)
+            if (llGetAgentSize(TargetKey) == ZERO_VECTOR) {
+                logd("DS holder already active, ignoring Lockmeister response");
+                return;
+            }
+        }
+        
+        // Start particles to the responding PRIM (not the owner avatar)
         LmActive = TRUE;
-        LmController = owner_key;
+        LmController = owner_key;  // Track who controls it
+        LmTargetPrim = id;         // Track the actual prim
         LmLastPing = now();
         
-        TargetKey = owner_key;
+        TargetKey = id;  // Target the responding prim
         ParticlesActive = TRUE;
         SourcePlugin = "lockmeister";
         
-        render_chain_particles(owner_key);
+        render_chain_particles(id);
         
         // Notify leash plugin
         string notify_msg = llList2Json(JSON_OBJECT, [
             "type", "lm_grabbed",
-            "controller", (string)owner_key
+            "controller", (string)owner_key,
+            "prim", (string)id
         ]);
         llMessageLinked(LINK_SET, UI_BUS, notify_msg, NULL_KEY);
     }
 }
 
-/* ═══════════════════════════════════════════════════════════
+/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
    LEASHPOINT DETECTION
-   ═══════════════════════════════════════════════════════════ */
+   â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
 
-// Find the leashpoint prim (name="leashpoint", desc="leashpoint")
-// Falls back to LINK_ROOT if not found
 integer find_leashpoint_link() {
     integer i = 2;
     integer prim_count = llGetNumberOfPrims();
@@ -167,9 +270,9 @@ integer find_leashpoint_link() {
     return LINK_ROOT;
 }
 
-/* ═══════════════════════════════════════════════════════════
+/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
    PARTICLE RENDERING
-   ═══════════════════════════════════════════════════════════ */
+   â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
 
 render_chain_particles(key target) {
     if (LeashpointLink == 0) {
@@ -178,15 +281,13 @@ render_chain_particles(key target) {
     
     if (target == NULL_KEY) {
         // Clear particles
-        if (ParticlesActive) {
-            llLinkParticleSystem(LeashpointLink, []);
-            ParticlesActive = FALSE;
-            logd("Particles cleared");
-        }
+        llLinkParticleSystem(LeashpointLink, []);
+        ParticlesActive = FALSE;
+        logd("Particles cleared");
         return;
     }
     
-    // Set up particle system
+    // Render chain to target
     llLinkParticleSystem(LeashpointLink, [
         PSYS_SRC_PATTERN, PSYS_SRC_PATTERN_DROP,
         PSYS_SRC_TEXTURE, CHAIN_TEXTURE,
@@ -210,35 +311,47 @@ render_chain_particles(key target) {
     ]);
     
     ParticlesActive = TRUE;
-    logd("Particles started to target: " + (string)target);
+    logd("Particles rendered to " + (string)target);
 }
 
-/* ═══════════════════════════════════════════════════════════
-   MESSAGE HANDLING
-   ═══════════════════════════════════════════════════════════ */
+/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+   MESSAGE HANDLERS
+   â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
 
 handle_particles_start(string msg) {
-    if (!json_has(msg, ["source"])) {
-        logd("ERROR: particles_start missing source");
-        return;
-    }
-    
-    if (!json_has(msg, ["target"])) {
-        logd("ERROR: particles_start missing target");
+    if (!json_has(msg, ["source"]) || !json_has(msg, ["target"])) {
+        logd("ERROR: particles_start missing source or target");
         return;
     }
     
     string source = llJsonGetValue(msg, ["source"]);
+    key target = (key)llJsonGetValue(msg, ["target"]);
     
-    // If Lockmeister is active, DS protocol takes precedence
-    if (LmActive && source != "lockmeister") {
-        logd("Stopping Lockmeister to switch to DS native");
-        LmActive = FALSE;
-        LmController = NULL_KEY;
+    // Validate target exists in-world
+    list details = llGetObjectDetails(target, [OBJECT_POS]);
+    if (llGetListLength(details) == 0) {
+        logd("ERROR: Target " + (string)target + " not found in-world");
+        return;
+    }
+    
+    // Priority: Lockmeister < DS leash
+    if (SourcePlugin == "lockmeister" && source == "core_leash") {
+        logd("Overriding Lockmeister with DS leash");
+        if (LmActive) {
+            LmActive = FALSE;
+            LmController = NULL_KEY;
+            LmTargetPrim = NULL_KEY;
+            LmAuthorized = FALSE;
+            close_lm_listen();
+        }
+    }
+    else if (SourcePlugin != "" && SourcePlugin != source) {
+        logd("Ignoring start request from " + source + " (active source: " + SourcePlugin + ")");
+        return;
     }
     
     SourcePlugin = source;
-    TargetKey = (key)llJsonGetValue(msg, ["target"]);
+    TargetKey = target;
     
     if (json_has(msg, ["style"])) {
         ParticleStyle = llJsonGetValue(msg, ["style"]);
@@ -249,10 +362,7 @@ handle_particles_start(string msg) {
     
     logd("Start request from " + SourcePlugin + " to target " + (string)TargetKey);
     
-    // Start rendering
     render_chain_particles(TargetKey);
-    
-    // Start timer for updates
     llSetTimerEvent(PARTICLE_UPDATE_RATE);
 }
 
@@ -272,18 +382,16 @@ handle_particles_stop(string msg) {
     
     logd("Stop request from " + source);
     
-    // Clear particles
     render_chain_particles(NULL_KEY);
     
-    // Stop timer if no Lockmeister active
-    if (!LmActive) {
-        llSetTimerEvent(0.0);
-    }
+    // Always clear source state when stopping
+    SourcePlugin = "";
+    TargetKey = NULL_KEY;
     
-    // Reset state
-    if (!LmActive) {
-        SourcePlugin = "";
-        TargetKey = NULL_KEY;
+    // Stop timer if nothing needs it
+    if (!needs_timer()) {
+        llSetTimerEvent(0.0);
+        logd("Timer stopped - no active sources");
     }
 }
 
@@ -294,6 +402,13 @@ handle_particles_update(string msg) {
     }
     
     key new_target = (key)llJsonGetValue(msg, ["target"]);
+    
+    // SECURITY: Validate target exists in-world
+    list details = llGetObjectDetails(new_target, [OBJECT_POS]);
+    if (llGetListLength(details) == 0) {
+        logd("ERROR: Update target " + (string)new_target + " not found in-world");
+        return;
+    }
     
     if (new_target != TargetKey) {
         logd("Updating target to: " + (string)new_target);
@@ -310,26 +425,48 @@ handle_lm_enable(string msg) {
     }
     
     LmController = (key)llJsonGetValue(msg, ["controller"]);
+    LmAuthorized = TRUE;  // Mark as authorized
     open_lm_listen();
     
     // Start pinging
     LmLastPing = now();
     llSetTimerEvent(PARTICLE_UPDATE_RATE);
     
-    logd("Lockmeister enabled for " + llKey2Name(LmController));
+    logd("Lockmeister AUTHORIZED for " + llKey2Name(LmController));
 }
 
 handle_lm_disable() {
     close_lm_listen();
-    LmActive = FALSE;
-    LmController = NULL_KEY;
     
-    logd("Lockmeister disabled");
+    // If Lockmeister was active, clear the particles
+    if (LmActive) {
+        LmActive = FALSE;
+        LmController = NULL_KEY;
+        LmTargetPrim = NULL_KEY;
+        LmAuthorized = FALSE;
+        
+        // Clear particles if we were the active source
+        if (SourcePlugin == "lockmeister") {
+            render_chain_particles(NULL_KEY);
+            SourcePlugin = "";
+            TargetKey = NULL_KEY;
+        }
+    }
+    
+    LmAuthorized = FALSE;  // Clear authorization
+    
+    // Check if timer should stop
+    if (!needs_timer()) {
+        llSetTimerEvent(0.0);
+        logd("Timer stopped - no active sources");
+    }
+    
+    logd("Lockmeister disabled and deauthorized");
 }
 
-/* ═══════════════════════════════════════════════════════════
+/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
    EVENTS
-   ═══════════════════════════════════════════════════════════ */
+   â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
 
 default
 {
@@ -341,9 +478,11 @@ default
         
         LmActive = FALSE;
         LmController = NULL_KEY;
+        LmTargetPrim = NULL_KEY;
+        LmAuthorized = FALSE;
         close_lm_listen();
         
-        logd("Particles module ready");
+        logd("Particles module ready (v2.2 SECURITY PATCH)");
     }
     
     on_rez(integer start_param) {
@@ -352,10 +491,14 @@ default
     
     changed(integer change) {
         if (change & CHANGED_OWNER) {
+            // Clear authorization before reset (defensive coding)
+            LmAuthorized = FALSE;
+            LmController = NULL_KEY;
+            close_lm_listen();
             llResetScript();
         }
         
-        // If inventory changed, re-detect leashpoint
+        // If linkset changed, re-detect leashpoint
         if (change & CHANGED_LINK) {
             LeashpointLink = 0;
             if (ParticlesActive) {
@@ -402,10 +545,8 @@ default
             lm_ping();
         }
         
-        // Periodic update - refresh particle system to target
-        // This helps keep the chain stable if target is moving
+        // Periodic validation - verify target still exists
         if (ParticlesActive && TargetKey != NULL_KEY) {
-            // Just verify target is still valid
             list details = llGetObjectDetails(TargetKey, [OBJECT_POS]);
             if (llGetListLength(details) == 0) {
                 // Target disappeared (offsim or logged out)
@@ -416,19 +557,24 @@ default
                 if (LmActive) {
                     LmActive = FALSE;
                     LmController = NULL_KEY;
+                    LmTargetPrim = NULL_KEY;
+                    LmAuthorized = FALSE;
                     close_lm_listen();
                     
                     // Notify leash plugin
-                    string notify_msg = llList2Json(JSON_OBJECT, [
+                    llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
                         "type", "lm_released"
-                    ]);
-                    llMessageLinked(LINK_SET, UI_BUS, notify_msg, NULL_KEY);
+                    ]), NULL_KEY);
                 }
                 
-                if (!LmActive) {
+                // Always cleanup when target is lost
+                SourcePlugin = "";
+                TargetKey = NULL_KEY;
+                
+                // Only stop timer if nothing needs it
+                if (!needs_timer()) {
                     llSetTimerEvent(0.0);
-                    SourcePlugin = "";
-                    TargetKey = NULL_KEY;
+                    logd("Timer stopped - no active sources");
                 }
             }
         }

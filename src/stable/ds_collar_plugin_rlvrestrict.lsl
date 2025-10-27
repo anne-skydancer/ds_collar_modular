@@ -4,7 +4,7 @@
 // ARCHITECTURE: v2 Consolidated ABI (5 channels)
 // =============================================================
 
-integer DEBUG = TRUE;
+integer DEBUG = FALSE;
 
 /* ═══════════════════════════════════════════════════════════
    CHANNELS (v2 Consolidated Architecture)

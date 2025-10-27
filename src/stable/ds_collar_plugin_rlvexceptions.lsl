@@ -16,7 +16,7 @@
    TIER: 2 (Medium - RLV command management)
    ============================================================================= */
 
-integer DEBUG = TRUE;
+integer DEBUG = FALSE;
 
 /* ═══════════════════════════════════════════════════════════
    ABI CHANNELS

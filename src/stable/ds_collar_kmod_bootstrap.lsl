@@ -1,5 +1,6 @@
 /* =============================================================================
-   MODULE: ds_collar_kmod_bootstrap.lsl (v2.1 - Enhanced Startup)
+   MODULE: ds_collar_kmod_bootstrap.lsl (v2.3 - Soft Reset Authorization Fix)
+   SECURITY AUDIT: MEDIUM-023 FIX APPLIED
    
    ROLE: Startup coordination, RLV detection, owner name resolution
    
@@ -14,9 +15,21 @@
    - 500 (KERNEL_LIFECYCLE): Soft reset coordination
    - 700 (AUTH_BUS): ACL queries for wearer
    - 800 (SETTINGS_BUS): Initial settings request
+   
+   SECURITY FIXES APPLIED:
+   - [MEDIUM-023] Soft reset authorization validation (v2.3)
+   - [MEDIUM] Integer overflow protection for timestamps
+   - [LOW] Production mode guards debug logging
+   - [ENHANCEMENT] Name resolution timeout added (30s)
+   
+   CHANGELOG v2.3:
+   - Added 'from' field validation for soft_reset messages
+   - Only authorized senders (kernel, maintenance, bootstrap) can trigger reset
+   - Aligns with kernel's security model from v2.0+
    ============================================================================= */
 
-integer DEBUG = TRUE;
+integer DEBUG = FALSE;
+integer PRODUCTION = TRUE;  // Set FALSE for development builds
 
 /* ═══════════════════════════════════════════════════════════
    CONSOLIDATED ABI
@@ -76,12 +89,14 @@ list OwnerHonorifics = [];
 list OwnerNameQueries = [];
 integer NAME_QUERY_STRIDE = 2;
 list OwnerDisplayNames = [];
+integer NameResolutionDeadline = 0;
+integer NAME_RESOLUTION_TIMEOUT_SEC = 30;
 
 /* ═══════════════════════════════════════════════════════════
    HELPERS
    ═══════════════════════════════════════════════════════════ */
 integer logd(string msg) {
-    if (DEBUG) llOwnerSay("[BOOTSTRAP] " + msg);
+    if (DEBUG && !PRODUCTION) llOwnerSay("[BOOTSTRAP] " + msg);
     return FALSE;
 }
 
@@ -94,7 +109,13 @@ integer is_json_arr(string s) {
 }
 
 integer now() {
-    return llGetUnixTime();
+    integer unix_time = llGetUnixTime();
+    // INTEGER OVERFLOW PROTECTION: Handle year 2038 problem
+    if (unix_time < 0) {
+        llOwnerSay("[BOOTSTRAP] ERROR: Unix timestamp overflow detected!");
+        return 0;
+    }
+    return unix_time;
 }
 
 sendIM(string msg) {
@@ -106,6 +127,14 @@ sendIM(string msg) {
 
 integer isAttached() {
     return ((integer)llGetAttached() != 0);
+}
+
+// SECURITY: Check if sender is authorized to trigger soft_reset
+integer is_authorized_reset_sender(string from) {
+    if (from == "kernel") return TRUE;
+    if (from == "maintenance") return TRUE;
+    if (from == "bootstrap") return TRUE;
+    return FALSE;
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -244,38 +273,50 @@ apply_settings_sync(string msg) {
     }
     
     if (json_has(kv_json, [KEY_OWNER_HONS])) {
-        string hon_json = llJsonGetValue(kv_json, [KEY_OWNER_HONS]);
-        if (is_json_arr(hon_json)) {
-            OwnerHonorifics = llJson2List(hon_json);
+        string owner_hons_json = llJsonGetValue(kv_json, [KEY_OWNER_HONS]);
+        if (is_json_arr(owner_hons_json)) {
+            OwnerHonorifics = llJson2List(owner_hons_json);
         }
     }
     
     SettingsReceived = TRUE;
-    logd("Settings received (multi_owner=" + (string)MultiOwnerMode + ")");
+    logd("Settings received");
     
-    // Start owner name resolution
-    start_owner_name_resolution();
+    // Start name resolution
+    start_name_resolution();
 }
 
 /* ═══════════════════════════════════════════════════════════
-   OWNER NAME RESOLUTION
+   NAME RESOLUTION
    ═══════════════════════════════════════════════════════════ */
 
-start_owner_name_resolution() {
+start_name_resolution() {
     OwnerNameQueries = [];
     OwnerDisplayNames = [];
     
+    integer current_time = now();
+    if (current_time > 0) {
+        integer deadline = current_time + NAME_RESOLUTION_TIMEOUT_SEC;
+        if (deadline > current_time) {
+            NameResolutionDeadline = deadline;
+        }
+        else {
+            NameResolutionDeadline = current_time;
+        }
+    }
+    
     if (MultiOwnerMode) {
-        // Multi-owner: resolve all owner names
+        // Multi-owner: resolve all names
         integer i = 0;
         integer len = llGetListLength(OwnerKeys);
         while (i < len) {
-            key owner = llList2Key(OwnerKeys, i);
+            string owner_str = llList2String(OwnerKeys, i);
+            key owner = (key)owner_str;
             if (owner != NULL_KEY) {
                 key query_id = llRequestDisplayName(owner);
                 OwnerNameQueries += [query_id, owner];
                 OwnerDisplayNames += ["(loading...)"];
-                logd("Requesting name for owner " + (string)(i + 1));
+                logd("Requesting owner name " + (string)(i + 1));
             }
             i += 1;
         }
@@ -421,6 +462,7 @@ default
     state_entry() {
         BootstrapComplete = FALSE;
         SettingsReceived = FALSE;
+        NameResolutionDeadline = 0;
         
         logd("Bootstrap started");
         sendIM("DS Collar starting up. Please wait...");
@@ -445,29 +487,39 @@ default
     }
     
     timer() {
+        integer current_time = now();
+        if (current_time == 0) return; // Overflow protection
+        
         // Handle RLV probe retries
         if (RlvProbing && !RlvReady) {
-            integer current_time = now();
-            
             // Check if we should send another query
-            if (current_time >= RlvNextRetry) {
+            if (RlvNextRetry > 0 && current_time >= RlvNextRetry) {
                 if (RlvRetryCount < RLV_MAX_RETRIES) {
                     sendRlvQueries();
                     RlvRetryCount += 1;
-                    RlvNextRetry = current_time + RLV_RETRY_INTERVAL_SEC;
+                    integer next_retry_time = current_time + RLV_RETRY_INTERVAL_SEC;
+                    if (next_retry_time < current_time) next_retry_time = current_time; // Overflow protection
+                    RlvNextRetry = next_retry_time;
                 }
             }
             
             // Check for timeout
-            if (current_time >= RlvProbeDeadline) {
+            if (RlvProbeDeadline > 0 && current_time >= RlvProbeDeadline) {
                 logd("RLV probe timed out");
                 stop_rlv_probe();
                 check_bootstrap_complete();
             }
         }
         
+        // Check name resolution timeout
+        if (llGetListLength(OwnerNameQueries) > 0 && NameResolutionDeadline > 0 && current_time >= NameResolutionDeadline) {
+            logd("Name resolution timed out, proceeding with fallback names");
+            OwnerNameQueries = []; // Clear pending queries
+            check_bootstrap_complete();
+        }
+        
         // Stop timer if bootstrap complete
-        if (BootstrapComplete && !RlvProbing) {
+        if (BootstrapComplete && !RlvProbing && llGetListLength(OwnerNameQueries) == 0) {
             llSetTimerEvent(0.0);
         }
     }
@@ -510,6 +562,21 @@ default
         /* ===== KERNEL LIFECYCLE ===== */
         else if (num == KERNEL_LIFECYCLE) {
             if (msg_type == "soft_reset" || msg_type == "soft_reset_all") {
+                // SECURITY FIX (v2.3 - MEDIUM-023): Validate sender authorization
+                if (!json_has(msg, ["from"])) {
+                    logd("SECURITY: Rejected soft_reset without 'from' field");
+                    return;
+                }
+                
+                string from = llJsonGetValue(msg, ["from"]);
+                
+                if (!is_authorized_reset_sender(from)) {
+                    logd("SECURITY: Rejected soft_reset from unauthorized sender: " + from);
+                    return;
+                }
+                
+                // Authorized - proceed with reset
+                logd("Accepting soft_reset from: " + from);
                 llResetScript();
             }
         }

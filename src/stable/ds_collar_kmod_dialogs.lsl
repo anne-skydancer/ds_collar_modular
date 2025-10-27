@@ -1,5 +1,6 @@
 /* =============================================================================
-   MODULE: ds_collar_kmod_dialogs.lsl (v2.0 - Consolidated ABI)
+   MODULE: ds_collar_kmod_dialogs.lsl (v2.1 - Security Hardened)
+   SECURITY AUDIT: MINOR ENHANCEMENTS APPLIED
    
    ROLE: Centralized dialog management - eliminates per-plugin listen handles
    
@@ -7,9 +8,16 @@
    - 950 (DIALOG_BUS): All dialog operations
    
    BENEFIT: Plugins don't need to manage their own listen handles or channels
+   
+   SECURITY ENHANCEMENTS:
+   - [MEDIUM] Channel collision detection
+   - [LOW] Production mode guard for debug
+   - [LOW] Owner change handler
+   - [LOW] Truncation warning for numbered lists
    ============================================================================= */
 
-integer DEBUG = TRUE;
+integer DEBUG = FALSE;
+integer PRODUCTION = TRUE;  // Set FALSE for development builds
 
 /* ═══════════════════════════════════════════════════════════
    CONSOLIDATED ABI
@@ -28,7 +36,7 @@ integer SESSION_ID = 0;
 integer SESSION_USER = 1;
 integer SESSION_CHANNEL = 2;
 integer SESSION_LISTEN = 3;
-integer SESSION_TIMEOUT = 30;
+integer SESSION_TIMEOUT = 4;
 
 /* ═══════════════════════════════════════════════════════════
    STATE
@@ -40,7 +48,8 @@ integer NextChannelOffset = 1;
    HELPERS
    ═══════════════════════════════════════════════════════════ */
 integer logd(string msg) {
-    if (DEBUG) llOwnerSay("[DIALOGS] " + msg);
+    // SECURITY FIX: Production mode guard
+    if (DEBUG && !PRODUCTION) llOwnerSay("[DIALOGS] " + msg);
     return FALSE;
 }
 
@@ -119,11 +128,38 @@ prune_expired_sessions() {
     }
 }
 
+// SECURITY FIX: Check if channel is already in use
+integer is_channel_in_use(integer channel) {
+    integer i = 0;
+    while (i < llGetListLength(Sessions)) {
+        if (llList2Integer(Sessions, i + SESSION_CHANNEL) == channel) {
+            return TRUE;
+        }
+        i += SESSION_STRIDE;
+    }
+    return FALSE;
+}
+
 integer get_next_channel() {
-    integer channel = CHANNEL_BASE - NextChannelOffset;
-    NextChannelOffset += 1;
-    if (NextChannelOffset > 1000000) NextChannelOffset = 1;
-    return channel;
+    // SECURITY FIX: Try up to 100 times to find unused channel
+    integer attempts = 0;
+    integer channel;
+    
+    while (attempts < 100) {
+        channel = CHANNEL_BASE - NextChannelOffset;
+        NextChannelOffset += 1;
+        if (NextChannelOffset > 1000000) NextChannelOffset = 1;
+        
+        if (!is_channel_in_use(channel)) {
+            return channel;
+        }
+        
+        attempts += 1;
+    }
+    
+    // Fallback: use random channel (collision still possible but very unlikely)
+    logd("WARNING: Could not find unused channel after 100 attempts, using random");
+    return CHANNEL_BASE - (integer)llFrand(1000000);
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -232,6 +268,7 @@ handle_numbered_list_dialog(string msg, string session_id, key user) {
     string items_json = llJsonGetValue(msg, ["items"]);
     list items = llJson2List(items_json);
     integer item_count = llGetListLength(items);
+    integer original_count = item_count;
     
     if (item_count == 0) {
         logd("ERROR: numbered_list has no items");
@@ -243,7 +280,12 @@ handle_numbered_list_dialog(string msg, string session_id, key user) {
     list buttons = ["Back"];
     
     integer max_items = 11;
-    if (item_count > max_items) item_count = max_items;
+    if (item_count > max_items) {
+        // SECURITY FIX: Warn about truncation
+        llOwnerSay("WARNING: Item list truncated to " + (string)max_items + " items (had " + (string)original_count + ")");
+        logd("WARNING: Truncated numbered list (" + (string)original_count + " -> " + (string)max_items + ")");
+        item_count = max_items;
+    }
     
     integer i = 0;
     while (i < item_count) {
@@ -362,6 +404,13 @@ default
         }
         else if (msg_type == "dialog_close") {
             handle_dialog_close(msg);
+        }
+    }
+    
+    // SECURITY FIX: Reset on owner change
+    changed(integer change) {
+        if (change & CHANGED_OWNER) {
+            llResetScript();
         }
     }
 }

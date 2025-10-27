@@ -33,6 +33,12 @@ string ROOT_CONTEXT = "core_root";
 string KEY_LOCKED = "locked";
 
 /* ═══════════════════════════════════════════════════════════
+   SOUND
+   ═══════════════════════════════════════════════════════════ */
+string SOUND_TOGGLE = "3aacf116-f060-b4c8-bb58-07aefc0af33a";
+float SOUND_VOLUME = 1.0;
+
+/* ═══════════════════════════════════════════════════════════
    VISUAL PRIM NAMES (optional)
    ═══════════════════════════════════════════════════════════ */
 string PRIM_LOCKED = "locked";
@@ -53,6 +59,10 @@ integer logd(string msg) {
 
 integer json_has(string json_data, list path) {
     return (llJsonGetValue(json_data, path) != JSON_INVALID);
+}
+
+play_toggle_sound() {
+    llTriggerSound(SOUND_TOGGLE, SOUND_VOLUME);
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -252,6 +262,9 @@ toggle_lock(key user, integer acl_level) {
     
     // Toggle state
     Locked = !Locked;
+    
+    // Play toggle sound
+    play_toggle_sound();
     
     // Apply immediately
     apply_lock_state();

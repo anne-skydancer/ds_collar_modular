@@ -1,5 +1,6 @@
 /* =============================================================================
-   MODULE: ds_collar_kmod_settings.lsl (v2.0 - Consolidated ABI)
+   MODULE: ds_collar_kmod_settings.lsl (v2.1 - Security Hardened)
+   SECURITY AUDIT: CRITICAL ISSUES FIXED
    
    ROLE: Persistent key-value store with notecard loading and delta updates
    
@@ -11,9 +12,19 @@
    - Lines: key=value
    - Lists: key=[uuid1,uuid2,uuid3]
    - Comments: # comment
+   
+   SECURITY FIXES APPLIED:
+   - [CRITICAL] Wearer-owner separation enforcement
+   - [CRITICAL] TPE-external-owner requirement validation
+   - [MEDIUM] Blacklist guards in notecard parsing
+   - [MEDIUM] Multi-owner support in trustee guards
+   - [MEDIUM] Multi-owner support in blacklist guards
+   - [LOW] Production mode guard for debug
+   - [LOW] MaxListLen enforcement in notecard parsing
    ============================================================================= */
 
-integer DEBUG = TRUE;
+integer DEBUG = FALSE;
+integer PRODUCTION = TRUE;  // Set FALSE for development builds
 
 /* ═══════════════════════════════════════════════════════════
    CONSOLIDATED ABI
@@ -35,6 +46,12 @@ string KEY_PUBLIC_ACCESS    = "public_mode";
 string KEY_TPE_MODE         = "tpe_mode";
 string KEY_LOCKED           = "locked";
 
+// Bell plugin keys
+string KEY_BELL_VISIBLE = "bell_visible";
+string KEY_BELL_SOUND_ENABLED = "bell_sound_enabled";
+string KEY_BELL_VOLUME = "bell_volume";
+string KEY_BELL_SOUND = "bell_sound";
+
 /* ═══════════════════════════════════════════════════════════
    NOTECARD CONFIG
    ═══════════════════════════════════════════════════════════ */
@@ -51,6 +68,7 @@ string KvJson = "{}";
 key NotecardQuery = NULL_KEY;
 integer NotecardLine = 0;
 integer IsLoadingNotecard = FALSE;
+key NotecardKey = NULL_KEY;  // Track settings notecard changes
 
 integer MaxListLen = 64;
 
@@ -58,7 +76,8 @@ integer MaxListLen = 64;
    HELPERS
    ═══════════════════════════════════════════════════════════ */
 integer logd(string msg) {
-    if (DEBUG) llOwnerSay("[SETTINGS] " + msg);
+    // SECURITY FIX: Production mode guard
+    if (DEBUG && !PRODUCTION) llOwnerSay("[SETTINGS] " + msg);
     return FALSE;
 }
 
@@ -163,10 +182,67 @@ integer kv_list_remove_all(string key_name, string elem) {
 }
 
 /* ═══════════════════════════════════════════════════════════
+   VALIDATION HELPERS
+   ═══════════════════════════════════════════════════════════ */
+
+// SECURITY FIX: Check if external owner exists
+integer has_external_owner() {
+    key wearer = llGetOwner();
+    
+    if (kv_get(KEY_MULTI_OWNER_MODE) == "1") {
+        string owner_keys = kv_get(KEY_OWNER_KEYS);
+        if (is_json_arr(owner_keys)) {
+            list owners = llJson2List(owner_keys);
+            integer i = 0;
+            while (i < llGetListLength(owners)) {
+                key owner = llList2Key(owners, i);
+                if (owner != wearer && owner != NULL_KEY) {
+                    return TRUE;
+                }
+                i += 1;
+            }
+        }
+    }
+    else {
+        key owner = (key)kv_get(KEY_OWNER_KEY);
+        if (owner != NULL_KEY && owner != wearer) {
+            return TRUE;
+        }
+    }
+    
+    return FALSE;
+}
+
+// SECURITY FIX: Check if someone is an owner (any mode)
+integer is_owner(string who) {
+    // Check single owner
+    if (kv_get(KEY_OWNER_KEY) == who) return TRUE;
+    
+    // Check multi-owner list
+    string owner_keys = kv_get(KEY_OWNER_KEYS);
+    if (is_json_arr(owner_keys)) {
+        list owners = llJson2List(owner_keys);
+        if (llListFindList(owners, [who]) != -1) return TRUE;
+    }
+    
+    return FALSE;
+}
+
+/* ═══════════════════════════════════════════════════════════
    ROLE EXCLUSIVITY GUARDS
    ═══════════════════════════════════════════════════════════ */
 
-apply_owner_set_guard(string who) {
+// SECURITY FIX: Returns FALSE if owner add should be rejected
+integer apply_owner_set_guard(string who) {
+    key wearer = llGetOwner();
+    
+    // CRITICAL: Prevent self-ownership
+    if ((key)who == wearer) {
+        llOwnerSay("ERROR: Cannot add wearer as owner (role separation required)");
+        logd("CRITICAL: Blocked attempt to add wearer as owner");
+        return FALSE;
+    }
+    
     // Remove owner from trustees
     string trustees_arr = kv_get(KEY_TRUSTEES);
     if (is_json_arr(trustees_arr)) {
@@ -182,12 +258,16 @@ apply_owner_set_guard(string who) {
         blacklist = list_remove_all(blacklist, who);
         kv_set_list(KEY_BLACKLIST, blacklist);
     }
+    
+    return TRUE;
 }
 
 integer apply_trustee_add_guard(string who) {
-    // Can't add owner as trustee
-    string cur_owner = kv_get(KEY_OWNER_KEY);
-    if (cur_owner != "" && cur_owner == who) return FALSE;
+    // SECURITY FIX: Can't add owner as trustee (check both modes)
+    if (is_owner(who)) {
+        logd("WARNING: Cannot add owner as trustee");
+        return FALSE;
+    }
     
     // Remove from blacklist
     string blacklist_arr = kv_get(KEY_BLACKLIST);
@@ -209,10 +289,16 @@ apply_blacklist_add_guard(string who) {
         kv_set_list(KEY_TRUSTEES, trustees);
     }
     
-    // Clear owner if blacklisted
+    // SECURITY FIX: Clear owner if blacklisted (both modes)
     string cur_owner = kv_get(KEY_OWNER_KEY);
     if (cur_owner != "" && cur_owner == who) {
         kv_set_scalar(KEY_OWNER_KEY, (string)NULL_KEY);
+        logd("WARNING: Cleared owner (was blacklisted)");
+    }
+    
+    // Remove from multi-owner list
+    if (kv_list_remove_all(KEY_OWNER_KEYS, who)) {
+        logd("WARNING: Removed owner from multi-owner list (was blacklisted)");
     }
 }
 
@@ -284,6 +370,11 @@ integer is_allowed_key(string k) {
     if (k == KEY_PUBLIC_ACCESS) return TRUE;
     if (k == KEY_TPE_MODE) return TRUE;
     if (k == KEY_LOCKED) return TRUE;
+    // Bell plugin keys
+    if (k == KEY_BELL_VISIBLE) return TRUE;
+    if (k == KEY_BELL_SOUND_ENABLED) return TRUE;
+    if (k == KEY_BELL_VOLUME) return TRUE;
+    if (k == KEY_BELL_SOUND) return TRUE;
     return FALSE;
 }
 
@@ -324,19 +415,40 @@ parse_notecard_line(string line) {
         list parsed_list = llCSV2List(list_contents);
         parsed_list = list_unique(parsed_list);
         
+        // SECURITY FIX: Enforce MaxListLen for notecard
+        if (llGetListLength(parsed_list) > MaxListLen) {
+            parsed_list = llList2List(parsed_list, 0, MaxListLen - 1);
+            llOwnerSay("WARNING: " + key_name + " list truncated to " + (string)MaxListLen + " entries");
+            logd("WARNING: Truncated " + key_name + " to MaxListLen");
+        }
+        
         // Apply guards for special lists
         if (key_name == KEY_OWNER_KEYS) {
             integer i = 0;
             integer len = llGetListLength(parsed_list);
+            list validated_list = [];
             while (i < len) {
-                apply_owner_set_guard(llList2String(parsed_list, i));
+                string owner = llList2String(parsed_list, i);
+                if (apply_owner_set_guard(owner)) {
+                    validated_list += [owner];
+                }
                 i += 1;
             }
+            parsed_list = validated_list;
         }
         else if (key_name == KEY_TRUSTEES) {
             string cur_owner = kv_get(KEY_OWNER_KEY);
             if (cur_owner != "") {
                 parsed_list = list_remove_all(parsed_list, cur_owner);
+            }
+        }
+        // SECURITY FIX: Add blacklist guards for notecard
+        else if (key_name == KEY_BLACKLIST) {
+            integer i = 0;
+            integer len = llGetListLength(parsed_list);
+            while (i < len) {
+                apply_blacklist_add_guard(llList2String(parsed_list, i));
+                i += 1;
             }
         }
         
@@ -350,7 +462,9 @@ parse_notecard_line(string line) {
         if (key_name == KEY_LOCKED) value = normalize_bool(value);
         
         if (key_name == KEY_OWNER_KEY) {
-            apply_owner_set_guard(value);
+            if (!apply_owner_set_guard(value)) {
+                return;  // Rejected (self-ownership)
+            }
         }
         
         kv_set_scalar(key_name, value);
@@ -400,10 +514,15 @@ handle_set(string msg) {
             if (key_name == KEY_OWNER_KEYS) {
                 integer i = 0;
                 integer len = llGetListLength(new_list);
+                list validated_list = [];
                 while (i < len) {
-                    apply_owner_set_guard(llList2String(new_list, i));
+                    string owner = llList2String(new_list, i);
+                    if (apply_owner_set_guard(owner)) {
+                        validated_list += [owner];
+                    }
                     i += 1;
                 }
+                new_list = validated_list;
             }
             else if (key_name == KEY_TRUSTEES) {
                 string cur_owner = kv_get(KEY_OWNER_KEY);
@@ -434,11 +553,25 @@ handle_set(string msg) {
         string value = llJsonGetValue(msg, ["value"]);
         
         if (key_name == KEY_PUBLIC_ACCESS) value = normalize_bool(value);
-        if (key_name == KEY_TPE_MODE) value = normalize_bool(value);
         if (key_name == KEY_LOCKED) value = normalize_bool(value);
         
+        // SECURITY FIX: Validate TPE mode
+        if (key_name == KEY_TPE_MODE) {
+            value = normalize_bool(value);
+            
+            if ((integer)value == 1) {
+                if (!has_external_owner()) {
+                    llOwnerSay("ERROR: Cannot enable TPE - requires external owner");
+                    logd("CRITICAL: Blocked TPE enable (no external owner)");
+                    return;  // Don't set TPE
+                }
+            }
+        }
+        
         if (key_name == KEY_OWNER_KEY) {
-            apply_owner_set_guard(value);
+            if (!apply_owner_set_guard(value)) {
+                return;  // Rejected (self-ownership)
+            }
         }
         
         did_change = kv_set_scalar(key_name, value);
@@ -465,8 +598,9 @@ handle_list_add(string msg) {
     integer did_change = FALSE;
     
     if (key_name == KEY_OWNER_KEYS) {
-        apply_owner_set_guard(elem);
-        did_change = kv_list_add_unique(key_name, elem);
+        if (apply_owner_set_guard(elem)) {
+            did_change = kv_list_add_unique(key_name, elem);
+        }
     }
     else if (key_name == KEY_TRUSTEES) {
         if (apply_trustee_add_guard(elem)) {
@@ -510,6 +644,7 @@ default
 {
     state_entry() {
         LastOwner = llGetOwner();
+        NotecardKey = llGetInventoryKey(NOTECARD_NAME);
         
         integer notecard_found = start_notecard_reading();
         
@@ -546,8 +681,21 @@ default
         }
         
         if (change & CHANGED_INVENTORY) {
-            logd("Inventory changed, reloading settings");
-            llResetScript();
+            // Only act if the settings notecard specifically changed
+            key current_notecard_key = llGetInventoryKey(NOTECARD_NAME);
+            if (current_notecard_key != NotecardKey) {
+                // Notecard was deleted → reset to defaults
+                if (current_notecard_key == NULL_KEY) {
+                    logd("Settings notecard deleted, resetting to defaults");
+                    llResetScript();
+                }
+                else {
+                    // Notecard edited or re-added → reload and overlay
+                    logd("Settings notecard changed, reloading settings");
+                    NotecardKey = current_notecard_key;
+                    start_notecard_reading();
+                }
+            }
         }
     }
     

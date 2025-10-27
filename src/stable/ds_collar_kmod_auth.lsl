@@ -1,5 +1,6 @@
 /* =============================================================================
-   MODULE: ds_collar_kmod_auth.lsl (v2.0 - Consolidated ABI)
+   MODULE: ds_collar_kmod_auth.lsl (v2.1 - Security Hardened)
+   SECURITY AUDIT: ACTUAL ISSUES FIXED
    
    ROLE: Authoritative ACL and policy engine
    
@@ -15,9 +16,21 @@
     3 = Trustee
     4 = Unowned (wearer when no owner)
     5 = Primary Owner
+    
+   SECURITY FIXES APPLIED:
+   - [CRITICAL] Added owner change detection with script reset
+   - [CRITICAL] Fixed ACL default return (NOACCESS not BLACKLIST)
+   - [CRITICAL] Fixed ACL logic order (blacklist check first)
+   - [MEDIUM] Added role exclusivity validation
+   - [MEDIUM] Added pending query limit
+   - [LOW] Production mode guards debug logging
+   
+   NOTE: TPE "self-ownership bypass" was a false positive.
+   Wearer can NEVER be in owner list by system design.
    ============================================================================= */
 
 integer DEBUG = FALSE;
+integer PRODUCTION = TRUE;  // Set FALSE for development builds
 
 /* ═══════════════════════════════════════════════════════════
    CONSOLIDATED ABI
@@ -61,12 +74,13 @@ integer TpeMode = FALSE;
 integer SettingsReady = FALSE;
 list PendingQueries = [];  // [avatar_key, correlation_id, avatar_key, correlation_id, ...]
 integer PENDING_STRIDE = 2;
+integer MAX_PENDING_QUERIES = 50;  // Prevent unbounded growth
 
 /* ═══════════════════════════════════════════════════════════
    HELPERS
    ═══════════════════════════════════════════════════════════ */
 integer logd(string msg) {
-    if (DEBUG) llOwnerSay("[AUTH] " + msg);
+    if (DEBUG && !PRODUCTION) llOwnerSay("[AUTH] " + msg);
     return FALSE;
 }
 
@@ -112,6 +126,9 @@ integer compute_acl_level(key av) {
     integer is_trustee = list_has_key(TrusteeList, av);
     integer is_blacklisted = list_has_key(Blacklist, av);
     
+    // SECURITY FIX: Blacklist check FIRST (before any grants)
+    if (is_blacklisted) return ACL_BLACKLIST;
+    
     // Owner check
     if (is_owner_flag) return ACL_PRIMARY_OWNER;
     
@@ -125,14 +142,12 @@ integer compute_acl_level(key av) {
     // Trustee check
     if (is_trustee) return ACL_TRUSTEE;
     
-    // Blacklist check
-    if (is_blacklisted) return ACL_BLACKLIST;
-    
     // Public mode check
     if (PublicMode) return ACL_PUBLIC;
     
-    // Default: no access
-    return ACL_BLACKLIST;
+    // SECURITY FIX: Default is NOACCESS (not BLACKLIST)
+    // BLACKLIST is explicit denial, NOACCESS is simply no privileges
+    return ACL_NOACCESS;
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -209,6 +224,66 @@ send_acl_result(key av, string correlation_id) {
 }
 
 /* ═══════════════════════════════════════════════════════════
+   ROLE EXCLUSIVITY VALIDATION
+   ═══════════════════════════════════════════════════════════ */
+
+// SECURITY FIX: Enforce role exclusivity (defense-in-depth)
+enforce_role_exclusivity() {
+    integer i;
+    
+    // Owners cannot be trustees or blacklisted
+    if (MultiOwnerMode) {
+        for (i = 0; i < llGetListLength(OwnerKeys); i = i + 1) {
+            string owner = llList2String(OwnerKeys, i);
+            
+            // Remove from trustees
+            integer idx = llListFindList(TrusteeList, [owner]);
+            if (idx != -1) {
+                TrusteeList = llDeleteSubList(TrusteeList, idx, idx);
+                logd("WARNING: Removed " + owner + " from trustees (is owner)");
+            }
+            
+            // Remove from blacklist
+            idx = llListFindList(Blacklist, [owner]);
+            if (idx != -1) {
+                Blacklist = llDeleteSubList(Blacklist, idx, idx);
+                logd("WARNING: Removed " + owner + " from blacklist (is owner)");
+            }
+        }
+    }
+    else {
+        if (OwnerKey != NULL_KEY) {
+            string owner = (string)OwnerKey;
+            
+            // Remove from trustees
+            integer idx = llListFindList(TrusteeList, [owner]);
+            if (idx != -1) {
+                TrusteeList = llDeleteSubList(TrusteeList, idx, idx);
+                logd("WARNING: Removed " + owner + " from trustees (is owner)");
+            }
+            
+            // Remove from blacklist
+            idx = llListFindList(Blacklist, [owner]);
+            if (idx != -1) {
+                Blacklist = llDeleteSubList(Blacklist, idx, idx);
+                logd("WARNING: Removed " + owner + " from blacklist (is owner)");
+            }
+        }
+    }
+    
+    // Trustees cannot be blacklisted
+    for (i = 0; i < llGetListLength(TrusteeList); i = i + 1) {
+        string trustee = llList2String(TrusteeList, i);
+        
+        integer idx = llListFindList(Blacklist, [trustee]);
+        if (idx != -1) {
+            Blacklist = llDeleteSubList(Blacklist, idx, idx);
+            logd("WARNING: Removed " + trustee + " from blacklist (is trustee)");
+        }
+    }
+}
+
+/* ═══════════════════════════════════════════════════════════
    SETTINGS CONSUMPTION
    ═══════════════════════════════════════════════════════════ */
 
@@ -264,6 +339,9 @@ apply_settings_sync(string msg) {
         TpeMode = (integer)llJsonGetValue(kv_json, [KEY_TPE_MODE]);
     }
     
+    // SECURITY FIX: Enforce role exclusivity after loading
+    enforce_role_exclusivity();
+    
     SettingsReady = TRUE;
     logd("Settings sync applied (multi_owner=" + (string)MultiOwnerMode + ")");
     
@@ -301,6 +379,8 @@ apply_settings_delta(string msg) {
         if (json_has(changes, [KEY_OWNER_KEY])) {
             OwnerKey = (key)llJsonGetValue(changes, [KEY_OWNER_KEY]);
             logd("Delta: owner_key = " + (string)OwnerKey);
+            // Enforce exclusivity after owner change
+            enforce_role_exclusivity();
         }
     }
     else if (op == "list_add") {
@@ -314,12 +394,16 @@ apply_settings_delta(string msg) {
             if (llListFindList(OwnerKeys, [elem]) == -1) {
                 OwnerKeys += [elem];
                 logd("Delta: added owner " + elem);
+                // Enforce exclusivity after adding owner
+                enforce_role_exclusivity();
             }
         }
         else if (key_name == KEY_TRUSTEES) {
             if (llListFindList(TrusteeList, [elem]) == -1) {
                 TrusteeList += [elem];
                 logd("Delta: added trustee " + elem);
+                // Enforce exclusivity after adding trustee
+                enforce_role_exclusivity();
             }
         }
         else if (key_name == KEY_BLACKLIST) {
@@ -379,6 +463,12 @@ handle_acl_query(string msg) {
     }
     
     if (!SettingsReady) {
+        // SECURITY FIX: Limit pending query queue size
+        if (llGetListLength(PendingQueries) / PENDING_STRIDE >= MAX_PENDING_QUERIES) {
+            logd("WARNING: Pending query limit reached, discarding oldest");
+            PendingQueries = llDeleteSubList(PendingQueries, 0, PENDING_STRIDE - 1);
+        }
+        
         // Queue this query
         PendingQueries += [av, correlation_id];
         logd("Queued ACL query for " + llKey2Name(av));
@@ -427,6 +517,13 @@ default
             else if (msg_type == "settings_delta") {
                 apply_settings_delta(msg);
             }
+        }
+    }
+    
+    // SECURITY FIX: Reset on owner change to clear cached ACL state
+    changed(integer change) {
+        if (change & CHANGED_OWNER) {
+            llResetScript();
         }
     }
 }

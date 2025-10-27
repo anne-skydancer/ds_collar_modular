@@ -333,7 +333,9 @@ default {
                 string correlation = llJsonGetValue(msg, ["id"]);
                 
                 if (correlation == PLUGIN_CONTEXT + "_toggle") {
-                    handle_acl_result(msg, id);
+                    if (!json_has(msg, ["avatar"])) return;
+                    key user = (key)llJsonGetValue(msg, ["avatar"]);
+                    handle_acl_result(msg, user);
                 }
                 return;
             }
