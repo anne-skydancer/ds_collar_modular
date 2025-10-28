@@ -25,18 +25,18 @@
 
 integer DEBUG = FALSE;
 
-/*  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o 
+/* ===============================================================
    CONSOLIDATED ABI
-    o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  */
+   =============================================================== */
 integer KERNEL_LIFECYCLE = 500;
 integer AUTH_BUS = 700;
 integer SETTINGS_BUS = 800;
 integer UI_BUS = 900;
 integer DIALOG_BUS = 950;
 
-/*  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o 
+/* ===============================================================
    PLUGIN IDENTITY
-    o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  */
+   =============================================================== */
 string PLUGIN_CONTEXT = "core_relay";
 string PLUGIN_LABEL = "RLV Relay";
 integer PLUGIN_MIN_ACL = 2;  // Wearer and above
@@ -52,9 +52,9 @@ string ROOT_CONTEXT = "core_root";
     5 = Primary Owner
 */
 
-/*  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o 
+/* ===============================================================
    RELAY CONSTANTS
-    o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  */
+   =============================================================== */
 integer RELAY_CHANNEL = -1812221819;
 integer RLV_RESP_CHANNEL = 4711;
 integer MAX_RELAYS = 5;
@@ -65,15 +65,15 @@ integer MODE_HARDCORE = 2;
 
 integer SOS_MSG_NUM = 555;  // SOS emergency channel
 
-/*  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o 
+/* ===============================================================
    SETTINGS KEYS
-    o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  */
+   =============================================================== */
 string KEY_RELAY_MODE = "relay_mode";
 string KEY_RELAY_HARDCORE = "relay_hardcore";
 
-/*  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o 
+/* ===============================================================
    STATE
-    o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  */
+   =============================================================== */
 // Relay state
 integer Mode = MODE_ON;
 integer Hardcore = FALSE;
@@ -92,9 +92,9 @@ string SessionId = "";
 // Menu state for object list pagination
 integer ObjectListPage = 0;
 
-/*  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o 
+/* ===============================================================
    HELPERS
-    o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  */
+   =============================================================== */
 integer logd(string msg) {
     if (DEBUG) llOwnerSay("[RELAY] " + msg);
     return FALSE;
@@ -117,9 +117,9 @@ string truncate_name(string name, integer max_len) {
     return llGetSubString(name, 0, max_len - 4) + "...";
 }
 
-/*  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o 
+/* ===============================================================
    LIFECYCLE MANAGEMENT
-    o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  */
+   =============================================================== */
 
 register_self() {
     string msg = llList2Json(JSON_OBJECT, [
@@ -141,9 +141,9 @@ send_pong() {
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, msg, NULL_KEY);
 }
 
-/*  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o 
+/* ===============================================================
    RELAY LISTEN MANAGEMENT
-    o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  */
+   =============================================================== */
 
 start_relay_listen() {
     if (RelayListenHandle) return;  // Already listening
@@ -170,9 +170,9 @@ update_relay_listen_state() {
     }
 }
 
-/*  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o 
+/* ===============================================================
    RELAY MANAGEMENT
-    o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  */
+   =============================================================== */
 
 integer relay_idx(key obj) {
     return llListFindList(Relays, [obj]);
@@ -245,9 +245,9 @@ safeword_clear_all() {
     logd("Cleared all relay restrictions");
 }
 
-/*  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o 
+/* ===============================================================
    SETTINGS CONSUMPTION
-    o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  */
+   =============================================================== */
 
 apply_settings_sync(string msg) {
     if (!json_has(msg, ["kv"])) return;
@@ -295,9 +295,9 @@ apply_settings_delta(string msg) {
     }
 }
 
-/*  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o 
+/* ===============================================================
    SETTINGS MODIFICATION
-    o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  */
+   =============================================================== */
 
 persist_mode(integer new_mode) {
     string msg = llList2Json(JSON_OBJECT, [
@@ -317,9 +317,9 @@ persist_hardcore(integer new_hardcore) {
     llMessageLinked(LINK_SET, SETTINGS_BUS, msg, NULL_KEY);
 }
 
-/*  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o 
+/* ===============================================================
    ACL VALIDATION
-    o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  */
+   =============================================================== */
 
 request_acl(key user) {
     AclPending = TRUE;
@@ -355,9 +355,9 @@ handle_acl_result(string msg) {
     show_main_menu();
 }
 
-/*  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o 
+/* ===============================================================
    UI / MENU SYSTEM
-    o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  */
+   =============================================================== */
 
 show_main_menu() {
     SessionId = generate_session_id();
@@ -482,9 +482,9 @@ show_object_list() {
     llMessageLinked(LINK_SET, DIALOG_BUS, msg, NULL_KEY);
 }
 
-/*  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o 
+/* ===============================================================
    BUTTON HANDLING
-    o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  */
+   =============================================================== */
 
 handle_button_click(string button) {
     if (button == "Mode") {
@@ -554,9 +554,9 @@ handle_button_click(string button) {
     }
 }
 
-/*  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o 
+/* ===============================================================
    NAVIGATION
-    o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  */
+   =============================================================== */
 
 return_to_root() {
     string msg = llList2Json(JSON_OBJECT, [
@@ -582,9 +582,9 @@ close_silent() {
     logd("Closing session silently");
 }
 
-/*  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o 
+/* ===============================================================
    SESSION MANAGEMENT
-    o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  */
+   =============================================================== */
 
 cleanup_session() {
     CurrentUser = NULL_KEY;
@@ -594,9 +594,9 @@ cleanup_session() {
     ObjectListPage = 0;
 }
 
-/*  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o 
+/* ===============================================================
    GROUND REZ HANDLER
-    o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  */
+   =============================================================== */
 
 handle_ground_rez() {
     // Turn off relay mode
@@ -616,9 +616,9 @@ handle_ground_rez() {
     llOwnerSay("[RELAY] Collar rezzed on ground - Relay turned OFF");
 }
 
-/*  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o 
+/* ===============================================================
    MESSAGE HANDLERS
-    o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  */
+   =============================================================== */
 
 handle_start(string msg) {
     if (!json_has(msg, ["context"])) return;
@@ -657,9 +657,9 @@ handle_dialog_timeout(string msg) {
     cleanup_session();
 }
 
-/*  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o 
+/* ===============================================================
    RELAY PROTOCOL HANDLERS
-    o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  */
+   =============================================================== */
 
 handle_relay_message(key sender_id, string sender_name, string raw_msg) {
     // Only process relay commands when attached
@@ -719,9 +719,9 @@ handle_relay_message(key sender_id, string sender_name, string raw_msg) {
     }
 }
 
-/*  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o 
+/* ===============================================================
    EVENTS
-    o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  */
+   =============================================================== */
 
 default
 {

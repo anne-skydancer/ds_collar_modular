@@ -32,18 +32,18 @@
 
 integer DEBUG = FALSE;
 
-/*  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o 
+/* ===============================================================
    CONSOLIDATED ABI
-    o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  */
+   =============================================================== */
 integer KERNEL_LIFECYCLE = 500;
 integer AUTH_BUS = 700;
 integer SETTINGS_BUS = 800;
 integer UI_BUS = 900;
 integer DIALOG_BUS = 950;
 
-/*  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o 
+/* ===============================================================
    PLUGIN IDENTITY
-    o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  */
+   =============================================================== */
 string PLUGIN_CONTEXT = "core_tpe";
 string PLUGIN_LABEL_ON = "TPE: Y";
 string PLUGIN_LABEL_OFF = "TPE: N";
@@ -60,14 +60,14 @@ string ROOT_CONTEXT = "core_root";
     5 = Primary Owner (ONLY ACL that can manage TPE)
 */
 
-/*  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o 
+/* ===============================================================
    SETTINGS KEYS
-    o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  */
+   =============================================================== */
 string KEY_TPE_MODE = "tpe_mode";
 
-/*  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o 
+/* ===============================================================
    STATE
-    o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  */
+   =============================================================== */
 integer TpeModeEnabled = FALSE;
 
 // Session management for confirmation dialog
@@ -77,9 +77,9 @@ string SessionId = "";
 key WearerKey = NULL_KEY;          // Owner of the collar (for confirmation)
 integer AclPending = FALSE;        // Waiting for ACL result
 
-/*  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o 
+/* ===============================================================
    HELPERS
-    o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  */
+   =============================================================== */
 integer logd(string msg) {
     if (DEBUG) llOwnerSay("[TPE] " + msg);
     return FALSE;
@@ -113,9 +113,9 @@ close_ui_for_user(key user) {
     logd("Closed UI for " + (string)user);
 }
 
-/*  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o 
+/* ===============================================================
    KERNEL MESSAGES
-    o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  */
+   =============================================================== */
 
 register_with_kernel() {
     string initial_label = PLUGIN_LABEL_OFF;
@@ -142,9 +142,9 @@ send_pong() {
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, msg, NULL_KEY);
 }
 
-/*  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o 
+/* ===============================================================
    SETTINGS MANAGEMENT
-    o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  */
+   =============================================================== */
 
 request_settings_sync() {
     string msg = llList2Json(JSON_OBJECT, [
@@ -166,9 +166,9 @@ persist_tpe_mode(integer new_value) {
     logd("Persisting tpe_mode=" + (string)new_value);
 }
 
-/*  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o 
+/* ===============================================================
    BUTTON HANDLING
-    o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  */
+   =============================================================== */
 
 handle_button_click(string button) {
     if (button == "Yes") {
@@ -230,9 +230,9 @@ handle_button_click(string button) {
     }
 }
 
-/*  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o 
+/* ===============================================================
    TPE TOGGLE LOGIC
-    o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  */
+   =============================================================== */
 
 handle_tpe_click(key user, integer acl_level) {
     // Verify ACL (only 5=Primary Owner)
@@ -300,9 +300,9 @@ handle_tpe_click(key user, integer acl_level) {
     }
 }
 
-/*  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o 
+/* ===============================================================
    SETTINGS CONSUMPTION
-    o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  */
+   =============================================================== */
 
 apply_settings_sync(string kv_json) {
     if (json_has(kv_json, [KEY_TPE_MODE])) {
@@ -327,9 +327,9 @@ apply_settings_delta(string msg) {
     }
 }
 
-/*  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o 
+/* ===============================================================
    EVENTS
-    o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  o  */
+   =============================================================== */
 
 default
 {
