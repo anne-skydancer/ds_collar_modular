@@ -40,10 +40,13 @@ integer UI_BUS = 900;
 
 /* ===============================================================
    EXTERNAL PROTOCOL CHANNELS
+
+   These channels are derived from the collar owner's UUID to provide
+   per-avatar unique channels, reducing eavesdropping risk.
    =============================================================== */
-integer EXTERNAL_ACL_QUERY_CHAN = -8675309;  // Listen for ACL queries/scans
-integer EXTERNAL_ACL_REPLY_CHAN = -8675310;  // Send ACL responses
-integer EXTERNAL_MENU_CHAN      = -8675311;  // Listen for menu requests
+integer EXTERNAL_ACL_QUERY_CHAN;  // Listen for ACL queries/scans
+integer EXTERNAL_ACL_REPLY_CHAN;  // Send ACL responses
+integer EXTERNAL_MENU_CHAN;       // Listen for menu requests
 
 float MAX_DETECTION_RANGE = 20.0;  // Maximum range in meters for HUD detection
 
@@ -90,6 +93,13 @@ integer json_has(string json_str, list path) {
 
 integer now() {
     return llGetUnixTime();
+}
+
+/* Derive secure channels based on collar owner's UUID
+   Both HUD and collar use this function to calculate matching channels */
+integer deriveSecureChannel(integer base_channel, key owner_key) {
+    integer seed = (integer)("0x" + llGetSubString((string)owner_key, 0, 7));
+    return base_channel + (seed % 1000000);
 }
 
 /* ===============================================================
@@ -403,15 +413,23 @@ default {
         QueryTimestamps = [];
         RequestTimestamps = [];
         CollarOwner = llGetOwner();
-        
+
+        // Derive secure channels based on collar owner UUID
+        EXTERNAL_ACL_QUERY_CHAN = deriveSecureChannel(-8675309, CollarOwner);
+        EXTERNAL_ACL_REPLY_CHAN = EXTERNAL_ACL_QUERY_CHAN - 1;
+        EXTERNAL_MENU_CHAN = EXTERNAL_ACL_QUERY_CHAN - 2;
+
         // Listen for external ACL queries and menu requests
         AclQueryListenHandle = llListen(EXTERNAL_ACL_QUERY_CHAN, "", NULL_KEY, "");
         MenuRequestListenHandle = llListen(EXTERNAL_MENU_CHAN, "", NULL_KEY, "");
-        
+
         // Start timer for periodic query pruning
         llSetTimerEvent(60.0);  // Check every 60 seconds
-        
+
         logd("Remote module initialized");
+        logd("Secure channels: Query=" + (string)EXTERNAL_ACL_QUERY_CHAN +
+             " Reply=" + (string)EXTERNAL_ACL_REPLY_CHAN +
+             " Menu=" + (string)EXTERNAL_MENU_CHAN);
         logd("Listening on channel " + (string)EXTERNAL_ACL_QUERY_CHAN + " for ACL queries");
         logd("Listening on channel " + (string)EXTERNAL_MENU_CHAN + " for menu requests");
     }

@@ -133,11 +133,10 @@ integer registry_upsert(string context, string label, integer min_acl, string sc
         return TRUE;
     }
     else {
-        // Update existing
-        PluginRegistry = llListReplaceList(PluginRegistry, [label], idx + REG_LABEL, idx + REG_LABEL);
-        PluginRegistry = llListReplaceList(PluginRegistry, [min_acl], idx + REG_MIN_ACL, idx + REG_MIN_ACL);
-        PluginRegistry = llListReplaceList(PluginRegistry, [script], idx + REG_SCRIPT, idx + REG_SCRIPT);
-        PluginRegistry = llListReplaceList(PluginRegistry, [now_unix], idx + REG_LAST_SEEN, idx + REG_LAST_SEEN);
+        // Update existing (consolidated into single list operation for efficiency)
+        PluginRegistry = llListReplaceList(PluginRegistry,
+            [label, min_acl, script, now_unix],
+            idx + REG_LABEL, idx + REG_LAST_SEEN);
         logd("Updated: " + context);
         return FALSE;
     }
@@ -418,9 +417,9 @@ default
         
         // Immediately broadcast register_now (opens registration window)
         broadcast_register_now();
-        
+
         // Start timer for window management, heartbeat, and inventory sweeps
-        llSetTimerEvent(0.5);  // Check twice per second
+        llSetTimerEvent(1.0);  // Check once per second (reduced from 0.5s for efficiency)
     }
     
     on_rez(integer start_param) {

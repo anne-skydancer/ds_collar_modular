@@ -108,7 +108,7 @@ integer is_owner(key k) {
    =============================================================== */
 
 cache_name(key k, string n) {
-    if (k == NULL_KEY || n == "" || n == "   -- ) return;
+    if (k == NULL_KEY || n == "" || n == " ") return;
     integer idx = llListFindList(NameCache, [k]);
     if (idx != -1) {
         NameCache = llListReplaceList(NameCache, [n], idx + 1, idx + 1);
@@ -127,7 +127,7 @@ string get_name(key k) {
     if (idx != -1) return llList2String(NameCache, idx + 1);
     
     string n = llGetDisplayName(k);
-    if (n != "" && n != "   -- ) {
+    if (n != "" && n != " ") {
         cache_name(k, n);
         return n;
     }

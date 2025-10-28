@@ -18,10 +18,13 @@ integer DEBUG = FALSE;
 
 /* ===============================================================
    EXTERNAL PROTOCOL CHANNELS
+
+   These channels are derived from the wearer's UUID to provide
+   per-avatar unique channels, reducing eavesdropping risk.
    =============================================================== */
-integer COLLAR_ACL_QUERY_CHAN = -8675309;
-integer COLLAR_ACL_REPLY_CHAN = -8675310;
-integer COLLAR_MENU_CHAN      = -8675311;
+integer COLLAR_ACL_QUERY_CHAN;
+integer COLLAR_ACL_REPLY_CHAN;
+integer COLLAR_MENU_CHAN;
 
 /* ===============================================================
    ACL LEVELS
@@ -71,6 +74,13 @@ integer logd(string msg) {
 
 integer json_has(string json_str, list path) {
     return (llJsonGetValue(json_str, path) != JSON_INVALID);
+}
+
+/* Derive secure channels based on wearer's UUID
+   Both HUD and collar use this function to calculate matching channels */
+integer deriveSecureChannel(integer base_channel, key owner_key) {
+    integer seed = (integer)("0x" + llGetSubString((string)owner_key, 0, 7));
+    return base_channel + (seed % 1000000);
 }
 
 /* ===============================================================
@@ -325,7 +335,16 @@ default {
     state_entry() {
         cleanup_session();
         HudWearer = llGetOwner();
+
+        // Derive secure channels based on wearer UUID
+        COLLAR_ACL_QUERY_CHAN = deriveSecureChannel(-8675309, HudWearer);
+        COLLAR_ACL_REPLY_CHAN = COLLAR_ACL_QUERY_CHAN - 1;
+        COLLAR_MENU_CHAN = COLLAR_ACL_QUERY_CHAN - 2;
+
         logd("Control HUD initialized. Owner: " + llKey2Name(HudWearer));
+        logd("Secure channels: Query=" + (string)COLLAR_ACL_QUERY_CHAN +
+             " Reply=" + (string)COLLAR_ACL_REPLY_CHAN +
+             " Menu=" + (string)COLLAR_MENU_CHAN);
         llOwnerSay("Control HUD ready. Touch to scan for collars.");
     }
     

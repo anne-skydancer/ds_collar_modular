@@ -68,6 +68,10 @@ string OfferDialogSession = "";
 key OfferTarget = NULL_KEY;
 key OfferOriginator = NULL_KEY;
 
+// State query tracking (event-driven, no blocking llSleep)
+integer PendingStateQuery = FALSE;
+string PendingQueryContext = "";  // Which menu to show after query completes
+
 // ===== HELPERS =====
 integer logd(string msg) {
     if (DEBUG) llOwnerSay("[LEASH-CFG] " + msg);
@@ -257,6 +261,15 @@ cleanup_offer_dialog() {
 
 // ===== ACTIONS =====
 give_holder_object() {
+    // ACL check: Allow ACL 1 (public) and ACL 3+ (trustee/owner)
+    // Deny ACL 2 (owned wearer) as per design
+    // Deny ACL 0 (no access) and ACL -1 (blacklisted)
+    if (UserAcl == 2 || UserAcl < 1) {
+        llRegionSayTo(CurrentUser, 0, "Access denied: Insufficient permissions to receive leash holder.");
+        logd("Holder request denied for ACL " + (string)UserAcl);
+        return;
+    }
+
     string holder_name = "D/s Collar leash holder";
     if (llGetInventoryType(holder_name) != INVENTORY_OBJECT) {
         llRegionSayTo(CurrentUser, 0, "Error: Holder object not found in collar inventory.");
@@ -265,8 +278,8 @@ give_holder_object() {
     }
     llGiveInventory(CurrentUser, holder_name);
     llRegionSayTo(CurrentUser, 0, "Leash holder given.");
-    logd("Gave holder to " + llKey2Name(CurrentUser));
-}
+    logd("Gave holder to " + llKey2Name(CurrentUser) + " (ACL " + (string)UserAcl + ")");}
+
 
 send_leash_action(string action) {
     llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
@@ -338,9 +351,7 @@ handle_button_click(string button) {
         }
         else if (button == "Turn: On" || button == "Turn: Off") {
             send_leash_action("toggle_turn");
-            llSleep(0.1);
-            query_state();
-            show_settings_menu();
+            scheduleStateQuery("settings");
         }
         else if (button == "Back") {
             show_main_menu();
@@ -352,23 +363,17 @@ handle_button_click(string button) {
         }
         else if (button == "<<") {
             send_set_length(LeashLength - 1);
-            llSleep(0.1);
-            query_state();
-            show_length_menu();
+            scheduleStateQuery("length");
         }
         else if (button == ">>") {
             send_set_length(LeashLength + 1);
-            llSleep(0.1);
-            query_state();
-            show_length_menu();
+            scheduleStateQuery("length");
         }
         else {
             integer length = (integer)button;
             if (length >= 1 && length <= 20) {
                 send_set_length(length);
-                llSleep(0.1);
-                query_state();
-                show_settings_menu();
+                scheduleStateQuery("settings");
             }
         }
     }
@@ -440,6 +445,15 @@ query_state() {
     ]), NULL_KEY);
 }
 
+// Schedule a state query after brief delay, then show specified menu
+// Replaces blocking llSleep() + query_state() pattern
+scheduleStateQuery(string next_menu_context) {
+    PendingStateQuery = TRUE;
+    PendingQueryContext = next_menu_context;
+    llSetTimerEvent(0.15);  // Query after 150ms (non-blocking)
+    logd("Scheduled state query, will show: " + next_menu_context);
+}
+
 // ===== EVENT HANDLERS =====
 default
 {
@@ -457,7 +471,18 @@ default
     changed(integer change) {
         if (change & CHANGED_OWNER) llResetScript();
     }
-    
+
+    timer() {
+        // Handle pending state query (replaces blocking llSleep pattern)
+        if (PendingStateQuery) {
+            PendingStateQuery = FALSE;
+            llSetTimerEvent(0.0);  // Stop timer
+            query_state();
+            // Menu will be shown when leash_state response arrives
+            logd("Timer fired: querying state for " + PendingQueryContext);
+        }
+    }
+
     link_message(integer sender, integer num, string msg, key id) {
         if (num == KERNEL_LIFECYCLE) {
             if (!json_has(msg, ["type"])) return;
@@ -500,6 +525,23 @@ default
                     TurnToFace = (integer)llJsonGetValue(msg, ["turnto"]);
                 }
                 logd("State synced");
+
+                // If we were waiting for state update, show the pending menu
+                if (PendingQueryContext != "") {
+                    string menu_to_show = PendingQueryContext;
+                    PendingQueryContext = "";  // Clear before showing menu
+
+                    if (menu_to_show == "settings") {
+                        show_settings_menu();
+                    }
+                    else if (menu_to_show == "length") {
+                        show_length_menu();
+                    }
+                    else if (menu_to_show == "main") {
+                        show_main_menu();
+                    }
+                    logd("Showed pending menu: " + menu_to_show);
+                }
                 return;
             }
             
@@ -526,9 +568,7 @@ default
                 if (json_has(msg, ["level"])) {
                     UserAcl = (integer)llJsonGetValue(msg, ["level"]);
                     AclPending = FALSE;
-                    query_state();
-                    llSleep(0.1);
-                    show_main_menu();
+                    scheduleStateQuery("main");
                     logd("ACL received: " + (string)UserAcl + " for " + llKey2Name(avatar));
                 }
                 return;
