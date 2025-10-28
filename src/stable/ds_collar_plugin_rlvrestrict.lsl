@@ -1,13 +1,13 @@
-// =============================================================
-// PLUGIN: ds_collar_plugin_rlvrestrict.lsl (v2)
-// PURPOSE: RLV Restriction Management Plugin
-// ARCHITECTURE: v2 Consolidated ABI (5 channels)
-// =============================================================
+/* =============================================================================
+   PLUGIN: ds_collar_plugin_rlvrestrict.lsl (v1.0 - Consolidated ABI)
+
+   PURPOSE: RLV Restriction Management Plugin
+   ============================================================================= */
 
 integer DEBUG = FALSE;
 
 /* ═══════════════════════════════════════════════════════════
-   CHANNELS (v2 Consolidated Architecture)
+   CONSOLIDATED ABI
    ═══════════════════════════════════════════════════════════ */
 
 integer KERNEL_LIFECYCLE = 500;  // register, ping/pong, soft_reset
