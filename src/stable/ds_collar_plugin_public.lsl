@@ -61,7 +61,7 @@ integer logd(string msg) {
     return FALSE;
 }
 
-integer json_has(string j, list path) {
+integer jsonHas(string j, list path) {
     return (llJsonGetValue(j, path) != JSON_INVALID);
 }
 
@@ -69,7 +69,7 @@ integer json_has(string j, list path) {
    LIFECYCLE MANAGEMENT
    =============================================================== */
 
-register_self() {
+registerSelf() {
     string label = PLUGIN_LABEL_OFF;
     if (PublicModeEnabled) {
         label = PLUGIN_LABEL_ON;
@@ -86,7 +86,7 @@ register_self() {
     logd("Registered with kernel as: " + label);
 }
 
-send_pong() {
+sendPong() {
     string msg = llList2Json(JSON_OBJECT, [
         "type", "pong",
         "context", PLUGIN_CONTEXT
@@ -98,7 +98,7 @@ send_pong() {
    SETTINGS CONSUMPTION
    =============================================================== */
 
-apply_settings_sync(string msg) {
+applySettingsSync(string msg) {
     if (!json_has(msg, ["kv"])) return;
     
     string kv_json = llJsonGetValue(msg, ["kv"]);
@@ -118,7 +118,7 @@ apply_settings_sync(string msg) {
     }
 }
 
-apply_settings_delta(string msg) {
+applySettingsDelta(string msg) {
     if (!json_has(msg, ["op"])) return;
     
     string op = llJsonGetValue(msg, ["op"]);
@@ -144,7 +144,7 @@ apply_settings_delta(string msg) {
    SETTINGS MODIFICATION
    =============================================================== */
 
-persist_public_mode(integer new_value) {
+persistPublicMode(integer new_value) {
     if (new_value != 0) new_value = 1;
     
     string msg = llList2Json(JSON_OBJECT, [
@@ -160,7 +160,7 @@ persist_public_mode(integer new_value) {
    UI LABEL UPDATE
    =============================================================== */
 
-update_ui_label_and_return(key user) {
+updateUiLabelAndReturn(key user) {
     string new_label = PLUGIN_LABEL_OFF;
     if (PublicModeEnabled) {
         new_label = PLUGIN_LABEL_ON;
@@ -187,7 +187,7 @@ update_ui_label_and_return(key user) {
    DIRECT TOGGLE ACTION
    =============================================================== */
 
-toggle_public_access(key user, integer acl_level) {
+togglePublicAccess(key user, integer acl_level) {
     // Verify ACL (Trustee = 3 minimum)
     if (acl_level < PLUGIN_MIN_ACL) {
         llRegionSayTo(user, 0, "Access denied.");
@@ -216,7 +216,7 @@ toggle_public_access(key user, integer acl_level) {
    ACL VALIDATION
    =============================================================== */
 
-request_acl_and_toggle(key user) {
+requestAclAndToggle(key user) {
     string msg = llList2Json(JSON_OBJECT, [
         "type", "acl_query",
         "avatar", (string)user,
@@ -225,7 +225,7 @@ request_acl_and_toggle(key user) {
     llMessageLinked(LINK_SET, AUTH_BUS, msg, NULL_KEY);
 }
 
-handle_acl_result(string msg, key expected_user) {
+handleAclResult(string msg, key expected_user) {
     if (!json_has(msg, ["avatar"])) return;
     if (!json_has(msg, ["level"])) return;
     
