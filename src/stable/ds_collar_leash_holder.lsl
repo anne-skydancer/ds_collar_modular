@@ -1,5 +1,9 @@
-// ds_leash_holder_point.lsl -> minimal leash-holder target responder
-// Works with ds_collar_plugin_leash.lsl (LEASH_HOLDER_CHAN must match)
+/* =============================================================================
+   LEASH HOLDER: ds_collar_leash_holder.lsl (v1.0 - Lockmeister)
+
+   PURPOSE: Minimal leash-holder target responder
+            Works with ds_collar_plugin_leash.lsl (LEASH_HOLDER_CHAN must match)
+   ============================================================================= */
 
 integer DEBUG = FALSE;
 integer LEASH_HOLDER_CHAN = -192837465;

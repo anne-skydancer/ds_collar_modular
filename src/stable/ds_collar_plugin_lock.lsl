@@ -1,6 +1,6 @@
 /* =============================================================================
-   PLUGIN: ds_collar_plugin_lock_v2.lsl (Simplified - Direct Toggle)
-   
+   PLUGIN: ds_collar_plugin_lock.lsl (v1.0 - Direct Toggle)
+
    PURPOSE: Toggle collar lock/unlock with RLV detach control
    
    SIMPLIFIED: No menu - just toggles state immediately when clicked

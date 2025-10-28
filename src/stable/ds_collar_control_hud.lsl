@@ -1,6 +1,6 @@
 /* =============================================================================
-   CONTROL HUD: ds_collar_control_hud_v2.lsl
-   
+   CONTROL HUD: ds_collar_control_hud.lsl (v1.0 - Auto-Detect)
+
    PURPOSE: Auto-detect nearby collars and connect automatically
             Works like RLV relay - broadcast and listen for responses
    

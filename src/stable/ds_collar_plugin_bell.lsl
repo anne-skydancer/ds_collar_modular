@@ -1,6 +1,6 @@
 /* =============================================================================
-   DS Collar - Bell Plugin
-   
+   PLUGIN: ds_collar_plugin_bell.lsl (v1.0 - Consolidated ABI)
+
    FEATURES:
    - Independent visibility and sound controls
    - Volume adjustment (10% increments)
