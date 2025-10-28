@@ -86,7 +86,7 @@ integer logd(string msg) {
     return FALSE;
 }
 
-integer json_has(string j, list path) {
+integer jsonHas(string j, list path) {
     return (llJsonGetValue(j, path) != JSON_INVALID);
 }
 
@@ -105,14 +105,14 @@ integer needs_timer() {
    LOCKMEISTER PROTOCOL (IMPROVED SECURITY)
    =============================================================== */
 
-open_lm_listen() {
+openLmListen() {
     if (LmListen == 0) {
         LmListen = llListen(LEASH_CHAN_LM, "", NULL_KEY, "");
         logd("Lockmeister listen opened");
     }
 }
 
-close_lm_listen() {
+closeLmListen() {
     if (LmListen != 0) {
         llListenRemove(LmListen);
         LmListen = 0;
@@ -120,7 +120,7 @@ close_lm_listen() {
     }
 }
 
-lm_ping() {
+lmPing() {
     if (!LmActive || LmController == NULL_KEY) return;
     
     integer t = now();
@@ -137,7 +137,7 @@ lm_ping() {
     }
 }
 
-handle_lm_message(key id, string msg) {
+handleLmMessage(key id, string msg) {
     key owner_key = llGetOwnerKey(id);
     
     // Lockmeister protocol sends: "<holder_uuid>handle ok" or "<holder_uuid>collar ok"
@@ -164,10 +164,10 @@ handle_lm_message(key id, string msg) {
             LmController = NULL_KEY;
             LmTargetPrim = NULL_KEY;
             LmAuthorized = FALSE;
-            close_lm_listen();
+            closeLmListen();
             
             // Clear particles
-            render_chain_particles(NULL_KEY);
+            renderChainParticles(NULL_KEY);
             
             // Notify leash plugin
             llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
@@ -234,7 +234,7 @@ handle_lm_message(key id, string msg) {
         ParticlesActive = TRUE;
         SourcePlugin = "lockmeister";
         
-        render_chain_particles(id);
+        renderChainParticles(id);
         
         // Notify leash plugin
         string notify_msg = llList2Json(JSON_OBJECT, [
@@ -274,7 +274,7 @@ integer find_leashpoint_link() {
    PARTICLE RENDERING
    =============================================================== */
 
-render_chain_particles(key target) {
+renderChainParticles(key target) {
     if (LeashpointLink == 0) {
         LeashpointLink = find_leashpoint_link();
     }
@@ -318,8 +318,8 @@ render_chain_particles(key target) {
    MESSAGE HANDLERS
    =============================================================== */
 
-handle_particles_start(string msg) {
-    if (!json_has(msg, ["source"]) || !json_has(msg, ["target"])) {
+handleParticlesStart(string msg) {
+    if (!jsonHas(msg, ["source"]) || !jsonHas(msg, ["target"])) {
         logd("ERROR: particles_start missing source or target");
         return;
     }
@@ -342,7 +342,7 @@ handle_particles_start(string msg) {
             LmController = NULL_KEY;
             LmTargetPrim = NULL_KEY;
             LmAuthorized = FALSE;
-            close_lm_listen();
+            closeLmListen();
         }
     }
     else if (SourcePlugin != "" && SourcePlugin != source) {
@@ -353,7 +353,7 @@ handle_particles_start(string msg) {
     SourcePlugin = source;
     TargetKey = target;
     
-    if (json_has(msg, ["style"])) {
+    if (jsonHas(msg, ["style"])) {
         ParticleStyle = llJsonGetValue(msg, ["style"]);
     }
     else {
@@ -362,12 +362,12 @@ handle_particles_start(string msg) {
     
     logd("Start request from " + SourcePlugin + " to target " + (string)TargetKey);
     
-    render_chain_particles(TargetKey);
+    renderChainParticles(TargetKey);
     llSetTimerEvent(PARTICLE_UPDATE_RATE);
 }
 
-handle_particles_stop(string msg) {
-    if (!json_has(msg, ["source"])) {
+handleParticlesStop(string msg) {
+    if (!jsonHas(msg, ["source"])) {
         logd("ERROR: particles_stop missing source");
         return;
     }
@@ -382,7 +382,7 @@ handle_particles_stop(string msg) {
     
     logd("Stop request from " + source);
     
-    render_chain_particles(NULL_KEY);
+    renderChainParticles(NULL_KEY);
     
     // Always clear source state when stopping
     SourcePlugin = "";
@@ -395,8 +395,8 @@ handle_particles_stop(string msg) {
     }
 }
 
-handle_particles_update(string msg) {
-    if (!json_has(msg, ["target"])) {
+handleParticlesUpdate(string msg) {
+    if (!jsonHas(msg, ["target"])) {
         logd("ERROR: particles_update missing target");
         return;
     }
@@ -413,20 +413,20 @@ handle_particles_update(string msg) {
     if (new_target != TargetKey) {
         logd("Updating target to: " + (string)new_target);
         TargetKey = new_target;
-        render_chain_particles(TargetKey);
+        renderChainParticles(TargetKey);
     }
 }
 
-handle_lm_enable(string msg) {
+handleLmEnable(string msg) {
     // Enable Lockmeister listening
-    if (!json_has(msg, ["controller"])) {
+    if (!jsonHas(msg, ["controller"])) {
         logd("ERROR: lm_enable missing controller");
         return;
     }
     
     LmController = (key)llJsonGetValue(msg, ["controller"]);
     LmAuthorized = TRUE;  // Mark as authorized
-    open_lm_listen();
+    openLmListen();
     
     // Start pinging
     LmLastPing = now();
@@ -435,8 +435,8 @@ handle_lm_enable(string msg) {
     logd("Lockmeister AUTHORIZED for " + llKey2Name(LmController));
 }
 
-handle_lm_disable() {
-    close_lm_listen();
+handleLmDisable() {
+    closeLmListen();
     
     // If Lockmeister was active, clear the particles
     if (LmActive) {
@@ -447,7 +447,7 @@ handle_lm_disable() {
         
         // Clear particles if we were the active source
         if (SourcePlugin == "lockmeister") {
-            render_chain_particles(NULL_KEY);
+            renderChainParticles(NULL_KEY);
             SourcePlugin = "";
             TargetKey = NULL_KEY;
         }
@@ -480,7 +480,7 @@ default
         LmController = NULL_KEY;
         LmTargetPrim = NULL_KEY;
         LmAuthorized = FALSE;
-        close_lm_listen();
+        closeLmListen();
         
         logd("Particles module ready (v1.0 SECURITY PATCH)");
     }
@@ -494,7 +494,7 @@ default
             // Clear authorization before reset (defensive coding)
             LmAuthorized = FALSE;
             LmController = NULL_KEY;
-            close_lm_listen();
+            closeLmListen();
             llResetScript();
         }
         
@@ -503,7 +503,7 @@ default
             LeashpointLink = 0;
             if (ParticlesActive) {
                 LeashpointLink = find_leashpoint_link();
-                render_chain_particles(TargetKey);
+                renderChainParticles(TargetKey);
             }
         }
     }
@@ -512,37 +512,37 @@ default
         // Only listen on UI_BUS
         if (num != UI_BUS) return;
         
-        if (!json_has(msg, ["type"])) return;
+        if (!jsonHas(msg, ["type"])) return;
         
         string msg_type = llJsonGetValue(msg, ["type"]);
         
         if (msg_type == "particles_start") {
-            handle_particles_start(msg);
+            handleParticlesStart(msg);
         }
         else if (msg_type == "particles_stop") {
-            handle_particles_stop(msg);
+            handleParticlesStop(msg);
         }
         else if (msg_type == "particles_update") {
-            handle_particles_update(msg);
+            handleParticlesUpdate(msg);
         }
         else if (msg_type == "lm_enable") {
-            handle_lm_enable(msg);
+            handleLmEnable(msg);
         }
         else if (msg_type == "lm_disable") {
-            handle_lm_disable();
+            handleLmDisable();
         }
     }
     
     listen(integer channel, string name, key id, string msg) {
         if (channel == LEASH_CHAN_LM) {
-            handle_lm_message(id, msg);
+            handleLmMessage(id, msg);
         }
     }
     
     timer() {
         // Lockmeister ping
         if (LmActive) {
-            lm_ping();
+            lmPing();
         }
         
         // Periodic validation - verify target still exists
@@ -551,7 +551,7 @@ default
             if (llGetListLength(details) == 0) {
                 // Target disappeared (offsim or logged out)
                 logd("Target lost, clearing particles");
-                render_chain_particles(NULL_KEY);
+                renderChainParticles(NULL_KEY);
                 
                 // If Lockmeister was active, stop it
                 if (LmActive) {
@@ -559,7 +559,7 @@ default
                     LmController = NULL_KEY;
                     LmTargetPrim = NULL_KEY;
                     LmAuthorized = FALSE;
-                    close_lm_listen();
+                    closeLmListen();
                     
                     // Notify leash plugin
                     llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
