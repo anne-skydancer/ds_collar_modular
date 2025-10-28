@@ -55,7 +55,7 @@ integer logd(string msg) {
     return FALSE;
 }
 
-integer json_has(string j, list path) {
+integer jsonHas(string j, list path) {
     return (llJsonGetValue(j, path) != JSON_INVALID);
 }
 
@@ -63,7 +63,7 @@ string generate_session_id() {
     return PLUGIN_CONTEXT + "_" + (string)llGetUnixTime();
 }
 
-set_bell_visibility(integer visible) {
+setBellVisibility(integer visible) {
     integer link_count = llGetNumberOfPrims();
     integer i;
     integer found = FALSE;
@@ -91,7 +91,7 @@ set_bell_visibility(integer visible) {
     BellVisible = visible;
 }
 
-play_jingle() {
+playJingle() {
     if (BellSound == "" || BellSound == "00000000-0000-0000-0000-000000000000") {
         return;
     }
@@ -105,7 +105,7 @@ play_jingle() {
 }
 
 // ===== UNIFIED MENU DISPLAY =====
-show_menu(string context, string title, string body, list buttons) {
+showMenu(string context, string title, string body, list buttons) {
     SessionId = generate_session_id();
     MenuContext = context;
     
@@ -121,7 +121,7 @@ show_menu(string context, string title, string body, list buttons) {
 }
 
 // ===== ACL QUERIES =====
-request_acl(key user) {
+requestAcl(key user) {
     AclPending = TRUE;
     llMessageLinked(LINK_SET, AUTH_BUS, llList2Json(JSON_OBJECT, [
         "type", "acl_query",
@@ -131,7 +131,7 @@ request_acl(key user) {
 }
 
 // ===== PLUGIN REGISTRATION =====
-register_self() {
+registerSelf() {
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
         "type", "register",
         "context", PLUGIN_CONTEXT,
@@ -141,7 +141,7 @@ register_self() {
     ]), NULL_KEY);
 }
 
-send_pong() {
+sendPong() {
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
         "type", "pong",
         "context", PLUGIN_CONTEXT
@@ -149,7 +149,7 @@ send_pong() {
 }
 
 // ===== MENU SYSTEM =====
-show_main_menu() {
+showMainMenu() {
     string visible_label;
     if (BellVisible) {
         visible_label = "Show: Y";
@@ -174,11 +174,11 @@ show_main_menu() {
     body += "Sound: " + (string)BellSoundEnabled + "\n";
     body += "Volume: " + (string)((integer)(BellVolume * 100)) + "%";
     
-    show_menu("main", "Bell", body, buttons);
+    showMenu("main", "Bell", body, buttons);
 }
 
 // ===== SETTINGS MODIFICATION =====
-persist_bell_setting(string setting_key, string value) {
+persistBellSetting(string setting_key, string value) {
     string msg = llList2Json(JSON_OBJECT, [
         "type", "set",
         "key", setting_key,
@@ -189,36 +189,36 @@ persist_bell_setting(string setting_key, string value) {
 }
 
 // ===== BUTTON HANDLER =====
-handle_button_click(string button) {
+handleButtonClick(string button) {
     logd("Button: " + button + " in context: " + MenuContext);
     
     if (MenuContext == "main") {
         if (button == "Back") {
-            return_to_root();
+            returnToRoot();
         }
         else if (button == "Volume +") {
             BellVolume = BellVolume + 0.1;
             if (BellVolume > 1.0) BellVolume = 1.0;
-            persist_bell_setting(KEY_BELL_VOLUME, (string)BellVolume);
+            persistBellSetting(KEY_BELL_VOLUME, (string)BellVolume);
             llRegionSayTo(CurrentUser, 0, "Volume: " + (string)((integer)(BellVolume * 100)) + "%");
-            show_main_menu();
+            showMainMenu();
         }
         else if (button == "Volume -") {
             BellVolume = BellVolume - 0.1;
             if (BellVolume < 0.0) BellVolume = 0.0;
-            persist_bell_setting(KEY_BELL_VOLUME, (string)BellVolume);
+            persistBellSetting(KEY_BELL_VOLUME, (string)BellVolume);
             llRegionSayTo(CurrentUser, 0, "Volume: " + (string)((integer)(BellVolume * 100)) + "%");
-            show_main_menu();
+            showMainMenu();
         }
         else if (button == "Show: Y" || button == "Show: N") {
             // Toggle state
             BellVisible = !BellVisible;
             
             // Apply immediately
-            set_bell_visibility(BellVisible);
+            setBellVisibility(BellVisible);
             
             // Persist change
-            persist_bell_setting(KEY_BELL_VISIBLE, (string)BellVisible);
+            persistBellSetting(KEY_BELL_VISIBLE, (string)BellVisible);
             
             // Notify user
             if (BellVisible) {
@@ -228,14 +228,14 @@ handle_button_click(string button) {
             }
             
             // Stay in menu
-            show_main_menu();
+            showMainMenu();
         }
         else if (button == "Sound: On" || button == "Sound: Off") {
             // Toggle state
             BellSoundEnabled = !BellSoundEnabled;
             
             // Persist change
-            persist_bell_setting(KEY_BELL_SOUND_ENABLED, (string)BellSoundEnabled);
+            persistBellSetting(KEY_BELL_SOUND_ENABLED, (string)BellSoundEnabled);
             
             // Notify user
             if (BellSoundEnabled) {
@@ -245,21 +245,21 @@ handle_button_click(string button) {
             }
             
             // Stay in menu
-            show_main_menu();
+            showMainMenu();
         }
     }
 }
 
 // ===== NAVIGATION =====
-return_to_root() {
+returnToRoot() {
     llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
         "type", "return",
         "user", (string)CurrentUser
     ]), NULL_KEY);
-    cleanup_session();
+    cleanupSession();
 }
 
-cleanup_session() {
+cleanupSession() {
     CurrentUser = NULL_KEY;
     UserAcl = -999;
     AclPending = FALSE;
@@ -269,27 +269,27 @@ cleanup_session() {
 }
 
 // ===== SETTINGS HANDLING =====
-apply_settings_sync(string msg) {
-    if (!json_has(msg, ["kv"])) return;
+applySettingsSync(string msg) {
+    if (!jsonHas(msg, ["kv"])) return;
     string kv_json = llJsonGetValue(msg, ["kv"]);
     
-    if (json_has(kv_json, [KEY_BELL_VISIBLE])) {
+    if (jsonHas(kv_json, [KEY_BELL_VISIBLE])) {
         integer new_visible = (integer)llJsonGetValue(kv_json, [KEY_BELL_VISIBLE]);
-        set_bell_visibility(new_visible);
+        setBellVisibility(new_visible);
         logd("Loaded bell_visible=" + (string)new_visible);
     }
     
-    if (json_has(kv_json, [KEY_BELL_SOUND_ENABLED])) {
+    if (jsonHas(kv_json, [KEY_BELL_SOUND_ENABLED])) {
         BellSoundEnabled = (integer)llJsonGetValue(kv_json, [KEY_BELL_SOUND_ENABLED]);
         logd("Loaded bell_sound_enabled=" + (string)BellSoundEnabled);
     }
     
-    if (json_has(kv_json, [KEY_BELL_VOLUME])) {
+    if (jsonHas(kv_json, [KEY_BELL_VOLUME])) {
         BellVolume = (float)llJsonGetValue(kv_json, [KEY_BELL_VOLUME]);
         logd("Loaded bell_volume=" + (string)BellVolume);
     }
     
-    if (json_has(kv_json, [KEY_BELL_SOUND])) {
+    if (jsonHas(kv_json, [KEY_BELL_SOUND])) {
         BellSound = llJsonGetValue(kv_json, [KEY_BELL_SOUND]);
         logd("Loaded bell_sound=" + BellSound);
     }
@@ -297,27 +297,27 @@ apply_settings_sync(string msg) {
     logd("Settings sync applied");
 }
 
-apply_settings_delta(string msg) {
-    if (!json_has(msg, ["changes"])) return;
+applySettingsDelta(string msg) {
+    if (!jsonHas(msg, ["changes"])) return;
     string changes = llJsonGetValue(msg, ["changes"]);
     
-    if (json_has(changes, [KEY_BELL_VISIBLE])) {
+    if (jsonHas(changes, [KEY_BELL_VISIBLE])) {
         integer new_visible = (integer)llJsonGetValue(changes, [KEY_BELL_VISIBLE]);
-        set_bell_visibility(new_visible);
+        setBellVisibility(new_visible);
         logd("Delta: bell_visible=" + (string)new_visible);
     }
     
-    if (json_has(changes, [KEY_BELL_SOUND_ENABLED])) {
+    if (jsonHas(changes, [KEY_BELL_SOUND_ENABLED])) {
         BellSoundEnabled = (integer)llJsonGetValue(changes, [KEY_BELL_SOUND_ENABLED]);
         logd("Delta: bell_sound_enabled=" + (string)BellSoundEnabled);
     }
     
-    if (json_has(changes, [KEY_BELL_VOLUME])) {
+    if (jsonHas(changes, [KEY_BELL_VOLUME])) {
         BellVolume = (float)llJsonGetValue(changes, [KEY_BELL_VOLUME]);
         logd("Delta: bell_volume=" + (string)BellVolume);
     }
     
-    if (json_has(changes, [KEY_BELL_SOUND])) {
+    if (jsonHas(changes, [KEY_BELL_SOUND])) {
         BellSound = llJsonGetValue(changes, [KEY_BELL_SOUND]);
         logd("Delta: bell_sound=" + BellSound);
     }
@@ -326,15 +326,15 @@ apply_settings_delta(string msg) {
 // ===== EVENT HANDLERS =====
 default {
     state_entry() {
-        cleanup_session();
+        cleanupSession();
         
         // Always start with safe defaults (bell hidden, sound off)
         // Settings sync will override these immediately if saved state exists
         BellVisible = FALSE;
         BellSoundEnabled = FALSE;
-        set_bell_visibility(FALSE);
+        setBellVisibility(FALSE);
         
-        register_self();
+        registerSelf();
         
         // Request settings from settings module
         llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
@@ -359,23 +359,23 @@ default {
     timer() {
         // Continuous jingling while moving
         if (IsMoving && BellVisible && BellSoundEnabled) {
-            play_jingle();
+            playJingle();
         }
     }
     
     link_message(integer sender, integer num, string msg, key id) {
         // ===== KERNEL LIFECYCLE =====
         if (num == KERNEL_LIFECYCLE) {
-            if (!json_has(msg, ["type"])) return;
+            if (!jsonHas(msg, ["type"])) return;
             string msg_type = llJsonGetValue(msg, ["type"]);
             
             if (msg_type == "register_now") {
-                register_self();
+                registerSelf();
                 return;
             }
             
             if (msg_type == "ping") {
-                send_pong();
+                sendPong();
                 return;
             }
             
@@ -384,16 +384,16 @@ default {
         
         // ===== SETTINGS SYNC/DELTA =====
         if (num == SETTINGS_BUS) {
-            if (!json_has(msg, ["type"])) return;
+            if (!jsonHas(msg, ["type"])) return;
             string msg_type = llJsonGetValue(msg, ["type"]);
             
             if (msg_type == "settings_sync") {
-                apply_settings_sync(msg);
+                applySettingsSync(msg);
                 return;
             }
             
             if (msg_type == "settings_delta") {
-                apply_settings_delta(msg);
+                applySettingsDelta(msg);
                 return;
             }
             
@@ -402,15 +402,15 @@ default {
         
         // ===== UI START =====
         if (num == UI_BUS) {
-            if (!json_has(msg, ["type"])) return;
+            if (!jsonHas(msg, ["type"])) return;
             string msg_type = llJsonGetValue(msg, ["type"]);
             
             if (msg_type == "start") {
-                if (!json_has(msg, ["context"])) return;
+                if (!jsonHas(msg, ["context"])) return;
                 if (llJsonGetValue(msg, ["context"]) != PLUGIN_CONTEXT) return;
                 
                 CurrentUser = id;
-                request_acl(id);
+                requestAcl(id);
                 return;
             }
             
@@ -419,27 +419,27 @@ default {
         
         // ===== AUTH RESULT =====
         if (num == AUTH_BUS) {
-            if (!json_has(msg, ["type"])) return;
+            if (!jsonHas(msg, ["type"])) return;
             string msg_type = llJsonGetValue(msg, ["type"]);
             
             if (msg_type == "acl_result") {
                 if (!AclPending) return;
-                if (!json_has(msg, ["avatar"])) return;
+                if (!jsonHas(msg, ["avatar"])) return;
                 
                 key avatar = (key)llJsonGetValue(msg, ["avatar"]);
                 if (avatar != CurrentUser) return;
                 
-                if (json_has(msg, ["level"])) {
+                if (jsonHas(msg, ["level"])) {
                     UserAcl = (integer)llJsonGetValue(msg, ["level"]);
                     AclPending = FALSE;
                     
                     if (UserAcl < PLUGIN_MIN_ACL) {
                         llRegionSayTo(CurrentUser, 0, "Access denied.");
-                        cleanup_session();
+                        cleanupSession();
                         return;
                     }
                     
-                    show_main_menu();
+                    showMainMenu();
                     logd("ACL received: " + (string)UserAcl);
                 }
                 return;
@@ -450,26 +450,26 @@ default {
         
         // ===== DIALOG RESPONSE =====
         if (num == DIALOG_BUS) {
-            if (!json_has(msg, ["type"])) return;
+            if (!jsonHas(msg, ["type"])) return;
             string msg_type = llJsonGetValue(msg, ["type"]);
             
             if (msg_type == "dialog_response") {
-                if (!json_has(msg, ["session_id"]) || !json_has(msg, ["button"])) return;
+                if (!jsonHas(msg, ["session_id"]) || !jsonHas(msg, ["button"])) return;
                 string response_session = llJsonGetValue(msg, ["session_id"]);
                 if (response_session != SessionId) return;
                 
                 string button = llJsonGetValue(msg, ["button"]);
-                handle_button_click(button);
+                handleButtonClick(button);
                 return;
             }
             
             if (msg_type == "dialog_timeout") {
-                if (!json_has(msg, ["session_id"])) return;
+                if (!jsonHas(msg, ["session_id"])) return;
                 string timeout_session = llJsonGetValue(msg, ["session_id"]);
                 if (timeout_session != SessionId) return;
                 
                 logd("Dialog timeout");
-                cleanup_session();
+                cleanupSession();
                 return;
             }
             
@@ -484,7 +484,7 @@ default {
             
             // Play first jingle immediately
             if (BellVisible && BellSoundEnabled) {
-                play_jingle();
+                playJingle();
             }
             
             // Start timer for continuous jingling

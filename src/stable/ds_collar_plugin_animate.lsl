@@ -60,7 +60,7 @@ integer logd(string msg) {
     return FALSE;
 }
 
-integer json_has(string j, list path) {
+integer jsonHas(string j, list path) {
     return (llJsonGetValue(j, path) != JSON_INVALID);
 }
 
@@ -72,7 +72,7 @@ string generate_session_id() {
    ANIMATION INVENTORY MANAGEMENT
    =============================================================== */
 
-refresh_animation_list() {
+refreshAnimationList() {
     AnimationList = [];
     integer count = llGetInventoryNumber(INVENTORY_ANIMATION);
     integer i;
@@ -91,7 +91,7 @@ refresh_animation_list() {
    ANIMATION CONTROL
    =============================================================== */
 
-ensure_permissions() {
+ensurePermissions() {
     key owner = llGetOwner();
     if (llGetPermissions() & PERMISSION_TRIGGER_ANIMATION) {
         HasPermission = TRUE;
@@ -103,7 +103,7 @@ ensure_permissions() {
     }
 }
 
-start_animation(string anim_name) {
+startAnimation(string anim_name) {
     if (!HasPermission) {
         logd("No permission to trigger animations");
         llRegionSayTo(CurrentUser, 0, "No animation permission granted.");
@@ -129,7 +129,7 @@ start_animation(string anim_name) {
     }
 }
 
-stop_all_animations() {
+stopAllAnimations() {
     if (LastPlayedAnim != "") {
         llStopAnimation(LastPlayedAnim);
         logd("Stopped: " + LastPlayedAnim);
@@ -145,7 +145,7 @@ stop_all_animations() {
    LIFECYCLE MANAGEMENT
    =============================================================== */
 
-register_self() {
+registerSelf() {
     string msg = llList2Json(JSON_OBJECT, [
         "type", "register",
         "context", PLUGIN_CONTEXT,
@@ -157,7 +157,7 @@ register_self() {
     logd("Registered with kernel");
 }
 
-send_pong() {
+sendPong() {
     string msg = llList2Json(JSON_OBJECT, [
         "type", "pong",
         "context", PLUGIN_CONTEXT
@@ -169,7 +169,7 @@ send_pong() {
    ACL VALIDATION
    =============================================================== */
 
-request_acl(key user) {
+requestAcl(key user) {
     AclPending = TRUE;
     
     string msg = llList2Json(JSON_OBJECT, [
@@ -180,9 +180,9 @@ request_acl(key user) {
     llMessageLinked(LINK_SET, AUTH_BUS, msg, NULL_KEY);
 }
 
-handle_acl_result(string msg) {
-    if (!json_has(msg, ["avatar"])) return;
-    if (!json_has(msg, ["level"])) return;
+handleAclResult(string msg) {
+    if (!jsonHas(msg, ["avatar"])) return;
+    if (!jsonHas(msg, ["level"])) return;
     
     key avatar = (key)llJsonGetValue(msg, ["avatar"]);
     if (avatar != CurrentUser) return;
@@ -194,19 +194,19 @@ handle_acl_result(string msg) {
     
     if (level < PLUGIN_MIN_ACL) {
         llRegionSayTo(CurrentUser, 0, "Access denied.");
-        cleanup_session();
+        cleanupSession();
         return;
     }
     
     // User has access, show menu
-    show_animation_menu(0);
+    showAnimationMenu(0);
 }
 
 /* ===============================================================
    UI / MENU SYSTEM
    =============================================================== */
 
-show_animation_menu(integer page) {
+showAnimationMenu(integer page) {
     SessionId = generate_session_id();
     CurrentPage = page;
     
@@ -298,18 +298,18 @@ show_animation_menu(integer page) {
    BUTTON HANDLING
    =============================================================== */
 
-handle_button_click(string button) {
+handleButtonClick(string button) {
     // Back button - return to root menu
     if (button == "Back") {
-        ui_return_root();
-        cleanup_session();
+        uiReturnRoot();
+        cleanupSession();
         return;
     }
     
     // Stop button
     if (button == "[Stop]") {
-        stop_all_animations();
-        show_animation_menu(CurrentPage);
+        stopAllAnimations();
+        showAnimationMenu(CurrentPage);
         return;
     }
     
@@ -320,10 +320,10 @@ handle_button_click(string button) {
         
         if (CurrentPage == 0) {
             // Wrap to last page
-            show_animation_menu(max_page);
+            showAnimationMenu(max_page);
         }
         else {
-            show_animation_menu(CurrentPage - 1);
+            showAnimationMenu(CurrentPage - 1);
         }
         return;
     }
@@ -335,30 +335,30 @@ handle_button_click(string button) {
         
         if (CurrentPage >= max_page) {
             // Wrap to first page
-            show_animation_menu(0);
+            showAnimationMenu(0);
         }
         else {
-            show_animation_menu(CurrentPage + 1);
+            showAnimationMenu(CurrentPage + 1);
         }
         return;
     }
     
     // Check if button is an animation name
     if (llListFindList(AnimationList, [button]) != -1) {
-        start_animation(button);
-        show_animation_menu(CurrentPage);
+        startAnimation(button);
+        showAnimationMenu(CurrentPage);
         return;
     }
     
     // Unknown button - redraw menu
-    show_animation_menu(CurrentPage);
+    showAnimationMenu(CurrentPage);
 }
 
 /* ===============================================================
    UI NAVIGATION
    =============================================================== */
 
-ui_return_root() {
+uiReturnRoot() {
     string msg = llList2Json(JSON_OBJECT, [
         "type", "return",
         "user", (string)CurrentUser
@@ -370,7 +370,7 @@ ui_return_root() {
    SESSION CLEANUP
    =============================================================== */
 
-cleanup_session() {
+cleanupSession() {
     CurrentUser = NULL_KEY;
     UserAcl = -999;
     AclPending = FALSE;
@@ -385,10 +385,10 @@ cleanup_session() {
 
 default {
     state_entry() {
-        cleanup_session();
-        refresh_animation_list();
-        ensure_permissions();
-        register_self();
+        cleanupSession();
+        refreshAnimationList();
+        ensurePermissions();
+        registerSelf();
         logd("Ready with " + (string)llGetListLength(AnimationList) + " animations");
     }
     
@@ -403,7 +403,7 @@ default {
         
         if (change & CHANGED_INVENTORY) {
             integer old_count = llGetListLength(AnimationList);
-            refresh_animation_list();
+            refreshAnimationList();
             integer new_count = llGetListLength(AnimationList);
             
             // Only redraw if count changed AND user has menu open
@@ -418,7 +418,7 @@ default {
                     CurrentPage = max_page;
                 }
                 
-                show_animation_menu(CurrentPage);
+                showAnimationMenu(CurrentPage);
             }
         }
     }
@@ -433,18 +433,18 @@ default {
     link_message(integer sender, integer num, string msg, key id) {
         // ===== KERNEL LIFECYCLE =====
         if (num == KERNEL_LIFECYCLE) {
-            if (!json_has(msg, ["type"])) return;
+            if (!jsonHas(msg, ["type"])) return;
             string msg_type = llJsonGetValue(msg, ["type"]);
             
             // Registration request
             if (msg_type == "register_now") {
-                register_self();
+                registerSelf();
                 return;
             }
             
             // Heartbeat ping
             if (msg_type == "ping") {
-                send_pong();
+                sendPong();
                 return;
             }
             
@@ -453,18 +453,18 @@ default {
         
         // ===== UI START =====
         if (num == UI_BUS) {
-            if (!json_has(msg, ["type"])) return;
+            if (!jsonHas(msg, ["type"])) return;
             string msg_type = llJsonGetValue(msg, ["type"]);
             
             if (msg_type == "start") {
-                if (!json_has(msg, ["context"])) return;
+                if (!jsonHas(msg, ["context"])) return;
                 if (llJsonGetValue(msg, ["context"]) != PLUGIN_CONTEXT) return;
                 
                 if (id == NULL_KEY) return;
                 
                 CurrentUser = id;
                 CurrentPage = 0;
-                request_acl(id);
+                requestAcl(id);
                 return;
             }
             
@@ -473,12 +473,12 @@ default {
         
         // ===== AUTH RESULT =====
         if (num == AUTH_BUS) {
-            if (!json_has(msg, ["type"])) return;
+            if (!jsonHas(msg, ["type"])) return;
             string msg_type = llJsonGetValue(msg, ["type"]);
             
             if (msg_type == "acl_result") {
                 if (!AclPending) return;
-                handle_acl_result(msg);
+                handleAclResult(msg);
                 return;
             }
             
@@ -487,17 +487,17 @@ default {
         
         // ===== DIALOG RESPONSE =====
         if (num == DIALOG_BUS) {
-            if (!json_has(msg, ["type"])) return;
+            if (!jsonHas(msg, ["type"])) return;
             string msg_type = llJsonGetValue(msg, ["type"]);
             
             if (msg_type == "dialog_response") {
-                if (!json_has(msg, ["session_id"])) return;
+                if (!jsonHas(msg, ["session_id"])) return;
                 if (llJsonGetValue(msg, ["session_id"]) != SessionId) return;
                 
-                if (!json_has(msg, ["button"])) return;
+                if (!jsonHas(msg, ["button"])) return;
                 string button = llJsonGetValue(msg, ["button"]);
                 
-                if (!json_has(msg, ["user"])) return;
+                if (!jsonHas(msg, ["user"])) return;
                 key user = (key)llJsonGetValue(msg, ["user"]);
                 
                 if (user != CurrentUser) return;
@@ -505,19 +505,19 @@ default {
                 // Re-validate ACL
                 if (UserAcl < PLUGIN_MIN_ACL) {
                     llRegionSayTo(user, 0, "Access denied.");
-                    cleanup_session();
+                    cleanupSession();
                     return;
                 }
                 
-                handle_button_click(button);
+                handleButtonClick(button);
                 return;
             }
             
             if (msg_type == "dialog_timeout") {
-                if (!json_has(msg, ["session_id"])) return;
+                if (!jsonHas(msg, ["session_id"])) return;
                 if (llJsonGetValue(msg, ["session_id"]) != SessionId) return;
                 
-                cleanup_session();
+                cleanupSession();
                 logd("Dialog timeout");
                 return;
             }
