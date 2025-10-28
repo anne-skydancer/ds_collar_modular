@@ -124,6 +124,7 @@ The system uses a **5-channel architecture** for all inter-script communication:
 ## 📚 Documentation
 
 - **[agents.md](./agents.md)** — Comprehensive LSL reference covering quirks, limitations, coding standards, review checklist, and documentation guidelines
+- **[VERSIONING.md](./VERSIONING.md)** — Official versioning specification defining how version numbers are assigned based on change types
 
 ---
 
@@ -131,10 +132,12 @@ The system uses a **5-channel architecture** for all inter-script communication:
 
 1. Fork the repo.
 2. Read **[agents.md](./agents.md)** thoroughly — it contains all LSL quirks, coding standards, and the review checklist.
-3. Work from the **authoritative baselines** (kernel, modules, plugin skeleton).
-4. Ensure your scripts compile in Second Life.
-5. Use the **Code Review Checklist** in agents.md before submitting.
-6. Submit a pull request with a clear description of your changes.  
+3. Read **[VERSIONING.md](./VERSIONING.md)** to understand how to version your changes.
+4. Work from the **authoritative baselines** (kernel, modules, plugin skeleton).
+5. Ensure your scripts compile in Second Life.
+6. Use the **Code Review Checklist** in agents.md before submitting.
+7. Apply appropriate version numbers according to VERSIONING.md.
+8. Submit a pull request with a clear description of your changes.  
 
 ---
 
