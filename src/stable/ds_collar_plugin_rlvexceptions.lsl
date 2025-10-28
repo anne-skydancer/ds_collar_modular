@@ -1,4 +1,4 @@
-/* ==================================================================================
+/* ===============================================================
    PLUGIN: ds_collar_plugin_rlvexceptions.lsl (v1.0 - Memory Optimized)
    
    PURPOSE: RLV exception management for owners and trustees

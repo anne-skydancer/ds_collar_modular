@@ -1,4 +1,4 @@
-/* ==================================================================================
+/* ===============================================================
    PLUGIN: ds_collar_plugin_rlvrelay.lsl (v1.0 - Consolidated ABI)
    
    PURPOSE: RLV relay with mode toggle + hardcore + safeword integration

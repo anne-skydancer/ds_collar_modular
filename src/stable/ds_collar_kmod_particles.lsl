@@ -1,4 +1,4 @@
-/* ==================================================================================
+/* ===============================================================
    MODULE: ds_collar_kmod_particles.lsl (v1.0 SECURITY HARDENING)
    
    PURPOSE: Visual connection renderer (chains, beams, ropes) + Lockmeister protocol

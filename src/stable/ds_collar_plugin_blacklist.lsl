@@ -1,4 +1,4 @@
-/* ==================================================================================
+/* ===============================================================
    PLUGIN: ds_collar_plugin_blacklist.lsl (v1.0 - Consolidated ABI)
    
    PURPOSE: Blacklist management with sensor-based avatar selection

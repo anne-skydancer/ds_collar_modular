@@ -1,4 +1,4 @@
-/* ==================================================================================
+/* ===============================================================
    PLUGIN: ds_collar_plugin_animate.lsl (v1.0 - Consolidated ABI)
    
    PURPOSE: Paginated animation menu with inventory-driven animation list

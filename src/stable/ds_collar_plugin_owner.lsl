@@ -1,4 +1,4 @@
-/* ==================================================================================
+/* ===============================================================
    PLUGIN: ds_collar_plugin_owner.lsl (v1.0 - Memory Optimized)
    
    PURPOSE: Owner and trustee management

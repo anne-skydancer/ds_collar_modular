@@ -1,4 +1,4 @@
-/* ==================================================================================
+/* ===============================================================
    MODULE: ds_collar_kmod_settings.lsl (v1.0 - Security Hardened)
    SECURITY AUDIT: CRITICAL ISSUES FIXED
    

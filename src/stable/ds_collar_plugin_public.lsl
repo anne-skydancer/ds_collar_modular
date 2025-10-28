@@ -1,4 +1,4 @@
-/* ==================================================================================
+/* ===============================================================
    PLUGIN: ds_collar_plugin_public.lsl (v1.0 - Toggle Mode)
    
    PURPOSE: Toggle public access mode (direct button click)

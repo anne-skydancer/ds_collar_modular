@@ -1,4 +1,4 @@
-/* ==================================================================================
+/* ===============================================================
    PLUGIN: ds_collar_plugin_tpe.lsl (v1.0 - Wearer Confirmation)
    
    PURPOSE: Toggle Total Power Exchange (TPE) mode with wearer consent

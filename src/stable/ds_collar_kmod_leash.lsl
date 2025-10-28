@@ -1,4 +1,4 @@
-/* ==================================================================================
+/* ===============================================================
    DS Collar - Leash Kernel Module (v1.0 OFFER DIALOG)
    
    PURPOSE: Leashing engine - provides leash services to plugins

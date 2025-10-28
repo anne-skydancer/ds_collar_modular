@@ -1,4 +1,4 @@
-/* ==================================================================================
+/* ===============================================================
    MODULE: ds_collar_kmod_dialogs.lsl (v1.0 - Security Hardened)
    SECURITY AUDIT: MINOR ENHANCEMENTS APPLIED
    

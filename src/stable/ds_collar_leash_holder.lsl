@@ -1,4 +1,4 @@
-/* ==================================================================================
+/* ==============================================================================
    LEASH HOLDER: ds_collar_leash_holder.lsl (v1.0 - Lockmeister)
 
    PURPOSE: Minimal leash-holder target responder

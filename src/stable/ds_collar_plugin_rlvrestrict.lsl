@@ -1,4 +1,4 @@
-/* ==================================================================================
+/* ==============================================================================
    PLUGIN: ds_collar_plugin_rlvrestrict.lsl (v1.0 - Consolidated ABI)
 
    PURPOSE: RLV Restriction Management Plugin

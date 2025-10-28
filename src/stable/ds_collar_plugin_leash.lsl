@@ -1,4 +1,4 @@
-/* ==================================================================================
+/* ===============================================================
    DS Collar - Leash Plugin (v1.0 OFFER DIALOG)
    
    PURPOSE: User interface and configuration for leashing system

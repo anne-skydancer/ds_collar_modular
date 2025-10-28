@@ -1,4 +1,4 @@
-/* ==================================================================================
+/* ===============================================================
    MODULE: ds_collar_kmod_bootstrap.lsl (v1.0 - Soft Reset Authorization Fix)
    SECURITY AUDIT: MEDIUM-023 FIX APPLIED
    
