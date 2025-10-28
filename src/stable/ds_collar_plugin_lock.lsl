@@ -57,11 +57,11 @@ integer logd(string msg) {
     return FALSE;
 }
 
-integer json_has(string json_data, list path) {
+integer jsonHas(string json_data, list path) {
     return (llJsonGetValue(json_data, path) != JSON_INVALID);
 }
 
-play_toggle_sound() {
+playToggleSound() {
     llTriggerSound(SOUND_TOGGLE, SOUND_VOLUME);
 }
 
@@ -69,7 +69,7 @@ play_toggle_sound() {
    LIFECYCLE MANAGEMENT
    =============================================================== */
 
-register_self() {
+registerSelf() {
     // Register with appropriate label based on current lock state
     string current_label = PLUGIN_LABEL_UNLOCKED;
     if (Locked) {
@@ -87,7 +87,7 @@ register_self() {
     logd("Registered as: " + current_label);
 }
 
-send_pong() {
+sendPong() {
     string msg = llList2Json(JSON_OBJECT, [
         "type", "pong",
         "context", PLUGIN_CONTEXT
@@ -99,7 +99,7 @@ send_pong() {
    SETTINGS CONSUMPTION
    =============================================================== */
 
-apply_settings_sync(string msg) {
+applySettingsSync(string msg) {
     if (!json_has(msg, ["kv"])) return;
     
     string kv_json = llJsonGetValue(msg, ["kv"]);
@@ -118,7 +118,7 @@ apply_settings_sync(string msg) {
     logd("Settings sync: locked=" + (string)Locked);
 }
 
-apply_settings_delta(string msg) {
+applySettingsDelta(string msg) {
     if (!json_has(msg, ["op"])) return;
     
     string op = llJsonGetValue(msg, ["op"]);
@@ -155,7 +155,7 @@ apply_settings_delta(string msg) {
    SETTINGS MODIFICATION
    =============================================================== */
 
-persist_locked(integer new_value) {
+persistLocked(integer new_value) {
     string msg = llList2Json(JSON_OBJECT, [
         "type", "set",
         "key", KEY_LOCKED,
@@ -168,7 +168,7 @@ persist_locked(integer new_value) {
    LOCK STATE APPLICATION
    =============================================================== */
 
-apply_lock_state() {
+applyLockState() {
     key owner = llGetOwner();
     
     if (Locked) {
@@ -189,7 +189,7 @@ apply_lock_state() {
    VISUAL FEEDBACK (optional prims)
    =============================================================== */
 
-show_locked_prim() {
+showLockedPrim() {
     integer link_count = llGetNumberOfPrims();
     integer i;
     
@@ -205,7 +205,7 @@ show_locked_prim() {
     }
 }
 
-show_unlocked_prim() {
+showUnlockedPrim() {
     integer link_count = llGetNumberOfPrims();
     integer i;
     
@@ -225,7 +225,7 @@ show_unlocked_prim() {
    UI LABEL UPDATE
    =============================================================== */
 
-update_ui_label_and_return(key user) {
+updateUiLabelAndReturn(key user) {
     // Tell UI our new label
     string new_label = PLUGIN_LABEL_UNLOCKED;
     if (Locked) {
@@ -253,7 +253,7 @@ update_ui_label_and_return(key user) {
    DIRECT TOGGLE ACTION
    =============================================================== */
 
-toggle_lock(key user, integer acl_level) {
+toggleLock(key user, integer acl_level) {
     // Verify ACL (only 4=unowned wearer, 5=owner)
     if (acl_level != 4 && acl_level != 5) {
         llRegionSayTo(user, 0, "Access denied.");
@@ -288,7 +288,7 @@ toggle_lock(key user, integer acl_level) {
    ACL VALIDATION
    =============================================================== */
 
-request_acl_and_toggle(key user) {
+requestAclAndToggle(key user) {
     string msg = llList2Json(JSON_OBJECT, [
         "type", "acl_query",
         "avatar", (string)user,
@@ -297,7 +297,7 @@ request_acl_and_toggle(key user) {
     llMessageLinked(LINK_SET, AUTH_BUS, msg, NULL_KEY);
 }
 
-handle_acl_result(string msg, key expected_user) {
+handleAclResult(string msg, key expected_user) {
     if (!json_has(msg, ["avatar"])) return;
     if (!json_has(msg, ["level"])) return;
     

@@ -98,15 +98,15 @@ integer logd(string msg) {
     return FALSE;
 }
 
-integer json_has(string j, list path) {
+integer jsonHas(string j, list path) {
     return (llJsonGetValue(j, path) != JSON_INVALID);
 }
 
-integer is_json_arr(string s) {
+integer isJsonArr(string s) {
     return (llGetSubString(s, 0, 0) == "[");
 }
 
-string generate_session_id() {
+string generateSessionId() {
     return "maint_" + (string)llGetKey() + "_" + (string)llGetUnixTime();
 }
 
@@ -114,7 +114,7 @@ string generate_session_id() {
    LIFECYCLE
    =============================================================== */
 
-register_self() {
+registerSelf() {
     string msg = llList2Json(JSON_OBJECT, [
         "type", "register",
         "context", PLUGIN_CONTEXT,
@@ -126,7 +126,7 @@ register_self() {
     logd("Registered");
 }
 
-send_pong() {
+sendPong() {
     string msg = llList2Json(JSON_OBJECT, [
         "type", "pong",
         "context", PLUGIN_CONTEXT
@@ -138,7 +138,7 @@ send_pong() {
    SETTINGS MANAGEMENT
    =============================================================== */
 
-apply_settings_sync(string msg) {
+applySettingsSync(string msg) {
     if (!json_has(msg, ["kv"])) return;
     
     string kv_json = llJsonGetValue(msg, ["kv"]);
@@ -148,7 +148,7 @@ apply_settings_sync(string msg) {
     logd("Settings sync applied");
 }
 
-apply_settings_delta(string msg) {
+applySettingsDelta(string msg) {
     // Request full sync to update our display cache
     string request = llList2Json(JSON_OBJECT, [
         "type", "settings_get"
@@ -162,7 +162,7 @@ apply_settings_delta(string msg) {
    ACL MANAGEMENT
    =============================================================== */
 
-request_acl(key user_key) {
+requestAcl(key user_key) {
     string msg = llList2Json(JSON_OBJECT, [
         "type", "acl_query",
         "avatar", (string)user_key
@@ -171,7 +171,7 @@ request_acl(key user_key) {
     logd("Requested ACL for " + llKey2Name(user_key));
 }
 
-handle_acl_result(string msg) {
+handleAclResult(string msg) {
     if (!json_has(msg, ["avatar"])) return;
     if (!json_has(msg, ["level"])) return;
     
@@ -195,7 +195,7 @@ handle_acl_result(string msg) {
    MENU DISPLAY
    =============================================================== */
 
-show_main_menu() {
+showMainMenu() {
     string body = "Maintenance:\n\n";
     
     list buttons;
@@ -238,7 +238,7 @@ show_main_menu() {
    ACTIONS
    =============================================================== */
 
-do_view_settings() {
+doViewSettings() {
     if (!SettingsReady || CachedSettings == "") {
         llRegionSayTo(CurrentUser, 0, "Settings not loaded yet. Try again.");
         return;
@@ -267,7 +267,7 @@ do_view_settings() {
     logd("Displayed settings to " + llKey2Name(CurrentUser));
 }
 
-do_display_access_list() {
+doDisplayAccessList() {
     if (!SettingsReady || CachedSettings == "") {
         llRegionSayTo(CurrentUser, 0, "Settings not loaded yet. Try again.");
         return;
@@ -385,7 +385,7 @@ do_display_access_list() {
     logd("Displayed access list to " + llKey2Name(CurrentUser));
 }
 
-do_reload_settings() {
+doReloadSettings() {
     string msg = llList2Json(JSON_OBJECT, [
         "type", "settings_get"
     ]);
@@ -395,7 +395,7 @@ do_reload_settings() {
     logd("Settings reload requested by " + llKey2Name(CurrentUser));
 }
 
-do_clear_leash() {
+doClearLeash() {
     string msg = llList2Json(JSON_OBJECT, [
         "type", "soft_reset",
         "context", "core_leash"
@@ -406,7 +406,7 @@ do_clear_leash() {
     logd("Leash cleared by " + llKey2Name(CurrentUser));
 }
 
-do_reload_collar() {
+doReloadCollar() {
     // Send soft reset to ALL plugins
     string msg = llList2Json(JSON_OBJECT, [
         "type", "soft_reset_all"
@@ -417,7 +417,7 @@ do_reload_collar() {
     logd("Collar reload requested by " + llKey2Name(CurrentUser));
 }
 
-do_give_hud() {
+doGiveHud() {
     if (llGetInventoryType(HUD_ITEM) != INVENTORY_OBJECT) {
         llRegionSayTo(CurrentUser, 0, "HUD not found in inventory.");
         logd("HUD not found: " + HUD_ITEM);
@@ -429,7 +429,7 @@ do_give_hud() {
     }
 }
 
-do_give_manual() {
+doGiveManual() {
     if (llGetInventoryType(MANUAL_NOTECARD) != INVENTORY_NOTECARD) {
         llRegionSayTo(CurrentUser, 0, "Manual not found in inventory.");
         logd("Manual not found: " + MANUAL_NOTECARD);
@@ -445,7 +445,7 @@ do_give_manual() {
    NAVIGATION
    =============================================================== */
 
-return_to_root() {
+returnToRoot() {
     string msg = llList2Json(JSON_OBJECT, [
         "type", "return",
         "user", (string)CurrentUser
@@ -454,7 +454,7 @@ return_to_root() {
     cleanup_session();
 }
 
-close_ui() {
+closeUi() {
     string msg = llList2Json(JSON_OBJECT, [
         "type", "close",
         "user", (string)CurrentUser
@@ -467,7 +467,7 @@ close_ui() {
    SESSION CLEANUP
    =============================================================== */
 
-cleanup_session() {
+cleanupSession() {
     CurrentUser = NULL_KEY;
     CurrentUserAcl = -999;
     SessionId = "";
@@ -478,7 +478,7 @@ cleanup_session() {
    DIALOG HANDLERS
    =============================================================== */
 
-handle_dialog_response(string msg) {
+handleDialogResponse(string msg) {
     if (!json_has(msg, ["session_id"])) return;
     if (!json_has(msg, ["button"])) return;
     
@@ -549,7 +549,7 @@ handle_dialog_response(string msg) {
     }
 }
 
-handle_dialog_timeout(string msg) {
+handleDialogTimeout(string msg) {
     if (!json_has(msg, ["session_id"])) return;
     
     string session = llJsonGetValue(msg, ["session_id"]);
