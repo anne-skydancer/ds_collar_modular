@@ -64,7 +64,7 @@
    - 900: UI/command bus
    - -192837465: DS Holder protocol
    - -8888: OpenCollar holder protocol
-   ============================================================================== */
+   =============================================================== */
 
 integer DEBUG = FALSE;
 integer PRODUCTION = TRUE;  // Set FALSE for development

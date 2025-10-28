@@ -18,7 +18,7 @@
    - [LOW] Production mode guard for debug
    - [LOW] Owner change handler
    - [LOW] Blacklist check in button handler
-   ============================================================================== */
+   =============================================================== */
 
 integer DEBUG = FALSE;
 integer PRODUCTION = TRUE;  // Set FALSE for development builds

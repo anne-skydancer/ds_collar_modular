@@ -19,7 +19,7 @@
    - [MEDIUM] Integer overflow protection for timestamps
    - [LOW] Production mode guards debug logging
    - [LOW] Late registration debounced to prevent broadcast storms
-   ============================================================================== */
+   =============================================================== */
 
 integer DEBUG = FALSE;
 integer PRODUCTION = TRUE;  // Set FALSE for development builds

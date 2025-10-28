@@ -11,7 +11,7 @@
    - Restricted ACL: Trustee, Unowned, Primary Owner only
    
    TIER: 1 (Simple - binary toggle with settings)
-   ============================================================================== */
+   =============================================================== */
 
 integer DEBUG = FALSE;
 

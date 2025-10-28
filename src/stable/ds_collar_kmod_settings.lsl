@@ -21,7 +21,7 @@
    - [MEDIUM] Multi-owner support in blacklist guards
    - [LOW] Production mode guard for debug
    - [LOW] MaxListLen enforcement in notecard parsing
-   ============================================================================== */
+   =============================================================== */
 
 integer DEBUG = FALSE;
 integer PRODUCTION = TRUE;  // Set FALSE for development builds

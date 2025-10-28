@@ -14,7 +14,7 @@
    - Allowed: Owned, Trustee, Unowned, Primary Owner (2,3,4,5)
    
    TIER: 2 (Medium - uses sensor, multiple menus)
-   ============================================================================== */
+   =============================================================== */
 
 integer DEBUG = FALSE;
 

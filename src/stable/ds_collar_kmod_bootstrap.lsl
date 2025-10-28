@@ -26,7 +26,7 @@
    - Added 'from' field validation for soft_reset messages
    - Only authorized senders (kernel, maintenance, bootstrap) can trigger reset
    - Aligns with kernel's security model from v1.0+
-   ============================================================================== */
+   =============================================================== */
 
 integer DEBUG = FALSE;
 integer PRODUCTION = TRUE;  // Set FALSE for development builds

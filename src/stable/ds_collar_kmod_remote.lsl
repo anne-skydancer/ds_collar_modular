@@ -27,7 +27,7 @@
    1. HUD broadcasts collar scan --> Collar responds with owner UUID
    2. HUD sends ACL query --> Collar queries AUTH --> Collar responds with level
    3. HUD sends menu request --> Collar triggers UI for HUD wearer
-   ============================================================================== */
+   =============================================================== */
 
 integer DEBUG = FALSE;
 integer PRODUCTION = TRUE;  // Set FALSE for development
@@ -92,9 +92,9 @@ integer now() {
     return llGetUnixTime();
 }
 
-/* ==============================================================================
+/* ===============================================================
    RATE LIMITING
-   ============================================================================== */
+   =============================================================== */
 
 integer check_rate_limit(key requester) {
     integer now_time = now();
@@ -125,9 +125,9 @@ integer check_rate_limit(key requester) {
     return TRUE;  // Allowed
 }
 
-/* ==============================================================================
+/* ===============================================================
    QUERY TIMEOUT & PRUNING
-   ============================================================================== */
+   =============================================================== */
 
 prune_expired_queries(integer now_time) {
     integer idx = 0;

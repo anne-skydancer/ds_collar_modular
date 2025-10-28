@@ -28,7 +28,7 @@
    - Owner never has their UI closed (they're in control)
    
    TIER: 1 (Simple toggle with confirmation dialog)
-   ============================================================================== */
+   =============================================================== */
 
 integer DEBUG = FALSE;
 

@@ -14,7 +14,7 @@
    BUG FIX: Properly clears exceptions when owners/trustees are removed
    
    TIER: 2 (Medium - RLV command management)
-   ============================================================================== */
+   =============================================================== */
 
 integer DEBUG = FALSE;
 

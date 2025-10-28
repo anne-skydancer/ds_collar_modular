@@ -11,7 +11,7 @@
    - Permission handling for TRIGGER_ANIMATION
    
    TIER: 2 (Medium - list management, paging)
-   ============================================================================== */
+   =============================================================== */
 
 integer DEBUG = FALSE;
 

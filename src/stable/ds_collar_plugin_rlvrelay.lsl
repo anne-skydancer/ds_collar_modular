@@ -21,7 +21,7 @@
    - Fixed: Session cleanup properly cancels dialogs
    
    NAMING: PascalCase globals, ALL_CAPS constants, snake_case locals
-   ============================================================================== */
+   =============================================================== */
 
 integer DEBUG = FALSE;
 

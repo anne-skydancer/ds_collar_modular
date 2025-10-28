@@ -12,7 +12,7 @@
    - Multi-collar selection dialog
    - ACL level verification
    - RLV relay-style workflow
-   ============================================================================== */
+   =============================================================== */
 
 integer DEBUG = FALSE;
 

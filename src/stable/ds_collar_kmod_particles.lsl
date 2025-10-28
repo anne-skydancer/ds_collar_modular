@@ -39,7 +39,7 @@
    - Fixed target validation in particles_update
    - Improved timer cleanup logic
    
-   ============================================================================== */
+   =============================================================== */
 
 integer DEBUG = FALSE;
 integer PRODUCTION = TRUE;  // Set FALSE for development

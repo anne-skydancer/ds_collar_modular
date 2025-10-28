@@ -27,7 +27,7 @@
    
    NOTE: TPE "self-ownership bypass" was a false positive.
    Wearer can NEVER be in owner list by system design.
-   ============================================================================== */
+   =============================================================== */
 
 integer DEBUG = FALSE;
 integer PRODUCTION = TRUE;  // Set FALSE for development builds

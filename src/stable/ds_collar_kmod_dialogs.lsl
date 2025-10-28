@@ -14,7 +14,7 @@
    - [LOW] Production mode guard for debug
    - [LOW] Owner change handler
    - [LOW] Truncation warning for numbered lists
-   ============================================================================== */
+   =============================================================== */
 
 integer DEBUG = FALSE;
 integer PRODUCTION = TRUE;  // Set FALSE for development builds

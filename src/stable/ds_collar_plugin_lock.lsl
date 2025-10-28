@@ -6,7 +6,7 @@
    SIMPLIFIED: No menu - just toggles state immediately when clicked
    
    ACL: Unowned (4) and Primary Owner (5) only
-   ============================================================================== */
+   =============================================================== */
 
 integer DEBUG = FALSE;
 
