@@ -1,7 +1,7 @@
-/* =============================================================================
+/* ==================================================================================
    DS Collar - Leash Plugin (v1.0 OFFER DIALOG)
    
-   ROLE: User interface and configuration for leashing system
+   PURPOSE: User interface and configuration for leashing system
    
    CHANGES v1.0:
    - Added offer acceptance dialog (targets can Accept/Decline offers)
@@ -31,7 +31,7 @@
    - 700: Auth queries
    - 900: UI/command bus
    - 950: Dialog system
-   ============================================================================= */
+   ============================================================================== */
 
 integer DEBUG = FALSE;
 integer KERNEL_LIFECYCLE = 500;

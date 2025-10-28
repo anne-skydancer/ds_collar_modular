@@ -1,8 +1,8 @@
-/* =============================================================================
+/* ==================================================================================
    MODULE: ds_collar_kmod_auth.lsl (v1.0 - Security Hardened)
    SECURITY AUDIT: ACTUAL ISSUES FIXED
    
-   ROLE: Authoritative ACL and policy engine
+   PURPOSE: Authoritative ACL and policy engine
    
    CHANNELS:
    - 700 (AUTH_BUS): ACL queries and results
@@ -27,20 +27,20 @@
    
    NOTE: TPE "self-ownership bypass" was a false positive.
    Wearer can NEVER be in owner list by system design.
-   ============================================================================= */
+   ============================================================================== */
 
 integer DEBUG = FALSE;
 integer PRODUCTION = TRUE;  // Set FALSE for development builds
 
-/* ═══════════════════════════════════════════════════════════
+/* ===============================================================
    CONSOLIDATED ABI
-   ═══════════════════════════════════════════════════════════ */
+   =============================================================== */
 integer AUTH_BUS = 700;
 integer SETTINGS_BUS = 800;
 
-/* ═══════════════════════════════════════════════════════════
+/* ===============================================================
    ACL CONSTANTS
-   ═══════════════════════════════════════════════════════════ */
+   =============================================================== */
 integer ACL_BLACKLIST     = -1;
 integer ACL_NOACCESS      = 0;
 integer ACL_PUBLIC        = 1;
@@ -49,9 +49,9 @@ integer ACL_TRUSTEE       = 3;
 integer ACL_UNOWNED       = 4;
 integer ACL_PRIMARY_OWNER = 5;
 
-/* ═══════════════════════════════════════════════════════════
+/* ===============================================================
    SETTINGS KEYS
-   ═══════════════════════════════════════════════════════════ */
+   =============================================================== */
 string KEY_MULTI_OWNER_MODE = "multi_owner_mode";
 string KEY_OWNER_KEY        = "owner_key";
 string KEY_OWNER_KEYS       = "owner_keys";
@@ -60,9 +60,9 @@ string KEY_BLACKLIST        = "blacklist";
 string KEY_PUBLIC_ACCESS    = "public_mode";
 string KEY_TPE_MODE         = "tpe_mode";
 
-/* ═══════════════════════════════════════════════════════════
+/* ===============================================================
    STATE (CACHED SETTINGS)
-   ═══════════════════════════════════════════════════════════ */
+   =============================================================== */
 integer MultiOwnerMode = FALSE;
 key OwnerKey = NULL_KEY;
 list OwnerKeys = [];
@@ -76,9 +76,9 @@ list PendingQueries = [];  // [avatar_key, correlation_id, avatar_key, correlati
 integer PENDING_STRIDE = 2;
 integer MAX_PENDING_QUERIES = 50;  // Prevent unbounded growth
 
-/* ═══════════════════════════════════════════════════════════
+/* ===============================================================
    HELPERS
-   ═══════════════════════════════════════════════════════════ */
+   =============================================================== */
 integer logd(string msg) {
     if (DEBUG && !PRODUCTION) llOwnerSay("[AUTH] " + msg);
     return FALSE;
@@ -96,9 +96,9 @@ integer list_has_key(list search_list, key k) {
     return (llListFindList(search_list, [(string)k]) != -1);
 }
 
-/* ═══════════════════════════════════════════════════════════
+/* ===============================================================
    OWNER CHECKING
-   ═══════════════════════════════════════════════════════════ */
+   =============================================================== */
 
 integer has_owner() {
     if (MultiOwnerMode) {
@@ -114,9 +114,9 @@ integer is_owner(key av) {
     return (av == OwnerKey);
 }
 
-/* ═══════════════════════════════════════════════════════════
+/* ===============================================================
    ACL COMPUTATION
-   ═══════════════════════════════════════════════════════════ */
+   =============================================================== */
 
 integer compute_acl_level(key av) {
     key wearer = llGetOwner();
@@ -150,9 +150,9 @@ integer compute_acl_level(key av) {
     return ACL_NOACCESS;
 }
 
-/* ═══════════════════════════════════════════════════════════
+/* ===============================================================
    POLICY FLAGS
-   ═══════════════════════════════════════════════════════════ */
+   =============================================================== */
 
 send_acl_result(key av, string correlation_id) {
     key wearer = llGetOwner();
@@ -223,9 +223,9 @@ send_acl_result(key av, string correlation_id) {
     logd("ACL result: " + llKey2Name(av) + " = " + (string)level);
 }
 
-/* ═══════════════════════════════════════════════════════════
+/* ===============================================================
    ROLE EXCLUSIVITY VALIDATION
-   ═══════════════════════════════════════════════════════════ */
+   =============================================================== */
 
 // SECURITY FIX: Enforce role exclusivity (defense-in-depth)
 enforce_role_exclusivity() {
@@ -283,9 +283,9 @@ enforce_role_exclusivity() {
     }
 }
 
-/* ═══════════════════════════════════════════════════════════
+/* ===============================================================
    SETTINGS CONSUMPTION
-   ═══════════════════════════════════════════════════════════ */
+   =============================================================== */
 
 apply_settings_sync(string msg) {
     if (!json_has(msg, ["kv"])) return;
@@ -447,9 +447,9 @@ apply_settings_delta(string msg) {
     }
 }
 
-/* ═══════════════════════════════════════════════════════════
+/* ===============================================================
    MESSAGE HANDLERS
-   ═══════════════════════════════════════════════════════════ */
+   =============================================================== */
 
 handle_acl_query(string msg) {
     if (!json_has(msg, ["avatar"])) return;
@@ -478,9 +478,9 @@ handle_acl_query(string msg) {
     send_acl_result(av, correlation_id);
 }
 
-/* ═══════════════════════════════════════════════════════════
+/* ===============================================================
    EVENTS
-   ═══════════════════════════════════════════════════════════ */
+   =============================================================== */
 
 default
 {

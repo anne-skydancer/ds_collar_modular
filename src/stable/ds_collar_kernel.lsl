@@ -1,37 +1,37 @@
-/* =============================================================================
+/* ===================================================================================
    MODULE: ds_collar_kernel.lsl (v1.0 - Consolidated ABI)
    SECURITY AUDIT: ALL ISSUES FIXED
-   
-   ROLE: Plugin registry, lifecycle management, heartbeat monitoring
-   
+
+   PURPOSE: Plugin registry, lifecycle management, heartbeat monitoring
+
    CHANNELS:
    - 500 (KERNEL_LIFECYCLE): All lifecycle operations
-   
+
    PREVENTS UNINTENDED UI:
    - Plugin registration does NOT trigger UI display
    - Only explicit touch events show UI
    - Heartbeat is silent
    - Resets are silent
-   
+
    SECURITY FIXES APPLIED:
    - [CRITICAL] Soft reset now requires authorized sender
    - [MEDIUM] JSON construction uses proper encoding (no string injection)
    - [MEDIUM] Integer overflow protection for timestamps
    - [LOW] Production mode guards debug logging
    - [LOW] Late registration debounced to prevent broadcast storms
-   ============================================================================= */
+   ============================================================================== */
 
 integer DEBUG = FALSE;
 integer PRODUCTION = TRUE;  // Set FALSE for development builds
 
-/* ═══════════════════════════════════════════════════════════
+/* ===================================================================
    CONSOLIDATED ABI
-   ═══════════════════════════════════════════════════════════ */
+   =============================================================== */
 integer KERNEL_LIFECYCLE = 500;
 
-/* ═══════════════════════════════════════════════════════════
+/* ===================================================================
    CONSTANTS
-   ═══════════════════════════════════════════════════════════ */
+   =============================================================== */
 float   PING_INTERVAL_SEC     = 5.0;
 integer PING_TIMEOUT_SEC      = 15;
 float   INV_SWEEP_INTERVAL    = 3.0;
@@ -48,9 +48,9 @@ integer REG_LAST_SEEN = 4;
 /* Authorized senders for privileged operations */
 list AUTHORIZED_RESET_SENDERS = ["bootstrap", "maintenance"];
 
-/* ═══════════════════════════════════════════════════════════
+/* ===================================================================
    STATE
-   ═══════════════════════════════════════════════════════════ */
+   =============================================================== */
 list PluginRegistry = [];
 integer LastPingUnix = 0;
 integer LastInvSweepUnix = 0;
@@ -61,9 +61,9 @@ integer PendingListRequest = FALSE;  // Track if someone requested list during w
 integer LastScriptCount = 0;  // Track script count to detect add/remove
 integer PendingLateBroadcast = FALSE;  // Debounce late registrations
 
-/* ═══════════════════════════════════════════════════════════
+/* ===================================================================
    HELPERS
-   ═══════════════════════════════════════════════════════════ */
+   =============================================================== */
 integer logd(string msg) {
     if (DEBUG && !PRODUCTION) llOwnerSay("[KERNEL] " + msg);
     return FALSE;
@@ -104,9 +104,9 @@ integer is_authorized_sender(string sender_name) {
     return FALSE;
 }
 
-/* ═══════════════════════════════════════════════════════════
+/* ===================================================================
    REGISTRY MANAGEMENT
-   ═══════════════════════════════════════════════════════════ */
+   =============================================================== */
 
 // Find plugin index in registry by context
 integer registry_find(string context) {
@@ -215,9 +215,9 @@ integer prune_missing_scripts() {
     return pruned;
 }
 
-/* ═══════════════════════════════════════════════════════════
+/* ===================================================================
    BROADCASTING
-   ═══════════════════════════════════════════════════════════ */
+   =============================================================== */
 
 // Request all plugins to register
 broadcast_register_now() {
@@ -305,9 +305,9 @@ broadcast_soft_reset() {
     logd("Broadcast: soft_reset");
 }
 
-/* ═══════════════════════════════════════════════════════════
+/* ===================================================================
    OWNER CHANGE DETECTION
-   ═══════════════════════════════════════════════════════════ */
+   =============================================================== */
 
 integer check_owner_changed() {
     key current_owner = llGetOwner();
@@ -324,9 +324,9 @@ integer check_owner_changed() {
     return FALSE;
 }
 
-/* ═══════════════════════════════════════════════════════════
+/* ===================================================================
    MESSAGE HANDLERS
-   ═══════════════════════════════════════════════════════════ */
+   =============================================================== */
 
 handle_register(string msg) {
     if (!json_has(msg, ["context"])) return;
@@ -397,9 +397,9 @@ handle_soft_reset(string msg) {
     broadcast_register_now();
 }
 
-/* ═══════════════════════════════════════════════════════════
+/* ===================================================================
    EVENTS
-   ═══════════════════════════════════════════════════════════ */
+   =============================================================== */
 
 default
 {

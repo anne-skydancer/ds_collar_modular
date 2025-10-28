@@ -1,4 +1,4 @@
-/* =============================================================================
+/* ==================================================================================
    PLUGIN: ds_collar_plugin_bell.lsl (v1.0 - Consolidated ABI)
 
    FEATURES:
@@ -13,7 +13,7 @@
    FIXES:
    - Settings now load properly on startup (don't reset before sync arrives)
    - Bell jingles continuously while moving, not just on first step
-   ============================================================================= */
+   ============================================================================== */
 
 integer DEBUG = FALSE;
 integer KERNEL_LIFECYCLE = 500;

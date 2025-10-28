@@ -1,8 +1,8 @@
-/* =============================================================================
+/* ==================================================================================
    MODULE: ds_collar_kmod_bootstrap.lsl (v1.0 - Soft Reset Authorization Fix)
    SECURITY AUDIT: MEDIUM-023 FIX APPLIED
    
-   ROLE: Startup coordination, RLV detection, owner name resolution
+   PURPOSE: Startup coordination, RLV detection, owner name resolution
    
    FEATURES:
    - IM notifications during startup (visible to wearer)
@@ -26,21 +26,21 @@
    - Added 'from' field validation for soft_reset messages
    - Only authorized senders (kernel, maintenance, bootstrap) can trigger reset
    - Aligns with kernel's security model from v1.0+
-   ============================================================================= */
+   ============================================================================== */
 
 integer DEBUG = FALSE;
 integer PRODUCTION = TRUE;  // Set FALSE for development builds
 
-/* ═══════════════════════════════════════════════════════════
+/* ===============================================================
    CONSOLIDATED ABI
-   ═══════════════════════════════════════════════════════════ */
+   =============================================================== */
 integer KERNEL_LIFECYCLE = 500;
 integer AUTH_BUS = 700;
 integer SETTINGS_BUS = 800;
 
-/* ═══════════════════════════════════════════════════════════
+/* ===============================================================
    RLV DETECTION CONFIG
-   ═══════════════════════════════════════════════════════════ */
+   =============================================================== */
 integer RLV_PROBE_TIMEOUT_SEC = 30;
 integer RLV_RETRY_INTERVAL_SEC = 4;
 integer RLV_MAX_RETRIES = 8;
@@ -52,18 +52,18 @@ integer USE_RELAY_CHAN = TRUE;
 integer RELAY_CHAN = -1812221819;
 integer PROBE_RELAY_BOTH_SIGNS = TRUE;  // Also try positive relay channel
 
-/* ═══════════════════════════════════════════════════════════
+/* ===============================================================
    SETTINGS KEYS
-   ═══════════════════════════════════════════════════════════ */
+   =============================================================== */
 string KEY_MULTI_OWNER_MODE = "multi_owner_mode";
 string KEY_OWNER_KEY = "owner_key";
 string KEY_OWNER_KEYS = "owner_keys";
 string KEY_OWNER_HON = "owner_hon";
 string KEY_OWNER_HONS = "owner_honorifics";
 
-/* ═══════════════════════════════════════════════════════════
+/* ===============================================================
    STATE
-   ═══════════════════════════════════════════════════════════ */
+   =============================================================== */
 integer BootstrapComplete = FALSE;
 
 // RLV detection
@@ -92,9 +92,9 @@ list OwnerDisplayNames = [];
 integer NameResolutionDeadline = 0;
 integer NAME_RESOLUTION_TIMEOUT_SEC = 30;
 
-/* ═══════════════════════════════════════════════════════════
+/* ===============================================================
    HELPERS
-   ═══════════════════════════════════════════════════════════ */
+   =============================================================== */
 integer logd(string msg) {
     if (DEBUG && !PRODUCTION) llOwnerSay("[BOOTSTRAP] " + msg);
     return FALSE;
@@ -137,9 +137,9 @@ integer is_authorized_reset_sender(string from) {
     return FALSE;
 }
 
-/* ═══════════════════════════════════════════════════════════
+/* ===============================================================
    RLV DETECTION - Multi-Channel Approach
-   ═══════════════════════════════════════════════════════════ */
+   =============================================================== */
 
 addProbeChannel(integer ch) {
     if (ch == 0) return;
@@ -228,9 +228,9 @@ stop_rlv_probe() {
     }
 }
 
-/* ═══════════════════════════════════════════════════════════
+/* ===============================================================
    SETTINGS LOADING
-   ═══════════════════════════════════════════════════════════ */
+   =============================================================== */
 
 request_settings() {
     string msg = llList2Json(JSON_OBJECT, [
@@ -286,9 +286,9 @@ apply_settings_sync(string msg) {
     start_name_resolution();
 }
 
-/* ═══════════════════════════════════════════════════════════
+/* ===============================================================
    NAME RESOLUTION
-   ═══════════════════════════════════════════════════════════ */
+   =============================================================== */
 
 start_name_resolution() {
     OwnerNameQueries = [];
@@ -375,9 +375,9 @@ handle_dataserver_name(key query_id, string name) {
     }
 }
 
-/* ═══════════════════════════════════════════════════════════
+/* ===============================================================
    BOOTSTRAP COMPLETION
-   ═══════════════════════════════════════════════════════════ */
+   =============================================================== */
 
 check_bootstrap_complete() {
     if (BootstrapComplete) return;
@@ -453,9 +453,9 @@ announce_status() {
     sendIM("Collar startup complete.");
 }
 
-/* ═══════════════════════════════════════════════════════════
+/* ===============================================================
    EVENTS
-   ═══════════════════════════════════════════════════════════ */
+   =============================================================== */
 
 default
 {

@@ -1,7 +1,7 @@
-/* =============================================================================
+/* ==================================================================================
    MODULE: ds_collar_kmod_remote.lsl (v1.0 SECURITY HARDENING)
    
-   ROLE: External HUD communication bridge
+   PURPOSE: External HUD communication bridge
    
    SECURITY FIXES v1.0:
    - Added ACL verification for menu requests
@@ -27,34 +27,34 @@
    1. HUD broadcasts collar scan --> Collar responds with owner UUID
    2. HUD sends ACL query --> Collar queries AUTH --> Collar responds with level
    3. HUD sends menu request --> Collar triggers UI for HUD wearer
-   ============================================================================= */
+   ============================================================================== */
 
 integer DEBUG = FALSE;
 integer PRODUCTION = TRUE;  // Set FALSE for development
 
-/* ═══════════════════════════════════════════════════════════
+/* ===============================================================
    CONSOLIDATED ABI
-   ═══════════════════════════════════════════════════════════ */
+   =============================================================== */
 integer AUTH_BUS = 700;
 integer UI_BUS = 900;
 
-/* ═══════════════════════════════════════════════════════════
+/* ===============================================================
    EXTERNAL PROTOCOL CHANNELS
-   ═══════════════════════════════════════════════════════════ */
+   =============================================================== */
 integer EXTERNAL_ACL_QUERY_CHAN = -8675309;  // Listen for ACL queries/scans
 integer EXTERNAL_ACL_REPLY_CHAN = -8675310;  // Send ACL responses
 integer EXTERNAL_MENU_CHAN      = -8675311;  // Listen for menu requests
 
 float MAX_DETECTION_RANGE = 20.0;  // Maximum range in meters for HUD detection
 
-/* ═══════════════════════════════════════════════════════════
+/* ===============================================================
    PROTOCOL MESSAGE TYPES
-   ═══════════════════════════════════════════════════════════ */
+   =============================================================== */
 string ROOT_CONTEXT = "core_root";
 
-/* ═══════════════════════════════════════════════════════════
+/* ===============================================================
    STATE
-   ═══════════════════════════════════════════════════════════ */
+   =============================================================== */
 integer AclQueryListenHandle = 0;
 integer MenuRequestListenHandle = 0;
 key CollarOwner = NULL_KEY;
@@ -76,9 +76,9 @@ list RequestTimestamps = [];
 integer REQUEST_STRIDE = 2;
 float REQUEST_COOLDOWN = 2.0;  // 2 seconds between requests per user
 
-/* ═══════════════════════════════════════════════════════════
+/* ===============================================================
    HELPERS
-   ═══════════════════════════════════════════════════════════ */
+   =============================================================== */
 integer logd(string msg) {
     if (DEBUG && !PRODUCTION) llOwnerSay("[REMOTE] " + msg);
     return FALSE;
@@ -92,9 +92,9 @@ integer now() {
     return llGetUnixTime();
 }
 
-/* ══════════════════════════════════════════════════════════════════════════════
+/* ===================================================================================
    RATE LIMITING
-   ══════════════════════════════════════════════════════════════════════════════ */
+   ============================================================================== */
 
 integer check_rate_limit(key requester) {
     integer now_time = now();
@@ -125,9 +125,9 @@ integer check_rate_limit(key requester) {
     return TRUE;  // Allowed
 }
 
-/* ══════════════════════════════════════════════════════════════════════════════
+/* ===================================================================================
    QUERY TIMEOUT & PRUNING
-   ══════════════════════════════════════════════════════════════════════════════ */
+   ============================================================================== */
 
 prune_expired_queries(integer now_time) {
     integer idx = 0;
@@ -153,9 +153,9 @@ prune_expired_queries(integer now_time) {
     }
 }
 
-/* ═══════════════════════════════════════════════════════════
+/* ===============================================================
    QUERY MANAGEMENT
-   ═══════════════════════════════════════════════════════════ */
+   =============================================================== */
 
 add_pending_query(key hud_wearer, key hud_object) {
     integer now_time = now();
@@ -225,9 +225,9 @@ remove_pending_query(key hud_wearer) {
     logd("Removed pending query for " + llKey2Name(hud_wearer));
 }
 
-/* ═══════════════════════════════════════════════════════════
+/* ===============================================================
    INTERNAL ACL COMMUNICATION
-   ═══════════════════════════════════════════════════════════ */
+   =============================================================== */
 
 request_internal_acl(key avatar_key) {
     string msg = llList2Json(JSON_OBJECT, [
@@ -253,9 +253,9 @@ send_external_acl_response(key hud_wearer, integer level) {
     logd("Sent ACL response: hud_wearer=" + llKey2Name(hud_wearer) + ", level=" + (string)level);
 }
 
-/* ═══════════════════════════════════════════════════════════
+/* ===============================================================
    MENU TRIGGERING
-   ═══════════════════════════════════════════════════════════ */
+   =============================================================== */
 
 trigger_menu_for_external_user(key user_key) {
     // Send start message to UI module with external user
@@ -270,9 +270,9 @@ trigger_menu_for_external_user(key user_key) {
     logd("Triggered menu for external user: " + llKey2Name(user_key));
 }
 
-/* ═══════════════════════════════════════════════════════════
+/* ===============================================================
    EXTERNAL PROTOCOL HANDLERS
-   ═══════════════════════════════════════════════════════════ */
+   =============================================================== */
 
 handle_collar_scan(string message) {
     // Extract HUD wearer key
@@ -383,9 +383,9 @@ handle_menu_request_external(string message) {
     }
 }
 
-/* ═══════════════════════════════════════════════════════════
+/* ===============================================================
    EVENTS
-   ═══════════════════════════════════════════════════════════ */
+   =============================================================== */
 
 default {
     state_entry() {
