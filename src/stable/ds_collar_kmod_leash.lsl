@@ -1,7 +1,7 @@
-/* =============================================================================
+/* ===============================================================
    DS Collar - Leash Kernel Module (v1.0 OFFER DIALOG)
    
-   ROLE: Leashing engine - provides leash services to plugins
+   PURPOSE: Leashing engine - provides leash services to plugins
    
    NEW FEATURES v1.0:
    - Added offer acceptance dialog for leash offers
@@ -64,7 +64,7 @@
    - 900: UI/command bus
    - -192837465: DS Holder protocol
    - -8888: OpenCollar holder protocol
-   ============================================================================= */
+   =============================================================== */
 
 integer DEBUG = FALSE;
 integer PRODUCTION = TRUE;  // Set FALSE for development
@@ -72,9 +72,9 @@ integer AUTH_BUS = 700;
 integer SETTINGS_BUS = 800;
 integer UI_BUS = 900;
 
-/* ═══════════════════════════════════════════════════════════
+/* ===============================================================
    PROTOCOL CONSTANTS - Moved to top for easy maintenance
-   ═══════════════════════════════════════════════════════════ */
+   =============================================================== */
 
 // Holder object name (change here if needed)
 string DS_HOLDER_NAME = "DS Leash Holder";

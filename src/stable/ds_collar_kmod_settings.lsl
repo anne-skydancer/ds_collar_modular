@@ -1,8 +1,8 @@
-/* =============================================================================
+/* ===============================================================
    MODULE: ds_collar_kmod_settings.lsl (v1.0 - Security Hardened)
    SECURITY AUDIT: CRITICAL ISSUES FIXED
    
-   ROLE: Persistent key-value store with notecard loading and delta updates
+   PURPOSE: Persistent key-value store with notecard loading and delta updates
    
    CHANNELS:
    - 800 (SETTINGS_BUS): All settings operations
@@ -21,19 +21,19 @@
    - [MEDIUM] Multi-owner support in blacklist guards
    - [LOW] Production mode guard for debug
    - [LOW] MaxListLen enforcement in notecard parsing
-   ============================================================================= */
+   =============================================================== */
 
 integer DEBUG = FALSE;
 integer PRODUCTION = TRUE;  // Set FALSE for development builds
 
-/* ═══════════════════════════════════════════════════════════
+/* ===============================================================
    CONSOLIDATED ABI
-   ═══════════════════════════════════════════════════════════ */
+   =============================================================== */
 integer SETTINGS_BUS = 800;
 
-/* ═══════════════════════════════════════════════════════════
+/* ===============================================================
    SETTINGS KEYS
-   ═══════════════════════════════════════════════════════════ */
+   =============================================================== */
 string KEY_MULTI_OWNER_MODE = "multi_owner_mode";
 string KEY_OWNER_KEY        = "owner_key";
 string KEY_OWNER_KEYS       = "owner_keys";
@@ -52,16 +52,16 @@ string KEY_BELL_SOUND_ENABLED = "bell_sound_enabled";
 string KEY_BELL_VOLUME = "bell_volume";
 string KEY_BELL_SOUND = "bell_sound";
 
-/* ═══════════════════════════════════════════════════════════
+/* ===============================================================
    NOTECARD CONFIG
-   ═══════════════════════════════════════════════════════════ */
+   =============================================================== */
 string NOTECARD_NAME = "settings";
 string COMMENT_PREFIX = "#";
 string SEPARATOR = "=";
 
-/* ═══════════════════════════════════════════════════════════
+/* ===============================================================
    STATE
-   ═══════════════════════════════════════════════════════════ */
+   =============================================================== */
 key LastOwner = NULL_KEY;
 string KvJson = "{}";
 
@@ -72,9 +72,9 @@ key NotecardKey = NULL_KEY;  // Track settings notecard changes
 
 integer MaxListLen = 64;
 
-/* ═══════════════════════════════════════════════════════════
+/* ===============================================================
    HELPERS
-   ═══════════════════════════════════════════════════════════ */
+   =============================================================== */
 integer logd(string msg) {
     // SECURITY FIX: Production mode guard
     if (DEBUG && !PRODUCTION) llOwnerSay("[SETTINGS] " + msg);
@@ -126,9 +126,9 @@ list list_unique(list source_list) {
     return unique_list;
 }
 
-/* ═══════════════════════════════════════════════════════════
+/* ===============================================================
    KV OPERATIONS
-   ═══════════════════════════════════════════════════════════ */
+   =============================================================== */
 
 string kv_get(string key_name) {
     string val = llJsonGetValue(KvJson, [key_name]);
@@ -181,9 +181,9 @@ integer kv_list_remove_all(string key_name, string elem) {
     return kv_set_list(key_name, new_list);
 }
 
-/* ═══════════════════════════════════════════════════════════
+/* ===============================================================
    VALIDATION HELPERS
-   ═══════════════════════════════════════════════════════════ */
+   =============================================================== */
 
 // SECURITY FIX: Check if external owner exists
 integer has_external_owner() {
@@ -228,9 +228,9 @@ integer is_owner(string who) {
     return FALSE;
 }
 
-/* ═══════════════════════════════════════════════════════════
+/* ===============================================================
    ROLE EXCLUSIVITY GUARDS
-   ═══════════════════════════════════════════════════════════ */
+   =============================================================== */
 
 // SECURITY FIX: Returns FALSE if owner add should be rejected
 integer apply_owner_set_guard(string who) {
@@ -302,9 +302,9 @@ apply_blacklist_add_guard(string who) {
     }
 }
 
-/* ═══════════════════════════════════════════════════════════
+/* ===============================================================
    BROADCASTING
-   ═══════════════════════════════════════════════════════════ */
+   =============================================================== */
 
 broadcast_full_sync() {
     string msg = llList2Json(JSON_OBJECT, [
@@ -354,9 +354,9 @@ broadcast_delta_list_remove(string key_name, string elem) {
     logd("Broadcast: delta list_remove " + key_name);
 }
 
-/* ═══════════════════════════════════════════════════════════
+/* ===============================================================
    KEY VALIDATION
-   ═══════════════════════════════════════════════════════════ */
+   =============================================================== */
 
 integer is_allowed_key(string k) {
     if (k == KEY_MULTI_OWNER_MODE) return TRUE;
@@ -384,9 +384,9 @@ integer is_notecard_only_key(string k) {
     return FALSE;
 }
 
-/* ═══════════════════════════════════════════════════════════
+/* ===============================================================
    NOTECARD PARSING
-   ═══════════════════════════════════════════════════════════ */
+   =============================================================== */
 
 parse_notecard_line(string line) {
     line = llStringTrim(line, STRING_TRIM);
@@ -484,9 +484,9 @@ integer start_notecard_reading() {
     return TRUE;
 }
 
-/* ═══════════════════════════════════════════════════════════
+/* ===============================================================
    MESSAGE HANDLERS
-   ═══════════════════════════════════════════════════════════ */
+   =============================================================== */
 
 handle_settings_get() {
     broadcast_full_sync();
@@ -636,9 +636,9 @@ handle_list_remove(string msg) {
     }
 }
 
-/* ═══════════════════════════════════════════════════════════
+/* ===============================================================
    EVENTS
-   ═══════════════════════════════════════════════════════════ */
+   =============================================================== */
 
 default
 {
@@ -684,13 +684,13 @@ default
             // Only act if the settings notecard specifically changed
             key current_notecard_key = llGetInventoryKey(NOTECARD_NAME);
             if (current_notecard_key != NotecardKey) {
-                // Notecard was deleted â†’ reset to defaults
+                // Notecard was deleted  +' reset to defaults
                 if (current_notecard_key == NULL_KEY) {
                     logd("Settings notecard deleted, resetting to defaults");
                     llResetScript();
                 }
                 else {
-                    // Notecard edited or re-added â†’ reload and overlay
+                    // Notecard edited or re-added  +' reload and overlay
                     logd("Settings notecard changed, reloading settings");
                     NotecardKey = current_notecard_key;
                     start_notecard_reading();

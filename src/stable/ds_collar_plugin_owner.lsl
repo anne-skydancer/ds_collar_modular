@@ -1,4 +1,4 @@
-/* =============================================================================
+/* ===============================================================
    PLUGIN: ds_collar_plugin_owner.lsl (v1.0 - Memory Optimized)
    
    PURPOSE: Owner and trustee management
@@ -11,29 +11,29 @@
    - Trustee management
    
    TIER: 2 (Medium)
-   ============================================================================= */
+   =============================================================== */
 
 integer DEBUG = FALSE;
 
-/* ═══════════════════════════════════════════════════════════
+/* ===============================================================
    ABI CHANNELS
-   ═══════════════════════════════════════════════════════════ */
+   =============================================================== */
 integer KERNEL_LIFECYCLE = 500;
 integer AUTH_BUS = 700;
 integer SETTINGS_BUS = 800;
 integer UI_BUS = 900;
 integer DIALOG_BUS = 950;
 
-/* ═══════════════════════════════════════════════════════════
+/* ===============================================================
    IDENTITY
-   ═══════════════════════════════════════════════════════════ */
+   =============================================================== */
 string PLUGIN_CONTEXT = "core_owner";
 string PLUGIN_LABEL = "Access";
 integer PLUGIN_MIN_ACL = 2;
 
-/* ═══════════════════════════════════════════════════════════
+/* ===============================================================
    SETTINGS KEYS
-   ═══════════════════════════════════════════════════════════ */
+   =============================================================== */
 string KEY_MULTI_OWNER_MODE = "multi_owner_mode";
 string KEY_OWNER_KEY = "owner_key";
 string KEY_OWNER_KEYS = "owner_keys";
@@ -43,9 +43,9 @@ string KEY_TRUSTEES = "trustees";
 string KEY_TRUSTEE_HONS = "trustee_honorifics";
 string KEY_RUNAWAY_ENABLED = "runaway_enabled";
 
-/* ═══════════════════════════════════════════════════════════
+/* ===============================================================
    STATE
-   ═══════════════════════════════════════════════════════════ */
+   =============================================================== */
 integer MultiOwnerMode;
 key OwnerKey;
 list OwnerKeys;
@@ -70,9 +70,9 @@ key ActiveQueryTarget;
 
 list HONORIFICS = ["Master", "Mistress", "Daddy", "Mommy", "King", "Queen"];
 
-/* ═══════════════════════════════════════════════════════════
+/* ===============================================================
    HELPERS
-   ═══════════════════════════════════════════════════════════ */
+   =============================================================== */
 
 logd(string msg) {
     if (DEBUG) llOwnerSay("[" + PLUGIN_LABEL + "] " + msg);
@@ -103,12 +103,12 @@ integer is_owner(key k) {
     return (k == OwnerKey);
 }
 
-/* ═══════════════════════════════════════════════════════════
+/* ===============================================================
    NAMES
-   ═══════════════════════════════════════════════════════════ */
+   =============================================================== */
 
 cache_name(key k, string n) {
-    if (k == NULL_KEY || n == "" || n == "???") return;
+    if (k == NULL_KEY || n == "" || n == "   -- ) return;
     integer idx = llListFindList(NameCache, [k]);
     if (idx != -1) {
         NameCache = llListReplaceList(NameCache, [n], idx + 1, idx + 1);
@@ -127,7 +127,7 @@ string get_name(key k) {
     if (idx != -1) return llList2String(NameCache, idx + 1);
     
     string n = llGetDisplayName(k);
-    if (n != "" && n != "???") {
+    if (n != "" && n != "   -- ) {
         cache_name(k, n);
         return n;
     }
@@ -140,9 +140,9 @@ string get_name(key k) {
     return llKey2Name(k);
 }
 
-/* ═══════════════════════════════════════════════════════════
+/* ===============================================================
    LIFECYCLE
-   ═══════════════════════════════════════════════════════════ */
+   =============================================================== */
 
 register_self() {
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
@@ -161,9 +161,9 @@ send_pong() {
     ]), NULL_KEY);
 }
 
-/* ═══════════════════════════════════════════════════════════
+/* ===============================================================
    SETTINGS
-   ═══════════════════════════════════════════════════════════ */
+   =============================================================== */
 
 apply_settings_sync(string msg) {
     if (!json_has(msg, ["kv"])) return;
@@ -271,9 +271,9 @@ clear_owner() {
     persist_owner(NULL_KEY, "");
 }
 
-/* ═══════════════════════════════════════════════════════════
+/* ===============================================================
    ACL
-   ═══════════════════════════════════════════════════════════ */
+   =============================================================== */
 
 request_acl(key user) {
     llMessageLinked(LINK_SET, AUTH_BUS, llList2Json(JSON_OBJECT, [
@@ -300,9 +300,9 @@ handle_acl_result(string msg) {
     show_main();
 }
 
-/* ═══════════════════════════════════════════════════════════
+/* ===============================================================
    MENUS
-   ═══════════════════════════════════════════════════════════ */
+   =============================================================== */
 
 show_main() {
     SessionId = gen_session();
@@ -402,7 +402,7 @@ show_honorific(key target, string context) {
         "session_id", SessionId,
         "user", (string)target,
         "title", "Honorific",
-        "prompt", "What would you like to be called?",
+        "prompt", "What would you like to be called -- ,
         "items", llList2Json(JSON_ARRAY, HONORIFICS),
         "timeout", 60
     ]), NULL_KEY);
@@ -457,9 +457,9 @@ show_remove_trustee() {
     ]), NULL_KEY);
 }
 
-/* ═══════════════════════════════════════════════════════════
+/* ===============================================================
    BUTTON HANDLING
-   ═══════════════════════════════════════════════════════════ */
+   =============================================================== */
 
 handle_button(string btn) {
     if (btn == "Back") {
@@ -485,10 +485,10 @@ handle_button(string btn) {
             llSensor("", NULL_KEY, AGENT, 10.0, PI);
         }
         else if (btn == "Release") {
-            show_confirm("Confirm Release", "Release " + get_name(llGetOwner()) + "?", "release_owner");
+            show_confirm("Confirm Release", "Release " + get_name(llGetOwner()) + " -- , "release_owner");
         }
         else if (btn == "Runaway") {
-            show_confirm("Confirm Runaway", "Run away from " + get_name(get_primary_owner()) + "?\n\nThis removes ownership without consent.", "runaway");
+            show_confirm("Confirm Runaway", "Run away from " + get_name(get_primary_owner()) + " \n\nThis removes ownership without consent.", "runaway");
         }
         else if (btn == "Runaway: On" || btn == "Runaway: Off") {
             if (RunawayEnabled) {
@@ -550,7 +550,7 @@ handle_button(string btn) {
                 "session_id", SessionId,
                 "user", (string)PendingCandidate,
                 "title", "Accept Ownership",
-                "body", get_name(llGetOwner()) + " wishes to submit to you.\n\nAccept?",
+                "body", get_name(llGetOwner()) + " wishes to submit to you.\n\nAccept -- ,
                 "buttons", llList2Json(JSON_ARRAY, ["Yes", "No"]),
                 "timeout", 60
             ]), NULL_KEY);
@@ -574,7 +574,7 @@ handle_button(string btn) {
                 "session_id", SessionId,
                 "user", (string)llGetOwner(),
                 "title", "Confirm",
-                "body", "Submit to " + get_name(PendingCandidate) + " as your " + PendingHonorific + "?",
+                "body", "Submit to " + get_name(PendingCandidate) + " as your " + PendingHonorific + " -- ,
                 "buttons", llList2Json(JSON_ARRAY, ["Yes", "No"]),
                 "timeout", 60
             ]), NULL_KEY);
@@ -603,7 +603,7 @@ handle_button(string btn) {
                 "session_id", SessionId,
                 "user", (string)PendingCandidate,
                 "title", "Accept Transfer",
-                "body", "Accept ownership of " + get_name(llGetOwner()) + "?",
+                "body", "Accept ownership of " + get_name(llGetOwner()) + " -- ,
                 "buttons", llList2Json(JSON_ARRAY, ["Yes", "No"]),
                 "timeout", 60
             ]), NULL_KEY);
@@ -637,7 +637,7 @@ handle_button(string btn) {
                 "session_id", SessionId,
                 "user", (string)llGetOwner(),
                 "title", "Confirm Release",
-                "body", "Released by " + get_name(CurrentUser) + ".\n\nConfirm freedom?",
+                "body", "Released by " + get_name(CurrentUser) + ".\n\nConfirm freedom -- ,
                 "buttons", llList2Json(JSON_ARRAY, ["Yes", "No"]),
                 "timeout", 60
             ]), NULL_KEY);
@@ -722,7 +722,7 @@ handle_button(string btn) {
                 "session_id", SessionId,
                 "user", (string)PendingCandidate,
                 "title", "Accept Trustee",
-                "body", get_name(llGetOwner()) + " wants you as trustee.\n\nAccept?",
+                "body", get_name(llGetOwner()) + " wants you as trustee.\n\nAccept -- ,
                 "buttons", llList2Json(JSON_ARRAY, ["Yes", "No"]),
                 "timeout", 60
             ]), NULL_KEY);
@@ -756,9 +756,9 @@ handle_button(string btn) {
     else show_main();
 }
 
-/* ═══════════════════════════════════════════════════════════
+/* ===============================================================
    CLEANUP
-   ═══════════════════════════════════════════════════════════ */
+   =============================================================== */
 
 cleanup() {
     CurrentUser = NULL_KEY;
@@ -770,9 +770,9 @@ cleanup() {
     CandidateKeys = [];
 }
 
-/* ═══════════════════════════════════════════════════════════
+/* ===============================================================
    EVENTS
-   ═══════════════════════════════════════════════════════════ */
+   =============================================================== */
 
 default {
     state_entry() {
@@ -873,7 +873,7 @@ default {
     
     dataserver(key qid, string data) {
         if (qid != ActiveNameQuery) return;
-        if (data != "" && data != "???") cache_name(ActiveQueryTarget, data);
+        if (data != "" && data != "   -- ) cache_name(ActiveQueryTarget, data);
         ActiveNameQuery = NULL_KEY;
         ActiveQueryTarget = NULL_KEY;
     }

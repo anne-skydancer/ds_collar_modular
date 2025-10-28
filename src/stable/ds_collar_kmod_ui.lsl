@@ -1,8 +1,8 @@
-/* =============================================================================
+/* ===============================================================
    MODULE: ds_collar_kmod_ui.lsl (v1.0 - Security Hardened)
    SECURITY AUDIT: ENHANCEMENTS APPLIED
    
-   ROLE: Root touch menu with paged plugin list and ACL filtering
+   PURPOSE: Root touch menu with paged plugin list and ACL filtering
    
    CHANNELS:
    - 500 (KERNEL_LIFECYCLE): Plugin list subscription
@@ -18,22 +18,22 @@
    - [LOW] Production mode guard for debug
    - [LOW] Owner change handler
    - [LOW] Blacklist check in button handler
-   ============================================================================= */
+   =============================================================== */
 
 integer DEBUG = FALSE;
 integer PRODUCTION = TRUE;  // Set FALSE for development builds
 
-/* ═══════════════════════════════════════════════════════════
+/* ===============================================================
    CONSOLIDATED ABI
-   ═══════════════════════════════════════════════════════════ */
+   =============================================================== */
 integer KERNEL_LIFECYCLE = 500;
 integer AUTH_BUS = 700;
 integer UI_BUS = 900;
 integer DIALOG_BUS = 950;
 
-/* ═══════════════════════════════════════════════════════════
+/* ===============================================================
    CONSTANTS
-   ═══════════════════════════════════════════════════════════ */
+   =============================================================== */
 string ROOT_CONTEXT = "core_root";
 integer MAX_FUNC_BTNS = 9;
 float TOUCH_RANGE_M = 5.0;
@@ -62,17 +62,17 @@ integer SESSION_CREATED_TIME = 7;  // SECURITY FIX: Timestamp for ACL refresh
 integer MAX_SESSIONS = 5;
 integer SESSION_MAX_AGE = 60;  // Seconds before ACL refresh required
 
-/* ═══════════════════════════════════════════════════════════
+/* ===============================================================
    STATE
-   ═══════════════════════════════════════════════════════════ */
+   =============================================================== */
 list AllPlugins = [];
 list Sessions = [];
 list FilteredPluginsData = [];
 list PendingAcl = [];
 
-/* ═══════════════════════════════════════════════════════════
+/* ===============================================================
    HELPERS
-   ═══════════════════════════════════════════════════════════ */
+   =============================================================== */
 integer logd(string msg) {
     // SECURITY FIX: Production mode guard
     if (DEBUG && !PRODUCTION) llOwnerSay("[UI] " + msg);
@@ -87,9 +87,9 @@ string generate_session_id(key user) {
     return "ui_" + (string)user + "_" + (string)llGetUnixTime();
 }
 
-/* ═══════════════════════════════════════════════════════════
+/* ===============================================================
    SESSION MANAGEMENT
-   ═══════════════════════════════════════════════════════════ */
+   =============================================================== */
 
 integer find_session_idx(key user) {
     integer i = 0;
@@ -199,9 +199,9 @@ create_session(key user, integer acl, integer is_blacklisted) {
          (string)(llGetListLength(filtered) / PLUGIN_STRIDE) + " plugins)");
 }
 
-/* ═══════════════════════════════════════════════════════════
+/* ===============================================================
    PLUGIN LIST MANAGEMENT
-   ═══════════════════════════════════════════════════════════ */
+   =============================================================== */
 
 apply_plugin_list(string plugins_json) {
     AllPlugins = [];
@@ -245,9 +245,9 @@ integer is_json_arr(string s) {
     return (llGetSubString(s, 0, 0) == "[");
 }
 
-/* ═══════════════════════════════════════════════════════════
+/* ===============================================================
    MENU DISPLAY
-   ═══════════════════════════════════════════════════════════ */
+   =============================================================== */
 
 show_root_menu(key user) {
     integer session_idx = find_session_idx(user);
@@ -337,9 +337,9 @@ show_root_menu(key user) {
     logd("Showing root menu to " + llKey2Name(user) + " (page " + (string)(current_page + 1) + "/" + (string)total_pages + ")");
 }
 
-/* ═══════════════════════════════════════════════════════════
+/* ===============================================================
    BUTTON HANDLING
-   ═══════════════════════════════════════════════════════════ */
+   =============================================================== */
 
 handle_button_click(key user, string button) {
     integer session_idx = find_session_idx(user);
@@ -414,9 +414,9 @@ handle_button_click(key user, string button) {
     logd("WARNING: No plugin found for button: " + button);
 }
 
-/* ═══════════════════════════════════════════════════════════
+/* ===============================================================
    PLUGIN LABEL UPDATE
-   ═══════════════════════════════════════════════════════════ */
+   =============================================================== */
 
 update_plugin_label(string context, string new_label) {
     integer i = 0;
@@ -445,9 +445,9 @@ update_plugin_label(string context, string new_label) {
     logd("WARNING: Plugin " + context + " not found for label update");
 }
 
-/* ═══════════════════════════════════════════════════════════
+/* ===============================================================
    MESSAGE HANDLERS
-   ═══════════════════════════════════════════════════════════ */
+   =============================================================== */
 
 handle_plugin_list(string msg) {
     logd("handle_plugin_list called");
@@ -585,9 +585,9 @@ handle_dialog_timeout(string msg) {
     }
 }
 
-/* ═══════════════════════════════════════════════════════════
+/* ===============================================================
    EVENTS
-   ═══════════════════════════════════════════════════════════ */
+   =============================================================== */
 
 default
 {

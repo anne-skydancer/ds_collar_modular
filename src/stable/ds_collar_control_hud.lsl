@@ -1,4 +1,4 @@
-/* =============================================================================
+/* ===============================================================
    CONTROL HUD: ds_collar_control_hud.lsl (v1.0 - Auto-Detect)
 
    PURPOSE: Auto-detect nearby collars and connect automatically
@@ -12,20 +12,20 @@
    - Multi-collar selection dialog
    - ACL level verification
    - RLV relay-style workflow
-   ============================================================================= */
+   =============================================================== */
 
 integer DEBUG = FALSE;
 
-/* ═══════════════════════════════════════════════════════════
+/* ===============================================================
    EXTERNAL PROTOCOL CHANNELS
-   ═══════════════════════════════════════════════════════════ */
+   =============================================================== */
 integer COLLAR_ACL_QUERY_CHAN = -8675309;
 integer COLLAR_ACL_REPLY_CHAN = -8675310;
 integer COLLAR_MENU_CHAN      = -8675311;
 
-/* ═══════════════════════════════════════════════════════════
+/* ===============================================================
    ACL LEVELS
-   ═══════════════════════════════════════════════════════════ */
+   =============================================================== */
 integer ACL_BLACKLIST     = -1;
 integer ACL_NOACCESS      = 0;
 integer ACL_PUBLIC        = 1;
@@ -34,16 +34,16 @@ integer ACL_TRUSTEE       = 3;
 integer ACL_UNOWNED       = 4;
 integer ACL_PRIMARY_OWNER = 5;
 
-/* ═══════════════════════════════════════════════════════════
+/* ===============================================================
    DIALOG SETTINGS
-   ═══════════════════════════════════════════════════════════ */
+   =============================================================== */
 float QUERY_TIMEOUT_SEC = 3.0;
 float COLLAR_SCAN_TIME = 2.0;
 integer DIALOG_CHANNEL = -98765;
 
-/* ═══════════════════════════════════════════════════════════
+/* ===============================================================
    STATE (PascalCase for globals)
-   ═══════════════════════════════════════════════════════════ */
+   =============================================================== */
 key HudWearer = NULL_KEY;
 integer CollarListenHandle = 0;
 integer DialogListenHandle = 0;
@@ -60,9 +60,9 @@ string TargetAvatarName = "";
 list DetectedCollars = [];
 integer COLLAR_STRIDE = 3;
 
-/* ═══════════════════════════════════════════════════════════
+/* ===============================================================
    HELPERS
-   ═══════════════════════════════════════════════════════════ */
+   =============================================================== */
 
 integer logd(string msg) {
     if (DEBUG) llOwnerSay("[HUD] " + msg);
@@ -73,9 +73,9 @@ integer json_has(string json_str, list path) {
     return (llJsonGetValue(json_str, path) != JSON_INVALID);
 }
 
-/* ═══════════════════════════════════════════════════════════
+/* ===============================================================
    SESSION MANAGEMENT
-   ═══════════════════════════════════════════════════════════ */
+   =============================================================== */
 
 cleanup_session() {
     if (CollarListenHandle != 0) {
@@ -97,9 +97,9 @@ cleanup_session() {
     llSetTimerEvent(0.0);
 }
 
-/* ═══════════════════════════════════════════════════════════
+/* ===============================================================
    COLLAR DETECTION
-   ═══════════════════════════════════════════════════════════ */
+   =============================================================== */
 
 add_detected_collar(key avatar_key, key collar_key, string avatar_name) {
     // Check if already detected
@@ -165,9 +165,9 @@ process_scan_results() {
     show_collar_selection_dialog();
 }
 
-/* ═══════════════════════════════════════════════════════════
+/* ===============================================================
    COLLAR SELECTION DIALOG
-   ═══════════════════════════════════════════════════════════ */
+   =============================================================== */
 
 show_collar_selection_dialog() {
     integer num_collars = llGetListLength(DetectedCollars) / COLLAR_STRIDE;
@@ -199,9 +199,9 @@ show_collar_selection_dialog() {
     llSetTimerEvent(30.0);
 }
 
-/* ═══════════════════════════════════════════════════════════
+/* ===============================================================
    ACL QUERY
-   ═══════════════════════════════════════════════════════════ */
+   =============================================================== */
 
 request_acl_from_collar(key avatar_key) {
     string json_msg = llList2Json(JSON_OBJECT, [
@@ -226,9 +226,9 @@ request_acl_from_collar(key avatar_key) {
     logd("ACL query sent for " + TargetAvatarName);
 }
 
-/* ═══════════════════════════════════════════════════════════
+/* ===============================================================
    MENU TRIGGERING
-   ═══════════════════════════════════════════════════════════ */
+   =============================================================== */
 
 trigger_collar_menu() {
     if (TargetCollarKey == NULL_KEY) {
@@ -253,9 +253,9 @@ trigger_collar_menu() {
     cleanup_session();
 }
 
-/* ═══════════════════════════════════════════════════════════
+/* ===============================================================
    ACL LEVEL PROCESSING
-   ═══════════════════════════════════════════════════════════ */
+   =============================================================== */
 
 process_acl_result(integer level) {
     string access_msg = "";
@@ -263,41 +263,41 @@ process_acl_result(integer level) {
     
     // Check access level (no ternary, nested if/else per preferences)
     if (level == ACL_PRIMARY_OWNER) {
-        access_msg = "✓ Access granted: PRIMARY OWNER";
+        access_msg = "[OK] Access granted: PRIMARY OWNER";
         has_access = TRUE;
     }
     else {
         if (level == ACL_TRUSTEE) {
-            access_msg = "✓ Access granted: TRUSTEE"; 
+            access_msg = "[OK] Access granted: TRUSTEE"; 
             has_access = TRUE;
         }
         else {
             if (level == ACL_OWNED) {
-                access_msg = "✓ Access granted: OWNED";
+                access_msg = "[OK] Access granted: OWNED";
                 has_access = TRUE;
             }
             else {
                 if (level == ACL_UNOWNED) {
-                    access_msg = "✓ Access granted: UNOWNED (wearer)";
+                    access_msg = "[OK] Access granted: UNOWNED (wearer)";
                     has_access = TRUE;
                 }
                 else {
                     if (level == ACL_PUBLIC) {
-                        access_msg = "✓ Access granted: PUBLIC";
+                        access_msg = "[OK] Access granted: PUBLIC";
                         has_access = TRUE;
                     }
                     else {
                         if (level == ACL_NOACCESS) {
-                            access_msg = "✗ Access denied: NO ACCESS";
+                            access_msg = "[FAIL] Access denied: NO ACCESS";
                             has_access = FALSE;
                         }
                         else {
                             if (level == ACL_BLACKLIST) {
-                                access_msg = "✗ Access denied: BLACKLISTED";
+                                access_msg = "[FAIL] Access denied: BLACKLISTED";
                                 has_access = FALSE;
                             }
                             else {
-                                access_msg = "✗ Access denied: Unknown level " + (string)level;
+                                access_msg = "[FAIL] Access denied: Unknown level " + (string)level;
                                 has_access = FALSE;
                             }
                         }
@@ -317,9 +317,9 @@ process_acl_result(integer level) {
     }
 }
 
-/* ═══════════════════════════════════════════════════════════
+/* ===============================================================
    EVENTS
-   ═══════════════════════════════════════════════════════════ */
+   =============================================================== */
 
 default {
     state_entry() {
@@ -461,7 +461,7 @@ default {
         else {
             if (AclPending) {
                 logd("ACL query timeout");
-                llOwnerSay("✗ Connection failed: No response from " + TargetAvatarName);
+                llOwnerSay("[FAIL] Connection failed: No response from " + TargetAvatarName);
                 cleanup_session();
             }
             else {
