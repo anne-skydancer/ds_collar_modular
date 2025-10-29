@@ -155,7 +155,7 @@ integer checkRateLimit(key requester) {
    QUERY TIMEOUT & PRUNING
    =============================================================== */
 
-prune_expired_queries(integer now_time) {
+pruneExpiredQueries(integer now_time) {
     integer idx = 0;
     
     while (idx < llGetListLength(QueryTimestamps)) {
@@ -208,7 +208,7 @@ addPendingQuery(key hud_wearer, key hud_object) {
     }
     
     // Prune expired queries before adding
-    prune_expired_queries(now_time);
+    pruneExpiredQueries(now_time);
     
     // Check limit
     if (llGetListLength(PendingQueries) >= (MAX_PENDING_QUERIES * QUERY_STRIDE)) {
@@ -544,7 +544,7 @@ default {
     
     timer() {
         // Periodic query pruning
-        prune_expired_queries(now());
+        pruneExpiredQueries(now());
     }
     
     listen(integer channel, string name, key speaker_id, string message) {
