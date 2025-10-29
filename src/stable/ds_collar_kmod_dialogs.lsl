@@ -77,8 +77,8 @@ integer findSessionIdx(string session_id) {
     return -1;
 }
 
-closeSessionAtIdx(integer idx) {
-    if (idx < 0) return;
+integer closeSessionAtIdx(integer idx) {
+    if (idx < 0) return FALSE;
     
     integer listen_handle = llList2Integer(Sessions, idx + SESSION_LISTEN);
     if (listen_handle != 0) {
@@ -87,15 +87,17 @@ closeSessionAtIdx(integer idx) {
     
     string session_id = llList2String(Sessions, idx + SESSION_ID);
     logd("Closed session: " + session_id);
-    
+
     Sessions = llDeleteSubList(Sessions, idx, idx + SESSION_STRIDE - 1);
+    return TRUE;
 }
 
-closeSession(string session_id) {
+integer closeSession(string session_id) {
     integer idx = findSessionIdx(session_id);
     if (idx != -1) {
-        closeSessionAtIdx(idx);
+        return closeSessionAtIdx(idx);
     }
+    return FALSE;
 }
 
 pruneExpiredSessions() {
@@ -328,9 +330,11 @@ handleNumberedListDialog(string msg, string session_id, key user) {
 
 handleDialogClose(string msg) {
     if (!jsonHas(msg, ["session_id"])) return;
-    
+
     string session_id = llJsonGetValue(msg, ["session_id"]);
-    closeSession(session_id);
+    if (!closeSession(session_id)) {
+        logd("WARNING: Session not found for close: " + session_id);
+    }
 }
 
 /* ===============================================================
