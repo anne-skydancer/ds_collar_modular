@@ -322,7 +322,27 @@ handleSessionEstablish(string message) {
     // SECURITY: Rate limit check
     if (!checkRateLimit(hud_wearer)) return;
 
-    logd("Establishing session with HUD wearer: " + llKey2Name(hud_wearer));
+    // SECURITY: Check distance to HUD wearer (prevent remote session establishment)
+    list agent_data = llGetObjectDetails(hud_wearer, [OBJECT_POS]);
+    if (llGetListLength(agent_data) == 0) {
+        logd("Could not get position for HUD wearer - rejecting session");
+        return;
+    }
+
+    vector hud_wearer_pos = llList2Vector(agent_data, 0);
+    vector collar_pos = llGetPos();
+    float distance = llVecDist(hud_wearer_pos, collar_pos);
+
+    // Only establish session if within range
+    if (distance > MAX_DETECTION_RANGE) {
+        logd("Session rejected: HUD wearer " + llKey2Name(hud_wearer) + " is " +
+             (string)((integer)distance) + "m away (max: " +
+             (string)((integer)MAX_DETECTION_RANGE) + "m)");
+        return;
+    }
+
+    logd("Establishing session with HUD wearer: " + llKey2Name(hud_wearer) +
+         " at " + (string)((integer)distance) + "m");
 
     // Derive session channels (must match HUD's calculation exactly)
     SESSION_QUERY_CHAN = deriveSessionChannel(SESSION_BASE_CHAN, hud_wearer, CollarOwner);
