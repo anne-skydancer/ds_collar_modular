@@ -23,7 +23,8 @@
 13. [Code Review Checklist](#code-review-checklist)
 14. [Documentation Guidelines](#documentation-guidelines)
 15. [Coding Standards](#coding-standards)
-16. [Versioning Specification](#versioning-specification)
+16. [Function Declaration Types](#function-declaration-types)
+17. [Versioning Specification](#versioning-specification)
 
 ---
 
@@ -1269,6 +1270,352 @@ integer mem_ok(integer need) {
 
 ---
 
+## Function Declaration Types
+
+### Overview
+
+LSL supports exactly **seven (7)** data types for function declarations, plus void functions (which omit the return type). All user-defined functions must be declared before state blocks.
+
+**Reference Sources:**
+- [LSL Portal - Second Life Wiki](https://wiki.secondlife.com/wiki/LSL_Portal)
+- [LSL Types - Second Life Wiki](https://wiki.secondlife.com/wiki/Category:LSL_Types)
+- [LSL Functions - Second Life Wiki](https://wiki.secondlife.com/wiki/Category:LSL_Functions)
+
+---
+
+### Valid LSL Data Types
+
+| Type | Description | Example Values |
+|------|-------------|----------------|
+| `integer` | 32-bit signed integers | `0`, `42`, `-100`, `0xFFFFFFFF` |
+| `float` | Single-precision floating-point | `0.0`, `3.14159`, `-2.5` |
+| `string` | Text data | `"Hello"`, `""`, `"multi\nline"` |
+| `key` | UUID identifiers | `"550e8400-e29b-41d4-a716-446655440000"`, `NULL_KEY` |
+| `vector` | 3D coordinates (x, y, z) | `<1.0, 2.0, 3.0>`, `ZERO_VECTOR` |
+| `rotation` | Quaternion orientation | `<0.0, 0.0, 0.0, 1.0>`, `ZERO_ROTATION` |
+| `list` | Ordered collection of mixed types | `[]`, `[1, "text", <0,0,1>]` |
+
+---
+
+### Function Declaration Syntax
+
+**Basic syntax:**
+```lsl
+return_type function_name(parameter_type parameter_name, ...) {
+    // function body
+    return value;  // if return_type is not void
+}
+```
+
+**Key rules:**
+1. User-defined functions must be declared **before** `default` state or any other state blocks
+2. Function names in this codebase follow **camelCase** convention (see STYLE_GUIDE.md)
+3. LSL uses **pass-by-value** semantics for all types - functions receive copies, not references
+4. Built-in LSL functions follow naming pattern `llFunctionName()` with the `ll` prefix (Linden Library)
+
+---
+
+### Void Functions (No Return Type)
+
+Functions that do not return a value have **no explicit return type** in LSL. Simply omit the return type:
+
+```lsl
+// Void function - no return type specified
+cacheName(key k, string n) {
+    // performs action but returns nothing
+}
+
+registerSelf() {
+    string msg = llJsonSetValue("{}",
+        ["sys"], "register",
+        ["context"], PLUGIN_CONTEXT
+    );
+    llMessageLinked(LINK_THIS, KERNEL_LIFECYCLE, msg, NULL_KEY);
+}
+```
+
+**Note:** In LSL, there is no `void` keyword. Functions without a return type declaration are implicitly void.
+
+**Common uses:** State modification, message broadcasting, UI display, cleanup, initialization
+
+---
+
+### Integer Return Type
+
+```lsl
+// Returns TRUE (1) or FALSE (0)
+integer jsonHas(string j, list path) {
+    return (llJsonGetValue(j, path) != JSON_INVALID);
+}
+
+// Returns computed access control level
+integer compute_acl_level(key av) {
+    if (is_owner(av)) return 100;
+    if (listHasKey(TrusteeKeys, av)) return 80;
+    return 0;
+}
+
+// Returns current Unix timestamp
+integer now() {
+    return llGetUnixTime();
+}
+```
+
+**Common uses:** Boolean flags (TRUE/FALSE), counters and indices, access control levels, timestamps, error codes
+
+---
+
+### Float Return Type
+
+```lsl
+// Returns distance between two positions
+float getDistance(vector pos1, vector pos2) {
+    return llVecDist(pos1, pos2);
+}
+
+// Returns angle in radians
+float getAngle(vector direction) {
+    return llAtan2(direction.y, direction.x);
+}
+```
+
+**Common uses:** Mathematical calculations, distances and measurements, time intervals (seconds), angles and rotations, percentages and ratios
+
+---
+
+### String Return Type
+
+```lsl
+// Returns session identifier
+string genSession() {
+    return PLUGIN_CONTEXT + "_" + (string)llGetUnixTime();
+}
+
+// Returns cached name or requests it
+string getName(key k) {
+    if (k == NULL_KEY) return "";
+    integer idx = llListFindList(NameCache, [k]);
+    if (idx != -1) {
+        return llList2String(NameCache, idx + 1);
+    }
+    llRequestAgentData(k, DATA_NAME);
+    return "...";
+}
+
+// Returns truncated string
+string truncateName(string name, integer max_len) {
+    if (llStringLength(name) <= max_len) return name;
+    return llGetSubString(name, 0, max_len - 4) + "...";
+}
+```
+
+**Common uses:** Session IDs and tokens, formatted messages and reports, name lookups and caching, JSON string construction, configuration values
+
+---
+
+### Key Return Type
+
+```lsl
+// Returns primary owner's key
+key getPrimaryOwner() {
+    if (MultiOwnerMode && llGetListLength(OwnerKeys) > 0) {
+        return llList2Key(OwnerKeys, 0);
+    }
+    if (OwnerKey != NULL_KEY) {
+        return OwnerKey;
+    }
+    return llGetOwner();
+}
+
+// Returns prim key by name search
+key primByName(string wantLower) {
+    integer link_count = llGetNumberOfPrims();
+    integer i;
+    for (i = 1; i <= link_count; i = i + 1) {
+        string name = llToLower(llGetLinkName(i));
+        if (name == wantLower) {
+            return llGetLinkKey(i);
+        }
+    }
+    return NULL_KEY;
+}
+```
+
+**Common uses:** Avatar and object identifiers, owner/user lookups, prim/link references, query IDs from dataserver, unique tokens
+
+---
+
+### Vector Return Type
+
+```lsl
+// Returns position offset for particles
+vector getLeashOffset() {
+    return <0.0, 0.0, 0.1>;
+}
+
+// Returns color from settings
+vector getColor() {
+    return <1.0, 1.0, 1.0>;  // White
+}
+
+// Returns midpoint between two positions
+vector getMidpoint(vector pos1, vector pos2) {
+    return (pos1 + pos2) / 2.0;
+}
+```
+
+**Common uses:** Positions (x, y, z coordinates), colors (RGB values 0.0-1.0), velocities and forces, offsets and directions, particle system parameters
+
+---
+
+### Rotation Return Type
+
+```lsl
+// Returns look-at rotation toward target
+rotation getLookRotation(vector target_pos) {
+    vector my_pos = llGetPos();
+    vector direction = llVecNorm(target_pos - my_pos);
+    return llRotBetween(<1.0, 0.0, 0.0>, direction);
+}
+
+// Returns relative rotation
+rotation getRelativeRotation(rotation base, rotation offset) {
+    return base * offset;
+}
+```
+
+**Common uses:** Object orientations, rotational transforms, look-at calculations, relative rotations, quaternion math
+
+---
+
+### List Return Type
+
+```lsl
+// Returns list of blacklisted names
+list blacklist_names() {
+    list names = [];
+    integer i;
+    integer len = llGetListLength(Blacklist);
+    for (i = 0; i < len; i = i + 1) {
+        key k = llList2Key(Blacklist, i);
+        names = names + [getName(k)];
+    }
+    return names;
+}
+
+// Returns list with all instances of value removed
+list list_remove_all(list source_list, string s) {
+    list result = [];
+    integer i;
+    integer len = llGetListLength(source_list);
+    for (i = 0; i < len; i = i + 1) {
+        string item = llList2String(source_list, i);
+        if (item != s) {
+            result = result + [item];
+        }
+    }
+    return result;
+}
+```
+
+**Common uses:** Collections of mixed data, function parameters for multiple values, menu button lists, filtered/transformed datasets, strided data structures
+
+---
+
+### Type Casting in Return Statements
+
+LSL requires explicit type casting when converting between types:
+
+```lsl
+string genSession() {
+    // Cast integer to string using (string)
+    return PLUGIN_CONTEXT + "_" + (string)llGetUnixTime();
+}
+
+integer hasOwner() {
+    // Explicitly return integer TRUE/FALSE
+    return (OwnerKey != NULL_KEY);
+}
+
+string getAclString(integer acl) {
+    // Cast integer to string
+    return (string)acl;
+}
+```
+
+---
+
+### Return Type Selection Guide
+
+| If you need to return... | Use type... |
+|-------------------------|-------------|
+| Boolean/flag | `integer` (TRUE=1, FALSE=0) |
+| Count/index | `integer` |
+| Measurements | `float` |
+| Text/identifiers | `string` |
+| Avatar/object ID | `key` |
+| Position/color | `vector` |
+| Orientation | `rotation` |
+| Mixed collection | `list` |
+| No return value | (no type - void) |
+
+---
+
+### LSL vs Other Languages - Function Declarations
+
+| Feature | LSL | C/C++/Java |
+|---------|-----|------------|
+| Void functions | No `void` keyword, omit return type | Explicit `void` keyword |
+| Pass-by-reference | Not supported | Supported with `&` or `*` |
+| Function overloading | Not supported | Supported |
+| Default parameters | Not supported | Supported |
+| Variadic functions | Not supported | Supported |
+
+**Example comparison:**
+
+**LSL:**
+```lsl
+// No void keyword
+cacheName(key k, string n) {
+    // function body
+}
+
+// Explicit type required
+integer isOwner(key av) {
+    return 1;
+}
+```
+
+**C/Java:**
+```c
+// Explicit void keyword
+void cacheName(string k, string n) {
+    // function body
+}
+
+// Boolean type available
+boolean isOwner(string av) {
+    return true;
+}
+```
+
+---
+
+### Built-in LSL Function Categories by Return Type
+
+The LSL API organizes built-in functions by return type:
+
+- **Returns integer:** `llAbs()`, `llGetUnixTime()`, `llGetPermissions()`
+- **Returns float:** `llSqrt()`, `llPow()`, `llVecDist()`
+- **Returns string:** `llGetObjectName()`, `llGetDate()`, `llJsonGetValue()`
+- **Returns key:** `llGetOwner()`, `llGetKey()`, `llRequestAgentData()`
+- **Returns vector:** `llGetPos()`, `llGetColor()`, `llGetVel()`
+- **Returns rotation:** `llGetRot()`, `llEuler2Rot()`, `llAxisAngle2Rot()`
+- **Returns list:** `llGetObjectDetails()`, `llParseString2List()`, `llListSort()`
+- **Returns nothing:** `llSay()`, `llSetColor()`, `llMessageLinked()`
+
+---
+
 ## Additional Resources
 
 - **Official LSL Wiki:** https://wiki.secondlife.com/wiki/LSL_Portal
@@ -1782,9 +2129,13 @@ Once stable, release as v1.1 without suffix.
 
 ## Document Version
 
-**Version:** 1.0
-**Last Updated:** 2025-10-28
+**Version:** 1.1
+**Last Updated:** 2025-10-29
 **Maintained by:** DS Collar Modular Project
+
+**Changelog:**
+- **v1.1** (2025-10-29): Added comprehensive Function Declaration Types section with examples for all 7 LSL data types plus void functions
+- **v1.0** (2025-10-28): Initial version with LSL quirks, limitations, coding standards, and versioning specification
 
 ---
 
