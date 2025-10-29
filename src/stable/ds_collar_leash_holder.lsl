@@ -98,6 +98,6 @@ default {
         reply = llJsonSetValue(reply, ["session"], (string)session);
 
         llRegionSayTo(collar, LEASH_HOLDER_CHAN, reply);
-        logd("sent target " + (string)targetPrim + "  +' " + (string)collar + " (sess " + (string)session + ")");
+        logd("sent target " + (string)targetPrim + " to " + (string)collar + " (sess " + (string)session + ")");
     }
 }
