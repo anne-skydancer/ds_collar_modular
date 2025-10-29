@@ -79,7 +79,7 @@ integer logd(string msg) {
     return FALSE;
 }
 
-integer json_has(string j, list path) {
+integer jsonHas(string j, list path) {
     return (llJsonGetValue(j, path) != JSON_INVALID);
 }
 
@@ -91,7 +91,7 @@ string generate_session_id(key user) {
    SESSION MANAGEMENT
    =============================================================== */
 
-integer find_session_idx(key user) {
+integer findSessionIdx(key user) {
     integer i = 0;
     integer len = llGetListLength(Sessions);
     while (i < len) {
@@ -133,8 +133,8 @@ list get_session_filtered_plugins(integer session_idx) {
     return [];
 }
 
-cleanup_session(key user) {
-    integer idx = find_session_idx(user);
+cleanupSession(key user) {
+    integer idx = findSessionIdx(user);
     if (idx == -1) return;
     
     integer start = get_session_filtered_start(idx);
@@ -158,17 +158,17 @@ cleanup_session(key user) {
     logd("Session cleaned up for " + llKey2Name(user));
 }
 
-create_session(key user, integer acl, integer is_blacklisted) {
-    integer existing_idx = find_session_idx(user);
+createSession(key user, integer acl, integer is_blacklisted) {
+    integer existing_idx = findSessionIdx(user);
     if (existing_idx != -1) {
         logd("Session already exists for " + llKey2Name(user) + ", updating");
-        cleanup_session(user);
+        cleanupSession(user);
     }
     
     if (llGetListLength(Sessions) / SESSION_STRIDE >= MAX_SESSIONS) {
         key oldest_user = llList2Key(Sessions, 0 + SESSION_USER);
         logd("Session limit reached, removing oldest: " + llKey2Name(oldest_user));
-        cleanup_session(oldest_user);
+        cleanupSession(oldest_user);
     }
     
     list filtered = [];
@@ -203,12 +203,12 @@ create_session(key user, integer acl, integer is_blacklisted) {
    PLUGIN LIST MANAGEMENT
    =============================================================== */
 
-apply_plugin_list(string plugins_json) {
+applyPluginList(string plugins_json) {
     AllPlugins = [];
     
     logd("apply_plugin_list called with: " + plugins_json);
     
-    if (!is_json_arr(plugins_json)) {
+    if (!isJsonArr(plugins_json)) {
         logd("ERROR: Not a JSON array!");
         return;
     }
@@ -224,9 +224,9 @@ apply_plugin_list(string plugins_json) {
     while (i < count) {
         string plugin_obj = llJsonGetValue(plugins_json, [i]);
         
-        if (json_has(plugin_obj, ["context"]) &&
-            json_has(plugin_obj, ["label"]) &&
-            json_has(plugin_obj, ["min_acl"])) {
+        if (jsonHas(plugin_obj, ["context"]) &&
+            jsonHas(plugin_obj, ["label"]) &&
+            jsonHas(plugin_obj, ["min_acl"])) {
             
             string context = llJsonGetValue(plugin_obj, ["context"]);
             string label = llJsonGetValue(plugin_obj, ["label"]);
@@ -241,7 +241,7 @@ apply_plugin_list(string plugins_json) {
     logd("Plugin list updated: " + (string)(llGetListLength(AllPlugins) / PLUGIN_STRIDE) + " plugins");
 }
 
-integer is_json_arr(string s) {
+integer isJsonArr(string s) {
     return (llGetSubString(s, 0, 0) == "[");
 }
 
@@ -249,8 +249,8 @@ integer is_json_arr(string s) {
    MENU DISPLAY
    =============================================================== */
 
-show_root_menu(key user) {
-    integer session_idx = find_session_idx(user);
+showRootMenu(key user) {
+    integer session_idx = findSessionIdx(user);
     if (session_idx == -1) {
         logd("ERROR: No session for " + llKey2Name(user));
         return;
@@ -278,7 +278,7 @@ show_root_menu(key user) {
             llRegionSayTo(user, 0, "No plugins are currently installed.");
         }
         
-        cleanup_session(user);
+        cleanupSession(user);
         return;
     }
     
@@ -341,8 +341,8 @@ show_root_menu(key user) {
    BUTTON HANDLING
    =============================================================== */
 
-handle_button_click(key user, string button) {
-    integer session_idx = find_session_idx(user);
+handleButtonClick(key user, string button) {
+    integer session_idx = findSessionIdx(user);
     if (session_idx == -1) {
         logd("ERROR: No session for button click from " + llKey2Name(user));
         return;
@@ -352,7 +352,7 @@ handle_button_click(key user, string button) {
     integer is_blacklisted = llList2Integer(Sessions, session_idx + SESSION_IS_BLACKLISTED);
     if (is_blacklisted) {
         llRegionSayTo(user, 0, "You have been barred from using this collar.");
-        cleanup_session(user);
+        cleanupSession(user);
         return;
     }
     
@@ -364,12 +364,12 @@ handle_button_click(key user, string button) {
         current_page -= 1;
         if (current_page < 0) current_page = total_pages - 1;
         Sessions = llListReplaceList(Sessions, [current_page], session_idx + SESSION_PAGE, session_idx + SESSION_PAGE);
-        show_root_menu(user);
+        showRootMenu(user);
         return;
     }
     
     if (button == "Close") {
-        cleanup_session(user);
+        cleanupSession(user);
         return;
     }
     
@@ -377,7 +377,7 @@ handle_button_click(key user, string button) {
         current_page += 1;
         if (current_page >= total_pages) current_page = 0;
         Sessions = llListReplaceList(Sessions, [current_page], session_idx + SESSION_PAGE, session_idx + SESSION_PAGE);
-        show_root_menu(user);
+        showRootMenu(user);
         return;
     }
     
@@ -418,7 +418,7 @@ handle_button_click(key user, string button) {
    PLUGIN LABEL UPDATE
    =============================================================== */
 
-update_plugin_label(string context, string new_label) {
+updatePluginLabel(string context, string new_label) {
     integer i = 0;
     integer len = llGetListLength(AllPlugins);
     
@@ -449,22 +449,22 @@ update_plugin_label(string context, string new_label) {
    MESSAGE HANDLERS
    =============================================================== */
 
-handle_plugin_list(string msg) {
+handlePluginList(string msg) {
     logd("handle_plugin_list called");
     
-    if (!json_has(msg, ["plugins"])) {
+    if (!jsonHas(msg, ["plugins"])) {
         logd("ERROR: No 'plugins' field in message!");
         return;
     }
     
     string plugins_json = llJsonGetValue(msg, ["plugins"]);
-    apply_plugin_list(plugins_json);
+    applyPluginList(plugins_json);
 }
 
-handle_acl_result(string msg) {
-    if (!json_has(msg, ["avatar"])) return;
-    if (!json_has(msg, ["level"])) return;
-    if (!json_has(msg, ["is_blacklisted"])) return;
+handleAclResult(string msg) {
+    if (!jsonHas(msg, ["avatar"])) return;
+    if (!jsonHas(msg, ["level"])) return;
+    if (!jsonHas(msg, ["is_blacklisted"])) return;
     
     key avatar = (key)llJsonGetValue(msg, ["avatar"]);
     integer level = (integer)llJsonGetValue(msg, ["level"]);
@@ -477,25 +477,25 @@ handle_acl_result(string msg) {
     
     logd("ACL result: " + (string)level + " (blacklisted=" + (string)is_blacklisted + ") for " + llKey2Name(avatar));
     
-    create_session(avatar, level, is_blacklisted);
-    show_root_menu(avatar);
+    createSession(avatar, level, is_blacklisted);
+    showRootMenu(avatar);
 }
 
-handle_start(string msg, key user_key) {
-    if (!json_has(msg, ["context"])) {
-        start_root_session(user_key);
+handleStart(string msg, key user_key) {
+    if (!jsonHas(msg, ["context"])) {
+        startRootSession(user_key);
         return;
     }
     
     string context = llJsonGetValue(msg, ["context"]);
     
     if (context == ROOT_CONTEXT) {
-        start_root_session(user_key);
+        startRootSession(user_key);
         return;
     }
 }
 
-start_root_session(key user_key) {
+startRootSession(key user_key) {
     logd("External start request from " + llKey2Name(user_key));
     
     if (llListFindList(PendingAcl, [user_key]) == -1) {
@@ -509,47 +509,47 @@ start_root_session(key user_key) {
     llMessageLinked(LINK_SET, AUTH_BUS, acl_query, NULL_KEY);
 }
 
-handle_return(string msg) {
-    if (!json_has(msg, ["user"])) return;
+handleReturn(string msg) {
+    if (!jsonHas(msg, ["user"])) return;
     
     key user_key = (key)llJsonGetValue(msg, ["user"]);
     
     logd("Return requested for " + llKey2Name(user_key));
     
     // SECURITY FIX: Check session age and re-validate if stale
-    integer session_idx = find_session_idx(user_key);
+    integer session_idx = findSessionIdx(user_key);
     if (session_idx != -1) {
         integer created_time = llList2Integer(Sessions, session_idx + SESSION_CREATED_TIME);
         integer age = llGetUnixTime() - created_time;
         
         if (age > SESSION_MAX_AGE) {
             logd("Session too old (" + (string)age + "s), re-validating ACL");
-            cleanup_session(user_key);
-            start_root_session(user_key);
+            cleanupSession(user_key);
+            startRootSession(user_key);
         }
         else {
-            show_root_menu(user_key);
+            showRootMenu(user_key);
         }
     }
     else {
-        start_root_session(user_key);
+        startRootSession(user_key);
     }
 }
 
-handle_update_label(string msg) {
-    if (!json_has(msg, ["context"])) return;
-    if (!json_has(msg, ["label"])) return;
+handleUpdateLabel(string msg) {
+    if (!jsonHas(msg, ["context"])) return;
+    if (!jsonHas(msg, ["label"])) return;
     
     string context = llJsonGetValue(msg, ["context"]);
     string new_label = llJsonGetValue(msg, ["label"]);
     
-    update_plugin_label(context, new_label);
+    updatePluginLabel(context, new_label);
 }
 
-handle_dialog_response(string msg) {
-    if (!json_has(msg, ["session_id"])) return;
-    if (!json_has(msg, ["button"])) return;
-    if (!json_has(msg, ["user"])) return;
+handleDialogResponse(string msg) {
+    if (!jsonHas(msg, ["session_id"])) return;
+    if (!jsonHas(msg, ["button"])) return;
+    if (!jsonHas(msg, ["user"])) return;
     
     string session_id = llJsonGetValue(msg, ["session_id"]);
     string button = llJsonGetValue(msg, ["button"]);
@@ -558,7 +558,7 @@ handle_dialog_response(string msg) {
     integer i = 0;
     while (i < llGetListLength(Sessions)) {
         if (llList2String(Sessions, i + SESSION_ID) == session_id) {
-            handle_button_click(user, button);
+            handleButtonClick(user, button);
             return;
         }
         i += SESSION_STRIDE;
@@ -567,9 +567,9 @@ handle_dialog_response(string msg) {
     logd("ERROR: Session not found for response: " + session_id);
 }
 
-handle_dialog_timeout(string msg) {
-    if (!json_has(msg, ["session_id"])) return;
-    if (!json_has(msg, ["user"])) return;
+handleDialogTimeout(string msg) {
+    if (!jsonHas(msg, ["session_id"])) return;
+    if (!jsonHas(msg, ["user"])) return;
     
     string session_id = llJsonGetValue(msg, ["session_id"]);
     key user = (key)llJsonGetValue(msg, ["user"]);
@@ -578,7 +578,7 @@ handle_dialog_timeout(string msg) {
     while (i < llGetListLength(Sessions)) {
         if (llList2String(Sessions, i + SESSION_ID) == session_id) {
             logd("Dialog timeout for " + llKey2Name(user));
-            cleanup_session(user);
+            cleanupSession(user);
             return;
         }
         i += SESSION_STRIDE;
@@ -627,7 +627,7 @@ default
             }
             
             // Valid touch - proceed
-            start_root_session(toucher);
+            startRootSession(toucher);
             logd("Touch from " + llKey2Name(toucher));
             
             @next_touch;
@@ -636,7 +636,7 @@ default
     }
     
     link_message(integer sender, integer num, string msg, key id) {
-        if (!json_has(msg, ["type"])) return;
+        if (!jsonHas(msg, ["type"])) return;
         
         string msg_type = llJsonGetValue(msg, ["type"]);
         
@@ -646,31 +646,31 @@ default
         
         if (num == KERNEL_LIFECYCLE) {
             if (msg_type == "plugin_list") {
-                handle_plugin_list(msg);
+                handlePluginList(msg);
             }
         }
         else if (num == AUTH_BUS) {
             if (msg_type == "acl_result") {
-                handle_acl_result(msg);
+                handleAclResult(msg);
             }
         }
         else if (num == UI_BUS) {
             if (msg_type == "start") {
-                handle_start(msg, id);
+                handleStart(msg, id);
             }
             else if (msg_type == "return") {
-                handle_return(msg);
+                handleReturn(msg);
             }
             else if (msg_type == "update_label") {
-                handle_update_label(msg);
+                handleUpdateLabel(msg);
             }
         }
         else if (num == DIALOG_BUS) {
             if (msg_type == "dialog_response") {
-                handle_dialog_response(msg);
+                handleDialogResponse(msg);
             }
             else if (msg_type == "dialog_timeout") {
-                handle_dialog_timeout(msg);
+                handleDialogTimeout(msg);
             }
         }
     }

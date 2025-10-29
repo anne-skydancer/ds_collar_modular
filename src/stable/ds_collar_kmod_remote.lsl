@@ -40,10 +40,13 @@ integer UI_BUS = 900;
 
 /* ===============================================================
    EXTERNAL PROTOCOL CHANNELS
+
+   These channels are derived from the collar owner's UUID to provide
+   per-avatar unique channels, reducing eavesdropping risk.
    =============================================================== */
-integer EXTERNAL_ACL_QUERY_CHAN = -8675309;  // Listen for ACL queries/scans
-integer EXTERNAL_ACL_REPLY_CHAN = -8675310;  // Send ACL responses
-integer EXTERNAL_MENU_CHAN      = -8675311;  // Listen for menu requests
+integer EXTERNAL_ACL_QUERY_CHAN;  // Listen for ACL queries/scans
+integer EXTERNAL_ACL_REPLY_CHAN;  // Send ACL responses
+integer EXTERNAL_MENU_CHAN;       // Listen for menu requests
 
 float MAX_DETECTION_RANGE = 20.0;  // Maximum range in meters for HUD detection
 
@@ -84,7 +87,7 @@ integer logd(string msg) {
     return FALSE;
 }
 
-integer json_has(string json_str, list path) {
+integer jsonHas(string json_str, list path) {
     return (llJsonGetValue(json_str, path) != JSON_INVALID);
 }
 
@@ -92,11 +95,18 @@ integer now() {
     return llGetUnixTime();
 }
 
+/* Derive secure channels based on collar owner's UUID
+   Both HUD and collar use this function to calculate matching channels */
+integer deriveSecureChannel(integer base_channel, key owner_key) {
+    integer seed = (integer)("0x" + llGetSubString((string)owner_key, 0, 7));
+    return base_channel + (seed % 1000000);
+}
+
 /* ===============================================================
    RATE LIMITING
    =============================================================== */
 
-integer check_rate_limit(key requester) {
+integer checkRateLimit(key requester) {
     integer now_time = now();
     
     // Find this requester's last request
@@ -140,7 +150,7 @@ prune_expired_queries(integer now_time) {
             logd("Pruning expired query for " + llKey2Name(hud_wearer));
             
             // Remove from both lists
-            integer query_idx = find_pending_query(hud_wearer);
+            integer query_idx = findPendingQuery(hud_wearer);
             if (query_idx != -1) {
                 PendingQueries = llDeleteSubList(PendingQueries, query_idx, query_idx + QUERY_STRIDE - 1);
             }
@@ -157,7 +167,7 @@ prune_expired_queries(integer now_time) {
    QUERY MANAGEMENT
    =============================================================== */
 
-add_pending_query(key hud_wearer, key hud_object) {
+addPendingQuery(key hud_wearer, key hud_object) {
     integer now_time = now();
     
     // Check if query already pending for this HUD wearer
@@ -204,7 +214,7 @@ add_pending_query(key hud_wearer, key hud_object) {
     logd("Added pending query for " + llKey2Name(hud_wearer));
 }
 
-integer find_pending_query(key hud_wearer) {
+integer findPendingQuery(key hud_wearer) {
     integer idx = 0;
     integer list_len = llGetListLength(PendingQueries);
     while (idx < list_len) {
@@ -217,8 +227,8 @@ integer find_pending_query(key hud_wearer) {
     return -1;
 }
 
-remove_pending_query(key hud_wearer) {
-    integer idx = find_pending_query(hud_wearer);
+removePendingQuery(key hud_wearer) {
+    integer idx = findPendingQuery(hud_wearer);
     if (idx == -1) return;
     
     PendingQueries = llDeleteSubList(PendingQueries, idx, idx + QUERY_STRIDE - 1);
@@ -229,7 +239,7 @@ remove_pending_query(key hud_wearer) {
    INTERNAL ACL COMMUNICATION
    =============================================================== */
 
-request_internal_acl(key avatar_key) {
+requestInternalAcl(key avatar_key) {
     string msg = llList2Json(JSON_OBJECT, [
         "type", "acl_query",
         "avatar", (string)avatar_key,
@@ -240,7 +250,7 @@ request_internal_acl(key avatar_key) {
     logd("Requested internal ACL for " + llKey2Name(avatar_key));
 }
 
-send_external_acl_response(key hud_wearer, integer level) {
+sendExternalAclResponse(key hud_wearer, integer level) {
     string msg = llList2Json(JSON_OBJECT, [
         "type", "acl_result_external",
         "avatar", (string)hud_wearer,
@@ -257,7 +267,7 @@ send_external_acl_response(key hud_wearer, integer level) {
    MENU TRIGGERING
    =============================================================== */
 
-trigger_menu_for_external_user(key user_key) {
+triggerMenuForExternalUser(key user_key) {
     // Send start message to UI module with external user
     string msg = llList2Json(JSON_OBJECT, [
         "type", "start",
@@ -274,9 +284,9 @@ trigger_menu_for_external_user(key user_key) {
    EXTERNAL PROTOCOL HANDLERS
    =============================================================== */
 
-handle_collar_scan(string message) {
+handleCollarScan(string message) {
     // Extract HUD wearer key
-    if (!json_has(message, ["hud_wearer"])) {
+    if (!jsonHas(message, ["hud_wearer"])) {
         logd("collar_scan missing hud_wearer field");
         return;
     }
@@ -285,7 +295,7 @@ handle_collar_scan(string message) {
     if (hud_wearer == NULL_KEY) return;
     
     // SECURITY: Rate limit check
-    if (!check_rate_limit(hud_wearer)) return;
+    if (!checkRateLimit(hud_wearer)) return;
     
     // Check distance to HUD wearer
     list agent_data = llGetObjectDetails(hud_wearer, [OBJECT_POS]);
@@ -314,11 +324,11 @@ handle_collar_scan(string message) {
     llRegionSay(EXTERNAL_ACL_REPLY_CHAN, response);
 }
 
-handle_acl_query_external(string message) {
+handleAclQueryExternal(string message) {
     // Extract query parameters
-    if (!json_has(message, ["avatar"])) return;
-    if (!json_has(message, ["hud"])) return;
-    if (!json_has(message, ["target_avatar"])) return;
+    if (!jsonHas(message, ["avatar"])) return;
+    if (!jsonHas(message, ["hud"])) return;
+    if (!jsonHas(message, ["target_avatar"])) return;
     
     key hud_wearer = (key)llJsonGetValue(message, ["avatar"]);
     key hud_object = (key)llJsonGetValue(message, ["hud"]);
@@ -329,7 +339,7 @@ handle_acl_query_external(string message) {
     if (target_avatar == NULL_KEY) return;
     
     // SECURITY: Rate limit check
-    if (!check_rate_limit(hud_wearer)) return;
+    if (!checkRateLimit(hud_wearer)) return;
     
     // Check if this query is for OUR collar (target matches our owner)
     if (target_avatar != CollarOwner) {
@@ -340,21 +350,21 @@ handle_acl_query_external(string message) {
     logd("Received ACL query from " + llKey2Name(hud_wearer) + " for our collar");
     
     // Store pending query
-    add_pending_query(hud_wearer, hud_object);
+    addPendingQuery(hud_wearer, hud_object);
     
     // Request ACL from internal AUTH module
-    request_internal_acl(hud_wearer);
+    requestInternalAcl(hud_wearer);
 }
 
-handle_menu_request_external(string message) {
+handleMenuRequestExternal(string message) {
     // Extract menu request parameters
-    if (!json_has(message, ["avatar"])) return;
+    if (!jsonHas(message, ["avatar"])) return;
     
     key hud_wearer = (key)llJsonGetValue(message, ["avatar"]);
     if (hud_wearer == NULL_KEY) return;
     
     // SECURITY: Rate limit check
-    if (!check_rate_limit(hud_wearer)) return;
+    if (!checkRateLimit(hud_wearer)) return;
     
     // SECURITY: Check range first
     list agent_data = llGetObjectDetails(hud_wearer, [OBJECT_POS]);
@@ -379,7 +389,7 @@ handle_menu_request_external(string message) {
     // SECURITY: Verify ACL before triggering menu
     if (llListFindList(PendingMenuRequests, [hud_wearer]) == -1) {
         PendingMenuRequests += [hud_wearer];
-        request_internal_acl(hud_wearer);
+        requestInternalAcl(hud_wearer);
     }
 }
 
@@ -403,15 +413,23 @@ default {
         QueryTimestamps = [];
         RequestTimestamps = [];
         CollarOwner = llGetOwner();
-        
+
+        // Derive secure channels based on collar owner UUID
+        EXTERNAL_ACL_QUERY_CHAN = deriveSecureChannel(-8675309, CollarOwner);
+        EXTERNAL_ACL_REPLY_CHAN = EXTERNAL_ACL_QUERY_CHAN - 1;
+        EXTERNAL_MENU_CHAN = EXTERNAL_ACL_QUERY_CHAN - 2;
+
         // Listen for external ACL queries and menu requests
         AclQueryListenHandle = llListen(EXTERNAL_ACL_QUERY_CHAN, "", NULL_KEY, "");
         MenuRequestListenHandle = llListen(EXTERNAL_MENU_CHAN, "", NULL_KEY, "");
-        
+
         // Start timer for periodic query pruning
         llSetTimerEvent(60.0);  // Check every 60 seconds
-        
+
         logd("Remote module initialized");
+        logd("Secure channels: Query=" + (string)EXTERNAL_ACL_QUERY_CHAN +
+             " Reply=" + (string)EXTERNAL_ACL_REPLY_CHAN +
+             " Menu=" + (string)EXTERNAL_MENU_CHAN);
         logd("Listening on channel " + (string)EXTERNAL_ACL_QUERY_CHAN + " for ACL queries");
         logd("Listening on channel " + (string)EXTERNAL_MENU_CHAN + " for menu requests");
     }
@@ -434,18 +452,18 @@ default {
     listen(integer channel, string name, key speaker_id, string message) {
         // Handle collar scan broadcasts and ACL queries
         if (channel == EXTERNAL_ACL_QUERY_CHAN) {
-            if (!json_has(message, ["type"])) return;
+            if (!jsonHas(message, ["type"])) return;
             string msg_type = llJsonGetValue(message, ["type"]);
             
             // Respond to collar scan
             if (msg_type == "collar_scan") {
-                handle_collar_scan(message);
+                handleCollarScan(message);
                 return;
             }
             
             // Handle ACL queries
             if (msg_type == "acl_query_external") {
-                handle_acl_query_external(message);
+                handleAclQueryExternal(message);
                 return;
             }
             
@@ -454,12 +472,12 @@ default {
         
         // Handle menu requests (only from HUDs we've authorized)
         if (channel == EXTERNAL_MENU_CHAN) {
-            if (!json_has(message, ["type"])) return;
+            if (!jsonHas(message, ["type"])) return;
             
             string msg_type = llJsonGetValue(message, ["type"]);
             if (msg_type != "menu_request_external") return;
             
-            handle_menu_request_external(message);
+            handleMenuRequestExternal(message);
             return;
         }
     }
@@ -467,19 +485,19 @@ default {
     link_message(integer sender_num, integer num, string str, key id) {
         // Handle ACL result from AUTH module
         if (num == AUTH_BUS) {
-            if (!json_has(str, ["type"])) return;
+            if (!jsonHas(str, ["type"])) return;
             
             string msg_type = llJsonGetValue(str, ["type"]);
             if (msg_type != "acl_result") return;
             
             // Extract ACL information
-            if (!json_has(str, ["avatar"])) return;
+            if (!jsonHas(str, ["avatar"])) return;
             
             key avatar_key = (key)llJsonGetValue(str, ["avatar"]);
             
             // Extract ACL level
             integer level = 0;
-            if (json_has(str, ["level"])) {
+            if (jsonHas(str, ["level"])) {
                 level = (integer)llJsonGetValue(str, ["level"]);
             }
             
@@ -491,7 +509,7 @@ default {
                 
                 // Only trigger menu if ACL >= 1 (public or higher)
                 if (level >= 1) {
-                    trigger_menu_for_external_user(avatar_key);
+                    triggerMenuForExternalUser(avatar_key);
                     logd("Menu request approved for " + llKey2Name(avatar_key) + " (ACL " + (string)level + ")");
                 } else {
                     logd("Menu request denied for " + llKey2Name(avatar_key) + " (ACL " + (string)level + ")");
@@ -500,14 +518,14 @@ default {
             }
             
             // Check if this is a response to a pending external query
-            integer query_idx = find_pending_query(avatar_key);
+            integer query_idx = findPendingQuery(avatar_key);
             if (query_idx == -1) return;  // Not an external query
             
             // Send response to HUD wearer
-            send_external_acl_response(avatar_key, level);
+            sendExternalAclResponse(avatar_key, level);
             
             // Clean up pending query
-            remove_pending_query(avatar_key);
+            removePendingQuery(avatar_key);
             return;
         }
     }

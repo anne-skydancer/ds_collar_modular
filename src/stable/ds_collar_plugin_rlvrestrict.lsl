@@ -74,7 +74,7 @@ integer DIALOG_PAGE_SIZE = 9;  // 9 items + 3 nav buttons = 12 total
    HELPER FUNCTIONS
    =============================================================== */
 
-integer json_has(string json_str, list path) {
+integer jsonHas(string json_str, list path) {
     return (llJsonGetValue(json_str, path) != JSON_INVALID);
 }
 
@@ -84,7 +84,7 @@ logd(string msg) {
     }
 }
 
-string generate_session_id() {
+string generateSessionId() {
     return llGetScriptName() + "_" + (string)llGetKey() + "_" + (string)llGetUnixTime();
 }
 
@@ -92,7 +92,7 @@ string generate_session_id() {
    LIFECYCLE
    =============================================================== */
 
-register_self() {
+registerSelf() {
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
         "type", "register",
         "context", PLUGIN_CONTEXT,
@@ -104,14 +104,14 @@ register_self() {
     logd("Registered with kernel");
 }
 
-send_pong() {
+sendPong() {
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
         "type", "pong",
         "context", PLUGIN_CONTEXT
     ]), NULL_KEY);
 }
 
-cleanup_session() {
+cleanupSession() {
     if (SessionId != "") {
         llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
             "type", "dialog_close",
@@ -131,7 +131,7 @@ cleanup_session() {
    SETTINGS PERSISTENCE
    =============================================================== */
 
-persist_restrictions() {
+persistRestrictions() {
     string csv = llDumpList2String(Restrictions, ",");
     
     llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
@@ -143,7 +143,7 @@ persist_restrictions() {
     logd("Persisted restrictions: " + csv);
 }
 
-apply_settings_sync(string msg) {
+applySettingsSync(string msg) {
     if (!json_has(msg, ["kv"])) return;
     
     string kv = llJsonGetValue(msg, ["kv"]);
@@ -171,7 +171,7 @@ apply_settings_sync(string msg) {
     }
 }
 
-apply_settings_delta(string msg) {
+applySettingsDelta(string msg) {
     if (!json_has(msg, ["op"])) return;
     
     string op = llJsonGetValue(msg, ["op"]);
@@ -218,7 +218,7 @@ apply_settings_delta(string msg) {
    ACL
    =============================================================== */
 
-request_acl(key user) {
+requestAcl(key user) {
     llMessageLinked(LINK_SET, AUTH_BUS, llList2Json(JSON_OBJECT, [
         "type", "acl_query",
         "avatar", (string)user,
@@ -226,7 +226,7 @@ request_acl(key user) {
     ]), NULL_KEY);
 }
 
-handle_acl_result(string msg) {
+handleAclResult(string msg) {
     if (!json_has(msg, ["avatar"]) || !json_has(msg, ["level"])) return;
     
     key avatar = (key)llJsonGetValue(msg, ["avatar"]);
@@ -251,7 +251,7 @@ integer restriction_idx(string restr_cmd) {
     return llListFindList(Restrictions, [restr_cmd]);
 }
 
-toggle_restriction(string restr_cmd) {
+toggleRestriction(string restr_cmd) {
     integer idx = restriction_idx(restr_cmd);
     
     if (idx != -1) {
@@ -275,7 +275,7 @@ toggle_restriction(string restr_cmd) {
     persist_restrictions();
 }
 
-remove_all_restrictions() {
+removeAllRestrictions() {
     integer i = 0;
     integer count = llGetListLength(Restrictions);
     while (i < count) {
@@ -327,7 +327,7 @@ string label_to_command(string btn_label, list cat_cmds, list cat_labels) {
    UI NAVIGATION
    =============================================================== */
 
-return_to_root() {
+returnToRoot() {
     llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
         "type", "return",
         "context", PLUGIN_CONTEXT,
@@ -341,7 +341,7 @@ return_to_root() {
    MENUS
    =============================================================== */
 
-show_main() {
+showMain() {
     SessionId = generate_session_id();
     MenuContext = "main";
     
@@ -367,7 +367,7 @@ show_main() {
     ]), NULL_KEY);
 }
 
-show_category_menu(string cat_name, integer page_num) {
+showCategoryMenu(string cat_name, integer page_num) {
     SessionId = generate_session_id();
     MenuContext = "category";
     CurrentCategory = cat_name;
@@ -446,7 +446,7 @@ show_category_menu(string cat_name, integer page_num) {
    DIALOG HANDLERS
    =============================================================== */
 
-handle_dialog_response(string msg) {
+handleDialogResponse(string msg) {
     if (!json_has(msg, ["session_id"]) || !json_has(msg, ["button"]) || !json_has(msg, ["user"])) return;
     
     string recv_session = llJsonGetValue(msg, ["session_id"]);
@@ -518,7 +518,7 @@ handle_dialog_response(string msg) {
     }
 }
 
-handle_dialog_timeout(string msg) {
+handleDialogTimeout(string msg) {
     if (!json_has(msg, ["session_id"])) return;
     
     string recv_session = llJsonGetValue(msg, ["session_id"]);

@@ -78,27 +78,27 @@ logd(string msg) {
     if (DEBUG) llOwnerSay("[" + PLUGIN_LABEL + "] " + msg);
 }
 
-integer json_has(string j, list path) {
+integer jsonHas(string j, list path) {
     return (llJsonGetValue(j, path) != JSON_INVALID);
 }
 
-string gen_session() {
+string genSession() {
     return PLUGIN_CONTEXT + "_" + (string)llGetUnixTime();
 }
 
-integer has_owner() {
+integer hasOwner() {
     if (MultiOwnerMode) return (llGetListLength(OwnerKeys) > 0);
     return (OwnerKey != NULL_KEY);
 }
 
-key get_primary_owner() {
+key getPrimaryOwner() {
     if (MultiOwnerMode && llGetListLength(OwnerKeys) > 0) {
         return (key)llList2String(OwnerKeys, 0);
     }
     return OwnerKey;
 }
 
-integer is_owner(key k) {
+integer isOwner(key k) {
     if (MultiOwnerMode) return (llListFindList(OwnerKeys, [(string)k]) != -1);
     return (k == OwnerKey);
 }
@@ -107,8 +107,8 @@ integer is_owner(key k) {
    NAMES
    =============================================================== */
 
-cache_name(key k, string n) {
-    if (k == NULL_KEY || n == "" || n == "   -- ) return;
+cacheName(key k, string n) {
+    if (k == NULL_KEY || n == "" || n == " ") return;
     integer idx = llListFindList(NameCache, [k]);
     if (idx != -1) {
         NameCache = llListReplaceList(NameCache, [n], idx + 1, idx + 1);
@@ -121,13 +121,13 @@ cache_name(key k, string n) {
     }
 }
 
-string get_name(key k) {
+string getName(key k) {
     if (k == NULL_KEY) return "";
     integer idx = llListFindList(NameCache, [k]);
     if (idx != -1) return llList2String(NameCache, idx + 1);
     
     string n = llGetDisplayName(k);
-    if (n != "" && n != "   -- ) {
+    if (n != "" && n != " ") {
         cache_name(k, n);
         return n;
     }
@@ -144,7 +144,7 @@ string get_name(key k) {
    LIFECYCLE
    =============================================================== */
 
-register_self() {
+registerSelf() {
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
         "type", "register",
         "context", PLUGIN_CONTEXT,
@@ -154,7 +154,7 @@ register_self() {
     ]), NULL_KEY);
 }
 
-send_pong() {
+sendPong() {
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
         "type", "pong",
         "context", PLUGIN_CONTEXT
@@ -165,7 +165,7 @@ send_pong() {
    SETTINGS
    =============================================================== */
 
-apply_settings_sync(string msg) {
+applySettingsSync(string msg) {
     if (!json_has(msg, ["kv"])) return;
     string kv = llJsonGetValue(msg, ["kv"]);
     
@@ -218,7 +218,7 @@ apply_settings_sync(string msg) {
     }
 }
 
-apply_settings_delta(string msg) {
+applySettingsDelta(string msg) {
     if (!json_has(msg, ["op"])) return;
     string op = llJsonGetValue(msg, ["op"]);
     
@@ -234,7 +234,7 @@ apply_settings_delta(string msg) {
 }
 
 
-persist_owner(key owner, string hon) {
+persistOwner(key owner, string hon) {
     llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
         "type", "set", "key", KEY_OWNER_KEY, "value", (string)owner
     ]), NULL_KEY);
@@ -243,7 +243,7 @@ persist_owner(key owner, string hon) {
     ]), NULL_KEY);
 }
 
-add_trustee(key trustee, string hon) {
+addTrustee(key trustee, string hon) {
     llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
         "type", "list_add", "key", KEY_TRUSTEES, "elem", (string)trustee
     ]), NULL_KEY);
@@ -252,7 +252,7 @@ add_trustee(key trustee, string hon) {
     ]), NULL_KEY);
 }
 
-remove_trustee(key trustee) {
+removeTrustee(key trustee) {
     integer idx = llListFindList(TrusteeKeys, [(string)trustee]);
     if (idx == -1) return;
     
@@ -267,7 +267,7 @@ remove_trustee(key trustee) {
     }
 }
 
-clear_owner() {
+clearOwner() {
     persist_owner(NULL_KEY, "");
 }
 
@@ -275,7 +275,7 @@ clear_owner() {
    ACL
    =============================================================== */
 
-request_acl(key user) {
+requestAcl(key user) {
     llMessageLinked(LINK_SET, AUTH_BUS, llList2Json(JSON_OBJECT, [
         "type", "acl_query",
         "avatar", (string)user,
@@ -283,7 +283,7 @@ request_acl(key user) {
     ]), NULL_KEY);
 }
 
-handle_acl_result(string msg) {
+handleAclResult(string msg) {
     if (!json_has(msg, ["avatar"]) || !json_has(msg, ["level"])) return;
     
     key avatar = (key)llJsonGetValue(msg, ["avatar"]);
@@ -304,7 +304,7 @@ handle_acl_result(string msg) {
    MENUS
    =============================================================== */
 
-show_main() {
+showMain() {
     SessionId = gen_session();
     MenuContext = "main";
     
@@ -361,7 +361,7 @@ show_main() {
     ]), NULL_KEY);
 }
 
-show_candidates(string context, string title, string prompt) {
+showCandidates(string context, string title, string prompt) {
     if (llGetListLength(CandidateKeys) == 0) {
         llRegionSayTo(CurrentUser, 0, "No nearby avatars found.");
         show_main();
@@ -391,7 +391,7 @@ show_candidates(string context, string title, string prompt) {
     ]), NULL_KEY);
 }
 
-show_honorific(key target, string context) {
+showHonorific(key target, string context) {
     PendingCandidate = target;
     SessionId = gen_session();
     MenuContext = context;
@@ -408,7 +408,7 @@ show_honorific(key target, string context) {
     ]), NULL_KEY);
 }
 
-show_confirm(string title, string body, string context) {
+showConfirm(string title, string body, string context) {
     SessionId = gen_session();
     MenuContext = context;
     
@@ -423,7 +423,7 @@ show_confirm(string title, string body, string context) {
     ]), NULL_KEY);
 }
 
-show_remove_trustee() {
+showRemoveTrustee() {
     if (llGetListLength(TrusteeKeys) == 0) {
         llRegionSayTo(CurrentUser, 0, "No trustees.");
         show_main();
@@ -461,7 +461,7 @@ show_remove_trustee() {
    BUTTON HANDLING
    =============================================================== */
 
-handle_button(string btn) {
+handleButton(string btn) {
     if (btn == "Back") {
         if (MenuContext == "main") {
             llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
@@ -760,7 +760,7 @@ handle_button(string btn) {
    CLEANUP
    =============================================================== */
 
-cleanup() {
+cleanupSession() {
     CurrentUser = NULL_KEY;
     UserAcl = -999;
     SessionId = "";

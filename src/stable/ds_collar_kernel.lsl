@@ -69,7 +69,7 @@ integer logd(string msg) {
     return FALSE;
 }
 
-integer json_has(string j, list path) {
+integer jsonHas(string j, list path) {
     return (llJsonGetValue(j, path) != JSON_INVALID);
 }
 
@@ -83,7 +83,7 @@ integer now() {
     return unix_time;
 }
 
-integer count_scripts() {
+integer countScripts() {
     integer count = 0;
     integer i;
     integer inv_count = llGetInventoryNumber(INVENTORY_SCRIPT);
@@ -93,7 +93,7 @@ integer count_scripts() {
     return count;
 }
 
-integer is_authorized_sender(string sender_name) {
+integer isAuthorizedSender(string sender_name) {
     integer i;
     integer len = llGetListLength(AUTHORIZED_RESET_SENDERS);
     for (i = 0; i < len; i = i + 1) {
@@ -109,7 +109,7 @@ integer is_authorized_sender(string sender_name) {
    =============================================================== */
 
 // Find plugin index in registry by context
-integer registry_find(string context) {
+integer registryFind(string context) {
     integer i = 0;
     integer len = llGetListLength(PluginRegistry);
     while (i < len) {
@@ -122,8 +122,8 @@ integer registry_find(string context) {
 }
 
 // Add or update plugin in registry
-integer registry_upsert(string context, string label, integer min_acl, string script) {
-    integer idx = registry_find(context);
+integer registryUpsert(string context, string label, integer min_acl, string script) {
+    integer idx = registryFind(context);
     integer now_unix = now();
     
     if (idx == -1) {
@@ -133,19 +133,18 @@ integer registry_upsert(string context, string label, integer min_acl, string sc
         return TRUE;
     }
     else {
-        // Update existing
-        PluginRegistry = llListReplaceList(PluginRegistry, [label], idx + REG_LABEL, idx + REG_LABEL);
-        PluginRegistry = llListReplaceList(PluginRegistry, [min_acl], idx + REG_MIN_ACL, idx + REG_MIN_ACL);
-        PluginRegistry = llListReplaceList(PluginRegistry, [script], idx + REG_SCRIPT, idx + REG_SCRIPT);
-        PluginRegistry = llListReplaceList(PluginRegistry, [now_unix], idx + REG_LAST_SEEN, idx + REG_LAST_SEEN);
+        // Update existing (consolidated into single list operation for efficiency)
+        PluginRegistry = llListReplaceList(PluginRegistry,
+            [label, min_acl, script, now_unix],
+            idx + REG_LABEL, idx + REG_LAST_SEEN);
         logd("Updated: " + context);
         return FALSE;
     }
 }
 
 // Update last_seen timestamp for plugin
-update_last_seen(string context) {
-    integer idx = registry_find(context);
+updateLastSeen(string context) {
+    integer idx = registryFind(context);
     if (idx != -1) {
         integer now_unix = now();
         PluginRegistry = llListReplaceList(PluginRegistry, [now_unix], idx + REG_LAST_SEEN, idx + REG_LAST_SEEN);
@@ -153,7 +152,7 @@ update_last_seen(string context) {
 }
 
 // Remove dead plugins (haven't responded to ping in PING_TIMEOUT_SEC)
-integer prune_dead_plugins() {
+integer pruneDeadPlugins() {
     integer now_unix = now();
     if (now_unix == 0) return 0; // Overflow protection
     
@@ -188,7 +187,7 @@ integer prune_dead_plugins() {
 }
 
 // Remove plugins whose scripts no longer exist in inventory
-integer prune_missing_scripts() {
+integer pruneMissingScripts() {
     list new_registry = [];
     integer pruned = 0;
     integer i = 0;
@@ -220,7 +219,7 @@ integer prune_missing_scripts() {
    =============================================================== */
 
 // Request all plugins to register
-broadcast_register_now() {
+broadcastRegisterNow() {
     string msg = llList2Json(JSON_OBJECT, [
         "type", "register_now"
     ]);
@@ -234,7 +233,7 @@ broadcast_register_now() {
 }
 
 // Heartbeat ping to all plugins
-broadcast_ping() {
+broadcastPing() {
     string msg = llList2Json(JSON_OBJECT, [
         "type", "ping"
     ]);
@@ -244,7 +243,7 @@ broadcast_ping() {
 
 // Send current plugin list (only when explicitly requested)
 // SECURITY FIX: Use proper JSON encoding to prevent string injection
-broadcast_plugin_list() {
+broadcastPluginList() {
     list plugins = [];
     integer i = 0;
     integer len = llGetListLength(PluginRegistry);
@@ -282,7 +281,7 @@ broadcast_plugin_list() {
 }
 
 // Close registration window and broadcast collected plugins
-close_registration_window() {
+closeRegistrationWindow() {
     if (!RegistrationWindowOpen) return;
     
     RegistrationWindowOpen = FALSE;
@@ -292,11 +291,11 @@ close_registration_window() {
     logd("Registration window closed (" + (string)plugin_count + " plugins registered)");
     
     // Always broadcast when window closes (satisfies any pending requests)
-    broadcast_plugin_list();
+    broadcastPluginList();
 }
 
 // Soft reset request to all modules
-broadcast_soft_reset() {
+broadcastSoftReset() {
     string msg = llList2Json(JSON_OBJECT, [
         "type", "soft_reset",
         "from", "kernel"
@@ -309,7 +308,7 @@ broadcast_soft_reset() {
    OWNER CHANGE DETECTION
    =============================================================== */
 
-integer check_owner_changed() {
+integer checkOwnerChanged() {
     key current_owner = llGetOwner();
     if (current_owner == NULL_KEY) return FALSE;
     
@@ -328,18 +327,18 @@ integer check_owner_changed() {
    MESSAGE HANDLERS
    =============================================================== */
 
-handle_register(string msg) {
-    if (!json_has(msg, ["context"])) return;
-    if (!json_has(msg, ["label"])) return;
-    if (!json_has(msg, ["min_acl"])) return;
-    if (!json_has(msg, ["script"])) return;
+handleRegister(string msg) {
+    if (!jsonHas(msg, ["context"])) return;
+    if (!jsonHas(msg, ["label"])) return;
+    if (!jsonHas(msg, ["min_acl"])) return;
+    if (!jsonHas(msg, ["script"])) return;
     
     string context = llJsonGetValue(msg, ["context"]);
     string label = llJsonGetValue(msg, ["label"]);
     integer min_acl = (integer)llJsonGetValue(msg, ["min_acl"]);
     string script = llJsonGetValue(msg, ["script"]);
     
-    integer was_new = registry_upsert(context, label, min_acl, script);
+    integer was_new = registryUpsert(context, label, min_acl, script);
     
     // If registration window is CLOSED and this is a new plugin,
     // schedule a deferred broadcast to prevent storms
@@ -352,15 +351,15 @@ handle_register(string msg) {
     // This would cause UI to show on every plugin registration during startup
 }
 
-handle_pong(string msg) {
-    if (!json_has(msg, ["context"])) return;
+handlePong(string msg) {
+    if (!jsonHas(msg, ["context"])) return;
     
     string context = llJsonGetValue(msg, ["context"]);
-    update_last_seen(context);
+    updateLastSeen(context);
     // Pong logging disabled - too noisy
 }
 
-handle_plugin_list_request() {
+handlePluginListRequest() {
     if (RegistrationWindowOpen) {
         // Window still open - mark that someone requested the list
         // We'll broadcast when window closes
@@ -369,11 +368,11 @@ handle_plugin_list_request() {
     }
     else {
         // Window closed - respond immediately
-        broadcast_plugin_list();
+        broadcastPluginList();
     }
 }
 
-handle_soft_reset(string msg) {
+handleSoftReset(string msg) {
     // SECURITY FIX: Verify sender is authorized to request reset
     string from = llJsonGetValue(msg, ["from"]);
     
@@ -383,7 +382,7 @@ handle_soft_reset(string msg) {
         return;
     }
     
-    if (!is_authorized_sender(from)) {
+    if (!isAuthorizedSender(from)) {
         logd("Rejected soft_reset from unauthorized sender: " + from);
         llOwnerSay("[KERNEL] ERROR: Soft reset rejected - unauthorized sender: " + from);
         return;
@@ -394,7 +393,7 @@ handle_soft_reset(string msg) {
     PluginRegistry = [];
     LastPingUnix = now();
     LastInvSweepUnix = now();
-    broadcast_register_now();
+    broadcastRegisterNow();
 }
 
 /* ===============================================================
@@ -412,24 +411,24 @@ default
         RegistrationWindowStartTime = 0;
         PendingListRequest = FALSE;
         PendingLateBroadcast = FALSE;
-        LastScriptCount = count_scripts();
+        LastScriptCount = countScripts();
         
         logd("Kernel started");
         
         // Immediately broadcast register_now (opens registration window)
-        broadcast_register_now();
-        
+        broadcastRegisterNow();
+
         // Start timer for window management, heartbeat, and inventory sweeps
-        llSetTimerEvent(0.5);  // Check twice per second
+        llSetTimerEvent(1.0);  // Check once per second (reduced from 0.5s for efficiency)
     }
     
     on_rez(integer start_param) {
-        check_owner_changed();
+        checkOwnerChanged();
     }
     
     attach(key id) {
         if (id == NULL_KEY) return;
-        check_owner_changed();
+        checkOwnerChanged();
     }
     
     timer() {
@@ -442,14 +441,14 @@ default
             if (elapsed < 0) elapsed = 0; // Overflow protection
             
             if (elapsed >= REGISTRATION_WINDOW_SEC) {
-                close_registration_window();
+                closeRegistrationWindow();
             }
         }
         
         // Handle pending late broadcast (debounced)
         if (PendingLateBroadcast && !RegistrationWindowOpen) {
             PendingLateBroadcast = FALSE;
-            broadcast_plugin_list();
+            broadcastPluginList();
             logd("Late registration broadcast completed");
         }
         
@@ -458,8 +457,8 @@ default
         if (ping_elapsed < 0) ping_elapsed = 0; // Overflow protection
         
         if (ping_elapsed >= PING_INTERVAL_SEC) {
-            broadcast_ping();
-            prune_dead_plugins();
+            broadcastPing();
+            pruneDeadPlugins();
             LastPingUnix = now_unix;
         }
         
@@ -468,39 +467,39 @@ default
         if (inv_elapsed < 0) inv_elapsed = 0; // Overflow protection
         
         if (inv_elapsed >= INV_SWEEP_INTERVAL) {
-            prune_missing_scripts();
+            pruneMissingScripts();
             LastInvSweepUnix = now_unix;
         }
     }
     
     link_message(integer sender, integer num, string msg, key id) {
         if (num != KERNEL_LIFECYCLE) return;
-        if (!json_has(msg, ["type"])) return;
+        if (!jsonHas(msg, ["type"])) return;
         
         string msg_type = llJsonGetValue(msg, ["type"]);
         
         if (msg_type == "register") {
-            handle_register(msg);
+            handleRegister(msg);
         }
         else if (msg_type == "pong") {
-            handle_pong(msg);
+            handlePong(msg);
         }
         else if (msg_type == "plugin_list_request") {
-            handle_plugin_list_request();
+            handlePluginListRequest();
         }
         else if (msg_type == "soft_reset") {
-            handle_soft_reset(msg);
+            handleSoftReset(msg);
         }
     }
     
     changed(integer change) {
         if (change & CHANGED_OWNER) {
-            check_owner_changed();
+            checkOwnerChanged();
         }
         
         if (change & CHANGED_INVENTORY) {
             // Check if SCRIPTS were added/removed (not notecards)
-            integer current_script_count = count_scripts();
+            integer current_script_count = countScripts();
             
             if (current_script_count != LastScriptCount) {
                 logd("Script count changed: " + (string)LastScriptCount + " -> " + (string)current_script_count);
@@ -508,7 +507,7 @@ default
                 
                 // Trigger re-registration to rebuild plugin list
                 PluginRegistry = [];
-                broadcast_register_now();
+                broadcastRegisterNow();
             }
         }
     }

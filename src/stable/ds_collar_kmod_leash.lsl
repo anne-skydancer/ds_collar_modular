@@ -163,7 +163,7 @@ integer logd(string msg) {
     if (DEBUG && !PRODUCTION) llOwnerSay("[LEASH-KMOD] " + msg);
     return FALSE;
 }
-integer json_has(string j, list path) {
+integer jsonHas(string j, list path) {
     return (llJsonGetValue(j, path) != JSON_INVALID);
 }
 integer now() {
@@ -174,7 +174,7 @@ integer in_allowed_list(integer level, list allowed) {
 }
 
 // ===== ACL VERIFICATION SYSTEM (NEW) =====
-request_acl_for_action(key user, string action, key pass_target) {
+requestAclForAction(key user, string action, key pass_target) {
     AclPending = TRUE;
     PendingActionUser = user;
     PendingAction = action;
@@ -188,9 +188,9 @@ request_acl_for_action(key user, string action, key pass_target) {
     logd("ACL query for " + action + " by " + llKey2Name(user));
 }
 
-handle_acl_result(string msg, key id) {
+handleAclResult(string msg, key id) {
     if (!AclPending) return;
-    if (!json_has(msg, ["avatar"]) || !json_has(msg, ["level"])) return;
+    if (!jsonHas(msg, ["avatar"]) || !jsonHas(msg, ["level"])) return;
     
     key avatar = (key)llJsonGetValue(msg, ["avatar"]);
     if (avatar != PendingActionUser) return;
@@ -203,7 +203,7 @@ handle_acl_result(string msg, key id) {
     // Execute pending action with ACL verification
     if (PendingAction == "grab") {
         if (in_allowed_list(acl_level, ALLOWED_ACL_GRAB)) {
-            grab_leash_internal(PendingActionUser);
+            grabLeashInternal(PendingActionUser);
         } else {
             llRegionSayTo(PendingActionUser, 0, "Access denied: insufficient permissions to grab leash.");
             logd("Grab denied for ACL " + (string)acl_level);
@@ -212,7 +212,7 @@ handle_acl_result(string msg, key id) {
     else if (PendingAction == "release") {
         // Release has special logic: current leasher OR level 2+ can release
         if (PendingActionUser == Leasher || acl_level >= 2) {
-            release_leash_internal(PendingActionUser);
+            releaseLeashInternal(PendingActionUser);
         } else {
             llRegionSayTo(PendingActionUser, 0, "Access denied: only leasher or authorized users can release.");
             logd("Release denied for ACL " + (string)acl_level);
@@ -222,7 +222,7 @@ handle_acl_result(string msg, key id) {
         // Pass requires user to be current leasher OR have level 3+
         if (PendingActionUser == Leasher || in_allowed_list(acl_level, ALLOWED_ACL_PASS)) {
             // Now verify target ACL
-            request_acl_for_pass_target(PendingPassTarget);
+            requestAclForPassTarget(PendingPassTarget);
             return;  // Don't clear pending state yet
         } else {
             llRegionSayTo(PendingActionUser, 0, "Access denied: insufficient permissions to pass leash.");
@@ -235,7 +235,7 @@ handle_acl_result(string msg, key id) {
             // Set flag so target check knows this is offer, not pass
             PendingIsOffer = TRUE;
             // Now verify target ACL
-            request_acl_for_pass_target(PendingPassTarget);
+            requestAclForPassTarget(PendingPassTarget);
             return;  // Don't clear pending state yet
         } else if (Leashed) {
             llRegionSayTo(PendingActionUser, 0, "Cannot offer leash: already leashed.");
@@ -264,7 +264,7 @@ handle_acl_result(string msg, key id) {
                 logd("Offer pending sent to plugin: target=" + llKey2Name(PendingPassTarget) + ", originator=" + llKey2Name(PendingPassOriginalUser));
             }
             else {
-                pass_leash_internal(PendingPassTarget);
+                passLeashInternal(PendingPassTarget);
             }
         } else {
             // Send error to ORIGINAL passer/offerer, not target
@@ -286,14 +286,14 @@ handle_acl_result(string msg, key id) {
     else if (PendingAction == "set_length") {
         if (in_allowed_list(acl_level, ALLOWED_ACL_SETTINGS)) {
             // PendingPassTarget is repurposed to store length as key
-            set_length_internal((integer)((string)PendingPassTarget));
+            setLengthInternal((integer)((string)PendingPassTarget));
         } else {
             llRegionSayTo(PendingActionUser, 0, "Access denied: insufficient permissions to change settings.");
         }
     }
     else if (PendingAction == "toggle_turn") {
         if (in_allowed_list(acl_level, ALLOWED_ACL_SETTINGS)) {
-            toggle_turn_internal();
+            toggleTurnInternal();
         } else {
             llRegionSayTo(PendingActionUser, 0, "Access denied: insufficient permissions to change settings.");
         }
@@ -306,7 +306,7 @@ handle_acl_result(string msg, key id) {
     PendingIsOffer = FALSE;
 }
 
-request_acl_for_pass_target(key target) {
+requestAclForPassTarget(key target) {
     // Save original passer for error messages
     PendingPassOriginalUser = PendingActionUser;
     
@@ -326,26 +326,26 @@ request_acl_for_pass_target(key target) {
 }
 
 // ===== DS HOLDER PROTOCOL (IMPROVED STATE MACHINE) =====
-open_holder_listen() {
+openHolderListen() {
     if (HolderListen == 0) {
         HolderListen = llListen(-192837465, "", NULL_KEY, "");
         logd("DS holder listen opened");
     }
 }
-close_holder_listen() {
+closeHolderListen() {
     if (HolderListen != 0) {
         llListenRemove(HolderListen);
         HolderListen = 0;
         logd("DS holder listen closed");
     }
 }
-open_holder_listen_oc() {
+openHolderListenOc() {
     if (HolderListenOC == 0) {
         HolderListenOC = llListen(-8888, "", NULL_KEY, "");
         logd("OC holder listen opened");
     }
 }
-close_holder_listen_oc() {
+closeHolderListenOc() {
     if (HolderListenOC != 0) {
         llListenRemove(HolderListenOC);
         HolderListenOC = 0;
@@ -353,7 +353,7 @@ close_holder_listen_oc() {
     }
 }
 
-begin_holder_handshake(key user) {
+beginHolderHandshake(key user) {
     // Improved randomness for session ID using multiple entropy sources
     integer key_entropy = (integer)("0x" + llGetSubString((string)llGetOwner(), 0, 7));
     HolderSession = (integer)(llFrand(999999.0) + 
@@ -363,7 +363,7 @@ begin_holder_handshake(key user) {
     HolderPhaseStart = now();
     
     // Phase 1: DS native only
-    open_holder_listen();
+    openHolderListen();
     
     // Send DS native JSON format on DS channel
     string msg = llList2Json(JSON_OBJECT, [
@@ -379,7 +379,7 @@ begin_holder_handshake(key user) {
     logd("Holder handshake Phase 1 (DS native, 2s)");
 }
 
-handle_holder_response_ds(string msg) {
+handleHolderResponseDs(string msg) {
     if (HolderState != HOLDER_STATE_DS_PHASE && HolderState != HOLDER_STATE_OC_PHASE) return;
     if (llJsonGetValue(msg, ["type"]) != "leash_target") return;
     if (llJsonGetValue(msg, ["ok"]) != "1") return;
@@ -392,8 +392,8 @@ handle_holder_response_ds(string msg) {
     logd("DS holder response: target=" + (string)HolderTarget + " name=" + holder_name);
     
     HolderState = HOLDER_STATE_COMPLETE;
-    close_holder_listen();
-    close_holder_listen_oc();
+    closeHolderListen();
+    closeHolderListenOc();
     
     string particles_msg = llList2Json(JSON_OBJECT, [
         "type", "particles_start",
@@ -406,7 +406,7 @@ handle_holder_response_ds(string msg) {
     logd("DS holder mode activated");
 }
 
-handle_holder_response_oc(key holder_prim, string msg) {
+handleHolderResponseOc(key holder_prim, string msg) {
     if (HolderState != HOLDER_STATE_OC_PHASE) return;
     // CRITICAL: Must match the UUID we sent in the ping (Leasher, not wearer)
     string expected = (string)Leasher + "handle ok";
@@ -417,8 +417,8 @@ handle_holder_response_oc(key holder_prim, string msg) {
     logd("OC holder response: target=" + (string)HolderTarget);
     
     HolderState = HOLDER_STATE_COMPLETE;
-    close_holder_listen();
-    close_holder_listen_oc();
+    closeHolderListen();
+    closeHolderListenOc();
     
     string particles_msg = llList2Json(JSON_OBJECT, [
         "type", "particles_start",
@@ -431,7 +431,7 @@ handle_holder_response_oc(key holder_prim, string msg) {
     logd("OC holder mode activated");
 }
 
-advance_holder_state_machine() {
+advanceHolderStateMachine() {
     if (HolderState == HOLDER_STATE_IDLE || HolderState == HOLDER_STATE_COMPLETE) return;
     
     float elapsed = (float)(now() - HolderPhaseStart);
@@ -442,8 +442,8 @@ advance_holder_state_machine() {
             logd("Holder handshake Phase 2 (OC, 2s)");
             HolderState = HOLDER_STATE_OC_PHASE;
             HolderPhaseStart = now();
-            close_holder_listen();
-            open_holder_listen_oc();
+            closeHolderListen();
+            openHolderListenOc();
             
             // CRITICAL FIX: Send controller UUID + "collar" AND "handle" per LM protocol (Code Review Fix #4)
             // The holder script expects the controller's UUID, not the wearer's UUID
@@ -457,8 +457,8 @@ advance_holder_state_machine() {
             // Fallback to avatar direct
             logd("Holder timeout - using avatar direct mode");
             HolderState = HOLDER_STATE_COMPLETE;
-            close_holder_listen();
-            close_holder_listen_oc();
+            closeHolderListen();
+            closeHolderListenOc();
             
             if (Leasher != NULL_KEY) {
                 llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
@@ -473,7 +473,7 @@ advance_holder_state_machine() {
 }
 
 // ===== OFFSIM DETECTION & AUTO-RECLIP (IMPROVED) =====
-check_leasher_presence() {
+checkLeasherPresence() {
     if (!Leashed || Leasher == NULL_KEY) return;
     
     integer now_time = now();
@@ -509,7 +509,7 @@ check_leasher_presence() {
         }
         else if ((float)(now_time - OffsimStartTime) >= OFFSIM_GRACE) {
             LastLeasher = Leasher;
-            auto_release_offsim();
+            autoReleaseOffsim();
             ReclipScheduled = now_time + 2;
             ReclipAttempts = 0;
         }
@@ -521,14 +521,14 @@ check_leasher_presence() {
     }
 }
 
-auto_release_offsim() {
+autoReleaseOffsim() {
     Leashed = FALSE;
     Leasher = NULL_KEY;
-    persist_leash_state(FALSE, NULL_KEY);
+    persistLeashState(FALSE, NULL_KEY);
     HolderTarget = NULL_KEY;
     HolderState = HOLDER_STATE_IDLE;
-    close_holder_listen();
-    close_holder_listen_oc();
+    closeHolderListen();
+    closeHolderListenOc();
     llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
         "type", "particles_stop",
         "source", PLUGIN_CONTEXT
@@ -536,13 +536,13 @@ auto_release_offsim() {
     llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
         "type", "lm_disable"
     ]), NULL_KEY);
-    stop_follow();
+    stopFollow();
     llOwnerSay("Auto-released (offsim)");
-    broadcast_state();
+    broadcastState();
     logd("Auto-released");
 }
 
-check_auto_reclip() {
+checkAutoReclip() {
     if (ReclipScheduled == 0 || now() < ReclipScheduled) return;
     
     if (ReclipAttempts >= MAX_RECLIP_ATTEMPTS) {
@@ -557,7 +557,7 @@ check_auto_reclip() {
         logd("Attempting auto-reclip (attempt " + (string)(ReclipAttempts + 1) + "/" + (string)MAX_RECLIP_ATTEMPTS + ")");
         
         // Request ACL verification before reclip
-        request_acl_for_action(LastLeasher, "grab", NULL_KEY);
+        requestAclForAction(LastLeasher, "grab", NULL_KEY);
         
         ReclipAttempts = ReclipAttempts + 1;
         ReclipScheduled = now() + 2;
@@ -565,7 +565,7 @@ check_auto_reclip() {
 }
 
 // ===== SETTINGS PERSISTENCE =====
-persist_setting(string setting_key, string value) {
+persistSetting(string setting_key, string value) {
     llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
         "type", "set",
         "key", setting_key,
@@ -573,41 +573,41 @@ persist_setting(string setting_key, string value) {
     ]), NULL_KEY);
 }
 
-persist_leash_state(integer leashed, key leasher) {
-    persist_setting(KEY_LEASHED, (string)leashed);
-    persist_setting(KEY_LEASHER, (string)leasher);
+persistLeashState(integer leashed, key leasher) {
+    persistSetting(KEY_LEASHED, (string)leashed);
+    persistSetting(KEY_LEASHER, (string)leasher);
 }
 
-persist_length(integer length) {
-    persist_setting(KEY_LEASH_LENGTH, (string)length);
+persistLength(integer length) {
+    persistSetting(KEY_LEASH_LENGTH, (string)length);
 }
 
-persist_turnto(integer turnto) {
-    persist_setting(KEY_LEASH_TURNTO, (string)turnto);
+persistTurnto(integer turnto) {
+    persistSetting(KEY_LEASH_TURNTO, (string)turnto);
 }
 
-apply_settings_sync(string msg) {
-    if (!json_has(msg, ["settings"])) return;
+applySettingsSync(string msg) {
+    if (!jsonHas(msg, ["settings"])) return;
     string settings_json = llJsonGetValue(msg, ["settings"]);
-    if (json_has(settings_json, [KEY_LEASHED])) {
+    if (jsonHas(settings_json, [KEY_LEASHED])) {
         Leashed = (integer)llJsonGetValue(settings_json, [KEY_LEASHED]);
     }
-    if (json_has(settings_json, [KEY_LEASHER])) {
+    if (jsonHas(settings_json, [KEY_LEASHER])) {
         Leasher = (key)llJsonGetValue(settings_json, [KEY_LEASHER]);
     }
-    if (json_has(settings_json, [KEY_LEASH_LENGTH])) {
+    if (jsonHas(settings_json, [KEY_LEASH_LENGTH])) {
         LeashLength = (integer)llJsonGetValue(settings_json, [KEY_LEASH_LENGTH]);
         if (LeashLength < 1) LeashLength = 1;
         if (LeashLength > 20) LeashLength = 20;
     }
-    if (json_has(settings_json, [KEY_LEASH_TURNTO])) {
+    if (jsonHas(settings_json, [KEY_LEASH_TURNTO])) {
         TurnToFace = (integer)llJsonGetValue(settings_json, [KEY_LEASH_TURNTO]);
     }
     logd("Settings loaded");
 }
 
-apply_settings_delta(string msg) {
-    if (json_has(msg, ["key"]) && json_has(msg, ["value"])) {
+applySettingsDelta(string msg) {
+    if (jsonHas(msg, ["key"]) && jsonHas(msg, ["value"])) {
         string setting_key = llJsonGetValue(msg, ["key"]);
         string value = llJsonGetValue(msg, ["value"]);
         if (setting_key == KEY_LEASHED) Leashed = (integer)value;
@@ -622,7 +622,7 @@ apply_settings_delta(string msg) {
 }
 
 // ===== STATE BROADCAST =====
-broadcast_state() {
+broadcastState() {
     string msg = llList2Json(JSON_OBJECT, [
         "type", "leash_state",
         "leashed", (string)Leashed,
@@ -634,7 +634,7 @@ broadcast_state() {
 }
 
 // ===== LEASH ACTIONS (INTERNAL - CALLED AFTER ACL VERIFICATION) =====
-grab_leash_internal(key user) {
+grabLeashInternal(key user) {
     if (Leashed) {
         llRegionSayTo(user, 0, "Already leashed to " + llKey2Name(Leasher));
         return;
@@ -643,8 +643,8 @@ grab_leash_internal(key user) {
     Leashed = TRUE;
     Leasher = user;
     LastLeasher = user;
-    persist_leash_state(TRUE, user);
-    begin_holder_handshake(user);
+    persistLeashState(TRUE, user);
+    beginHolderHandshake(user);
     
     // Enable Lockmeister for this authorized controller
     AuthorizedLmController = user;
@@ -653,14 +653,14 @@ grab_leash_internal(key user) {
         "controller", (string)user
     ]), NULL_KEY);
     
-    start_follow();
+    startFollow();
     llRegionSayTo(user, 0, "Leash grabbed.");
     llOwnerSay("Leashed by " + llKey2Name(user));
-    broadcast_state();
+    broadcastState();
     logd("Grabbed by " + llKey2Name(user));
 }
 
-release_leash_internal(key user) {
+releaseLeashInternal(key user) {
     if (!Leashed) {
         llRegionSayTo(user, 0, "Not currently leashed.");
         return;
@@ -669,11 +669,11 @@ release_leash_internal(key user) {
     key old_leasher = Leasher;
     Leashed = FALSE;
     Leasher = NULL_KEY;
-    persist_leash_state(FALSE, NULL_KEY);
+    persistLeashState(FALSE, NULL_KEY);
     HolderTarget = NULL_KEY;
     HolderState = HOLDER_STATE_IDLE;
-    close_holder_listen();
-    close_holder_listen_oc();
+    closeHolderListen();
+    closeHolderListenOc();
     
     // CRITICAL BUG FIX: Clear auto-reclip state on explicit release
     // Without this, the system tries to re-leash after explicit unleash
@@ -690,20 +690,20 @@ release_leash_internal(key user) {
         "source", PLUGIN_CONTEXT
     ]), NULL_KEY);
     
-    stop_follow();
+    stopFollow();
     llRegionSayTo(user, 0, "Leash released.");
     llOwnerSay("Released by " + llKey2Name(user));
-    broadcast_state();
+    broadcastState();
     logd("Released by " + llKey2Name(user));
 }
 
-pass_leash_internal(key new_leasher) {
+passLeashInternal(key new_leasher) {
     if (!Leashed) return;
     
     key old_leasher = Leasher;
     Leasher = new_leasher;
     LastLeasher = new_leasher;
-    persist_leash_state(TRUE, new_leasher);
+    persistLeashState(TRUE, new_leasher);
     
     // Update particles target
     llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
@@ -721,11 +721,11 @@ pass_leash_internal(key new_leasher) {
     llRegionSayTo(old_leasher, 0, "Leash passed to " + llKey2Name(new_leasher));
     llRegionSayTo(new_leasher, 0, "Leash received from " + llKey2Name(old_leasher));
     llOwnerSay("Leash passed to " + llKey2Name(new_leasher));
-    broadcast_state();
+    broadcastState();
     logd("Passed to " + llKey2Name(new_leasher));
 }
 
-yank_to_leasher() {
+yankToLeasher() {
     if (!Leashed || Leasher == NULL_KEY) return;
     list details = llGetObjectDetails(Leasher, [OBJECT_POS]);
     if (llGetListLength(details) == 0) {
@@ -739,28 +739,28 @@ yank_to_leasher() {
     logd("Yanked to " + llKey2Name(Leasher));
 }
 
-set_length_internal(integer length) {
+setLengthInternal(integer length) {
     if (length < 1) length = 1;
     if (length > 20) length = 20;
     LeashLength = length;
-    persist_length(LeashLength);
-    broadcast_state();
+    persistLength(LeashLength);
+    broadcastState();
     logd("Length set to " + (string)length);
 }
 
-toggle_turn_internal() {
+toggleTurnInternal() {
     TurnToFace = !TurnToFace;
     if (!TurnToFace) {
         llOwnerSay("@setrot=clear");
         LastTurnAngle = -999.0;
     }
-    persist_turnto(TurnToFace);
-    broadcast_state();
+    persistTurnto(TurnToFace);
+    broadcastState();
     logd("Turn-to-face: " + (string)TurnToFace);
 }
 
 // ===== FOLLOW MECHANICS (IMPROVED TURN THROTTLING) =====
-start_follow() {
+startFollow() {
     if (!Leashed || Leasher == NULL_KEY) return;
     FollowActive = TRUE;
     llOwnerSay("@follow:" + (string)Leasher + "=force");
@@ -768,7 +768,7 @@ start_follow() {
     logd("Follow started");
 }
 
-stop_follow() {
+stopFollow() {
     FollowActive = FALSE;
     llOwnerSay("@follow=clear");
     llStopMoveToTarget();
@@ -778,7 +778,7 @@ stop_follow() {
     logd("Follow stopped");
 }
 
-turn_to_leasher() {
+turnToLeasher() {
     if (!TurnToFace || !Leashed || Leasher == NULL_KEY) return;
     list details = llGetObjectDetails(Leasher, [OBJECT_POS]);
     if (llGetListLength(details) == 0) return;
@@ -794,7 +794,7 @@ turn_to_leasher() {
     }
 }
 
-follow_tick() {
+followTick() {
     if (!FollowActive || !Leashed || Leasher == NULL_KEY) return;
     
     vector leasher_pos;
@@ -825,7 +825,7 @@ follow_tick() {
             llMoveToTarget(target_pos, 0.5);
             LastTargetPos = target_pos;
         }
-        if (TurnToFace) turn_to_leasher();
+        if (TurnToFace) turnToLeasher();
     }
     else if (LastDistance >= 0.0 && LastDistance > (float)LeashLength) {
         llStopMoveToTarget();
@@ -839,8 +839,8 @@ follow_tick() {
 default
 {
     state_entry() {
-        close_holder_listen();
-        close_holder_listen_oc();
+        closeHolderListen();
+        closeHolderListenOc();
         HolderTarget = NULL_KEY;
         HolderState = HOLDER_STATE_IDLE;
         AclPending = FALSE;
@@ -874,20 +874,20 @@ default
     
     link_message(integer sender, integer num, string msg, key id) {
         // OPTIMIZATION: Check "type" once at the top (Code Review Fix #3)
-        if (!json_has(msg, ["type"])) return;
+        if (!jsonHas(msg, ["type"])) return;
         string msg_type = llJsonGetValue(msg, ["type"]);
         
         if (num == UI_BUS) {
             
             // Commands from config plugin - NOW WITH ACL VERIFICATION
             if (msg_type == "leash_action") {
-                if (!json_has(msg, ["action"])) return;
+                if (!jsonHas(msg, ["action"])) return;
                 string action = llJsonGetValue(msg, ["action"]);
                 key user = id;
                 
                 // Query state doesn't need ACL
                 if (action == "query_state") {
-                    broadcast_state();
+                    broadcastState();
                     return;
                 }
                 
@@ -901,7 +901,7 @@ default
                             return;
                         }
                         LastYankTime = now_time;
-                        yank_to_leasher();
+                        yankToLeasher();
                     } else {
                         llRegionSayTo(user, 0, "Only the current leasher can yank.");
                     }
@@ -910,39 +910,39 @@ default
                 
                 // All other actions require ACL verification
                 if (action == "grab") {
-                    request_acl_for_action(user, "grab", NULL_KEY);
+                    requestAclForAction(user, "grab", NULL_KEY);
                 }
                 else if (action == "release") {
-                    request_acl_for_action(user, "release", NULL_KEY);
+                    requestAclForAction(user, "release", NULL_KEY);
                 }
                 else if (action == "pass") {
-                    if (json_has(msg, ["target"])) {
+                    if (jsonHas(msg, ["target"])) {
                         key target = (key)llJsonGetValue(msg, ["target"]);
-                        request_acl_for_action(user, "pass", target);
+                        requestAclForAction(user, "pass", target);
                     }
                 }
                 else if (action == "offer") {
-                    if (json_has(msg, ["target"])) {
+                    if (jsonHas(msg, ["target"])) {
                         key target = (key)llJsonGetValue(msg, ["target"]);
-                        request_acl_for_action(user, "offer", target);
+                        requestAclForAction(user, "offer", target);
                     }
                 }
                 else if (action == "set_length") {
-                    if (json_has(msg, ["length"])) {
+                    if (jsonHas(msg, ["length"])) {
                         integer length = (integer)llJsonGetValue(msg, ["length"]);
                         // Store length in pass_target field (repurposing)
-                        request_acl_for_action(user, "set_length", (key)((string)length));
+                        requestAclForAction(user, "set_length", (key)((string)length));
                     }
                 }
                 else if (action == "toggle_turn") {
-                    request_acl_for_action(user, "toggle_turn", NULL_KEY);
+                    requestAclForAction(user, "toggle_turn", NULL_KEY);
                 }
                 return;
             }
             
             // Lockmeister notifications from particles - VERIFY AUTHORIZATION
             if (msg_type == "lm_grabbed") {
-                if (!json_has(msg, ["controller"])) return;
+                if (!jsonHas(msg, ["controller"])) return;
                 key controller = (key)llJsonGetValue(msg, ["controller"]);
                 
                 // SECURITY: Only accept if this controller was authorized
@@ -955,10 +955,10 @@ default
                     Leashed = TRUE;
                     Leasher = controller;
                     LastLeasher = controller;
-                    persist_leash_state(TRUE, controller);
-                    start_follow();
+                    persistLeashState(TRUE, controller);
+                    startFollow();
                     llOwnerSay("Leashed by " + llKey2Name(controller) + " (Lockmeister)");
-                    broadcast_state();
+                    broadcastState();
                     logd("Lockmeister grab from " + llKey2Name(controller));
                 }
                 return;
@@ -969,11 +969,11 @@ default
                     key old_leasher = Leasher;
                     Leashed = FALSE;
                     Leasher = NULL_KEY;
-                    persist_leash_state(FALSE, NULL_KEY);
+                    persistLeashState(FALSE, NULL_KEY);
                     AuthorizedLmController = NULL_KEY;
-                    stop_follow();
+                    stopFollow();
                     llOwnerSay("Released by " + llKey2Name(old_leasher) + " (Lockmeister)");
-                    broadcast_state();
+                    broadcastState();
                     logd("Lockmeister release");
                 }
                 return;
@@ -983,36 +983,36 @@ default
         
         if (num == AUTH_BUS) {
             if (msg_type == "acl_result") {
-                handle_acl_result(msg, id);
+                handleAclResult(msg, id);
             }
             return;
         }
         
         if (num == SETTINGS_BUS) {
-            if (msg_type == "settings_sync") apply_settings_sync(msg);
-            else if (msg_type == "settings_delta") apply_settings_delta(msg);
+            if (msg_type == "settings_sync") applySettingsSync(msg);
+            else if (msg_type == "settings_delta") applySettingsDelta(msg);
             return;
         }
     }
     
     timer() {
         // Advance holder detection state machine
-        advance_holder_state_machine();
+        advanceHolderStateMachine();
         
         // Check for offsim/auto-release
-        if (Leashed) check_leasher_presence();
-        if (!Leashed && ReclipScheduled != 0) check_auto_reclip();
+        if (Leashed) checkLeasherPresence();
+        if (!Leashed && ReclipScheduled != 0) checkAutoReclip();
         
         // Follow tick
-        if (FollowActive && Leashed) follow_tick();
+        if (FollowActive && Leashed) followTick();
     }
     
     listen(integer channel, string name, key id, string msg) {
         if (channel == -192837465) {
-            handle_holder_response_ds(msg);
+            handleHolderResponseDs(msg);
         }
         else if (channel == -8888) {
-            handle_holder_response_oc(id, msg);
+            handleHolderResponseOc(id, msg);
         }
     }
 }

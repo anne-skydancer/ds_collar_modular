@@ -100,7 +100,7 @@ integer logd(string msg) {
     return FALSE;
 }
 
-integer json_has(string j, list path) {
+integer jsonHas(string j, list path) {
     return (llJsonGetValue(j, path) != JSON_INVALID);
 }
 
@@ -108,11 +108,11 @@ integer now() {
     return llGetUnixTime();
 }
 
-string generate_session_id() {
+string generateSessionId() {
     return PLUGIN_CONTEXT + "_" + (string)llGetUnixTime();
 }
 
-string truncate_name(string name, integer max_len) {
+string truncateName(string name, integer max_len) {
     if (llStringLength(name) <= max_len) return name;
     return llGetSubString(name, 0, max_len - 4) + "...";
 }
@@ -121,7 +121,7 @@ string truncate_name(string name, integer max_len) {
    LIFECYCLE MANAGEMENT
    =============================================================== */
 
-register_self() {
+registerSelf() {
     string msg = llList2Json(JSON_OBJECT, [
         "type", "register",
         "context", PLUGIN_CONTEXT,
@@ -133,7 +133,7 @@ register_self() {
     logd("Registered with kernel");
 }
 
-send_pong() {
+sendPong() {
     string msg = llList2Json(JSON_OBJECT, [
         "type", "pong",
         "context", PLUGIN_CONTEXT
@@ -145,14 +145,14 @@ send_pong() {
    RELAY LISTEN MANAGEMENT
    =============================================================== */
 
-start_relay_listen() {
+startRelayListen() {
     if (RelayListenHandle) return;  // Already listening
     
     RelayListenHandle = llListen(RELAY_CHANNEL, "", NULL_KEY, "");
     logd("Relay channel listener started");
 }
 
-stop_relay_listen() {
+stopRelayListen() {
     if (RelayListenHandle) {
         llListenRemove(RelayListenHandle);
         RelayListenHandle = 0;
@@ -160,7 +160,7 @@ stop_relay_listen() {
     }
 }
 
-update_relay_listen_state() {
+updateRelayListenState() {
     // Only listen if: Mode != OFF AND IsAttached
     if (Mode != MODE_OFF && IsAttached) {
         start_relay_listen();
@@ -224,7 +224,7 @@ integer store_restriction(key obj, string rlv_cmd) {
     return FALSE;
 }
 
-clear_restrictions(key obj) {
+clearRestrictions(key obj) {
     integer idx = relay_idx(obj);
     if (idx != -1) {
         // Use @clear per RLV spec - safer than manual reversal
@@ -233,7 +233,7 @@ clear_restrictions(key obj) {
     }
 }
 
-safeword_clear_all() {
+safewordClearAll() {
     integer relay_count = llGetListLength(Relays);
     integer i = 0;
     while (i < relay_count) {
@@ -249,7 +249,7 @@ safeword_clear_all() {
    SETTINGS CONSUMPTION
    =============================================================== */
 
-apply_settings_sync(string msg) {
+applySettingsSync(string msg) {
     if (!json_has(msg, ["kv"])) return;
     
     string kv_json = llJsonGetValue(msg, ["kv"]);
@@ -273,7 +273,7 @@ apply_settings_sync(string msg) {
     logd("Settings sync applied: Mode=" + (string)Mode + " Hardcore=" + (string)Hardcore);
 }
 
-apply_settings_delta(string msg) {
+applySettingsDelta(string msg) {
     if (!json_has(msg, ["op"])) return;
     
     string op = llJsonGetValue(msg, ["op"]);
@@ -299,7 +299,7 @@ apply_settings_delta(string msg) {
    SETTINGS MODIFICATION
    =============================================================== */
 
-persist_mode(integer new_mode) {
+persistMode(integer new_mode) {
     string msg = llList2Json(JSON_OBJECT, [
         "type", "set",
         "key", KEY_RELAY_MODE,
@@ -308,7 +308,7 @@ persist_mode(integer new_mode) {
     llMessageLinked(LINK_SET, SETTINGS_BUS, msg, NULL_KEY);
 }
 
-persist_hardcore(integer new_hardcore) {
+persistHardcore(integer new_hardcore) {
     string msg = llList2Json(JSON_OBJECT, [
         "type", "set",
         "key", KEY_RELAY_HARDCORE,
@@ -321,7 +321,7 @@ persist_hardcore(integer new_hardcore) {
    ACL VALIDATION
    =============================================================== */
 
-request_acl(key user) {
+requestAcl(key user) {
     AclPending = TRUE;
     
     string msg = llList2Json(JSON_OBJECT, [
@@ -332,7 +332,7 @@ request_acl(key user) {
     llMessageLinked(LINK_SET, AUTH_BUS, msg, NULL_KEY);
 }
 
-handle_acl_result(string msg) {
+handleAclResult(string msg) {
     if (!json_has(msg, ["avatar"])) return;
     if (!json_has(msg, ["level"])) return;
     
@@ -359,7 +359,7 @@ handle_acl_result(string msg) {
    UI / MENU SYSTEM
    =============================================================== */
 
-show_main_menu() {
+showMainMenu() {
     SessionId = generate_session_id();
     
     string mode_str = "OFF";
@@ -404,7 +404,7 @@ show_main_menu() {
     logd("Showing main menu to " + llKey2Name(CurrentUser));
 }
 
-show_mode_menu() {
+showModeMenu() {
     SessionId = generate_session_id();
     
     string mode_str = "OFF";
@@ -446,7 +446,7 @@ show_mode_menu() {
     llMessageLinked(LINK_SET, DIALOG_BUS, msg, NULL_KEY);
 }
 
-show_object_list() {
+showObjectList() {
     SessionId = generate_session_id();
     
     integer relay_count = llGetListLength(Relays) / 4;
@@ -486,7 +486,7 @@ show_object_list() {
    BUTTON HANDLING
    =============================================================== */
 
-handle_button_click(string button) {
+handleButtonClick(string button) {
     if (button == "Mode") {
         show_mode_menu();
     }
@@ -558,7 +558,7 @@ handle_button_click(string button) {
    NAVIGATION
    =============================================================== */
 
-return_to_root() {
+returnToRoot() {
     string msg = llList2Json(JSON_OBJECT, [
         "type", "return",
         "context", PLUGIN_CONTEXT,
@@ -570,7 +570,7 @@ return_to_root() {
     logd("Returning to root menu");
 }
 
-close_silent() {
+closeSilent() {
     string msg = llList2Json(JSON_OBJECT, [
         "type", "close",
         "context", PLUGIN_CONTEXT,
@@ -586,7 +586,7 @@ close_silent() {
    SESSION MANAGEMENT
    =============================================================== */
 
-cleanup_session() {
+cleanupSession() {
     CurrentUser = NULL_KEY;
     UserAcl = -999;
     AclPending = FALSE;
@@ -598,7 +598,7 @@ cleanup_session() {
    GROUND REZ HANDLER
    =============================================================== */
 
-handle_ground_rez() {
+handleGroundRez() {
     // Turn off relay mode
     Mode = MODE_OFF;
     Hardcore = FALSE;
@@ -620,7 +620,7 @@ handle_ground_rez() {
    MESSAGE HANDLERS
    =============================================================== */
 
-handle_start(string msg) {
+handleStart(string msg) {
     if (!json_has(msg, ["context"])) return;
     if (!json_has(msg, ["user"])) return;
     
@@ -636,7 +636,7 @@ handle_start(string msg) {
     logd("Started by " + llKey2Name(user));
 }
 
-handle_dialog_response(string msg) {
+handleDialogResponse(string msg) {
     if (!json_has(msg, ["session_id"])) return;
     if (!json_has(msg, ["button"])) return;
     
@@ -647,7 +647,7 @@ handle_dialog_response(string msg) {
     handle_button_click(button);
 }
 
-handle_dialog_timeout(string msg) {
+handleDialogTimeout(string msg) {
     if (!json_has(msg, ["session_id"])) return;
     
     string session = llJsonGetValue(msg, ["session_id"]);
@@ -661,7 +661,7 @@ handle_dialog_timeout(string msg) {
    RELAY PROTOCOL HANDLERS
    =============================================================== */
 
-handle_relay_message(key sender_id, string sender_name, string raw_msg) {
+handleRelayMessage(key sender_id, string sender_name, string raw_msg) {
     // Only process relay commands when attached
     if (!IsAttached) return;
     

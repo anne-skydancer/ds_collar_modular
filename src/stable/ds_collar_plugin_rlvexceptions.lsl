@@ -72,11 +72,11 @@ logd(string msg) {
     if (DEBUG) llOwnerSay("[" + PLUGIN_LABEL + "] " + msg);
 }
 
-integer json_has(string j, list path) {
+integer jsonHas(string j, list path) {
     return (llJsonGetValue(j, path) != JSON_INVALID);
 }
 
-string gen_session() {
+string genSession() {
     return PLUGIN_CONTEXT + "_" + (string)llGetUnixTime();
 }
 
@@ -84,7 +84,7 @@ string gen_session() {
    RLV COMMANDS
    =============================================================== */
 
-apply_tp_exception(key k, integer allow) {
+applyTpException(key k, integer allow) {
     if (k == NULL_KEY) return;
     
     if (allow) {
@@ -97,7 +97,7 @@ apply_tp_exception(key k, integer allow) {
     }
 }
 
-apply_im_exception(key k, integer allow) {
+applyImException(key k, integer allow) {
     if (k == NULL_KEY) return;
     
     if (allow) {
@@ -110,7 +110,7 @@ apply_im_exception(key k, integer allow) {
     }
 }
 
-reconcile_all() {
+reconcileAll() {
     logd("Reconciling RLV exceptions");
     
     // Owner exceptions
@@ -144,7 +144,7 @@ reconcile_all() {
    LIFECYCLE
    =============================================================== */
 
-register_self() {
+registerSelf() {
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
         "type", "register",
         "context", PLUGIN_CONTEXT,
@@ -154,7 +154,7 @@ register_self() {
     ]), NULL_KEY);
 }
 
-send_pong() {
+sendPong() {
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
         "type", "pong",
         "context", PLUGIN_CONTEXT
@@ -165,7 +165,7 @@ send_pong() {
    SETTINGS
    =============================================================== */
 
-apply_settings_sync(string msg) {
+applySettingsSync(string msg) {
     if (!json_has(msg, ["kv"])) return;
     string kv = llJsonGetValue(msg, ["kv"]);
     
@@ -221,7 +221,7 @@ apply_settings_sync(string msg) {
     logd("Settings applied");
 }
 
-apply_settings_delta(string msg) {
+applySettingsDelta(string msg) {
     if (!json_has(msg, ["op"])) return;
     string op = llJsonGetValue(msg, ["op"]);
     
@@ -328,7 +328,7 @@ apply_settings_delta(string msg) {
     }
 }
 
-persist_setting(string setting_key, integer value) {
+persistSetting(string setting_key, integer value) {
     llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
         "type", "set",
         "key", setting_key,
@@ -340,7 +340,7 @@ persist_setting(string setting_key, integer value) {
    ACL
    =============================================================== */
 
-request_acl(key user) {
+requestAcl(key user) {
     llMessageLinked(LINK_SET, AUTH_BUS, llList2Json(JSON_OBJECT, [
         "type", "acl_query",
         "avatar", (string)user,
@@ -348,7 +348,7 @@ request_acl(key user) {
     ]), NULL_KEY);
 }
 
-handle_acl_result(string msg) {
+handleAclResult(string msg) {
     if (!json_has(msg, ["avatar"]) || !json_has(msg, ["level"])) return;
     
     key avatar = (key)llJsonGetValue(msg, ["avatar"]);
@@ -369,7 +369,7 @@ handle_acl_result(string msg) {
    MENUS
    =============================================================== */
 
-show_main() {
+showMain() {
     SessionId = gen_session();
     MenuContext = "main";
     
@@ -388,7 +388,7 @@ show_main() {
     ]), NULL_KEY);
 }
 
-show_owner_menu() {
+showOwnerMenu() {
     SessionId = gen_session();
     MenuContext = "owner";
     
@@ -411,7 +411,7 @@ show_owner_menu() {
     ]), NULL_KEY);
 }
 
-show_trustee_menu() {
+showTrusteeMenu() {
     SessionId = gen_session();
     MenuContext = "trustee";
     
@@ -434,7 +434,7 @@ show_trustee_menu() {
     ]), NULL_KEY);
 }
 
-show_toggle(string role, string exception_type, string setting_key, integer current) {
+showToggle(string role, string exception_type, string setting_key, integer current) {
     SessionId = gen_session();
     MenuContext = role + "_" + exception_type;
     
@@ -461,7 +461,7 @@ show_toggle(string role, string exception_type, string setting_key, integer curr
    BUTTON HANDLING
    =============================================================== */
 
-handle_button(string btn) {
+handleButton(string btn) {
     if (btn == "Back") {
         if (MenuContext == "main") {
             llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
@@ -542,7 +542,7 @@ handle_button(string btn) {
    CLEANUP
    =============================================================== */
 
-cleanup() {
+cleanupSession() {
     CurrentUser = NULL_KEY;
     UserAcl = -999;
     SessionId = "";

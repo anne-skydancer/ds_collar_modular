@@ -100,11 +100,11 @@ integer logd(string msg) {
     return FALSE;
 }
 
-integer json_has(string j, list path) {
+integer jsonHas(string j, list path) {
     return (llJsonGetValue(j, path) != JSON_INVALID);
 }
 
-integer is_json_arr(string s) {
+integer isJsonArr(string s) {
     return (llGetSubString(s, 0, 0) == "[");
 }
 
@@ -174,7 +174,7 @@ sendRlvQueries() {
     logd("RLV @versionnew sent (attempt " + (string)(RlvRetryCount + 1) + ")");
 }
 
-start_rlv_probe() {
+startRlvProbe() {
     if (RlvProbing) {
         logd("RLV probe already active");
         return;
@@ -213,7 +213,7 @@ start_rlv_probe() {
     sendIM("Detecting RLV...");
 }
 
-stop_rlv_probe() {
+stopRlvProbe() {
     clearProbeChannels();
     RlvProbing = FALSE;
     RlvReady = TRUE;
@@ -232,7 +232,7 @@ stop_rlv_probe() {
    SETTINGS LOADING
    =============================================================== */
 
-request_settings() {
+requestSettings() {
     string msg = llList2Json(JSON_OBJECT, [
         "type", "settings_get"
     ]);
@@ -240,8 +240,8 @@ request_settings() {
     logd("Requested settings");
 }
 
-apply_settings_sync(string msg) {
-    if (!json_has(msg, ["kv"])) return;
+applySettingsSync(string msg) {
+    if (!jsonHas(msg, ["kv"])) return;
     
     string kv_json = llJsonGetValue(msg, ["kv"]);
     
@@ -253,28 +253,28 @@ apply_settings_sync(string msg) {
     OwnerHonorifics = [];
     
     // Load
-    if (json_has(kv_json, [KEY_MULTI_OWNER_MODE])) {
+    if (jsonHas(kv_json, [KEY_MULTI_OWNER_MODE])) {
         MultiOwnerMode = (integer)llJsonGetValue(kv_json, [KEY_MULTI_OWNER_MODE]);
     }
     
-    if (json_has(kv_json, [KEY_OWNER_KEY])) {
+    if (jsonHas(kv_json, [KEY_OWNER_KEY])) {
         OwnerKey = (key)llJsonGetValue(kv_json, [KEY_OWNER_KEY]);
     }
     
-    if (json_has(kv_json, [KEY_OWNER_KEYS])) {
+    if (jsonHas(kv_json, [KEY_OWNER_KEYS])) {
         string owner_keys_json = llJsonGetValue(kv_json, [KEY_OWNER_KEYS]);
-        if (is_json_arr(owner_keys_json)) {
+        if (isJsonArr(owner_keys_json)) {
             OwnerKeys = llJson2List(owner_keys_json);
         }
     }
     
-    if (json_has(kv_json, [KEY_OWNER_HON])) {
+    if (jsonHas(kv_json, [KEY_OWNER_HON])) {
         OwnerHonorific = llJsonGetValue(kv_json, [KEY_OWNER_HON]);
     }
     
-    if (json_has(kv_json, [KEY_OWNER_HONS])) {
+    if (jsonHas(kv_json, [KEY_OWNER_HONS])) {
         string owner_hons_json = llJsonGetValue(kv_json, [KEY_OWNER_HONS]);
-        if (is_json_arr(owner_hons_json)) {
+        if (isJsonArr(owner_hons_json)) {
             OwnerHonorifics = llJson2List(owner_hons_json);
         }
     }
@@ -283,14 +283,14 @@ apply_settings_sync(string msg) {
     logd("Settings received");
     
     // Start name resolution
-    start_name_resolution();
+    startNameResolution();
 }
 
 /* ===============================================================
    NAME RESOLUTION
    =============================================================== */
 
-start_name_resolution() {
+startNameResolution() {
     OwnerNameQueries = [];
     OwnerDisplayNames = [];
     
@@ -333,11 +333,11 @@ start_name_resolution() {
     
     // If no owners, we're done
     if (llGetListLength(OwnerNameQueries) == 0) {
-        check_bootstrap_complete();
+        checkBootstrapComplete();
     }
 }
 
-handle_dataserver_name(key query_id, string name) {
+handleDataserverName(key query_id, string name) {
     // Find this query
     integer i = 0;
     integer len = llGetListLength(OwnerNameQueries);
@@ -366,7 +366,7 @@ handle_dataserver_name(key query_id, string name) {
             // Check if all names resolved
             if (llGetListLength(OwnerNameQueries) == 0) {
                 logd("All owner names resolved");
-                check_bootstrap_complete();
+                checkBootstrapComplete();
             }
             
             return;
@@ -379,7 +379,7 @@ handle_dataserver_name(key query_id, string name) {
    BOOTSTRAP COMPLETION
    =============================================================== */
 
-check_bootstrap_complete() {
+checkBootstrapComplete() {
     if (BootstrapComplete) return;
     
     // Check all conditions
@@ -388,11 +388,11 @@ check_bootstrap_complete() {
         logd("Bootstrap complete");
         
         // Announce final status
-        announce_status();
+        announceStatus();
     }
 }
 
-announce_status() {
+announceStatus() {
     // Mode notification
     if (MultiOwnerMode) {
         integer owner_count = llGetListLength(OwnerKeys);
@@ -468,10 +468,10 @@ default
         sendIM("DS Collar starting up. Please wait...");
         
         // Start RLV detection
-        start_rlv_probe();
+        startRlvProbe();
         
         // Request settings
-        request_settings();
+        requestSettings();
         
         // Start timer for RLV probe management
         llSetTimerEvent(1.0);
@@ -506,8 +506,8 @@ default
             // Check for timeout
             if (RlvProbeDeadline > 0 && current_time >= RlvProbeDeadline) {
                 logd("RLV probe timed out");
-                stop_rlv_probe();
-                check_bootstrap_complete();
+                stopRlvProbe();
+                checkBootstrapComplete();
             }
         }
         
@@ -515,7 +515,7 @@ default
         if (llGetListLength(OwnerNameQueries) > 0 && NameResolutionDeadline > 0 && current_time >= NameResolutionDeadline) {
             logd("Name resolution timed out, proceeding with fallback names");
             OwnerNameQueries = []; // Clear pending queries
-            check_bootstrap_complete();
+            checkBootstrapComplete();
         }
         
         // Stop timer if bootstrap complete
@@ -538,24 +538,24 @@ default
         logd("RLV reply on channel " + (string)channel + " from " + (string)id + ": " + RlvVersion);
         
         // Stop probing immediately
-        stop_rlv_probe();
-        check_bootstrap_complete();
+        stopRlvProbe();
+        checkBootstrapComplete();
     }
     
     dataserver(key query_id, string data) {
         // Handle display name responses
-        handle_dataserver_name(query_id, data);
+        handleDataserverName(query_id, data);
     }
     
     link_message(integer sender, integer num, string msg, key id) {
-        if (!json_has(msg, ["type"])) return;
+        if (!jsonHas(msg, ["type"])) return;
         
         string msg_type = llJsonGetValue(msg, ["type"]);
         
         /* ===== SETTINGS BUS ===== */
         if (num == SETTINGS_BUS) {
             if (msg_type == "settings_sync") {
-                apply_settings_sync(msg);
+                applySettingsSync(msg);
             }
         }
         
@@ -563,7 +563,7 @@ default
         else if (num == KERNEL_LIFECYCLE) {
             if (msg_type == "soft_reset" || msg_type == "soft_reset_all") {
                 // SECURITY FIX (v1.0 - MEDIUM-023): Validate sender authorization
-                if (!json_has(msg, ["from"])) {
+                if (!jsonHas(msg, ["from"])) {
                     logd("SECURITY: Rejected soft_reset without 'from' field");
                     return;
                 }

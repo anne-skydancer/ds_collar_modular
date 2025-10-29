@@ -84,15 +84,15 @@ integer logd(string msg) {
     return FALSE;
 }
 
-integer json_has(string j, list path) {
+integer jsonHas(string j, list path) {
     return (llJsonGetValue(j, path) != JSON_INVALID);
 }
 
-integer is_json_arr(string s) {
+integer isJsonArr(string s) {
     return (llGetSubString(s, 0, 0) == "[");
 }
 
-integer list_has_key(list search_list, key k) {
+integer listHasKey(list search_list, key k) {
     return (llListFindList(search_list, [(string)k]) != -1);
 }
 
@@ -109,7 +109,7 @@ integer has_owner() {
 
 integer is_owner(key av) {
     if (MultiOwnerMode) {
-        return list_has_key(OwnerKeys, av);
+        return listHasKey(OwnerKeys, av);
     }
     return (av == OwnerKey);
 }
@@ -123,8 +123,8 @@ integer compute_acl_level(key av) {
     integer owner_set = has_owner();
     integer is_owner_flag = is_owner(av);
     integer is_wearer = (av == wearer);
-    integer is_trustee = list_has_key(TrusteeList, av);
-    integer is_blacklisted = list_has_key(Blacklist, av);
+    integer is_trustee = listHasKey(TrusteeList, av);
+    integer is_blacklisted = listHasKey(Blacklist, av);
     
     // SECURITY FIX: Blacklist check FIRST (before any grants)
     if (is_blacklisted) return ACL_BLACKLIST;
@@ -154,12 +154,12 @@ integer compute_acl_level(key av) {
    POLICY FLAGS
    =============================================================== */
 
-send_acl_result(key av, string correlation_id) {
+sendAclResult(key av, string correlation_id) {
     key wearer = llGetOwner();
     integer is_wearer = (av == wearer);
     integer owner_set = has_owner();
     integer level = compute_acl_level(av);
-    integer is_blacklisted = list_has_key(Blacklist, av);
+    integer is_blacklisted = listHasKey(Blacklist, av);
     
     // Policy flags
     integer policy_tpe = 0;
@@ -228,7 +228,7 @@ send_acl_result(key av, string correlation_id) {
    =============================================================== */
 
 // SECURITY FIX: Enforce role exclusivity (defense-in-depth)
-enforce_role_exclusivity() {
+enforceRoleExclusivity() {
     integer i;
     
     // Owners cannot be trustees or blacklisted
@@ -287,8 +287,8 @@ enforce_role_exclusivity() {
    SETTINGS CONSUMPTION
    =============================================================== */
 
-apply_settings_sync(string msg) {
-    if (!json_has(msg, ["kv"])) return;
+applySettingsSync(string msg) {
+    if (!jsonHas(msg, ["kv"])) return;
     
     string kv_json = llJsonGetValue(msg, ["kv"]);
     
@@ -302,45 +302,45 @@ apply_settings_sync(string msg) {
     TpeMode = FALSE;
     
     // Load values
-    if (json_has(kv_json, [KEY_MULTI_OWNER_MODE])) {
+    if (jsonHas(kv_json, [KEY_MULTI_OWNER_MODE])) {
         MultiOwnerMode = (integer)llJsonGetValue(kv_json, [KEY_MULTI_OWNER_MODE]);
     }
     
-    if (json_has(kv_json, [KEY_OWNER_KEY])) {
+    if (jsonHas(kv_json, [KEY_OWNER_KEY])) {
         OwnerKey = (key)llJsonGetValue(kv_json, [KEY_OWNER_KEY]);
     }
     
-    if (json_has(kv_json, [KEY_OWNER_KEYS])) {
+    if (jsonHas(kv_json, [KEY_OWNER_KEYS])) {
         string owner_keys_json = llJsonGetValue(kv_json, [KEY_OWNER_KEYS]);
-        if (is_json_arr(owner_keys_json)) {
+        if (isJsonArr(owner_keys_json)) {
             OwnerKeys = llJson2List(owner_keys_json);
         }
     }
     
-    if (json_has(kv_json, [KEY_TRUSTEES])) {
+    if (jsonHas(kv_json, [KEY_TRUSTEES])) {
         string trustees_json = llJsonGetValue(kv_json, [KEY_TRUSTEES]);
-        if (is_json_arr(trustees_json)) {
+        if (isJsonArr(trustees_json)) {
             TrusteeList = llJson2List(trustees_json);
         }
     }
     
-    if (json_has(kv_json, [KEY_BLACKLIST])) {
+    if (jsonHas(kv_json, [KEY_BLACKLIST])) {
         string blacklist_json = llJsonGetValue(kv_json, [KEY_BLACKLIST]);
-        if (is_json_arr(blacklist_json)) {
+        if (isJsonArr(blacklist_json)) {
             Blacklist = llJson2List(blacklist_json);
         }
     }
     
-    if (json_has(kv_json, [KEY_PUBLIC_ACCESS])) {
+    if (jsonHas(kv_json, [KEY_PUBLIC_ACCESS])) {
         PublicMode = (integer)llJsonGetValue(kv_json, [KEY_PUBLIC_ACCESS]);
     }
     
-    if (json_has(kv_json, [KEY_TPE_MODE])) {
+    if (jsonHas(kv_json, [KEY_TPE_MODE])) {
         TpeMode = (integer)llJsonGetValue(kv_json, [KEY_TPE_MODE]);
     }
     
     // SECURITY FIX: Enforce role exclusivity after loading
-    enforce_role_exclusivity();
+    enforceRoleExclusivity();
     
     SettingsReady = TRUE;
     logd("Settings sync applied (multi_owner=" + (string)MultiOwnerMode + ")");
@@ -351,41 +351,41 @@ apply_settings_sync(string msg) {
     while (i < len) {
         key av = llList2Key(PendingQueries, i);
         string corr_id = llList2String(PendingQueries, i + 1);
-        send_acl_result(av, corr_id);
+        sendAclResult(av, corr_id);
         i += PENDING_STRIDE;
     }
     PendingQueries = [];
 }
 
-apply_settings_delta(string msg) {
-    if (!json_has(msg, ["op"])) return;
+applySettingsDelta(string msg) {
+    if (!jsonHas(msg, ["op"])) return;
     
     string op = llJsonGetValue(msg, ["op"]);
     
     if (op == "set") {
-        if (!json_has(msg, ["changes"])) return;
+        if (!jsonHas(msg, ["changes"])) return;
         string changes = llJsonGetValue(msg, ["changes"]);
         
-        if (json_has(changes, [KEY_PUBLIC_ACCESS])) {
+        if (jsonHas(changes, [KEY_PUBLIC_ACCESS])) {
             PublicMode = (integer)llJsonGetValue(changes, [KEY_PUBLIC_ACCESS]);
             logd("Delta: public_mode = " + (string)PublicMode);
         }
         
-        if (json_has(changes, [KEY_TPE_MODE])) {
+        if (jsonHas(changes, [KEY_TPE_MODE])) {
             TpeMode = (integer)llJsonGetValue(changes, [KEY_TPE_MODE]);
             logd("Delta: tpe_mode = " + (string)TpeMode);
         }
         
-        if (json_has(changes, [KEY_OWNER_KEY])) {
+        if (jsonHas(changes, [KEY_OWNER_KEY])) {
             OwnerKey = (key)llJsonGetValue(changes, [KEY_OWNER_KEY]);
             logd("Delta: owner_key = " + (string)OwnerKey);
             // Enforce exclusivity after owner change
-            enforce_role_exclusivity();
+            enforceRoleExclusivity();
         }
     }
     else if (op == "list_add") {
-        if (!json_has(msg, ["key"])) return;
-        if (!json_has(msg, ["elem"])) return;
+        if (!jsonHas(msg, ["key"])) return;
+        if (!jsonHas(msg, ["elem"])) return;
         
         string key_name = llJsonGetValue(msg, ["key"]);
         string elem = llJsonGetValue(msg, ["elem"]);
@@ -395,7 +395,7 @@ apply_settings_delta(string msg) {
                 OwnerKeys += [elem];
                 logd("Delta: added owner " + elem);
                 // Enforce exclusivity after adding owner
-                enforce_role_exclusivity();
+                enforceRoleExclusivity();
             }
         }
         else if (key_name == KEY_TRUSTEES) {
@@ -403,7 +403,7 @@ apply_settings_delta(string msg) {
                 TrusteeList += [elem];
                 logd("Delta: added trustee " + elem);
                 // Enforce exclusivity after adding trustee
-                enforce_role_exclusivity();
+                enforceRoleExclusivity();
             }
         }
         else if (key_name == KEY_BLACKLIST) {
@@ -414,8 +414,8 @@ apply_settings_delta(string msg) {
         }
     }
     else if (op == "list_remove") {
-        if (!json_has(msg, ["key"])) return;
-        if (!json_has(msg, ["elem"])) return;
+        if (!jsonHas(msg, ["key"])) return;
+        if (!jsonHas(msg, ["elem"])) return;
         
         string key_name = llJsonGetValue(msg, ["key"]);
         string elem = llJsonGetValue(msg, ["elem"]);
@@ -451,14 +451,14 @@ apply_settings_delta(string msg) {
    MESSAGE HANDLERS
    =============================================================== */
 
-handle_acl_query(string msg) {
-    if (!json_has(msg, ["avatar"])) return;
+handleAclQuery(string msg) {
+    if (!jsonHas(msg, ["avatar"])) return;
     
     key av = (key)llJsonGetValue(msg, ["avatar"]);
     if (av == NULL_KEY) return;
     
     string correlation_id = "";
-    if (json_has(msg, ["id"])) {
+    if (jsonHas(msg, ["id"])) {
         correlation_id = llJsonGetValue(msg, ["id"]);
     }
     
@@ -475,7 +475,7 @@ handle_acl_query(string msg) {
         return;
     }
     
-    send_acl_result(av, correlation_id);
+    sendAclResult(av, correlation_id);
 }
 
 /* ===============================================================
@@ -498,24 +498,24 @@ default
     }
     
     link_message(integer sender, integer num, string msg, key id) {
-        if (!json_has(msg, ["type"])) return;
+        if (!jsonHas(msg, ["type"])) return;
         
         string msg_type = llJsonGetValue(msg, ["type"]);
         
         /* ===== AUTH BUS ===== */
         if (num == AUTH_BUS) {
             if (msg_type == "acl_query") {
-                handle_acl_query(msg);
+                handleAclQuery(msg);
             }
         }
         
         /* ===== SETTINGS BUS ===== */
         else if (num == SETTINGS_BUS) {
             if (msg_type == "settings_sync") {
-                apply_settings_sync(msg);
+                applySettingsSync(msg);
             }
             else if (msg_type == "settings_delta") {
-                apply_settings_delta(msg);
+                applySettingsDelta(msg);
             }
         }
     }

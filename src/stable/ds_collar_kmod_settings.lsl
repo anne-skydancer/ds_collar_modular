@@ -81,7 +81,7 @@ integer logd(string msg) {
     return FALSE;
 }
 
-integer json_has(string j, list path) {
+integer jsonHas(string j, list path) {
     return (llJsonGetValue(j, path) != JSON_INVALID);
 }
 
@@ -280,7 +280,7 @@ integer apply_trustee_add_guard(string who) {
     return TRUE;
 }
 
-apply_blacklist_add_guard(string who) {
+applyBlacklistAddGuard(string who) {
     // Remove from trustees
     string trustees_arr = kv_get(KEY_TRUSTEES);
     if (is_json_arr(trustees_arr)) {
@@ -306,7 +306,7 @@ apply_blacklist_add_guard(string who) {
    BROADCASTING
    =============================================================== */
 
-broadcast_full_sync() {
+broadcastFullSync() {
     string msg = llList2Json(JSON_OBJECT, [
         "type", "settings_sync",
         "kv", KvJson
@@ -315,7 +315,7 @@ broadcast_full_sync() {
     logd("Broadcast: full sync");
 }
 
-broadcast_delta_scalar(string key_name, string new_value) {
+broadcastDeltaScalar(string key_name, string new_value) {
     string changes = llList2Json(JSON_OBJECT, [
         key_name, new_value
     ]);
@@ -330,7 +330,7 @@ broadcast_delta_scalar(string key_name, string new_value) {
     logd("Broadcast: delta set " + key_name);
 }
 
-broadcast_delta_list_add(string key_name, string elem) {
+broadcastDeltaListAdd(string key_name, string elem) {
     string msg = llList2Json(JSON_OBJECT, [
         "type", "settings_delta",
         "op", "list_add",
@@ -342,7 +342,7 @@ broadcast_delta_list_add(string key_name, string elem) {
     logd("Broadcast: delta list_add " + key_name);
 }
 
-broadcast_delta_list_remove(string key_name, string elem) {
+broadcastDeltaListRemove(string key_name, string elem) {
     string msg = llList2Json(JSON_OBJECT, [
         "type", "settings_delta",
         "op", "list_remove",
@@ -388,7 +388,7 @@ integer is_notecard_only_key(string k) {
    NOTECARD PARSING
    =============================================================== */
 
-parse_notecard_line(string line) {
+parseNotecardLine(string line) {
     line = llStringTrim(line, STRING_TRIM);
     
     if (line == "") return;
@@ -447,7 +447,7 @@ parse_notecard_line(string line) {
             integer i = 0;
             integer len = llGetListLength(parsed_list);
             while (i < len) {
-                apply_blacklist_add_guard(llList2String(parsed_list, i));
+                applyBlacklistAddGuard(llList2String(parsed_list, i));
                 i += 1;
             }
         }
@@ -488,12 +488,12 @@ integer start_notecard_reading() {
    MESSAGE HANDLERS
    =============================================================== */
 
-handle_settings_get() {
-    broadcast_full_sync();
+handleSettingsGet() {
+    broadcastFullSync();
 }
 
-handle_set(string msg) {
-    if (!json_has(msg, ["key"])) return;
+handleSet(string msg) {
+    if (!jsonHas(msg, ["key"])) return;
     
     string key_name = llJsonGetValue(msg, ["key"]);
     if (!is_allowed_key(key_name)) return;
@@ -505,7 +505,7 @@ handle_set(string msg) {
     integer did_change = FALSE;
     
     // Bulk list set
-    if (json_has(msg, ["values"])) {
+    if (jsonHas(msg, ["values"])) {
         string values_arr = llJsonGetValue(msg, ["values"]);
         if (is_json_arr(values_arr)) {
             list new_list = llJson2List(values_arr);
@@ -534,7 +534,7 @@ handle_set(string msg) {
                 integer i = 0;
                 integer len = llGetListLength(new_list);
                 while (i < len) {
-                    apply_blacklist_add_guard(llList2String(new_list, i));
+                    applyBlacklistAddGuard(llList2String(new_list, i));
                     i += 1;
                 }
             }
@@ -542,14 +542,14 @@ handle_set(string msg) {
             did_change = kv_set_list(key_name, new_list);
             
             if (did_change) {
-                broadcast_full_sync();  // Bulk operations get full sync
+                broadcastFullSync();  // Bulk operations get full sync
             }
         }
         return;
     }
     
     // Scalar set
-    if (json_has(msg, ["value"])) {
+    if (jsonHas(msg, ["value"])) {
         string value = llJsonGetValue(msg, ["value"]);
         
         if (key_name == KEY_PUBLIC_ACCESS) value = normalize_bool(value);
@@ -577,14 +577,14 @@ handle_set(string msg) {
         did_change = kv_set_scalar(key_name, value);
         
         if (did_change) {
-            broadcast_delta_scalar(key_name, value);
+            broadcastDeltaScalar(key_name, value);
         }
     }
 }
 
-handle_list_add(string msg) {
-    if (!json_has(msg, ["key"])) return;
-    if (!json_has(msg, ["elem"])) return;
+handleListAdd(string msg) {
+    if (!jsonHas(msg, ["key"])) return;
+    if (!jsonHas(msg, ["elem"])) return;
     
     string key_name = llJsonGetValue(msg, ["key"]);
     string elem = llJsonGetValue(msg, ["elem"]);
@@ -608,7 +608,7 @@ handle_list_add(string msg) {
         }
     }
     else if (key_name == KEY_BLACKLIST) {
-        apply_blacklist_add_guard(elem);
+        applyBlacklistAddGuard(elem);
         did_change = kv_list_add_unique(key_name, elem);
     }
     else {
@@ -616,13 +616,13 @@ handle_list_add(string msg) {
     }
     
     if (did_change) {
-        broadcast_delta_list_add(key_name, elem);
+        broadcastDeltaListAdd(key_name, elem);
     }
 }
 
-handle_list_remove(string msg) {
-    if (!json_has(msg, ["key"])) return;
-    if (!json_has(msg, ["elem"])) return;
+handleListRemove(string msg) {
+    if (!jsonHas(msg, ["key"])) return;
+    if (!jsonHas(msg, ["elem"])) return;
     
     string key_name = llJsonGetValue(msg, ["key"]);
     string elem = llJsonGetValue(msg, ["elem"]);
@@ -632,7 +632,7 @@ handle_list_remove(string msg) {
     integer did_change = kv_list_remove_all(key_name, elem);
     
     if (did_change) {
-        broadcast_delta_list_remove(key_name, elem);
+        broadcastDeltaListRemove(key_name, elem);
     }
 }
 
@@ -649,7 +649,7 @@ default
         integer notecard_found = start_notecard_reading();
         
         if (!notecard_found) {
-            broadcast_full_sync();
+            broadcastFullSync();
         }
     }
     
@@ -703,7 +703,7 @@ default
         if (query_id != NotecardQuery) return;
         
         if (data != EOF) {
-            parse_notecard_line(data);
+            parseNotecardLine(data);
             
             NotecardLine += 1;
             NotecardQuery = llGetNotecardLine(NOTECARD_NAME, NotecardLine);
@@ -711,27 +711,27 @@ default
         else {
             IsLoadingNotecard = FALSE;
             logd("Notecard loading complete");
-            broadcast_full_sync();
+            broadcastFullSync();
         }
     }
     
     link_message(integer sender, integer num, string msg, key id) {
         if (num != SETTINGS_BUS) return;
-        if (!json_has(msg, ["type"])) return;
+        if (!jsonHas(msg, ["type"])) return;
         
         string msg_type = llJsonGetValue(msg, ["type"]);
         
         if (msg_type == "settings_get") {
-            handle_settings_get();
+            handleSettingsGet();
         }
         else if (msg_type == "set") {
-            handle_set(msg);
+            handleSet(msg);
         }
         else if (msg_type == "list_add") {
-            handle_list_add(msg);
+            handleListAdd(msg);
         }
         else if (msg_type == "list_remove") {
-            handle_list_remove(msg);
+            handleListRemove(msg);
         }
     }
 }

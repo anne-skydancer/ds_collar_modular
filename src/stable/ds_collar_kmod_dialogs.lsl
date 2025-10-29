@@ -53,7 +53,7 @@ integer logd(string msg) {
     return FALSE;
 }
 
-integer json_has(string j, list path) {
+integer jsonHas(string j, list path) {
     return (llJsonGetValue(j, path) != JSON_INVALID);
 }
 
@@ -65,7 +65,7 @@ integer now() {
    SESSION MANAGEMENT
    =============================================================== */
 
-integer find_session_idx(string session_id) {
+integer findSessionIdx(string session_id) {
     integer i = 0;
     integer len = llGetListLength(Sessions);
     while (i < len) {
@@ -77,7 +77,7 @@ integer find_session_idx(string session_id) {
     return -1;
 }
 
-close_session_at_idx(integer idx) {
+closeSessionAtIdx(integer idx) {
     if (idx < 0) return;
     
     integer listen_handle = llList2Integer(Sessions, idx + SESSION_LISTEN);
@@ -91,14 +91,14 @@ close_session_at_idx(integer idx) {
     Sessions = llDeleteSubList(Sessions, idx, idx + SESSION_STRIDE - 1);
 }
 
-close_session(string session_id) {
-    integer idx = find_session_idx(session_id);
+closeSession(string session_id) {
+    integer idx = findSessionIdx(session_id);
     if (idx != -1) {
-        close_session_at_idx(idx);
+        closeSessionAtIdx(idx);
     }
 }
 
-prune_expired_sessions() {
+pruneExpiredSessions() {
     integer now_unix = now();
     integer i = 0;
     
@@ -119,7 +119,7 @@ prune_expired_sessions() {
             
             logd("Session timeout: " + session_id);
             
-            close_session_at_idx(i);
+            closeSessionAtIdx(i);
             // Don't increment i, list shifted
         }
         else {
@@ -166,12 +166,12 @@ integer get_next_channel() {
    DIALOG DISPLAY
    =============================================================== */
 
-handle_dialog_open(string msg) {
-    if (!json_has(msg, ["session_id"])) {
+handleDialogOpen(string msg) {
+    if (!jsonHas(msg, ["session_id"])) {
         logd("ERROR: dialog_open missing session_id");
         return;
     }
-    if (!json_has(msg, ["user"])) {
+    if (!jsonHas(msg, ["user"])) {
         logd("ERROR: dialog_open missing user");
         return;
     }
@@ -180,13 +180,13 @@ handle_dialog_open(string msg) {
     key user = (key)llJsonGetValue(msg, ["user"]);
     
     // Check for numbered list type
-    if (json_has(msg, ["dialog_type"]) && llJsonGetValue(msg, ["dialog_type"]) == "numbered_list") {
-        handle_numbered_list_dialog(msg, session_id, user);
+    if (jsonHas(msg, ["dialog_type"]) && llJsonGetValue(msg, ["dialog_type"]) == "numbered_list") {
+        handleNumberedListDialog(msg, session_id, user);
         return;
     }
     
     // Standard dialog
-    if (!json_has(msg, ["buttons"])) {
+    if (!jsonHas(msg, ["buttons"])) {
         logd("ERROR: dialog_open missing buttons");
         return;
     }
@@ -195,29 +195,29 @@ handle_dialog_open(string msg) {
     string message = "Select an option:";
     integer timeout = 60;
     
-    if (json_has(msg, ["title"])) {
+    if (jsonHas(msg, ["title"])) {
         title = llJsonGetValue(msg, ["title"]);
     }
-    if (json_has(msg, ["body"])) {
+    if (jsonHas(msg, ["body"])) {
         message = llJsonGetValue(msg, ["body"]);
     }
-    else if (json_has(msg, ["message"])) {
+    else if (jsonHas(msg, ["message"])) {
         message = llJsonGetValue(msg, ["message"]);
     }
-    if (json_has(msg, ["timeout"])) {
+    if (jsonHas(msg, ["timeout"])) {
         timeout = (integer)llJsonGetValue(msg, ["timeout"]);
     }
     
     // Close existing session with same ID
-    integer existing_idx = find_session_idx(session_id);
+    integer existing_idx = findSessionIdx(session_id);
     if (existing_idx != -1) {
-        close_session_at_idx(existing_idx);
+        closeSessionAtIdx(existing_idx);
     }
     
     // Enforce session limit
     if (llGetListLength(Sessions) / SESSION_STRIDE >= SESSION_MAX) {
         // Close oldest session
-        close_session_at_idx(0);
+        closeSessionAtIdx(0);
         logd("Session limit reached, closed oldest");
     }
     
@@ -244,8 +244,8 @@ handle_dialog_open(string msg) {
     logd("Opened dialog: " + session_id + " for " + llKey2Name(user) + " on channel " + (string)channel);
 }
 
-handle_numbered_list_dialog(string msg, string session_id, key user) {
-    if (!json_has(msg, ["items"])) {
+handleNumberedListDialog(string msg, string session_id, key user) {
+    if (!jsonHas(msg, ["items"])) {
         logd("ERROR: numbered_list missing items");
         return;
     }
@@ -254,13 +254,13 @@ handle_numbered_list_dialog(string msg, string session_id, key user) {
     string prompt = "Choose:";
     integer timeout = 60;
     
-    if (json_has(msg, ["title"])) {
+    if (jsonHas(msg, ["title"])) {
         title = llJsonGetValue(msg, ["title"]);
     }
-    if (json_has(msg, ["prompt"])) {
+    if (jsonHas(msg, ["prompt"])) {
         prompt = llJsonGetValue(msg, ["prompt"]);
     }
-    if (json_has(msg, ["timeout"])) {
+    if (jsonHas(msg, ["timeout"])) {
         timeout = (integer)llJsonGetValue(msg, ["timeout"]);
     }
     
@@ -296,14 +296,14 @@ handle_numbered_list_dialog(string msg, string session_id, key user) {
     }
     
     // Close existing session with same ID
-    integer existing_idx = find_session_idx(session_id);
+    integer existing_idx = findSessionIdx(session_id);
     if (existing_idx != -1) {
-        close_session_at_idx(existing_idx);
+        closeSessionAtIdx(existing_idx);
     }
     
     // Enforce session limit
     if (llGetListLength(Sessions) / SESSION_STRIDE >= SESSION_MAX) {
-        close_session_at_idx(0);
+        closeSessionAtIdx(0);
         logd("Session limit reached, closed oldest");
     }
     
@@ -326,11 +326,11 @@ handle_numbered_list_dialog(string msg, string session_id, key user) {
     logd("Opened numbered list: " + session_id + " (" + (string)item_count + " items)");
 }
 
-handle_dialog_close(string msg) {
-    if (!json_has(msg, ["session_id"])) return;
+handleDialogClose(string msg) {
+    if (!jsonHas(msg, ["session_id"])) return;
     
     string session_id = llJsonGetValue(msg, ["session_id"]);
-    close_session(session_id);
+    closeSession(session_id);
 }
 
 /* ===============================================================
@@ -350,7 +350,7 @@ default
     }
     
     timer() {
-        prune_expired_sessions();
+        pruneExpiredSessions();
     }
     
     listen(integer channel, string name, key id, string message) {
@@ -384,7 +384,7 @@ default
                 logd("Button click: " + message + " from " + llKey2Name(id));
                 
                 // Close session after response
-                close_session_at_idx(i);
+                closeSessionAtIdx(i);
                 return;
             }
             
@@ -395,15 +395,15 @@ default
     
     link_message(integer sender, integer num, string msg, key id) {
         if (num != DIALOG_BUS) return;
-        if (!json_has(msg, ["type"])) return;
+        if (!jsonHas(msg, ["type"])) return;
         
         string msg_type = llJsonGetValue(msg, ["type"]);
         
         if (msg_type == "dialog_open") {
-            handle_dialog_open(msg);
+            handleDialogOpen(msg);
         }
         else if (msg_type == "dialog_close") {
-            handle_dialog_close(msg);
+            handleDialogClose(msg);
         }
     }
     
