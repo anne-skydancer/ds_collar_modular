@@ -532,7 +532,7 @@ handleButton(string btn) {
             llSensor("", NULL_KEY, AGENT, 10.0, PI);
         }
         else if (btn == "Rem Trustee") {
-            show_removeTrustee();
+            showRemoveTrustee();
         }
         return;
     }
