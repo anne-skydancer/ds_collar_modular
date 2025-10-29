@@ -51,6 +51,7 @@ integer PUBLIC_DISCOVERY_CHAN = -8675309;
 integer PUBLIC_DISCOVERY_REPLY_CHAN = -8675310;
 
 // Phase 2: Session channels (derived from HUD wearer + collar owner, negotiated per-session)
+integer SESSION_BASE_CHAN = -8675320;  // Base channel for session derivation (must match HUD)
 integer SESSION_QUERY_CHAN = 0;
 integer SESSION_REPLY_CHAN = 0;
 integer SESSION_MENU_CHAN = 0;
@@ -273,9 +274,14 @@ sendExternalAclResponse(key hud_wearer, integer level) {
         "collar_owner", (string)CollarOwner
     ]);
 
-    // Send response on session reply channel
-    llRegionSay(SESSION_REPLY_CHAN, msg);
-    logd("Sent ACL response: hud_wearer=" + llKey2Name(hud_wearer) + ", level=" + (string)level);
+    // CRITICAL: Derive reply channel from hud_wearer parameter, not global SESSION_REPLY_CHAN
+    // This prevents race conditions when multiple HUDs establish sessions concurrently
+    integer hud_session_query = deriveSessionChannel(SESSION_BASE_CHAN, hud_wearer, CollarOwner);
+    integer hud_session_reply = hud_session_query - 1;
+
+    // Send response on THIS hud's session reply channel
+    llRegionSay(hud_session_reply, msg);
+    logd("Sent ACL response: hud_wearer=" + llKey2Name(hud_wearer) + ", level=" + (string)level + " on channel " + (string)hud_session_reply);
 }
 
 /* ===============================================================
@@ -319,7 +325,7 @@ handleSessionEstablish(string message) {
     logd("Establishing session with HUD wearer: " + llKey2Name(hud_wearer));
 
     // Derive session channels (must match HUD's calculation exactly)
-    SESSION_QUERY_CHAN = deriveSessionChannel(-8675320, hud_wearer, CollarOwner);
+    SESSION_QUERY_CHAN = deriveSessionChannel(SESSION_BASE_CHAN, hud_wearer, CollarOwner);
     SESSION_REPLY_CHAN = SESSION_QUERY_CHAN - 1;
     SESSION_MENU_CHAN = SESSION_QUERY_CHAN - 2;
 
@@ -340,6 +346,16 @@ handleSessionEstablish(string message) {
     logd("Session established - Query=" + (string)SESSION_QUERY_CHAN +
          " Reply=" + (string)SESSION_REPLY_CHAN +
          " Menu=" + (string)SESSION_MENU_CHAN);
+
+    // Send acknowledgment to HUD on public reply channel
+    string ack_msg = llList2Json(JSON_OBJECT, [
+        "type", "session_established_ack",
+        "collar_owner", (string)CollarOwner,
+        "hud_wearer", (string)hud_wearer
+    ]);
+
+    llRegionSay(PUBLIC_DISCOVERY_REPLY_CHAN, ack_msg);
+    logd("Sent session acknowledgment to " + llKey2Name(hud_wearer));
 }
 
 /* ===============================================================

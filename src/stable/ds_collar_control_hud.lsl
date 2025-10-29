@@ -29,6 +29,7 @@ integer PUBLIC_DISCOVERY_CHAN = -8675309;
 integer PUBLIC_DISCOVERY_REPLY_CHAN = -8675310;
 
 // Phase 2: Session channels (derived from HUD wearer + collar owner after selection)
+integer SESSION_BASE_CHAN = -8675320;  // Base channel for session derivation
 integer SESSION_QUERY_CHAN;
 integer SESSION_REPLY_CHAN;
 integer SESSION_MENU_CHAN;
@@ -59,6 +60,7 @@ integer CollarListenHandle = 0;
 integer DialogListenHandle = 0;
 
 integer ScanningForCollars = FALSE;
+integer SessionPending = FALSE;  // Waiting for session establishment acknowledgment
 integer AclPending = FALSE;
 integer AclLevel = ACL_NOACCESS;
 
@@ -106,8 +108,9 @@ cleanupSession() {
         llListenRemove(DialogListenHandle);
         DialogListenHandle = 0;
     }
-    
+
     ScanningForCollars = FALSE;
+    SessionPending = FALSE;
     AclPending = FALSE;
     AclLevel = ACL_NOACCESS;
     TargetCollarKey = NULL_KEY;
@@ -223,16 +226,21 @@ showCollarSelectionDialog() {
    SESSION ESTABLISHMENT
    =============================================================== */
 
-establishSession(key collar_owner) {
+deriveSessionChannels(key collar_owner) {
     // Phase 2: Derive secure session channels from both HUD wearer + collar owner
-    SESSION_QUERY_CHAN = deriveSessionChannel(-8675320, HudWearer, collar_owner);
+    SESSION_QUERY_CHAN = deriveSessionChannel(SESSION_BASE_CHAN, HudWearer, collar_owner);
     SESSION_REPLY_CHAN = SESSION_QUERY_CHAN - 1;
     SESSION_MENU_CHAN = SESSION_QUERY_CHAN - 2;
 
-    logd("Session channels established:");
+    logd("Session channels derived:");
     logd("  Query=" + (string)SESSION_QUERY_CHAN);
     logd("  Reply=" + (string)SESSION_REPLY_CHAN);
     logd("  Menu=" + (string)SESSION_MENU_CHAN);
+}
+
+requestSessionEstablishment(key collar_owner) {
+    // Derive session channels
+    deriveSessionChannels(collar_owner);
 
     // Notify collar about session establishment
     string json_msg = llList2Json(JSON_OBJECT, [
@@ -246,6 +254,17 @@ establishSession(key collar_owner) {
 
     // Send session establishment on public channel (collar still listening there)
     llRegionSay(PUBLIC_DISCOVERY_CHAN, json_msg);
+
+    // Set up listener for session acknowledgment (on public reply channel)
+    if (CollarListenHandle != 0) {
+        llListenRemove(CollarListenHandle);
+    }
+    CollarListenHandle = llListen(PUBLIC_DISCOVERY_REPLY_CHAN, "", NULL_KEY, "");
+
+    SessionPending = TRUE;
+    llSetTimerEvent(QUERY_TIMEOUT_SEC);
+
+    logd("Requesting session establishment for " + llKey2Name(collar_owner));
 }
 
 /* ===============================================================
@@ -253,15 +272,19 @@ establishSession(key collar_owner) {
    =============================================================== */
 
 requestAclFromCollar(key avatar_key) {
-    // First establish session with this collar
-    establishSession(avatar_key);
+    // First request session establishment (will wait for ack before sending ACL query)
+    TargetAvatarKey = avatar_key;
+    TargetAvatarName = llKey2Name(avatar_key);
+    requestSessionEstablishment(avatar_key);
+}
 
-    // Send ACL query on session channel
+sendAclQuery() {
+    // Send ACL query on session channel (called after session is established)
     string json_msg = llList2Json(JSON_OBJECT, [
         "type", "acl_query_external",
         "avatar", (string)HudWearer,
         "hud", (string)llGetKey(),
-        "target_avatar", (string)avatar_key
+        "target_avatar", (string)TargetAvatarKey
     ]);
 
     if (CollarListenHandle != 0) {
@@ -272,8 +295,6 @@ requestAclFromCollar(key avatar_key) {
     llRegionSay(SESSION_QUERY_CHAN, json_msg);
 
     AclPending = TRUE;
-    TargetAvatarKey = avatar_key;
-    TargetAvatarName = llKey2Name(avatar_key);
     llSetTimerEvent(QUERY_TIMEOUT_SEC);
 
     logd("ACL query sent for " + TargetAvatarName + " on session channel");
@@ -440,6 +461,29 @@ default {
             addDetectedCollar(collar_owner, id, owner_name);
             return;
         }
+
+        // Handle session establishment acknowledgment (on public reply channel)
+        if (channel == PUBLIC_DISCOVERY_REPLY_CHAN && SessionPending) {
+            if (!jsonHas(message, ["type"])) return;
+
+            string msg_type = llJsonGetValue(message, ["type"]);
+            if (msg_type != "session_established_ack") return;
+
+            if (!jsonHas(message, ["collar_owner"])) return;
+            key collar_owner = (key)llJsonGetValue(message, ["collar_owner"]);
+
+            // Verify this ack is for the collar we're trying to connect to
+            if (collar_owner != TargetAvatarKey) return;
+
+            logd("Session established with " + llKey2Name(collar_owner));
+            llOwnerSay("Session established with " + TargetAvatarName);
+
+            // Session is ready, now we can send the ACL query
+            SessionPending = FALSE;
+            TargetCollarKey = id;  // Save collar object key
+            sendAclQuery();
+            return;
+        }
         
         // Handle collar selection dialog
         if (channel == DIALOG_CHANNEL) {
@@ -519,17 +563,20 @@ default {
             logd("Collar scan complete");
             processScanResults();
         }
+        else if (SessionPending) {
+            logd("Session establishment timeout");
+            llOwnerSay("[FAIL] Session establishment failed: No response from " + TargetAvatarName);
+            cleanupSession();
+        }
+        else if (AclPending) {
+            logd("ACL query timeout");
+            llOwnerSay("[FAIL] Connection failed: No response from " + TargetAvatarName);
+            cleanupSession();
+        }
         else {
-            if (AclPending) {
-                logd("ACL query timeout");
-                llOwnerSay("[FAIL] Connection failed: No response from " + TargetAvatarName);
-                cleanupSession();
-            }
-            else {
-                logd("Dialog timeout");
-                llOwnerSay("Selection dialog timed out.");
-                cleanupSession();
-            }
+            logd("Dialog timeout");
+            llOwnerSay("Selection dialog timed out.");
+            cleanupSession();
         }
     }
 }
