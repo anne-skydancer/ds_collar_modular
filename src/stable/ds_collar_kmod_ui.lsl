@@ -83,7 +83,7 @@ integer jsonHas(string j, list path) {
     return (llJsonGetValue(j, path) != JSON_INVALID);
 }
 
-string generate_session_id(key user) {
+string generateSessionId(key user) {
     return "ui_" + (string)user + "_" + (string)llGetUnixTime();
 }
 
@@ -191,7 +191,7 @@ createSession(key user, integer acl, integer is_blacklisted) {
     FilteredPluginsData += filtered;
     
     // SECURITY FIX: Add timestamp to session
-    string session_id = generate_session_id(user);
+    string session_id = generateSessionId(user);
     integer created_time = llGetUnixTime();
     Sessions += [user, acl, is_blacklisted, 0, 0, session_id, filtered_start, created_time];
     

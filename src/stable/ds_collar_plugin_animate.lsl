@@ -64,7 +64,7 @@ integer jsonHas(string j, list path) {
     return (llJsonGetValue(j, path) != JSON_INVALID);
 }
 
-string generate_session_id() {
+string generateSessionId() {
     return PLUGIN_CONTEXT + "_" + (string)llGetUnixTime();
 }
 
@@ -207,7 +207,7 @@ handleAclResult(string msg) {
    =============================================================== */
 
 showAnimationMenu(integer page) {
-    SessionId = generate_session_id();
+    SessionId = generateSessionId();
     CurrentPage = page;
     
     integer total_anims = llGetListLength(AnimationList);

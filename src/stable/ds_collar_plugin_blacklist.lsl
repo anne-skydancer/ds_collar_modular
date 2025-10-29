@@ -86,19 +86,19 @@ integer logd(string msg) {
     return FALSE;
 }
 
-integer json_has(string j, list path) {
+integer jsonHas(string j, list path) {
     return (llJsonGetValue(j, path) != JSON_INVALID);
 }
 
-string generate_session_id() {
+string generateSessionId() {
     return "blacklist_" + (string)llGetKey() + "_" + (string)llGetUnixTime();
 }
 
-integer in_allowed_levels(integer level) {
+integer inAllowedLevels(integer level) {
     return (llListFindList(ALLOWED_ACL_LEVELS, [level]) != -1);
 }
 
-list blacklist_names() {
+list blacklistNames() {
     list out = [];
     integer i = 0;
     integer count = llGetListLength(Blacklist);
@@ -141,30 +141,30 @@ sendPong() {
    =============================================================== */
 
 applySettingsSync(string msg) {
-    if (!json_has(msg, ["kv"])) return;
+    if (!jsonHas(msg, ["kv"])) return;
     
     string kv_json = llJsonGetValue(msg, ["kv"]);
     applyBlacklistPayload(kv_json);
 }
 
 applySettingsDelta(string msg) {
-    if (!json_has(msg, ["op"])) return;
-    
+    if (!jsonHas(msg, ["op"])) return;
+
     string op = llJsonGetValue(msg, ["op"]);
-    
+
     if (op == "set") {
-        if (!json_has(msg, ["changes"])) return;
+        if (!jsonHas(msg, ["changes"])) return;
         string changes = llJsonGetValue(msg, ["changes"]);
-        
-        if (json_has(changes, [KEY_BLACKLIST])) {
+
+        if (jsonHas(changes, [KEY_BLACKLIST])) {
             string new_value = llJsonGetValue(changes, [KEY_BLACKLIST]);
             parseBlacklistValue(new_value);
             logd("Delta set applied");
         }
     }
     else if (op == "list_add") {
-        if (!json_has(msg, ["key"])) return;
-        if (!json_has(msg, ["elem"])) return;
+        if (!jsonHas(msg, ["key"])) return;
+        if (!jsonHas(msg, ["elem"])) return;
         
         string setting_key = llJsonGetValue(msg, ["key"]);
         if (setting_key == KEY_BLACKLIST) {
@@ -176,8 +176,8 @@ applySettingsDelta(string msg) {
         }
     }
     else if (op == "list_remove") {
-        if (!json_has(msg, ["key"])) return;
-        if (!json_has(msg, ["elem"])) return;
+        if (!jsonHas(msg, ["key"])) return;
+        if (!jsonHas(msg, ["elem"])) return;
         
         string setting_key = llJsonGetValue(msg, ["key"]);
         if (setting_key == KEY_BLACKLIST) {
@@ -192,7 +192,7 @@ applySettingsDelta(string msg) {
 }
 
 applyBlacklistPayload(string kv_json) {
-    if (!json_has(kv_json, [KEY_BLACKLIST])) {
+    if (!jsonHas(kv_json, [KEY_BLACKLIST])) {
         logd("No blacklist key in settings");
         Blacklist = [];
         return;
@@ -266,17 +266,17 @@ requestAcl(key user_key) {
 }
 
 handleAclResult(string msg) {
-    if (!json_has(msg, ["avatar"])) return;
-    if (!json_has(msg, ["level"])) return;
-    
+    if (!jsonHas(msg, ["avatar"])) return;
+    if (!jsonHas(msg, ["level"])) return;
+
     key avatar = (key)llJsonGetValue(msg, ["avatar"]);
     if (avatar != CurrentUser) return;
-    
+
     integer level = (integer)llJsonGetValue(msg, ["level"]);
     CurrentUserAcl = level;
-    
+
     // Check access
-    if (!in_allowed_levels(level)) {
+    if (!inAllowedLevels(level)) {
         llRegionSayTo(CurrentUser, 0, "Access denied.");
         returnToRoot();
         return;
@@ -301,7 +301,7 @@ showMainMenu() {
         BTN_REMOVE
     ];
     
-    SessionId = generate_session_id();
+    SessionId = generateSessionId();
     MenuContext = "main";
     
     string msg = llList2Json(JSON_OBJECT, [
@@ -325,9 +325,9 @@ showRemoveMenu() {
         return;
     }
     
-    list names = blacklist_names();
-    
-    SessionId = generate_session_id();
+    list names = blacklistNames();
+
+    SessionId = generateSessionId();
     MenuContext = "remove";
     
     string msg = llList2Json(JSON_OBJECT, [
@@ -364,7 +364,7 @@ showAddCandidates() {
         i += 1;
     }
     
-    SessionId = generate_session_id();
+    SessionId = generateSessionId();
     MenuContext = "add_pick";
     
     string msg = llList2Json(JSON_OBJECT, [
@@ -413,17 +413,17 @@ cleanupSession() {
    =============================================================== */
 
 handleDialogResponse(string msg) {
-    if (!json_has(msg, ["session_id"])) return;
-    if (!json_has(msg, ["button"])) return;
-    
+    if (!jsonHas(msg, ["session_id"])) return;
+    if (!jsonHas(msg, ["button"])) return;
+
     string session = llJsonGetValue(msg, ["session_id"]);
     if (session != SessionId) return;
-    
+
     string button = llJsonGetValue(msg, ["button"]);
     logd("Button pressed: " + button + " in context: " + MenuContext);
-    
+
     // Re-validate ACL
-    if (!in_allowed_levels(CurrentUserAcl)) {
+    if (!inAllowedLevels(CurrentUserAcl)) {
         llRegionSayTo(CurrentUser, 0, "Access denied.");
         returnToRoot();
         return;
@@ -488,7 +488,7 @@ handleDialogResponse(string msg) {
 }
 
 handleDialogTimeout(string msg) {
-    if (!json_has(msg, ["session_id"])) return;
+    if (!jsonHas(msg, ["session_id"])) return;
     
     string session = llJsonGetValue(msg, ["session_id"]);
     if (session != SessionId) return;
@@ -526,7 +526,7 @@ default {
     }
     
     link_message(integer sender, integer num, string msg, key id) {
-        if (!json_has(msg, ["type"])) return;
+        if (!jsonHas(msg, ["type"])) return;
         
         string msg_type = llJsonGetValue(msg, ["type"]);
         
@@ -563,7 +563,7 @@ default {
         /* ===== UI START ===== */
         if (num == UI_BUS) {
             if (msg_type == "start") {
-                if (!json_has(msg, ["context"])) return;
+                if (!jsonHas(msg, ["context"])) return;
                 if (llJsonGetValue(msg, ["context"]) != PLUGIN_CONTEXT) return;
                 
                 // User wants to start this plugin

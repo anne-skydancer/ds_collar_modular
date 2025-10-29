@@ -8,7 +8,7 @@
 integer DEBUG = FALSE;
 integer LEASH_HOLDER_CHAN = -192837465;
 
-integer gListen = 0;
+integer GListen = 0;
 
 integer logd(string s) { if (DEBUG) llOwnerSay("[HOLDER] " + s); return TRUE; }
 
@@ -51,8 +51,8 @@ key leashPrimKey() {
 }
 
 integer openListen() {
-    if (gListen) llListenRemove(gListen);
-    gListen = llListen(LEASH_HOLDER_CHAN, "", NULL_KEY, "");
+    if (GListen) llListenRemove(GListen);
+    GListen = llListen(LEASH_HOLDER_CHAN, "", NULL_KEY, "");
     return TRUE;
 }
 
