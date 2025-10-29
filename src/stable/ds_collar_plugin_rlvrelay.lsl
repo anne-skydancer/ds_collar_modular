@@ -163,10 +163,10 @@ stopRelayListen() {
 updateRelayListenState() {
     // Only listen if: Mode != OFF AND IsAttached
     if (Mode != MODE_OFF && IsAttached) {
-        start_relay_listen();
+        startRelayListen();
     }
     else {
-        stop_relay_listen();
+        stopRelayListen();
     }
 }
 
@@ -174,12 +174,12 @@ updateRelayListenState() {
    RELAY MANAGEMENT
    =============================================================== */
 
-integer relay_idx(key obj) {
+integer relayIdx(key obj) {
     return llListFindList(Relays, [obj]);
 }
 
-integer add_relay(key obj, string obj_name, integer chan) {
-    integer idx = relay_idx(obj);
+integer addRelay(key obj, string obj_name, integer chan) {
+    integer idx = relayIdx(obj);
     if (idx != -1) {
         // Update existing relay
         Relays = llListReplaceList(Relays, [obj, obj_name, chan, ""], idx, idx + 3);
@@ -198,8 +198,8 @@ integer add_relay(key obj, string obj_name, integer chan) {
     return TRUE;
 }
 
-integer remove_relay(key obj) {
-    integer idx = relay_idx(obj);
+integer removeRelay(key obj) {
+    integer idx = relayIdx(obj);
     if (idx != -1) {
         Relays = llDeleteSubList(Relays, idx, idx + 3);
         logd("Removed relay: " + (string)obj);
@@ -208,8 +208,8 @@ integer remove_relay(key obj) {
     return FALSE;
 }
 
-integer store_restriction(key obj, string rlv_cmd) {
-    integer idx = relay_idx(obj);
+integer storeRestriction(key obj, string rlv_cmd) {
+    integer idx = relayIdx(obj);
     if (idx != -1) {
         string current_csv = llList2String(Relays, idx + 3);
         if (current_csv == "") {
@@ -225,7 +225,7 @@ integer store_restriction(key obj, string rlv_cmd) {
 }
 
 clearRestrictions(key obj) {
-    integer idx = relay_idx(obj);
+    integer idx = relayIdx(obj);
     if (idx != -1) {
         // Use @clear per RLV spec - safer than manual reversal
         llOwnerSay("@clear");
@@ -238,7 +238,7 @@ safewordClearAll() {
     integer i = 0;
     while (i < relay_count) {
         key obj = llList2Key(Relays, i);
-        clear_restrictions(obj);
+        clearRestrictions(obj);
         i = i + 4;
     }
     Relays = [];
@@ -250,7 +250,7 @@ safewordClearAll() {
    =============================================================== */
 
 applySettingsSync(string msg) {
-    if (!json_has(msg, ["kv"])) return;
+    if (!jsonHas(msg, ["kv"])) return;
     
     string kv_json = llJsonGetValue(msg, ["kv"]);
     
@@ -259,36 +259,36 @@ applySettingsSync(string msg) {
     Hardcore = FALSE;
     
     // Load persisted values
-    if (json_has(kv_json, [KEY_RELAY_MODE])) {
+    if (jsonHas(kv_json, [KEY_RELAY_MODE])) {
         Mode = (integer)llJsonGetValue(kv_json, [KEY_RELAY_MODE]);
     }
     
-    if (json_has(kv_json, [KEY_RELAY_HARDCORE])) {
+    if (jsonHas(kv_json, [KEY_RELAY_HARDCORE])) {
         Hardcore = (integer)llJsonGetValue(kv_json, [KEY_RELAY_HARDCORE]);
     }
     
     // Update relay listen state
-    update_relay_listen_state();
+    updateRelayListenState();
     
     logd("Settings sync applied: Mode=" + (string)Mode + " Hardcore=" + (string)Hardcore);
 }
 
 applySettingsDelta(string msg) {
-    if (!json_has(msg, ["op"])) return;
+    if (!jsonHas(msg, ["op"])) return;
     
     string op = llJsonGetValue(msg, ["op"]);
     
     if (op == "set") {
-        if (!json_has(msg, ["changes"])) return;
+        if (!jsonHas(msg, ["changes"])) return;
         string changes = llJsonGetValue(msg, ["changes"]);
         
-        if (json_has(changes, [KEY_RELAY_MODE])) {
+        if (jsonHas(changes, [KEY_RELAY_MODE])) {
             Mode = (integer)llJsonGetValue(changes, [KEY_RELAY_MODE]);
             logd("Delta: mode = " + (string)Mode);
-            update_relay_listen_state();
+            updateRelayListenState();
         }
         
-        if (json_has(changes, [KEY_RELAY_HARDCORE])) {
+        if (jsonHas(changes, [KEY_RELAY_HARDCORE])) {
             Hardcore = (integer)llJsonGetValue(changes, [KEY_RELAY_HARDCORE]);
             logd("Delta: hardcore = " + (string)Hardcore);
         }
@@ -333,8 +333,8 @@ requestAcl(key user) {
 }
 
 handleAclResult(string msg) {
-    if (!json_has(msg, ["avatar"])) return;
-    if (!json_has(msg, ["level"])) return;
+    if (!jsonHas(msg, ["avatar"])) return;
+    if (!jsonHas(msg, ["level"])) return;
     
     key avatar = (key)llJsonGetValue(msg, ["avatar"]);
     if (avatar != CurrentUser) return;
@@ -347,12 +347,12 @@ handleAclResult(string msg) {
     // Check if user has sufficient access
     if (level < PLUGIN_MIN_ACL) {
         llRegionSayTo(CurrentUser, 0, "Access denied.");
-        cleanup_session();
+        cleanupSession();
         return;
     }
     
     // User has access, show menu
-    show_main_menu();
+    showMainMenu();
 }
 
 /* ===============================================================
@@ -360,7 +360,7 @@ handleAclResult(string msg) {
    =============================================================== */
 
 showMainMenu() {
-    SessionId = generate_session_id();
+    SessionId = generateSessionId();
     
     string mode_str = "OFF";
     if (Mode == MODE_ON) {
@@ -405,7 +405,7 @@ showMainMenu() {
 }
 
 showModeMenu() {
-    SessionId = generate_session_id();
+    SessionId = generateSessionId();
     
     string mode_str = "OFF";
     if (Mode == MODE_ON) {
@@ -447,7 +447,7 @@ showModeMenu() {
 }
 
 showObjectList() {
-    SessionId = generate_session_id();
+    SessionId = generateSessionId();
     
     integer relay_count = llGetListLength(Relays) / 4;
     
@@ -461,7 +461,7 @@ showObjectList() {
         while (i < relay_count) {
             integer idx = i * 4;
             string obj_name = llList2String(Relays, idx + 1);
-            message += (string)(i + 1) + ". " + truncate_name(obj_name, 20) + "\n";
+            message += (string)(i + 1) + ". " + truncateName(obj_name, 20) + "\n";
             i++;
         }
     }
@@ -488,69 +488,69 @@ showObjectList() {
 
 handleButtonClick(string button) {
     if (button == "Mode") {
-        show_mode_menu();
+        showModeMenu();
     }
     else if (button == "Bound by...") {
-        show_object_list();
+        showObjectList();
     }
     else if (button == "Safeword") {
         if ((UserAcl == 2 || UserAcl == 4) && !Hardcore) {
-            safeword_clear_all();
+            safewordClearAll();
             llRegionSayTo(CurrentUser, 0, "[RELAY] Safeword used - all restrictions cleared");
-            show_main_menu();
+            showMainMenu();
         }
     }
     else if (button == "Unbind") {
         if (UserAcl == 3 || UserAcl == 5) {
-            safeword_clear_all();
+            safewordClearAll();
             llRegionSayTo(CurrentUser, 0, "[RELAY] Unbound - all restrictions cleared");
-            show_main_menu();
+            showMainMenu();
         }
     }
     else if (button == "OFF") {
         Mode = MODE_OFF;
         Hardcore = FALSE;
-        persist_mode(MODE_OFF);
-        persist_hardcore(FALSE);
-        update_relay_listen_state();
+        persistMode(MODE_OFF);
+        persistHardcore(FALSE);
+        updateRelayListenState();
         llRegionSayTo(CurrentUser, 0, "[RELAY] Mode set to OFF");
-        show_mode_menu();
+        showModeMenu();
     }
     else if (button == "ON") {
         Mode = MODE_ON;
-        persist_mode(MODE_ON);
-        update_relay_listen_state();
+        persistMode(MODE_ON);
+        updateRelayListenState();
         if (!Hardcore) {
             llRegionSayTo(CurrentUser, 0, "[RELAY] Mode set to ON");
         }
-        show_mode_menu();
+        showModeMenu();
     }
     else if (button == "HC ON") {
         if (UserAcl == 3 || UserAcl == 5) {
             Hardcore = TRUE;
             Mode = MODE_ON;
-            persist_hardcore(TRUE);
-            persist_mode(MODE_ON);
+            persistHardcore(TRUE);
+            persistMode(MODE_ON);
             llRegionSayTo(CurrentUser, 0, "[RELAY] Hardcore mode ENABLED");
-            show_mode_menu();
+            showModeMenu();
         }
     }
     else if (button == "HC OFF") {
         if (UserAcl == 3 || UserAcl == 5) {
             Hardcore = FALSE;
             Mode = MODE_ON;
-            persist_hardcore(FALSE);
-            persist_mode(MODE_ON);
+            persistHardcore(FALSE);
+            persistMode(MODE_ON);
             llRegionSayTo(CurrentUser, 0, "[RELAY] Hardcore mode DISABLED");
-            show_mode_menu();
+            showModeMenu();
         }
     }
     else if (button == "Back") {
-        return_to_root();
+        returnToRoot();
     }
     else {
         // Unknown button, reshow menu
-        show_main_menu();
+        showMainMenu();
     }
 }
 
@@ -566,7 +566,7 @@ returnToRoot() {
     ]);
     llMessageLinked(LINK_SET, UI_BUS, msg, CurrentUser);
     
-    cleanup_session();
+    cleanupSession();
     logd("Returning to root menu");
 }
 
@@ -578,7 +578,7 @@ closeSilent() {
     ]);
     llMessageLinked(LINK_SET, UI_BUS, msg, CurrentUser);
     
-    cleanup_session();
+    cleanupSession();
     logd("Closing session silently");
 }
 
@@ -602,16 +602,16 @@ handleGroundRez() {
     // Turn off relay mode
     Mode = MODE_OFF;
     Hardcore = FALSE;
-    persist_mode(MODE_OFF);
-    persist_hardcore(FALSE);
+    persistMode(MODE_OFF);
+    persistHardcore(FALSE);
     
     // Clear any active restrictions
     if (llGetListLength(Relays) > 0) {
-        safeword_clear_all();
+        safewordClearAll();
     }
     
     // Update listen state
-    update_relay_listen_state();
+    updateRelayListenState();
     
     llOwnerSay("[RELAY] Collar rezzed on ground - Relay turned OFF");
 }
@@ -621,8 +621,8 @@ handleGroundRez() {
    =============================================================== */
 
 handleStart(string msg) {
-    if (!json_has(msg, ["context"])) return;
-    if (!json_has(msg, ["user"])) return;
+    if (!jsonHas(msg, ["context"])) return;
+    if (!jsonHas(msg, ["user"])) return;
     
     string context = llJsonGetValue(msg, ["context"]);
     if (context != PLUGIN_CONTEXT) return;
@@ -631,30 +631,30 @@ handleStart(string msg) {
     
     // Start new session
     CurrentUser = user;
-    request_acl(user);
+    requestAcl(user);
     
     logd("Started by " + llKey2Name(user));
 }
 
 handleDialogResponse(string msg) {
-    if (!json_has(msg, ["session_id"])) return;
-    if (!json_has(msg, ["button"])) return;
+    if (!jsonHas(msg, ["session_id"])) return;
+    if (!jsonHas(msg, ["button"])) return;
     
     string session = llJsonGetValue(msg, ["session_id"]);
     if (session != SessionId) return;
     
     string button = llJsonGetValue(msg, ["button"]);
-    handle_button_click(button);
+    handleButtonClick(button);
 }
 
 handleDialogTimeout(string msg) {
-    if (!json_has(msg, ["session_id"])) return;
+    if (!jsonHas(msg, ["session_id"])) return;
     
     string session = llJsonGetValue(msg, ["session_id"]);
     if (session != SessionId) return;
     
     logd("Dialog timeout");
-    cleanup_session();
+    cleanupSession();
 }
 
 /* ===============================================================
@@ -684,7 +684,7 @@ handleRelayMessage(key sender_id, string sender_name, string raw_msg) {
     
     // Handle version queries
     if (command == "@version" || command == "@versionnew") {
-        add_relay(sender_id, sender_name, session_chan);
+        addRelay(sender_id, sender_name, session_chan);
         string reply = "RLV," + (string)llGetKey() + "," + command + ",ok";
         llRegionSayTo(sender_id, session_chan, reply);
         return;
@@ -692,8 +692,8 @@ handleRelayMessage(key sender_id, string sender_name, string raw_msg) {
     
     // Handle release commands
     if (command == "!release" || command == "!release_fail") {
-        clear_restrictions(sender_id);
-        remove_relay(sender_id);
+        clearRestrictions(sender_id);
+        removeRelay(sender_id);
         string reply = "RLV," + (string)llGetKey() + "," + command + ",ok";
         llRegionSayTo(sender_id, session_chan, reply);
         return;
@@ -709,8 +709,8 @@ handleRelayMessage(key sender_id, string sender_name, string raw_msg) {
         }
         
         // Accept command
-        add_relay(sender_id, sender_name, session_chan);
-        store_restriction(sender_id, command);
+        addRelay(sender_id, sender_name, session_chan);
+        storeRestriction(sender_id, command);
         llOwnerSay(command);  // Forward to viewer
         
         string reply_ok = "RLV," + (string)llGetKey() + "," + command + ",ok";
@@ -726,14 +726,14 @@ handleRelayMessage(key sender_id, string sender_name, string raw_msg) {
 default
 {
     state_entry() {
-        cleanup_session();
+        cleanupSession();
         
         // Check attachment state
         IsAttached = (llGetAttached() != 0);
         
         // Handle ground rez
         if (!IsAttached) {
-            handle_ground_rez();
+            handleGroundRez();
         }
         
         logd("Plugin started (Attached=" + (string)IsAttached + ")");
@@ -753,28 +753,28 @@ default
         if (id == NULL_KEY) {
             // Detached
             IsAttached = FALSE;
-            handle_ground_rez();
+            handleGroundRez();
         }
         else {
             // Attached
             IsAttached = TRUE;
-            update_relay_listen_state();
+            updateRelayListenState();
             llOwnerSay("[RELAY] Collar attached - Relay state restored");
         }
     }
     
     link_message(integer sender, integer num, string msg, key id) {
-        if (!json_has(msg, ["type"])) return;
+        if (!jsonHas(msg, ["type"])) return;
         
         string msg_type = llJsonGetValue(msg, ["type"]);
         
         /* ===== LIFECYCLE ===== */
         if (num == KERNEL_LIFECYCLE) {
             if (msg_type == "register_now") {
-                register_self();
+                registerSelf();
             }
             else if (msg_type == "ping") {
-                send_pong();
+                sendPong();
             }
             else if (msg_type == "soft_reset") {
                 llResetScript();
@@ -784,41 +784,41 @@ default
         /* ===== SETTINGS ===== */
         else if (num == SETTINGS_BUS) {
             if (msg_type == "settings_sync") {
-                apply_settings_sync(msg);
+                applySettingsSync(msg);
             }
             else if (msg_type == "settings_delta") {
-                apply_settings_delta(msg);
+                applySettingsDelta(msg);
             }
         }
         
         /* ===== AUTH ===== */
         else if (num == AUTH_BUS) {
             if (msg_type == "acl_result") {
-                handle_acl_result(msg);
+                handleAclResult(msg);
             }
         }
         
         /* ===== UI ===== */
         else if (num == UI_BUS) {
             if (msg_type == "start") {
-                handle_start(msg);
+                handleStart(msg);
             }
         }
         
         /* ===== DIALOG ===== */
         else if (num == DIALOG_BUS) {
             if (msg_type == "dialog_response") {
-                handle_dialog_response(msg);
+                handleDialogResponse(msg);
             }
             else if (msg_type == "dialog_timeout") {
-                handle_dialog_timeout(msg);
+                handleDialogTimeout(msg);
             }
         }
         
         /* ===== SOS ===== */
         else if (num == SOS_MSG_NUM) {
             if (msg_type == "sos_release") {
-                safeword_clear_all();
+                safewordClearAll();
                 llOwnerSay("[SOS] All RLV restrictions cleared.");
             }
         }
@@ -826,7 +826,7 @@ default
     
     listen(integer chan, string name, key id, string msg) {
         if (chan == RELAY_CHANNEL) {
-            handle_relay_message(id, name, msg);
+            handleRelayMessage(id, name, msg);
         }
     }
 }

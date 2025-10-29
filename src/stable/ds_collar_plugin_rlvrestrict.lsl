@@ -144,11 +144,11 @@ persistRestrictions() {
 }
 
 applySettingsSync(string msg) {
-    if (!json_has(msg, ["kv"])) return;
+    if (!jsonHas(msg, ["kv"])) return;
     
     string kv = llJsonGetValue(msg, ["kv"]);
     
-    if (json_has(kv, [KEY_RESTRICTIONS])) {
+    if (jsonHas(kv, [KEY_RESTRICTIONS])) {
         string csv = llJsonGetValue(kv, [KEY_RESTRICTIONS]);
         
         if (csv != "") {
@@ -172,15 +172,15 @@ applySettingsSync(string msg) {
 }
 
 applySettingsDelta(string msg) {
-    if (!json_has(msg, ["op"])) return;
+    if (!jsonHas(msg, ["op"])) return;
     
     string op = llJsonGetValue(msg, ["op"]);
     
     if (op == "set") {
-        if (!json_has(msg, ["changes"])) return;
+        if (!jsonHas(msg, ["changes"])) return;
         string changes = llJsonGetValue(msg, ["changes"]);
         
-        if (json_has(changes, [KEY_RESTRICTIONS])) {
+        if (jsonHas(changes, [KEY_RESTRICTIONS])) {
             string csv = llJsonGetValue(changes, [KEY_RESTRICTIONS]);
             
             // Clear all current restrictions
@@ -227,7 +227,7 @@ requestAcl(key user) {
 }
 
 handleAclResult(string msg) {
-    if (!json_has(msg, ["avatar"]) || !json_has(msg, ["level"])) return;
+    if (!jsonHas(msg, ["avatar"]) || !jsonHas(msg, ["level"])) return;
     
     key avatar = (key)llJsonGetValue(msg, ["avatar"]);
     if (avatar != CurrentUser) return;
@@ -236,23 +236,23 @@ handleAclResult(string msg) {
     
     if (UserAcl < PLUGIN_MIN_ACL) {
         llRegionSayTo(CurrentUser, 0, "Access denied.");
-        cleanup_session();
+        cleanupSession();
         return;
     }
     
-    show_main();
+    showMain();
 }
 
 /* ===============================================================
    RESTRICTION LOGIC
    =============================================================== */
 
-integer restriction_idx(string restr_cmd) {
+integer restrictionIdx(string restr_cmd) {
     return llListFindList(Restrictions, [restr_cmd]);
 }
 
 toggleRestriction(string restr_cmd) {
-    integer idx = restriction_idx(restr_cmd);
+    integer idx = restrictionIdx(restr_cmd);
     
     if (idx != -1) {
         // Remove restriction
@@ -272,7 +272,7 @@ toggleRestriction(string restr_cmd) {
         logd("Added restriction: " + restr_cmd);
     }
     
-    persist_restrictions();
+    persistRestrictions();
 }
 
 removeAllRestrictions() {
@@ -285,7 +285,7 @@ removeAllRestrictions() {
     }
     
     Restrictions = [];
-    persist_restrictions();
+    persistRestrictions();
     logd("All restrictions removed via safeword");
 }
 
@@ -293,7 +293,7 @@ removeAllRestrictions() {
    CATEGORY HELPERS
    =============================================================== */
 
-list get_category_list(string cat_name) {
+list getCategoryList(string cat_name) {
     if (cat_name == CAT_NAME_INVENTORY) return CAT_INV;
     if (cat_name == CAT_NAME_SPEECH) return CAT_SPEECH;
     if (cat_name == CAT_NAME_TRAVEL) return CAT_TRAVEL;
@@ -301,7 +301,7 @@ list get_category_list(string cat_name) {
     return [];
 }
 
-list get_category_labels(string cat_name) {
+list getCategoryLabels(string cat_name) {
     if (cat_name == CAT_NAME_INVENTORY) return LABEL_INV;
     if (cat_name == CAT_NAME_SPEECH) return LABEL_SPEECH;
     if (cat_name == CAT_NAME_TRAVEL) return LABEL_TRAVEL;
@@ -309,7 +309,7 @@ list get_category_labels(string cat_name) {
     return [];
 }
 
-string label_to_command(string btn_label, list cat_cmds, list cat_labels) {
+string labelToCommand(string btn_label, list cat_cmds, list cat_labels) {
     // Remove checkbox prefix
     string clean_label = btn_label;
     if (llGetSubString(btn_label, 0, 3) == "[X] " || llGetSubString(btn_label, 0, 3) == "[ ] ") {
@@ -334,7 +334,7 @@ returnToRoot() {
         "user", (string)CurrentUser
     ]), NULL_KEY);
     
-    cleanup_session();
+    cleanupSession();
 }
 
 /* ===============================================================
@@ -342,7 +342,7 @@ returnToRoot() {
    =============================================================== */
 
 showMain() {
-    SessionId = generate_session_id();
+    SessionId = generateSessionId();
     MenuContext = "main";
     
     string body = "RLV Restrictions\n\nActive: " + (string)llGetListLength(Restrictions) + "/" + (string)MAX_RESTRICTIONS;
@@ -368,18 +368,18 @@ showMain() {
 }
 
 showCategoryMenu(string cat_name, integer page_num) {
-    SessionId = generate_session_id();
+    SessionId = generateSessionId();
     MenuContext = "category";
     CurrentCategory = cat_name;
     CurrentPage = page_num;
     
-    list cat_cmds = get_category_list(cat_name);
-    list cat_labels = get_category_labels(cat_name);
+    list cat_cmds = getCategoryList(cat_name);
+    list cat_labels = getCategoryLabels(cat_name);
     integer total_items = llGetListLength(cat_cmds);
     
     if (total_items == 0) {
         llRegionSayTo(CurrentUser, 0, "Empty category.");
-        show_main();
+        showMain();
         return;
     }
     
@@ -397,7 +397,7 @@ showCategoryMenu(string cat_name, integer page_num) {
         string cmd = llList2String(cat_cmds, i);
         string label = llList2String(cat_labels, i);
         
-        integer is_active = (restriction_idx(cmd) != -1);
+        integer is_active = (restrictionIdx(cmd) != -1);
         if (is_active) {
             label = "[X] " + label;
         }
@@ -447,7 +447,7 @@ showCategoryMenu(string cat_name, integer page_num) {
    =============================================================== */
 
 handleDialogResponse(string msg) {
-    if (!json_has(msg, ["session_id"]) || !json_has(msg, ["button"]) || !json_has(msg, ["user"])) return;
+    if (!jsonHas(msg, ["session_id"]) || !jsonHas(msg, ["button"]) || !jsonHas(msg, ["user"])) return;
     
     string recv_session = llJsonGetValue(msg, ["session_id"]);
     if (recv_session != SessionId) return;
@@ -460,71 +460,71 @@ handleDialogResponse(string msg) {
     // Main menu
     if (MenuContext == "main") {
         if (button == "Back") {
-            return_to_root();
+            returnToRoot();
         }
         else if (button == CAT_NAME_INVENTORY || button == CAT_NAME_SPEECH || 
                  button == CAT_NAME_TRAVEL || button == CAT_NAME_OTHER) {
-            show_category_menu(button, 0);
+            showCategoryMenu(button, 0);
         }
         else if (button == "Clear all") {
-            remove_all_restrictions();
+            removeAllRestrictions();
             llRegionSayTo(CurrentUser, 0, "All restrictions removed.");
-            show_main();
+            showMain();
         }
     }
     // Category menu
     else if (MenuContext == "category") {
         if (button == "Back") {
-            show_main();
+            showMain();
         }
         else if (button == "<<") {
-            list cat_cmds = get_category_list(CurrentCategory);
+            list cat_cmds = getCategoryList(CurrentCategory);
             integer total_items = llGetListLength(cat_cmds);
             integer max_page = (total_items - 1) / DIALOG_PAGE_SIZE;
             
             if (CurrentPage == 0) {
                 // Wrap to last page
-                show_category_menu(CurrentCategory, max_page);
+                showCategoryMenu(CurrentCategory, max_page);
             }
             else {
-                show_category_menu(CurrentCategory, CurrentPage - 1);
+                showCategoryMenu(CurrentCategory, CurrentPage - 1);
             }
         }
         else if (button == ">>") {
-            list cat_cmds = get_category_list(CurrentCategory);
+            list cat_cmds = getCategoryList(CurrentCategory);
             integer total_items = llGetListLength(cat_cmds);
             integer max_page = (total_items - 1) / DIALOG_PAGE_SIZE;
             
             if (CurrentPage >= max_page) {
                 // Wrap to first page
-                show_category_menu(CurrentCategory, 0);
+                showCategoryMenu(CurrentCategory, 0);
             }
             else {
-                show_category_menu(CurrentCategory, CurrentPage + 1);
+                showCategoryMenu(CurrentCategory, CurrentPage + 1);
             }
         }
         else {
             // Toggle restriction
-            list cat_cmds = get_category_list(CurrentCategory);
-            list cat_labels = get_category_labels(CurrentCategory);
+            list cat_cmds = getCategoryList(CurrentCategory);
+            list cat_labels = getCategoryLabels(CurrentCategory);
             
-            string restr_cmd = label_to_command(button, cat_cmds, cat_labels);
+            string restr_cmd = labelToCommand(button, cat_cmds, cat_labels);
             
             if (restr_cmd != "") {
-                toggle_restriction(restr_cmd);
-                show_category_menu(CurrentCategory, CurrentPage);
+                toggleRestriction(restr_cmd);
+                showCategoryMenu(CurrentCategory, CurrentPage);
             }
         }
     }
 }
 
 handleDialogTimeout(string msg) {
-    if (!json_has(msg, ["session_id"])) return;
+    if (!jsonHas(msg, ["session_id"])) return;
     
     string recv_session = llJsonGetValue(msg, ["session_id"]);
     if (recv_session != SessionId) return;
     
-    cleanup_session();
+    cleanupSession();
 }
 
 /* ===============================================================
@@ -534,8 +534,8 @@ handleDialogTimeout(string msg) {
 default
 {
     state_entry() {
-        cleanup_session();
-        register_self();
+        cleanupSession();
+        registerSelf();
         
         // Request settings
         llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
@@ -556,17 +556,17 @@ default
     }
     
     link_message(integer sender, integer num, string msg, key id) {
-        if (!json_has(msg, ["type"])) return;
+        if (!jsonHas(msg, ["type"])) return;
         
         string type = llJsonGetValue(msg, ["type"]);
         
         // Kernel lifecycle
         if (num == KERNEL_LIFECYCLE) {
             if (type == "register_now") {
-                register_self();
+                registerSelf();
             }
             else if (type == "ping") {
-                send_pong();
+                sendPong();
             }
             else if (type == "soft_reset") {
                 llResetScript();
@@ -575,37 +575,37 @@ default
         // Settings
         else if (num == SETTINGS_BUS) {
             if (type == "settings_sync") {
-                apply_settings_sync(msg);
+                applySettingsSync(msg);
             }
             else if (type == "settings_delta") {
-                apply_settings_delta(msg);
+                applySettingsDelta(msg);
             }
         }
         // ACL
         else if (num == AUTH_BUS) {
             if (type == "acl_result") {
-                handle_acl_result(msg);
+                handleAclResult(msg);
             }
         }
         // UI
         else if (num == UI_BUS) {
             if (type == "start") {
-                if (!json_has(msg, ["context"])) return;
+                if (!jsonHas(msg, ["context"])) return;
                 string context = llJsonGetValue(msg, ["context"]);
                 
                 if (context == PLUGIN_CONTEXT) {
                     CurrentUser = id;
-                    request_acl(CurrentUser);
+                    requestAcl(CurrentUser);
                 }
             }
         }
         // Dialogs
         else if (num == DIALOG_BUS) {
             if (type == "dialog_response") {
-                handle_dialog_response(msg);
+                handleDialogResponse(msg);
             }
             else if (type == "dialog_timeout") {
-                handle_dialog_timeout(msg);
+                handleDialogTimeout(msg);
             }
         }
     }
