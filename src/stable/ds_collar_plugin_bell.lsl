@@ -378,7 +378,19 @@ default {
                 send_pong();
                 return;
             }
-            
+
+            if (msg_type == "soft_reset" || msg_type == "soft_reset_all") {
+                // Check if this is a targeted reset
+                if (json_has(msg, ["context"])) {
+                    string target_context = llJsonGetValue(msg, ["context"]);
+                    if (target_context != "" && target_context != PLUGIN_CONTEXT) {
+                        return; // Not for us, ignore
+                    }
+                }
+                // Either no context (broadcast) or matches our context
+                llResetScript();
+            }
+
             return;
         }
         

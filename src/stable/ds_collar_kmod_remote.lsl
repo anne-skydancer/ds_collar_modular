@@ -35,6 +35,7 @@ integer PRODUCTION = TRUE;  // Set FALSE for development
 /* ═══════════════════════════════════════════════════════════
    CONSOLIDATED ABI
    ═══════════════════════════════════════════════════════════ */
+integer KERNEL_LIFECYCLE = 500;
 integer AUTH_BUS = 700;
 integer UI_BUS = 900;
 
@@ -465,11 +466,20 @@ default {
     }
     
     link_message(integer sender_num, integer num, string str, key id) {
+        if (!json_has(str, ["type"])) return;
+
+        string msg_type = llJsonGetValue(str, ["type"]);
+
+        /* ===== KERNEL LIFECYCLE ===== */
+        if (num == KERNEL_LIFECYCLE) {
+            if (msg_type == "soft_reset" || msg_type == "soft_reset_all") {
+                llResetScript();
+            }
+            return;
+        }
+
         // Handle ACL result from AUTH module
         if (num == AUTH_BUS) {
-            if (!json_has(str, ["type"])) return;
-            
-            string msg_type = llJsonGetValue(str, ["type"]);
             if (msg_type != "acl_result") return;
             
             // Extract ACL information

@@ -68,6 +68,7 @@
 
 integer DEBUG = FALSE;
 integer PRODUCTION = TRUE;  // Set FALSE for development
+integer KERNEL_LIFECYCLE = 500;
 integer AUTH_BUS = 700;
 integer SETTINGS_BUS = 800;
 integer UI_BUS = 900;
@@ -876,7 +877,15 @@ default
         // OPTIMIZATION: Check "type" once at the top (Code Review Fix #3)
         if (!json_has(msg, ["type"])) return;
         string msg_type = llJsonGetValue(msg, ["type"]);
-        
+
+        /* ===== KERNEL LIFECYCLE ===== */
+        if (num == KERNEL_LIFECYCLE) {
+            if (msg_type == "soft_reset" || msg_type == "soft_reset_all") {
+                llResetScript();
+            }
+            return;
+        }
+
         if (num == UI_BUS) {
             
             // Commands from config plugin - NOW WITH ACL VERIFICATION

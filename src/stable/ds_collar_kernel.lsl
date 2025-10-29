@@ -488,7 +488,7 @@ default
         else if (msg_type == "plugin_list_request") {
             handle_plugin_list_request();
         }
-        else if (msg_type == "soft_reset") {
+        else if (msg_type == "soft_reset" || msg_type == "soft_reset_all") {
             handle_soft_reset(msg);
         }
     }

@@ -648,6 +648,9 @@ default
             if (msg_type == "plugin_list") {
                 handle_plugin_list(msg);
             }
+            else if (msg_type == "soft_reset" || msg_type == "soft_reset_all") {
+                llResetScript();
+            }
         }
         else if (num == AUTH_BUS) {
             if (msg_type == "acl_result") {
