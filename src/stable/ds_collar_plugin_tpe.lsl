@@ -85,25 +85,25 @@ integer logd(string msg) {
     return FALSE;
 }
 
-integer json_has(string j, list path) {
+integer jsonHas(string j, list path) {
     return (llJsonGetValue(j, path) != JSON_INVALID);
 }
 
-integer is_json_arr(string j) {
+integer isJsonArr(string j) {
     return (llGetSubString(j, 0, 0) == "[");
 }
 
-string gen_session() {
+string genSession() {
     return (string)llGetKey() + "_" + (string)llGetUnixTime();
 }
 
-cleanup_session() {
+cleanupSession() {
     CurrentUser = NULL_KEY;
     UserAcl = -999;
     SessionId = "";
 }
 
-close_ui_for_user(key user) {
+closeUiForUser(key user) {
     string msg = llList2Json(JSON_OBJECT, [
         "type", "close",
         "context", PLUGIN_CONTEXT,
@@ -117,7 +117,7 @@ close_ui_for_user(key user) {
    KERNEL MESSAGES
    =============================================================== */
 
-register_with_kernel() {
+registerWithKernel() {
     string initial_label = PLUGIN_LABEL_OFF;
     if (TpeModeEnabled) {
         initial_label = PLUGIN_LABEL_ON;
@@ -134,7 +134,7 @@ register_with_kernel() {
     logd("Registered with kernel as: " + initial_label);
 }
 
-send_pong() {
+sendPong() {
     string msg = llList2Json(JSON_OBJECT, [
         "type", "pong",
         "context", PLUGIN_CONTEXT
@@ -146,7 +146,7 @@ send_pong() {
    SETTINGS MANAGEMENT
    =============================================================== */
 
-request_settings_sync() {
+requestSettingsSync() {
     string msg = llList2Json(JSON_OBJECT, [
         "type", "sync_request"
     ]);
@@ -154,7 +154,7 @@ request_settings_sync() {
     logd("Requesting settings sync");
 }
 
-persist_tpe_mode(integer new_value) {
+persistTpeMode(integer new_value) {
     if (new_value != 0) new_value = 1;
     
     string msg = llList2Json(JSON_OBJECT, [
@@ -170,7 +170,7 @@ persist_tpe_mode(integer new_value) {
    BUTTON HANDLING
    =============================================================== */
 
-handle_button_click(string button) {
+handleButtonClick(string button) {
     if (button == "Yes") {
         // Wearer confirmed - enable TPE
         TpeModeEnabled = TRUE;
@@ -234,7 +234,7 @@ handle_button_click(string button) {
    TPE TOGGLE LOGIC
    =============================================================== */
 
-handle_tpe_click(key user, integer acl_level) {
+handleTpeClick(key user, integer acl_level) {
     // Verify ACL (only 5=Primary Owner)
     if (acl_level != 5) {
         llRegionSayTo(user, 0, "Access denied. Only primary owner can manage TPE mode.");
@@ -304,14 +304,14 @@ handle_tpe_click(key user, integer acl_level) {
    SETTINGS CONSUMPTION
    =============================================================== */
 
-apply_settings_sync(string kv_json) {
+applySettingsSync(string kv_json) {
     if (json_has(kv_json, [KEY_TPE_MODE])) {
         TpeModeEnabled = (integer)llJsonGetValue(kv_json, [KEY_TPE_MODE]);
         logd("TPE mode from sync: " + (string)TpeModeEnabled);
     }
 }
 
-apply_settings_delta(string msg) {
+applySettingsDelta(string msg) {
     if (!json_has(msg, ["op"])) return;
     
     string op = llJsonGetValue(msg, ["op"]);

@@ -86,15 +86,15 @@ integer logd(string msg) {
     return FALSE;
 }
 
-integer json_has(string j, list path) {
+integer jsonHas(string j, list path) {
     return (llJsonGetValue(j, path) != JSON_INVALID);
 }
 
-integer is_json_arr(string s) {
+integer isJsonArr(string s) {
     return (llGetSubString(s, 0, 0) == "[");
 }
 
-string generate_session_id() {
+string generateSessionId() {
     return PLUGIN_CONTEXT + "_" + (string)llGetUnixTime();
 }
 
@@ -102,7 +102,7 @@ string generate_session_id() {
    LIFECYCLE MANAGEMENT
    =============================================================== */
 
-register_self() {
+registerSelf() {
     string msg = llList2Json(JSON_OBJECT, [
         "type", "register",
         "context", PLUGIN_CONTEXT,
@@ -114,7 +114,7 @@ register_self() {
     logd("Registered with kernel");
 }
 
-send_pong() {
+sendPong() {
     string msg = llList2Json(JSON_OBJECT, [
         "type", "pong",
         "context", PLUGIN_CONTEXT
@@ -126,7 +126,7 @@ send_pong() {
    SETTINGS CONSUMPTION
    =============================================================== */
 
-apply_settings_sync(string msg) {
+applySettingsSync(string msg) {
     if (!json_has(msg, ["kv"])) return;
     
     string kv_json = llJsonGetValue(msg, ["kv"]);
@@ -233,7 +233,7 @@ apply_settings_sync(string msg) {
     }
 }
 
-apply_settings_delta(string msg) {
+applySettingsDelta(string msg) {
     if (!json_has(msg, ["op"])) return;
     
     string op = llJsonGetValue(msg, ["op"]);
@@ -290,7 +290,7 @@ apply_settings_delta(string msg) {
    OWNER NAME RESOLUTION
    =============================================================== */
 
-request_owner_names() {
+requestOwnerNames() {
     if (MultiOwnerMode) {
         OwnerDisplayNames = [];
         OwnerNameQueries = [];
@@ -452,7 +452,7 @@ string build_status_report() {
    UI / MENU SYSTEM
    =============================================================== */
 
-show_status_menu() {
+showStatusMenu() {
     SessionId = generate_session_id();
     
     string status_report = build_status_report();
@@ -478,7 +478,7 @@ show_status_menu() {
    BUTTON HANDLING
    =============================================================== */
 
-handle_button_click(string button) {
+handleButtonClick(string button) {
     if (button == "Back") {
         ui_return_root();
         cleanup_session();
@@ -493,7 +493,7 @@ handle_button_click(string button) {
    UI NAVIGATION
    =============================================================== */
 
-ui_return_root() {
+uiReturnRoot() {
     string msg = llList2Json(JSON_OBJECT, [
         "type", "return",
         "user", (string)CurrentUser
@@ -505,7 +505,7 @@ ui_return_root() {
    SESSION CLEANUP
    =============================================================== */
 
-cleanup_session() {
+cleanupSession() {
     CurrentUser = NULL_KEY;
     SessionId = "";
     logd("Session cleaned up");
