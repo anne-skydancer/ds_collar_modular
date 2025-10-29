@@ -68,8 +68,9 @@ string MenuContext;
    HELPERS
    =============================================================== */
 
-logd(string msg) {
+integer logd(string msg) {
     if (DEBUG) llOwnerSay("[" + PLUGIN_LABEL + "] " + msg);
+    return FALSE;
 }
 
 integer jsonHas(string j, list path) {

@@ -78,21 +78,21 @@ integer logd(string msg) {
     return FALSE;
 }
 
-integer json_has(string j, list path) {
+integer jsonHas(string j, list path) {
     return (llJsonGetValue(j, path) != JSON_INVALID);
 }
 
-string generate_session_id() {
+string generateSessionId() {
     return PLUGIN_CONTEXT + "_" + (string)llGetUnixTime();
 }
 
-integer in_allowed_list(integer level, list allowed) {
+integer inAllowedList(integer level, list allowed) {
     return (llListFindList(allowed, [level]) != -1);
 }
 
 // ===== UNIFIED MENU DISPLAY =====
-show_menu(string context, string title, string body, list buttons) {
-    SessionId = generate_session_id();
+showMenu(string context, string title, string body, list buttons) {
+    SessionId = generateSessionId();
     MenuContext = context;
     
     llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
@@ -141,7 +141,7 @@ showMainMenu() {
     
     // Action buttons
     if (!Leashed) {
-        if (in_allowed_list(UserAcl, ALLOWED_ACL_GRAB)) {
+        if (inAllowedList(UserAcl, ALLOWED_ACL_GRAB)) {
             buttons += ["Clip"];
         }
         if (UserAcl == 2) {
@@ -163,7 +163,7 @@ showMainMenu() {
     }
     
     // Settings button - ACL 1, 3, 4, 5 (NOT ACL 2)
-    if (UserAcl == 1 || in_allowed_list(UserAcl, ALLOWED_ACL_SETTINGS)) {
+    if (UserAcl == 1 || inAllowedList(UserAcl, ALLOWED_ACL_SETTINGS)) {
         buttons += ["Settings"];
     }
     
@@ -175,7 +175,7 @@ showMainMenu() {
         body = "Not leashed";
     }
     
-    show_menu("main", "Leash", body, buttons);
+    showMenu("main", "Leash", body, buttons);
 }
 
 showSettingsMenu() {
@@ -188,11 +188,11 @@ showSettingsMenu() {
     }
     
     string body = "Leash Settings\nLength: " + (string)LeashLength + "m\nTurn to face: " + (string)TurnToFace;
-    show_menu("settings", "Settings", body, buttons);
+    showMenu("settings", "Settings", body, buttons);
 }
 
 showLengthMenu() {
-    show_menu("length", "Length", "Select leash length\nCurrent: " + (string)LeashLength + "m", 
+    showMenu("length", "Length", "Select leash length\nCurrent: " + (string)LeashLength + "m", 
               ["<<", ">>", "Back", "1m", "3m", "5m", "10m", "15m", "20m"]);
 }
 
@@ -204,7 +204,7 @@ showPassMenu() {
 
 // ===== OFFER DIALOG (NEW v1.0) =====
 showOfferDialog(key target, key originator) {
-    OfferDialogSession = generate_session_id();
+    OfferDialogSession = generateSessionId();
     OfferTarget = target;
     OfferOriginator = originator;
     
@@ -313,7 +313,7 @@ handleButtonClick(string button) {
     
     if (MenuContext == "main") {
         if (button == "Clip") {
-            if (in_allowed_list(UserAcl, ALLOWED_ACL_GRAB)) {
+            if (inAllowedList(UserAcl, ALLOWED_ACL_GRAB)) {
                 sendLeashAction("grab");
                 cleanupSession();
             }
@@ -485,7 +485,7 @@ default
 
     link_message(integer sender, integer num, string msg, key id) {
         if (num == KERNEL_LIFECYCLE) {
-            if (!json_has(msg, ["type"])) return;
+            if (!jsonHas(msg, ["type"])) return;
             string msg_type = llJsonGetValue(msg, ["type"]);
             
             if (msg_type == "register_now") {
@@ -500,11 +500,11 @@ default
         }
         
         if (num == UI_BUS) {
-            if (!json_has(msg, ["type"])) return;
+            if (!jsonHas(msg, ["type"])) return;
             string msg_type = llJsonGetValue(msg, ["type"]);
             
             if (msg_type == "start") {
-                if (!json_has(msg, ["context"])) return;
+                if (!jsonHas(msg, ["context"])) return;
                 if (llJsonGetValue(msg, ["context"]) != PLUGIN_CONTEXT) return;
                 CurrentUser = id;
                 requestAcl(id);
@@ -512,16 +512,16 @@ default
             }
             
             if (msg_type == "leash_state") {
-                if (json_has(msg, ["leashed"])) {
+                if (jsonHas(msg, ["leashed"])) {
                     Leashed = (integer)llJsonGetValue(msg, ["leashed"]);
                 }
-                if (json_has(msg, ["leasher"])) {
+                if (jsonHas(msg, ["leasher"])) {
                     Leasher = (key)llJsonGetValue(msg, ["leasher"]);
                 }
-                if (json_has(msg, ["length"])) {
+                if (jsonHas(msg, ["length"])) {
                     LeashLength = (integer)llJsonGetValue(msg, ["length"]);
                 }
-                if (json_has(msg, ["turnto"])) {
+                if (jsonHas(msg, ["turnto"])) {
                     TurnToFace = (integer)llJsonGetValue(msg, ["turnto"]);
                 }
                 logd("State synced");
@@ -546,7 +546,7 @@ default
             }
             
             if (msg_type == "offer_pending") {
-                if (!json_has(msg, ["target"]) || !json_has(msg, ["originator"])) return;
+                if (!jsonHas(msg, ["target"]) || !jsonHas(msg, ["originator"])) return;
                 key target = (key)llJsonGetValue(msg, ["target"]);
                 key originator = (key)llJsonGetValue(msg, ["originator"]);
                 showOfferDialog(target, originator);
@@ -555,17 +555,17 @@ default
         }
         
         if (num == AUTH_BUS) {
-            if (!json_has(msg, ["type"])) return;
+            if (!jsonHas(msg, ["type"])) return;
             string msg_type = llJsonGetValue(msg, ["type"]);
             
             if (msg_type == "acl_result") {
                 if (!AclPending) return;
-                if (!json_has(msg, ["avatar"])) return;
+                if (!jsonHas(msg, ["avatar"])) return;
                 
                 key avatar = (key)llJsonGetValue(msg, ["avatar"]);
                 if (avatar != CurrentUser) return;
                 
-                if (json_has(msg, ["level"])) {
+                if (jsonHas(msg, ["level"])) {
                     UserAcl = (integer)llJsonGetValue(msg, ["level"]);
                     AclPending = FALSE;
                     scheduleStateQuery("main");
@@ -577,11 +577,11 @@ default
         }
         
         if (num == DIALOG_BUS) {
-            if (!json_has(msg, ["type"])) return;
+            if (!jsonHas(msg, ["type"])) return;
             string msg_type = llJsonGetValue(msg, ["type"]);
             
             if (msg_type == "dialog_response") {
-                if (!json_has(msg, ["session_id"]) || !json_has(msg, ["button"])) return;
+                if (!jsonHas(msg, ["session_id"]) || !jsonHas(msg, ["button"])) return;
                 
                 string response_session = llJsonGetValue(msg, ["session_id"]);
                 string button = llJsonGetValue(msg, ["button"]);
@@ -599,7 +599,7 @@ default
             }
             
             if (msg_type == "dialog_timeout") {
-                if (!json_has(msg, ["session_id"])) return;
+                if (!jsonHas(msg, ["session_id"])) return;
                 
                 string timeout_session = llJsonGetValue(msg, ["session_id"]);
                 
@@ -667,7 +667,7 @@ default
             body = "Select avatar:";
         }
         
-        show_menu(SensorMode, title, body, menu_buttons);
+        showMenu(SensorMode, title, body, menu_buttons);
     }
     
     no_sensor() {

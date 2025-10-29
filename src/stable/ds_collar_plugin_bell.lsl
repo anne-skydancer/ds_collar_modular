@@ -59,7 +59,7 @@ integer jsonHas(string j, list path) {
     return (llJsonGetValue(j, path) != JSON_INVALID);
 }
 
-string generate_session_id() {
+string generateSessionId() {
     return PLUGIN_CONTEXT + "_" + (string)llGetUnixTime();
 }
 
@@ -76,8 +76,8 @@ setBellVisibility(integer visible) {
     }
     
     for (i = 1; i <= link_count; i++) {
-        string prim_name = llGetLinkName(i);
-        if (llToLower(prim_name) == "bell") {
+        string primName = llGetLinkName(i);
+        if (llToLower(primName) == "bell") {
             llSetLinkAlpha(i, alpha, ALL_SIDES);
             found = TRUE;
             logd("Found bell prim at link " + (string)i + ", setting alpha to " + (string)alpha);
@@ -106,7 +106,7 @@ playJingle() {
 
 // ===== UNIFIED MENU DISPLAY =====
 showMenu(string context, string title, string body, list buttons) {
-    SessionId = generate_session_id();
+    SessionId = generateSessionId();
     MenuContext = context;
     
     llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
