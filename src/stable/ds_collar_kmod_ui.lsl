@@ -103,14 +103,14 @@ integer findSessionIdx(key user) {
     return -1;
 }
 
-integer get_session_filtered_start(integer session_idx) {
+integer getSessionFilteredStart(integer session_idx) {
     return llList2Integer(Sessions, session_idx + SESSION_FILTERED_START);
 }
 
-integer get_session_filtered_count(integer session_idx) {
-    integer start = get_session_filtered_start(session_idx);
+integer getSessionFilteredCount(integer session_idx) {
+    integer start = getSessionFilteredStart(session_idx);
     integer next_session_idx = session_idx + SESSION_STRIDE;
-    
+
     integer end;
     if (next_session_idx < llGetListLength(Sessions)) {
         end = llList2Integer(Sessions, next_session_idx + SESSION_FILTERED_START);
@@ -118,13 +118,13 @@ integer get_session_filtered_count(integer session_idx) {
     else {
         end = llGetListLength(FilteredPluginsData);
     }
-    
+
     return (end - start) / PLUGIN_STRIDE;
 }
 
-list get_session_filtered_plugins(integer session_idx) {
-    integer start = get_session_filtered_start(session_idx);
-    integer count = get_session_filtered_count(session_idx);
+list getSessionFilteredPlugins(integer session_idx) {
+    integer start = getSessionFilteredStart(session_idx);
+    integer count = getSessionFilteredCount(session_idx);
     integer end = start + (count * PLUGIN_STRIDE);
     
     if (end > start) {
@@ -137,8 +137,8 @@ cleanupSession(key user) {
     integer idx = findSessionIdx(user);
     if (idx == -1) return;
     
-    integer start = get_session_filtered_start(idx);
-    integer count = get_session_filtered_count(idx);
+    integer start = getSessionFilteredStart(idx);
+    integer count = getSessionFilteredCount(idx);
     integer end = start + (count * PLUGIN_STRIDE);
     
     if (count > 0) {
@@ -256,7 +256,7 @@ showRootMenu(key user) {
         return;
     }
     
-    list filtered = get_session_filtered_plugins(session_idx);
+    list filtered = getSessionFilteredPlugins(session_idx);
     integer plugin_count = llGetListLength(filtered) / PLUGIN_STRIDE;
     
     if (plugin_count == 0) {
@@ -354,7 +354,7 @@ handleButtonClick(key user, string button) {
     
     integer current_page = llList2Integer(Sessions, session_idx + SESSION_PAGE);
     integer total_pages = llList2Integer(Sessions, session_idx + SESSION_TOTAL_PAGES);
-    list filtered = get_session_filtered_plugins(session_idx);
+    list filtered = getSessionFilteredPlugins(session_idx);
     
     if (button == "<<") {
         current_page -= 1;

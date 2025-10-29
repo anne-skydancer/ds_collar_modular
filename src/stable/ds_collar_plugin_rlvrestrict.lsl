@@ -78,10 +78,11 @@ integer jsonHas(string json_str, list path) {
     return (llJsonGetValue(json_str, path) != JSON_INVALID);
 }
 
-logd(string msg) {
+integer logd(string msg) {
     if (DEBUG) {
         llOwnerSay("[RLVRESTRICT] " + msg);
     }
+    return FALSE;
 }
 
 string generateSessionId() {
