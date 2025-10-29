@@ -4,7 +4,7 @@
    PURPOSE: Visual connection renderer (chains, beams, ropes) + Lockmeister protocol
    
    SECURITY FIXES v1.0:
-   - Added needs_timer() helper for proper timer cleanup
+   - Added needsTimer() helper for proper timer cleanup
    - Fixed timer not stopping when both sources inactive
    - Added explicit cleanup before owner change reset
    - Added production debug guard (dual-gate logging)
@@ -179,7 +179,7 @@ handleLmMessage(key id, string msg) {
                 SourcePlugin = "";
                 TargetKey = NULL_KEY;
             }
-            if (!needs_timer()) {
+            if (!needsTimer()) {
                 llSetTimerEvent(0.0);
                 logd("Timer stopped - no active sources");
             }
@@ -276,7 +276,7 @@ integer findLeashpointLink() {
 
 renderChainParticles(key target) {
     if (LeashpointLink == 0) {
-        LeashpointLink = find_leashpoint_link();
+        LeashpointLink = findLeashpointLink();
     }
     
     if (target == NULL_KEY) {
@@ -389,7 +389,7 @@ handleParticlesStop(string msg) {
     TargetKey = NULL_KEY;
     
     // Stop timer if nothing needs it
-    if (!needs_timer()) {
+    if (!needsTimer()) {
         llSetTimerEvent(0.0);
         logd("Timer stopped - no active sources");
     }
@@ -456,7 +456,7 @@ handleLmDisable() {
     LmAuthorized = FALSE;  // Clear authorization
     
     // Check if timer should stop
-    if (!needs_timer()) {
+    if (!needsTimer()) {
         llSetTimerEvent(0.0);
         logd("Timer stopped - no active sources");
     }
@@ -502,7 +502,7 @@ default
         if (change & CHANGED_LINK) {
             LeashpointLink = 0;
             if (ParticlesActive) {
-                LeashpointLink = find_leashpoint_link();
+                LeashpointLink = findLeashpointLink();
                 renderChainParticles(TargetKey);
             }
         }
@@ -572,7 +572,7 @@ default
                 TargetKey = NULL_KEY;
                 
                 // Only stop timer if nothing needs it
-                if (!needs_timer()) {
+                if (!needsTimer()) {
                     llSetTimerEvent(0.0);
                     logd("Timer stopped - no active sources");
                 }

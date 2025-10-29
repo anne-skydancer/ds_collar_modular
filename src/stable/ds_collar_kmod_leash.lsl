@@ -202,7 +202,7 @@ handleAclResult(string msg, key id) {
     
     // Execute pending action with ACL verification
     if (PendingAction == "grab") {
-        if (in_allowed_list(acl_level, ALLOWED_ACL_GRAB)) {
+        if (inAllowedList(acl_level, ALLOWED_ACL_GRAB)) {
             grabLeashInternal(PendingActionUser);
         } else {
             llRegionSayTo(PendingActionUser, 0, "Access denied: insufficient permissions to grab leash.");
@@ -220,7 +220,7 @@ handleAclResult(string msg, key id) {
     }
     else if (PendingAction == "pass") {
         // Pass requires user to be current leasher OR have level 3+
-        if (PendingActionUser == Leasher || in_allowed_list(acl_level, ALLOWED_ACL_PASS)) {
+        if (PendingActionUser == Leasher || inAllowedList(acl_level, ALLOWED_ACL_PASS)) {
             // Now verify target ACL
             requestAclForPassTarget(PendingPassTarget);
             return;  // Don't clear pending state yet
@@ -231,7 +231,7 @@ handleAclResult(string msg, key id) {
     }
     else if (PendingAction == "offer") {
         // Offer is for ACL 2 (Owned wearer) only, and only when NOT currently leashed
-        if (in_allowed_list(acl_level, ALLOWED_ACL_OFFER) && !Leashed) {
+        if (inAllowedList(acl_level, ALLOWED_ACL_OFFER) && !Leashed) {
             // Set flag so target check knows this is offer, not pass
             PendingIsOffer = TRUE;
             // Now verify target ACL
@@ -284,7 +284,7 @@ handleAclResult(string msg, key id) {
         PendingIsOffer = FALSE;
     }
     else if (PendingAction == "set_length") {
-        if (in_allowed_list(acl_level, ALLOWED_ACL_SETTINGS)) {
+        if (inAllowedList(acl_level, ALLOWED_ACL_SETTINGS)) {
             // PendingPassTarget is repurposed to store length as key
             setLengthInternal((integer)((string)PendingPassTarget));
         } else {
@@ -292,7 +292,7 @@ handleAclResult(string msg, key id) {
         }
     }
     else if (PendingAction == "toggle_turn") {
-        if (in_allowed_list(acl_level, ALLOWED_ACL_SETTINGS)) {
+        if (inAllowedList(acl_level, ALLOWED_ACL_SETTINGS)) {
             toggleTurnInternal();
         } else {
             llRegionSayTo(PendingActionUser, 0, "Access denied: insufficient permissions to change settings.");

@@ -152,7 +152,7 @@ integer getNextChannel() {
         NextChannelOffset += 1;
         if (NextChannelOffset > 1000000) NextChannelOffset = 1;
         
-        if (!is_channel_in_use(channel)) {
+        if (!isChannelInUse(channel)) {
             return channel;
         }
         
@@ -224,7 +224,7 @@ handleDialogOpen(string msg) {
     }
     
     // Get channel and create listen
-    integer channel = get_next_channel();
+    integer channel = getNextChannel();
     integer listen_handle = llListen(channel, "", user, "");
     
     // Calculate timeout timestamp
@@ -310,7 +310,7 @@ handleNumberedListDialog(string msg, string session_id, key user) {
     }
     
     // Get channel and create listen
-    integer channel = get_next_channel();
+    integer channel = getNextChannel();
     integer listen_handle = llListen(channel, "", user, "");
     
     // Calculate timeout timestamp

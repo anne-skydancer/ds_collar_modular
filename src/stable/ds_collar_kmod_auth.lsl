@@ -120,8 +120,8 @@ integer isOwner(key av) {
 
 integer computeAclLevel(key av) {
     key wearer = llGetOwner();
-    integer owner_set = has_owner();
-    integer is_owner_flag = is_owner(av);
+    integer owner_set = hasOwner();
+    integer is_owner_flag = isOwner(av);
     integer is_wearer = (av == wearer);
     integer is_trustee = listHasKey(TrusteeList, av);
     integer is_blacklisted = listHasKey(Blacklist, av);
@@ -157,8 +157,8 @@ integer computeAclLevel(key av) {
 sendAclResult(key av, string correlation_id) {
     key wearer = llGetOwner();
     integer is_wearer = (av == wearer);
-    integer owner_set = has_owner();
-    integer level = compute_acl_level(av);
+    integer owner_set = hasOwner();
+    integer level = computeAclLevel(av);
     integer is_blacklisted = listHasKey(Blacklist, av);
     
     // Policy flags

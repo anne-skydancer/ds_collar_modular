@@ -570,7 +570,7 @@ default
                 
                 string from = llJsonGetValue(msg, ["from"]);
                 
-                if (!is_authorized_reset_sender(from)) {
+                if (!isAuthorizedResetSender(from)) {
                     logd("SECURITY: Rejected soft_reset from unauthorized sender: " + from);
                     return;
                 }
