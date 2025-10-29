@@ -410,10 +410,11 @@ do_clear_leash() {
 do_reload_collar() {
     // Send soft reset to ALL plugins
     string msg = llList2Json(JSON_OBJECT, [
-        "type", "soft_reset_all"
+        "type", "soft_reset",
+        "from", "maintenance"
     ]);
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, msg, NULL_KEY);
-    
+
     llRegionSayTo(CurrentUser, 0, "Collar reload initiated.");
     logd("Collar reload requested by " + llKey2Name(CurrentUser));
 }

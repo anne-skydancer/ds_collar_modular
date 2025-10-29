@@ -568,7 +568,7 @@ default
             else if (type == "ping") {
                 send_pong();
             }
-            else if (type == "soft_reset") {
+            else if (type == "soft_reset" || type == "soft_reset_all") {
                 llResetScript();
             }
         }

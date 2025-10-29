@@ -372,7 +372,7 @@ default
             else if (msg_type == "ping") {
                 send_pong();
             }
-            else if (msg_type == "soft_reset") {
+            else if (msg_type == "soft_reset" || msg_type == "soft_reset_all") {
                 llResetScript();
             }
         }
