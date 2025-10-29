@@ -829,4 +829,10 @@ default
             handle_relay_message(id, name, msg);
         }
     }
+
+    changed(integer change) {
+        if (change & CHANGED_OWNER) {
+            llResetScript();
+        }
+    }
 }
