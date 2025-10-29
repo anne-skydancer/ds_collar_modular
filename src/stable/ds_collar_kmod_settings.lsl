@@ -280,7 +280,7 @@ integer apply_trustee_add_guard(string who) {
     return TRUE;
 }
 
-applyBlacklistAddGuard(string who) {
+integer applyBlacklistAddGuard(string who) {
     // Remove from trustees
     string trustees_arr = kv_get(KEY_TRUSTEES);
     if (is_json_arr(trustees_arr)) {
@@ -288,18 +288,19 @@ applyBlacklistAddGuard(string who) {
         trustees = list_remove_all(trustees, who);
         kv_set_list(KEY_TRUSTEES, trustees);
     }
-    
+
     // SECURITY FIX: Clear owner if blacklisted (both modes)
     string cur_owner = kv_get(KEY_OWNER_KEY);
     if (cur_owner != "" && cur_owner == who) {
         kv_set_scalar(KEY_OWNER_KEY, (string)NULL_KEY);
         logd("WARNING: Cleared owner (was blacklisted)");
     }
-    
+
     // Remove from multi-owner list
     if (kv_list_remove_all(KEY_OWNER_KEYS, who)) {
         logd("WARNING: Removed owner from multi-owner list (was blacklisted)");
     }
+    return TRUE;
 }
 
 /* ===============================================================
