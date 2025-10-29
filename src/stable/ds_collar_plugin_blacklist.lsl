@@ -116,7 +116,7 @@ list blacklist_names() {
    LIFECYCLE
    =============================================================== */
 
-register_self() {
+registerSelf() {
     string msg = llList2Json(JSON_OBJECT, [
         "type", "register",
         "context", PLUGIN_CONTEXT,
@@ -128,7 +128,7 @@ register_self() {
     logd("Registered");
 }
 
-send_pong() {
+sendPong() {
     string msg = llList2Json(JSON_OBJECT, [
         "type", "pong",
         "context", PLUGIN_CONTEXT
@@ -140,14 +140,14 @@ send_pong() {
    SETTINGS MANAGEMENT
    =============================================================== */
 
-apply_settings_sync(string msg) {
+applySettingsSync(string msg) {
     if (!json_has(msg, ["kv"])) return;
     
     string kv_json = llJsonGetValue(msg, ["kv"]);
-    apply_blacklist_payload(kv_json);
+    applyBlacklistPayload(kv_json);
 }
 
-apply_settings_delta(string msg) {
+applySettingsDelta(string msg) {
     if (!json_has(msg, ["op"])) return;
     
     string op = llJsonGetValue(msg, ["op"]);
@@ -158,7 +158,7 @@ apply_settings_delta(string msg) {
         
         if (json_has(changes, [KEY_BLACKLIST])) {
             string new_value = llJsonGetValue(changes, [KEY_BLACKLIST]);
-            parse_blacklist_value(new_value);
+            parseBlacklistValue(new_value);
             logd("Delta set applied");
         }
     }
@@ -191,7 +191,7 @@ apply_settings_delta(string msg) {
     }
 }
 
-apply_blacklist_payload(string kv_json) {
+applyBlacklistPayload(string kv_json) {
     if (!json_has(kv_json, [KEY_BLACKLIST])) {
         logd("No blacklist key in settings");
         Blacklist = [];
@@ -199,10 +199,10 @@ apply_blacklist_payload(string kv_json) {
     }
     
     string raw = llJsonGetValue(kv_json, [KEY_BLACKLIST]);
-    parse_blacklist_value(raw);
+    parseBlacklistValue(raw);
 }
 
-parse_blacklist_value(string raw) {
+parseBlacklistValue(string raw) {
     if (raw == JSON_INVALID || raw == "[]" || raw == "" || raw == " ") {
         Blacklist = [];
         logd("Blacklist cleared");
@@ -242,7 +242,7 @@ parse_blacklist_value(string raw) {
     logd("Loaded blacklist (CSV): " + (string)llGetListLength(Blacklist) + " entries");
 }
 
-persist_blacklist() {
+persistBlacklist() {
     string msg = llList2Json(JSON_OBJECT, [
         "type", "set",
         "key", KEY_BLACKLIST,
@@ -256,7 +256,7 @@ persist_blacklist() {
    ACL MANAGEMENT
    =============================================================== */
 
-request_acl(key user_key) {
+requestAcl(key user_key) {
     string msg = llList2Json(JSON_OBJECT, [
         "type", "acl_query",
         "avatar", (string)user_key
@@ -265,7 +265,7 @@ request_acl(key user_key) {
     logd("Requested ACL for " + llKey2Name(user_key));
 }
 
-handle_acl_result(string msg) {
+handleAclResult(string msg) {
     if (!json_has(msg, ["avatar"])) return;
     if (!json_has(msg, ["level"])) return;
     
@@ -278,19 +278,19 @@ handle_acl_result(string msg) {
     // Check access
     if (!in_allowed_levels(level)) {
         llRegionSayTo(CurrentUser, 0, "Access denied.");
-        return_to_root();
+        returnToRoot();
         return;
     }
     
     logd("ACL result: " + (string)level + " for " + llKey2Name(avatar));
-    show_main_menu();
+    showMainMenu();
 }
 
 /* ===============================================================
    MENU DISPLAY
    =============================================================== */
 
-show_main_menu() {
+showMainMenu() {
     integer count = llGetListLength(Blacklist);
     string body = "Blacklist Management\n\n";
     body += "Currently blacklisted: " + (string)count;
@@ -318,10 +318,10 @@ show_main_menu() {
     logd("Showing main menu");
 }
 
-show_remove_menu() {
+showRemoveMenu() {
     if (llGetListLength(Blacklist) == 0) {
         llRegionSayTo(CurrentUser, 0, "Blacklist is empty.");
-        show_main_menu();
+        showMainMenu();
         return;
     }
     
@@ -345,10 +345,10 @@ show_remove_menu() {
     logd("Showing remove menu");
 }
 
-show_add_candidates() {
+showAddCandidates() {
     if (llGetListLength(CandidateKeys) == 0) {
         llRegionSayTo(CurrentUser, 0, "No nearby avatars found.");
-        show_main_menu();
+        showMainMenu();
         return;
     }
     
@@ -386,20 +386,20 @@ show_add_candidates() {
    NAVIGATION
    =============================================================== */
 
-return_to_root() {
+returnToRoot() {
     string msg = llList2Json(JSON_OBJECT, [
         "type", "return",
         "user", (string)CurrentUser
     ]);
     llMessageLinked(LINK_SET, UI_BUS, msg, NULL_KEY);
-    cleanup_session();
+    cleanupSession();
 }
 
 /* ===============================================================
    SESSION CLEANUP
    =============================================================== */
 
-cleanup_session() {
+cleanupSession() {
     CurrentUser = NULL_KEY;
     CurrentUserAcl = -999;
     SessionId = "";
@@ -412,7 +412,7 @@ cleanup_session() {
    DIALOG HANDLERS
    =============================================================== */
 
-handle_dialog_response(string msg) {
+handleDialogResponse(string msg) {
     if (!json_has(msg, ["session_id"])) return;
     if (!json_has(msg, ["button"])) return;
     
@@ -425,17 +425,17 @@ handle_dialog_response(string msg) {
     // Re-validate ACL
     if (!in_allowed_levels(CurrentUserAcl)) {
         llRegionSayTo(CurrentUser, 0, "Access denied.");
-        return_to_root();
+        returnToRoot();
         return;
     }
     
     // Handle Back button
     if (button == BTN_BACK) {
         if (MenuContext == "main") {
-            return_to_root();
+            returnToRoot();
             return;
         }
-        show_main_menu();
+        showMainMenu();
         return;
     }
     
@@ -449,7 +449,7 @@ handle_dialog_response(string msg) {
             return;
         }
         if (button == BTN_REMOVE) {
-            show_remove_menu();
+            showRemoveMenu();
             return;
         }
     }
@@ -460,10 +460,10 @@ handle_dialog_response(string msg) {
         if (idx >= 0 && idx < llGetListLength(Blacklist)) {
             string removed = llList2String(Blacklist, idx);
             Blacklist = llDeleteSubList(Blacklist, idx, idx);
-            persist_blacklist();
+            persistBlacklist();
             llRegionSayTo(CurrentUser, 0, "Removed from blacklist.");
         }
-        show_main_menu();
+        showMainMenu();
         return;
     }
     
@@ -474,27 +474,27 @@ handle_dialog_response(string msg) {
             string entry = llList2String(CandidateKeys, idx);
             if (entry != "" && llListFindList(Blacklist, [entry]) == -1) {
                 Blacklist += [entry];
-                persist_blacklist();
+                persistBlacklist();
                 llRegionSayTo(CurrentUser, 0, "Added to blacklist.");
             }
         }
-        show_main_menu();
+        showMainMenu();
         return;
     }
     
     // Unknown context - return to main
     logd("Unknown menu context: " + MenuContext);
-    show_main_menu();
+    showMainMenu();
 }
 
-handle_dialog_timeout(string msg) {
+handleDialogTimeout(string msg) {
     if (!json_has(msg, ["session_id"])) return;
     
     string session = llJsonGetValue(msg, ["session_id"]);
     if (session != SessionId) return;
     
     logd("Dialog timeout");
-    cleanup_session();
+    cleanupSession();
 }
 
 /* ===============================================================
@@ -503,8 +503,8 @@ handle_dialog_timeout(string msg) {
 
 default {
     state_entry() {
-        cleanup_session();
-        register_self();
+        cleanupSession();
+        registerSelf();
         
         // Request initial settings
         string msg = llList2Json(JSON_OBJECT, [
@@ -533,12 +533,12 @@ default {
         /* ===== KERNEL LIFECYCLE ===== */
         if (num == KERNEL_LIFECYCLE) {
             if (msg_type == "register_now") {
-                register_self();
+                registerSelf();
                 return;
             }
             
             if (msg_type == "ping") {
-                send_pong();
+                sendPong();
                 return;
             }
             
@@ -548,12 +548,12 @@ default {
         /* ===== SETTINGS BUS ===== */
         if (num == SETTINGS_BUS) {
             if (msg_type == "settings_sync") {
-                apply_settings_sync(msg);
+                applySettingsSync(msg);
                 return;
             }
             
             if (msg_type == "settings_delta") {
-                apply_settings_delta(msg);
+                applySettingsDelta(msg);
                 return;
             }
             
@@ -568,7 +568,7 @@ default {
                 
                 // User wants to start this plugin
                 CurrentUser = id;
-                request_acl(id);
+                requestAcl(id);
                 return;
             }
             
@@ -578,7 +578,7 @@ default {
         /* ===== AUTH RESULT ===== */
         if (num == AUTH_BUS) {
             if (msg_type == "acl_result") {
-                handle_acl_result(msg);
+                handleAclResult(msg);
                 return;
             }
             
@@ -588,12 +588,12 @@ default {
         /* ===== DIALOG RESPONSES ===== */
         if (num == DIALOG_BUS) {
             if (msg_type == "dialog_response") {
-                handle_dialog_response(msg);
+                handleDialogResponse(msg);
                 return;
             }
             
             if (msg_type == "dialog_timeout") {
-                handle_dialog_timeout(msg);
+                handleDialogTimeout(msg);
                 return;
             }
             
@@ -620,7 +620,7 @@ default {
         }
         
         CandidateKeys = candidates;
-        show_add_candidates();
+        showAddCandidates();
     }
     
     no_sensor() {
@@ -628,6 +628,6 @@ default {
         if (MenuContext != "add_scan") return;
         
         CandidateKeys = [];
-        show_add_candidates();
+        showAddCandidates();
     }
 }

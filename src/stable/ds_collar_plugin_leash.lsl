@@ -107,7 +107,7 @@ show_menu(string context, string title, string body, list buttons) {
 }
 
 // ===== ACL QUERIES =====
-request_acl(key user) {
+requestAcl(key user) {
     AclPending = TRUE;
     llMessageLinked(LINK_SET, AUTH_BUS, llList2Json(JSON_OBJECT, [
         "type", "acl_query",
@@ -117,7 +117,7 @@ request_acl(key user) {
 }
 
 // ===== PLUGIN REGISTRATION =====
-register_self() {
+registerSelf() {
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
         "type", "register",
         "context", PLUGIN_CONTEXT,
@@ -127,7 +127,7 @@ register_self() {
     ]), NULL_KEY);
 }
 
-send_pong() {
+sendPong() {
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
         "type", "pong",
         "context", PLUGIN_CONTEXT
@@ -135,7 +135,7 @@ send_pong() {
 }
 
 // ===== MENU SYSTEM =====
-show_main_menu() {
+showMainMenu() {
     // Build buttons in display order (left-to-right, top-to-bottom)
     list buttons = ["Back"];
     
@@ -178,7 +178,7 @@ show_main_menu() {
     show_menu("main", "Leash", body, buttons);
 }
 
-show_settings_menu() {
+showSettingsMenu() {
     list buttons = ["Back", "Length"];
     if (TurnToFace) {
         buttons += ["Turn: On"];
@@ -191,19 +191,19 @@ show_settings_menu() {
     show_menu("settings", "Settings", body, buttons);
 }
 
-show_length_menu() {
+showLengthMenu() {
     show_menu("length", "Length", "Select leash length\nCurrent: " + (string)LeashLength + "m", 
               ["<<", ">>", "Back", "1m", "3m", "5m", "10m", "15m", "20m"]);
 }
 
-show_pass_menu() {
+showPassMenu() {
     SensorMode = "pass";
     MenuContext = "pass";
     llSensor("", NULL_KEY, AGENT, 96.0, PI);
 }
 
 // ===== OFFER DIALOG (NEW v1.0) =====
-show_offer_dialog(key target, key originator) {
+showOfferDialog(key target, key originator) {
     OfferDialogSession = generate_session_id();
     OfferTarget = target;
     OfferOriginator = originator;
@@ -225,7 +225,7 @@ show_offer_dialog(key target, key originator) {
     logd("Offer dialog shown to " + llKey2Name(target) + " from " + offerer_name);
 }
 
-handle_offer_response(string button) {
+handleOfferResponse(string button) {
     if (button == "Accept") {
         // Send grab action to kernel with target as leasher
         llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
@@ -249,7 +249,7 @@ handle_offer_response(string button) {
     OfferOriginator = NULL_KEY;
 }
 
-cleanup_offer_dialog() {
+cleanupOfferDialog() {
     if (OfferOriginator != NULL_KEY) {
         llRegionSayTo(OfferOriginator, 0, "Leash offer to " + llKey2Name(OfferTarget) + " timed out.");
     }
@@ -260,7 +260,7 @@ cleanup_offer_dialog() {
 }
 
 // ===== ACTIONS =====
-give_holder_object() {
+giveHolderObject() {
     // ACL check: Allow ACL 1 (public) and ACL 3+ (trustee/owner)
     // Deny ACL 2 (owned wearer) as per design
     // Deny ACL 0 (no access) and ACL -1 (blacklisted)
@@ -281,7 +281,7 @@ give_holder_object() {
     logd("Gave holder to " + llKey2Name(CurrentUser) + " (ACL " + (string)UserAcl + ")");}
 
 
-send_leash_action(string action) {
+sendLeashAction(string action) {
     llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
         "type", "leash_action",
         "action", action,
@@ -289,7 +289,7 @@ send_leash_action(string action) {
     ]), CurrentUser);
 }
 
-send_leash_action_with_target(string action, key target) {
+sendLeashActionWithTarget(string action, key target) {
     llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
         "type", "leash_action",
         "action", action,
@@ -298,7 +298,7 @@ send_leash_action_with_target(string action, key target) {
     ]), CurrentUser);
 }
 
-send_set_length(integer length) {
+sendSetLength(integer length) {
     llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
         "type", "leash_action",
         "action", "set_length",
@@ -308,81 +308,81 @@ send_set_length(integer length) {
 }
 
 // ===== BUTTON HANDLERS =====
-handle_button_click(string button) {
+handleButtonClick(string button) {
     logd("Button: " + button + " in context: " + MenuContext);
     
     if (MenuContext == "main") {
         if (button == "Clip") {
             if (in_allowed_list(UserAcl, ALLOWED_ACL_GRAB)) {
-                send_leash_action("grab");
-                cleanup_session();
+                sendLeashAction("grab");
+                cleanupSession();
             }
         }
         else if (button == "Unclip") {
-            send_leash_action("release");
-            cleanup_session();
+            sendLeashAction("release");
+            cleanupSession();
         }
         else if (button == "Pass") {
             IsOfferMode = FALSE;
-            show_pass_menu();
+            showPassMenu();
         }
         else if (button == "Offer") {
             IsOfferMode = TRUE;
-            show_pass_menu();
+            showPassMenu();
         }
         else if (button == "Yank") {
-            send_leash_action("yank");
-            show_main_menu();
+            sendLeashAction("yank");
+            showMainMenu();
         }
         else if (button == "Get Holder") {
-            give_holder_object();
-            show_main_menu();
+            giveHolderObject();
+            showMainMenu();
         }
         else if (button == "Settings") {
-            show_settings_menu();
+            showSettingsMenu();
         }
         else if (button == "Back") {
-            return_to_root();
+            returnToRoot();
         }
     }
     else if (MenuContext == "settings") {
         if (button == "Length") {
-            show_length_menu();
+            showLengthMenu();
         }
         else if (button == "Turn: On" || button == "Turn: Off") {
-            send_leash_action("toggle_turn");
+            sendLeashAction("toggle_turn");
             scheduleStateQuery("settings");
         }
         else if (button == "Back") {
-            show_main_menu();
+            showMainMenu();
         }
     }
     else if (MenuContext == "length") {
         if (button == "Back") {
-            show_settings_menu();
+            showSettingsMenu();
         }
         else if (button == "<<") {
-            send_set_length(LeashLength - 1);
+            sendSetLength(LeashLength - 1);
             scheduleStateQuery("length");
         }
         else if (button == ">>") {
-            send_set_length(LeashLength + 1);
+            sendSetLength(LeashLength + 1);
             scheduleStateQuery("length");
         }
         else {
             integer length = (integer)button;
             if (length >= 1 && length <= 20) {
-                send_set_length(length);
+                sendSetLength(length);
                 scheduleStateQuery("settings");
             }
         }
     }
     else if (MenuContext == "pass") {
         if (button == "Back") {
-            show_main_menu();
+            showMainMenu();
         }
         else if (button == "<<" || button == ">>") {
-            show_pass_menu();
+            showPassMenu();
         }
         else {
             // Find selected avatar in SensorCandidates
@@ -406,27 +406,27 @@ handle_button_click(string button) {
                 else {
                     action = "pass";
                 }
-                send_leash_action_with_target(action, selected);
-                cleanup_session();
+                sendLeashActionWithTarget(action, selected);
+                cleanupSession();
             }
             else {
                 llRegionSayTo(CurrentUser, 0, "Avatar not found.");
-                show_main_menu();
+                showMainMenu();
             }
         }
     }
 }
 
 // ===== NAVIGATION =====
-return_to_root() {
+returnToRoot() {
     llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
         "type", "return",
         "user", (string)CurrentUser
     ]), NULL_KEY);
-    cleanup_session();
+    cleanupSession();
 }
 
-cleanup_session() {
+cleanupSession() {
     CurrentUser = NULL_KEY;
     UserAcl = -999;
     AclPending = FALSE;
@@ -438,7 +438,7 @@ cleanup_session() {
     logd("Session cleaned up");
 }
 
-query_state() {
+queryState() {
     llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
         "type", "leash_action",
         "action", "query_state"
@@ -446,7 +446,7 @@ query_state() {
 }
 
 // Schedule a state query after brief delay, then show specified menu
-// Replaces blocking llSleep() + query_state() pattern
+// Replaces blocking llSleep() + queryState() pattern
 scheduleStateQuery(string next_menu_context) {
     PendingStateQuery = TRUE;
     PendingQueryContext = next_menu_context;
@@ -458,9 +458,9 @@ scheduleStateQuery(string next_menu_context) {
 default
 {
     state_entry() {
-        cleanup_session();
-        register_self();
-        query_state();
+        cleanupSession();
+        registerSelf();
+        queryState();
         logd("Leash UI ready (v1.0 OFFER DIALOG)");
     }
     
@@ -477,7 +477,7 @@ default
         if (PendingStateQuery) {
             PendingStateQuery = FALSE;
             llSetTimerEvent(0.0);  // Stop timer
-            query_state();
+            queryState();
             // Menu will be shown when leash_state response arrives
             logd("Timer fired: querying state for " + PendingQueryContext);
         }
@@ -489,11 +489,11 @@ default
             string msg_type = llJsonGetValue(msg, ["type"]);
             
             if (msg_type == "register_now") {
-                register_self();
+                registerSelf();
                 return;
             }
             if (msg_type == "ping") {
-                send_pong();
+                sendPong();
                 return;
             }
             return;
@@ -507,7 +507,7 @@ default
                 if (!json_has(msg, ["context"])) return;
                 if (llJsonGetValue(msg, ["context"]) != PLUGIN_CONTEXT) return;
                 CurrentUser = id;
-                request_acl(id);
+                requestAcl(id);
                 return;
             }
             
@@ -532,13 +532,13 @@ default
                     PendingQueryContext = "";  // Clear before showing menu
 
                     if (menu_to_show == "settings") {
-                        show_settings_menu();
+                        showSettingsMenu();
                     }
                     else if (menu_to_show == "length") {
-                        show_length_menu();
+                        showLengthMenu();
                     }
                     else if (menu_to_show == "main") {
-                        show_main_menu();
+                        showMainMenu();
                     }
                     logd("Showed pending menu: " + menu_to_show);
                 }
@@ -549,7 +549,7 @@ default
                 if (!json_has(msg, ["target"]) || !json_has(msg, ["originator"])) return;
                 key target = (key)llJsonGetValue(msg, ["target"]);
                 key originator = (key)llJsonGetValue(msg, ["originator"]);
-                show_offer_dialog(target, originator);
+                showOfferDialog(target, originator);
                 return;
             }
         }
@@ -588,13 +588,13 @@ default
                 
                 // Check if this is an offer dialog response
                 if (response_session == OfferDialogSession) {
-                    handle_offer_response(button);
+                    handleOfferResponse(button);
                     return;
                 }
                 
                 // Otherwise handle menu dialog response
                 if (response_session != SessionId) return;
-                handle_button_click(button);
+                handleButtonClick(button);
                 return;
             }
             
@@ -605,14 +605,14 @@ default
                 
                 // Check if this is an offer dialog timeout
                 if (timeout_session == OfferDialogSession) {
-                    cleanup_offer_dialog();
+                    cleanupOfferDialog();
                     return;
                 }
                 
                 // Otherwise handle menu dialog timeout
                 if (timeout_session != SessionId) return;
                 logd("Dialog timeout");
-                cleanup_session();
+                cleanupSession();
                 return;
             }
             return;
@@ -638,7 +638,7 @@ default
         if (llGetListLength(SensorCandidates) == 0) {
             if (SensorMode == "pass") {
                 llRegionSayTo(CurrentUser, 0, "No nearby avatars found.");
-                show_main_menu();
+                showMainMenu();
             }
             SensorMode = "";
             return;
@@ -674,7 +674,7 @@ default
         if (SensorMode == "") return;
         if (SensorMode == "pass") {
             llRegionSayTo(CurrentUser, 0, "No nearby avatars found.");
-            show_main_menu();
+            showMainMenu();
         }
         SensorMode = "";
     }

@@ -58,6 +58,7 @@ string ROOT_CONTEXT = "core_root";
 integer RELAY_CHANNEL = -1812221819;
 integer RLV_RESP_CHANNEL = 4711;
 integer MAX_RELAYS = 5;
+integer RELAY_STRIDE = 4;  // [obj_key, obj_name, session_chan, restrictions_csv]
 
 integer MODE_OFF = 0;
 integer MODE_ON = 1;
@@ -115,6 +116,21 @@ string generateSessionId() {
 string truncateName(string name, integer max_len) {
     if (llStringLength(name) <= max_len) return name;
     return llGetSubString(name, 0, max_len - 4) + "...";
+}
+
+// Returns number of active relays
+integer getRelayCount() {
+    return llGetListLength(Relays) / RELAY_STRIDE;
+}
+
+// Returns TRUE if at max relay capacity
+integer isRelaysFull() {
+    return (llGetListLength(Relays) >= (MAX_RELAYS * RELAY_STRIDE));
+}
+
+// Returns TRUE if any relays are active
+integer hasActiveRelays() {
+    return (llGetListLength(Relays) > 0);
 }
 
 /* ===============================================================
@@ -187,7 +203,7 @@ integer addRelay(key obj, string obj_name, integer chan) {
     }
     
     // Check max relays
-    if (llGetListLength(Relays) >= (MAX_RELAYS * 4)) {
+    if (isRelaysFull()) {
         logd("Max relays reached. Ignoring " + obj_name);
         return FALSE;
     }
@@ -239,7 +255,7 @@ safewordClearAll() {
     while (i < relay_count) {
         key obj = llList2Key(Relays, i);
         clearRestrictions(obj);
-        i = i + 4;
+        i += RELAY_STRIDE;
     }
     Relays = [];
     logd("Cleared all relay restrictions");
@@ -372,8 +388,8 @@ showMainMenu() {
         }
     }
     
-    integer relay_count = llGetListLength(Relays) / 4;
-    
+    integer relay_count = getRelayCount();
+
     string message = "RLV Relay Menu\nMode: " + mode_str + "\nActive Relays: " + (string)relay_count;
     
     list buttons = ["Back", "Mode", "Bound by..."];
@@ -448,9 +464,9 @@ showModeMenu() {
 
 showObjectList() {
     SessionId = generateSessionId();
-    
-    integer relay_count = llGetListLength(Relays) / 4;
-    
+
+    integer relay_count = getRelayCount();
+
     string message;
     if (relay_count == 0) {
         message = "No active relays.";
@@ -459,7 +475,7 @@ showObjectList() {
         message = "Active Relays:\n";
         integer i = 0;
         while (i < relay_count) {
-            integer idx = i * 4;
+            integer idx = i * RELAY_STRIDE;
             string obj_name = llList2String(Relays, idx + 1);
             message += (string)(i + 1) + ". " + truncateName(obj_name, 20) + "\n";
             i++;
@@ -606,7 +622,7 @@ handleGroundRez() {
     persistHardcore(FALSE);
     
     // Clear any active restrictions
-    if (llGetListLength(Relays) > 0) {
+    if (hasActiveRelays()) {
         safewordClearAll();
     }
     

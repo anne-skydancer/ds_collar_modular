@@ -328,59 +328,37 @@ triggerCollarMenu() {
 }
 
 /* ===============================================================
+   ACL LEVEL HELPERS
+   =============================================================== */
+
+string getAclMessage(integer level) {
+    if (level == ACL_PRIMARY_OWNER) return "[OK] Access granted: PRIMARY OWNER";
+    if (level == ACL_TRUSTEE) return "[OK] Access granted: TRUSTEE";
+    if (level == ACL_OWNED) return "[OK] Access granted: OWNED";
+    if (level == ACL_UNOWNED) return "[OK] Access granted: UNOWNED (wearer)";
+    if (level == ACL_PUBLIC) return "[OK] Access granted: PUBLIC";
+    if (level == ACL_NOACCESS) return "[FAIL] Access denied: NO ACCESS";
+    if (level == ACL_BLACKLIST) return "[FAIL] Access denied: BLACKLISTED";
+    return "[FAIL] Access denied: Unknown level " + (string)level;
+}
+
+integer hasAccess(integer level) {
+    if (level == ACL_PRIMARY_OWNER) return TRUE;
+    if (level == ACL_TRUSTEE) return TRUE;
+    if (level == ACL_OWNED) return TRUE;
+    if (level == ACL_UNOWNED) return TRUE;
+    if (level == ACL_PUBLIC) return TRUE;
+    return FALSE;
+}
+
+/* ===============================================================
    ACL LEVEL PROCESSING
    =============================================================== */
 
 processAclResult(integer level) {
-    string access_msg = "";
-    integer has_access = FALSE;
-    
-    // Check access level (no ternary, nested if/else per preferences)
-    if (level == ACL_PRIMARY_OWNER) {
-        access_msg = "[OK] Access granted: PRIMARY OWNER";
-        has_access = TRUE;
-    }
-    else {
-        if (level == ACL_TRUSTEE) {
-            access_msg = "[OK] Access granted: TRUSTEE"; 
-            has_access = TRUE;
-        }
-        else {
-            if (level == ACL_OWNED) {
-                access_msg = "[OK] Access granted: OWNED";
-                has_access = TRUE;
-            }
-            else {
-                if (level == ACL_UNOWNED) {
-                    access_msg = "[OK] Access granted: UNOWNED (wearer)";
-                    has_access = TRUE;
-                }
-                else {
-                    if (level == ACL_PUBLIC) {
-                        access_msg = "[OK] Access granted: PUBLIC";
-                        has_access = TRUE;
-                    }
-                    else {
-                        if (level == ACL_NOACCESS) {
-                            access_msg = "[FAIL] Access denied: NO ACCESS";
-                            has_access = FALSE;
-                        }
-                        else {
-                            if (level == ACL_BLACKLIST) {
-                                access_msg = "[FAIL] Access denied: BLACKLISTED";
-                                has_access = FALSE;
-                            }
-                            else {
-                                access_msg = "[FAIL] Access denied: Unknown level " + (string)level;
-                                has_access = FALSE;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-    
+    string access_msg = getAclMessage(level);
+    integer has_access = hasAccess(level);
+
     llOwnerSay(access_msg);
 
     if (has_access) {
