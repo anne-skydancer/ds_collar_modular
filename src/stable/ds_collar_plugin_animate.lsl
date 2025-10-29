@@ -72,7 +72,7 @@ string generate_session_id() {
    ANIMATION INVENTORY MANAGEMENT
    =============================================================== */
 
-void refreshAnimationList() {
+refreshAnimationList() {
     AnimationList = [];
     integer count = llGetInventoryNumber(INVENTORY_ANIMATION);
     integer i;
@@ -91,7 +91,7 @@ void refreshAnimationList() {
    ANIMATION CONTROL
    =============================================================== */
 
-void ensurePermissions() {
+ensurePermissions() {
     key owner = llGetOwner();
     if (llGetPermissions() & PERMISSION_TRIGGER_ANIMATION) {
         HasPermission = TRUE;
@@ -103,7 +103,7 @@ void ensurePermissions() {
     }
 }
 
-void startAnimation(string anim_name) {
+startAnimation(string anim_name) {
     if (!HasPermission) {
         logd("No permission to trigger animations");
         llRegionSayTo(CurrentUser, 0, "No animation permission granted.");
@@ -129,7 +129,7 @@ void startAnimation(string anim_name) {
     }
 }
 
-void stopAllAnimations() {
+stopAllAnimations() {
     if (LastPlayedAnim != "") {
         llStopAnimation(LastPlayedAnim);
         logd("Stopped: " + LastPlayedAnim);
@@ -145,7 +145,7 @@ void stopAllAnimations() {
    LIFECYCLE MANAGEMENT
    =============================================================== */
 
-void registerSelf() {
+registerSelf() {
     string msg = llList2Json(JSON_OBJECT, [
         "type", "register",
         "context", PLUGIN_CONTEXT,

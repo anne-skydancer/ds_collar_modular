@@ -114,7 +114,7 @@ string generateSessionId() {
    LIFECYCLE
    =============================================================== */
 
-void registerSelf() {
+registerSelf() {
     string msg = llList2Json(JSON_OBJECT, [
         "type", "register",
         "context", PLUGIN_CONTEXT,
@@ -126,7 +126,7 @@ void registerSelf() {
     logd("Registered");
 }
 
-void sendPong() {
+sendPong() {
     string msg = llList2Json(JSON_OBJECT, [
         "type", "pong",
         "context", PLUGIN_CONTEXT
@@ -138,7 +138,7 @@ void sendPong() {
    SETTINGS MANAGEMENT
    =============================================================== */
 
-void applySettingsSync(string msg) {
+applySettingsSync(string msg) {
     if (!jsonHas(msg, ["kv"])) return;
     
     string kv_json = llJsonGetValue(msg, ["kv"]);
@@ -148,7 +148,7 @@ void applySettingsSync(string msg) {
     logd("Settings sync applied");
 }
 
-void applySettingsDelta(string msg) {
+applySettingsDelta(string msg) {
     // Request full sync to update our display cache
     string request = llList2Json(JSON_OBJECT, [
         "type", "settings_get"
@@ -162,7 +162,7 @@ void applySettingsDelta(string msg) {
    ACL MANAGEMENT
    =============================================================== */
 
-void requestAcl(key user_key) {
+requestAcl(key user_key) {
     string msg = llList2Json(JSON_OBJECT, [
         "type", "acl_query",
         "avatar", (string)user_key
@@ -171,7 +171,7 @@ void requestAcl(key user_key) {
     logd("Requested ACL for " + llKey2Name(user_key));
 }
 
-void handleAclResult(string msg) {
+handleAclResult(string msg) {
     if (!jsonHas(msg, ["avatar"])) return;
     if (!jsonHas(msg, ["level"])) return;
     
@@ -195,7 +195,7 @@ void handleAclResult(string msg) {
    MENU DISPLAY
    =============================================================== */
 
-void showMainMenu() {
+showMainMenu() {
     string body = "Maintenance:\n\n";
     
     list buttons;
@@ -238,7 +238,7 @@ void showMainMenu() {
    ACTIONS
    =============================================================== */
 
-void doViewSettings() {
+doViewSettings() {
     if (!SettingsReady || CachedSettings == "") {
         llRegionSayTo(CurrentUser, 0, "Settings not loaded yet. Try again.");
         return;
@@ -267,7 +267,7 @@ void doViewSettings() {
     logd("Displayed settings to " + llKey2Name(CurrentUser));
 }
 
-void doDisplayAccessList() {
+doDisplayAccessList() {
     if (!SettingsReady || CachedSettings == "") {
         llRegionSayTo(CurrentUser, 0, "Settings not loaded yet. Try again.");
         return;
@@ -385,7 +385,7 @@ void doDisplayAccessList() {
     logd("Displayed access list to " + llKey2Name(CurrentUser));
 }
 
-void doReloadSettings() {
+doReloadSettings() {
     string msg = llList2Json(JSON_OBJECT, [
         "type", "settings_get"
     ]);
@@ -395,7 +395,7 @@ void doReloadSettings() {
     logd("Settings reload requested by " + llKey2Name(CurrentUser));
 }
 
-void doClearLeash() {
+doClearLeash() {
     string msg = llList2Json(JSON_OBJECT, [
         "type", "soft_reset",
         "context", "core_leash"
@@ -406,7 +406,7 @@ void doClearLeash() {
     logd("Leash cleared by " + llKey2Name(CurrentUser));
 }
 
-void doReloadCollar() {
+doReloadCollar() {
     // Send soft reset to ALL plugins
     string msg = llList2Json(JSON_OBJECT, [
         "type", "soft_reset_all"
@@ -417,7 +417,7 @@ void doReloadCollar() {
     logd("Collar reload requested by " + llKey2Name(CurrentUser));
 }
 
-void doGiveHud() {
+doGiveHud() {
     if (llGetInventoryType(HUD_ITEM) != INVENTORY_OBJECT) {
         llRegionSayTo(CurrentUser, 0, "HUD not found in inventory.");
         logd("HUD not found: " + HUD_ITEM);
@@ -429,7 +429,7 @@ void doGiveHud() {
     }
 }
 
-void doGiveManual() {
+doGiveManual() {
     if (llGetInventoryType(MANUAL_NOTECARD) != INVENTORY_NOTECARD) {
         llRegionSayTo(CurrentUser, 0, "Manual not found in inventory.");
         logd("Manual not found: " + MANUAL_NOTECARD);
@@ -445,7 +445,7 @@ void doGiveManual() {
    NAVIGATION
    =============================================================== */
 
-void returnToRoot() {
+returnToRoot() {
     string msg = llList2Json(JSON_OBJECT, [
         "type", "return",
         "user", (string)CurrentUser
@@ -454,7 +454,7 @@ void returnToRoot() {
     cleanupSession();
 }
 
-void closeUi() {
+closeUi() {
     string msg = llList2Json(JSON_OBJECT, [
         "type", "close",
         "user", (string)CurrentUser
@@ -467,7 +467,7 @@ void closeUi() {
    SESSION CLEANUP
    =============================================================== */
 
-void cleanupSession() {
+cleanupSession() {
     CurrentUser = NULL_KEY;
     CurrentUserAcl = -999;
     SessionId = "";
@@ -478,7 +478,7 @@ void cleanupSession() {
    DIALOG HANDLERS
    =============================================================== */
 
-void handleDialogResponse(string msg) {
+handleDialogResponse(string msg) {
     if (!jsonHas(msg, ["session_id"])) return;
     if (!jsonHas(msg, ["button"])) return;
     
@@ -549,7 +549,7 @@ void handleDialogResponse(string msg) {
     }
 }
 
-void handleDialogTimeout(string msg) {
+handleDialogTimeout(string msg) {
     if (!jsonHas(msg, ["session_id"])) return;
     
     string session = llJsonGetValue(msg, ["session_id"]);

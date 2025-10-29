@@ -63,7 +63,7 @@ string generate_session_id() {
     return PLUGIN_CONTEXT + "_" + (string)llGetUnixTime();
 }
 
-void setBellVisibility(integer visible) {
+setBellVisibility(integer visible) {
     integer link_count = llGetNumberOfPrims();
     integer i;
     integer found = FALSE;
@@ -91,7 +91,7 @@ void setBellVisibility(integer visible) {
     BellVisible = visible;
 }
 
-void playJingle() {
+playJingle() {
     if (BellSound == "" || BellSound == "00000000-0000-0000-0000-000000000000") {
         return;
     }
@@ -105,7 +105,7 @@ void playJingle() {
 }
 
 // ===== UNIFIED MENU DISPLAY =====
-void showMenu(string context, string title, string body, list buttons) {
+showMenu(string context, string title, string body, list buttons) {
     SessionId = generate_session_id();
     MenuContext = context;
     
@@ -121,7 +121,7 @@ void showMenu(string context, string title, string body, list buttons) {
 }
 
 // ===== ACL QUERIES =====
-void requestAcl(key user) {
+requestAcl(key user) {
     AclPending = TRUE;
     llMessageLinked(LINK_SET, AUTH_BUS, llList2Json(JSON_OBJECT, [
         "type", "acl_query",
@@ -131,7 +131,7 @@ void requestAcl(key user) {
 }
 
 // ===== PLUGIN REGISTRATION =====
-void registerSelf() {
+registerSelf() {
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
         "type", "register",
         "context", PLUGIN_CONTEXT,
@@ -141,7 +141,7 @@ void registerSelf() {
     ]), NULL_KEY);
 }
 
-void sendPong() {
+sendPong() {
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
         "type", "pong",
         "context", PLUGIN_CONTEXT
@@ -149,7 +149,7 @@ void sendPong() {
 }
 
 // ===== MENU SYSTEM =====
-void showMainMenu() {
+showMainMenu() {
     string visible_label;
     if (BellVisible) {
         visible_label = "Show: Y";
@@ -178,7 +178,7 @@ void showMainMenu() {
 }
 
 // ===== SETTINGS MODIFICATION =====
-void persistBellSetting(string setting_key, string value) {
+persistBellSetting(string setting_key, string value) {
     string msg = llList2Json(JSON_OBJECT, [
         "type", "set",
         "key", setting_key,
@@ -189,7 +189,7 @@ void persistBellSetting(string setting_key, string value) {
 }
 
 // ===== BUTTON HANDLER =====
-void handleButtonClick(string button) {
+handleButtonClick(string button) {
     logd("Button: " + button + " in context: " + MenuContext);
     
     if (MenuContext == "main") {
@@ -251,7 +251,7 @@ void handleButtonClick(string button) {
 }
 
 // ===== NAVIGATION =====
-void returnToRoot() {
+returnToRoot() {
     llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
         "type", "return",
         "user", (string)CurrentUser
@@ -259,7 +259,7 @@ void returnToRoot() {
     cleanupSession();
 }
 
-void cleanupSession() {
+cleanupSession() {
     CurrentUser = NULL_KEY;
     UserAcl = -999;
     AclPending = FALSE;
@@ -269,7 +269,7 @@ void cleanupSession() {
 }
 
 // ===== SETTINGS HANDLING =====
-void applySettingsSync(string msg) {
+applySettingsSync(string msg) {
     if (!jsonHas(msg, ["kv"])) return;
     string kv_json = llJsonGetValue(msg, ["kv"]);
     
@@ -297,7 +297,7 @@ void applySettingsSync(string msg) {
     logd("Settings sync applied");
 }
 
-void applySettingsDelta(string msg) {
+applySettingsDelta(string msg) {
     if (!jsonHas(msg, ["changes"])) return;
     string changes = llJsonGetValue(msg, ["changes"]);
     

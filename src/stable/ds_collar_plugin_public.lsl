@@ -69,7 +69,7 @@ integer jsonHas(string j, list path) {
    LIFECYCLE MANAGEMENT
    =============================================================== */
 
-void registerSelf() {
+registerSelf() {
     string label = PLUGIN_LABEL_OFF;
     if (PublicModeEnabled) {
         label = PLUGIN_LABEL_ON;
@@ -86,7 +86,7 @@ void registerSelf() {
     logd("Registered with kernel as: " + label);
 }
 
-void sendPong() {
+sendPong() {
     string msg = llList2Json(JSON_OBJECT, [
         "type", "pong",
         "context", PLUGIN_CONTEXT
@@ -98,7 +98,7 @@ void sendPong() {
    SETTINGS CONSUMPTION
    =============================================================== */
 
-void applySettingsSync(string msg) {
+applySettingsSync(string msg) {
     if (!jsonHas(msg, ["kv"])) return;
     
     string kv_json = llJsonGetValue(msg, ["kv"]);
@@ -118,7 +118,7 @@ void applySettingsSync(string msg) {
     }
 }
 
-void applySettingsDelta(string msg) {
+applySettingsDelta(string msg) {
     if (!jsonHas(msg, ["op"])) return;
     
     string op = llJsonGetValue(msg, ["op"]);
@@ -144,7 +144,7 @@ void applySettingsDelta(string msg) {
    SETTINGS MODIFICATION
    =============================================================== */
 
-void persistPublicMode(integer new_value) {
+persistPublicMode(integer new_value) {
     if (new_value != 0) new_value = 1;
     
     string msg = llList2Json(JSON_OBJECT, [
@@ -160,7 +160,7 @@ void persistPublicMode(integer new_value) {
    UI LABEL UPDATE
    =============================================================== */
 
-void updateUiLabelAndReturn(key user) {
+updateUiLabelAndReturn(key user) {
     string new_label = PLUGIN_LABEL_OFF;
     if (PublicModeEnabled) {
         new_label = PLUGIN_LABEL_ON;
@@ -187,7 +187,7 @@ void updateUiLabelAndReturn(key user) {
    DIRECT TOGGLE ACTION
    =============================================================== */
 
-void togglePublicAccess(key user, integer acl_level) {
+togglePublicAccess(key user, integer acl_level) {
     // Verify ACL (Trustee = 3 minimum)
     if (acl_level < PLUGIN_MIN_ACL) {
         llRegionSayTo(user, 0, "Access denied.");
@@ -216,7 +216,7 @@ void togglePublicAccess(key user, integer acl_level) {
    ACL VALIDATION
    =============================================================== */
 
-void requestAclAndToggle(key user) {
+requestAclAndToggle(key user) {
     string msg = llList2Json(JSON_OBJECT, [
         "type", "acl_query",
         "avatar", (string)user,
@@ -225,7 +225,7 @@ void requestAclAndToggle(key user) {
     llMessageLinked(LINK_SET, AUTH_BUS, msg, NULL_KEY);
 }
 
-void handleAclResult(string msg, key expected_user) {
+handleAclResult(string msg, key expected_user) {
     if (!jsonHas(msg, ["avatar"])) return;
     if (!jsonHas(msg, ["level"])) return;
     

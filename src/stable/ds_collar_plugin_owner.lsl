@@ -74,7 +74,7 @@ list HONORIFICS = ["Master", "Mistress", "Daddy", "Mommy", "King", "Queen"];
    HELPERS
    =============================================================== */
 
-void logd(string msg) {
+logd(string msg) {
     if (DEBUG) llOwnerSay("[" + PLUGIN_LABEL + "] " + msg);
 }
 
@@ -107,7 +107,7 @@ integer isOwner(key k) {
    NAMES
    =============================================================== */
 
-void cacheName(key k, string n) {
+cacheName(key k, string n) {
     if (k == NULL_KEY || n == "" || n == " ") return;
     integer idx = llListFindList(NameCache, [k]);
     if (idx != -1) {
@@ -144,7 +144,7 @@ string getName(key k) {
    LIFECYCLE
    =============================================================== */
 
-void registerSelf() {
+registerSelf() {
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
         "type", "register",
         "context", PLUGIN_CONTEXT,
@@ -154,7 +154,7 @@ void registerSelf() {
     ]), NULL_KEY);
 }
 
-void sendPong() {
+sendPong() {
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
         "type", "pong",
         "context", PLUGIN_CONTEXT
@@ -165,7 +165,7 @@ void sendPong() {
    SETTINGS
    =============================================================== */
 
-void applySettingsSync(string msg) {
+applySettingsSync(string msg) {
     if (!jsonHas(msg, ["kv"])) return;
     string kv = llJsonGetValue(msg, ["kv"]);
     
@@ -218,7 +218,7 @@ void applySettingsSync(string msg) {
     }
 }
 
-void applySettingsDelta(string msg) {
+applySettingsDelta(string msg) {
     if (!jsonHas(msg, ["op"])) return;
     string op = llJsonGetValue(msg, ["op"]);
     
@@ -234,7 +234,7 @@ void applySettingsDelta(string msg) {
 }
 
 
-void persistOwner(key owner, string hon) {
+persistOwner(key owner, string hon) {
     llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
         "type", "set", "key", KEY_OWNER_KEY, "value", (string)owner
     ]), NULL_KEY);
@@ -243,7 +243,7 @@ void persistOwner(key owner, string hon) {
     ]), NULL_KEY);
 }
 
-void addTrustee(key trustee, string hon) {
+addTrustee(key trustee, string hon) {
     llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
         "type", "list_add", "key", KEY_TRUSTEES, "elem", (string)trustee
     ]), NULL_KEY);
@@ -252,7 +252,7 @@ void addTrustee(key trustee, string hon) {
     ]), NULL_KEY);
 }
 
-void removeTrustee(key trustee) {
+removeTrustee(key trustee) {
     integer idx = llListFindList(TrusteeKeys, [(string)trustee]);
     if (idx == -1) return;
     
@@ -267,7 +267,7 @@ void removeTrustee(key trustee) {
     }
 }
 
-void clearOwner() {
+clearOwner() {
     persistOwner(NULL_KEY, "");
 }
 
@@ -275,7 +275,7 @@ void clearOwner() {
    ACL
    =============================================================== */
 
-void requestAcl(key user) {
+requestAcl(key user) {
     llMessageLinked(LINK_SET, AUTH_BUS, llList2Json(JSON_OBJECT, [
         "type", "acl_query",
         "avatar", (string)user,
@@ -283,7 +283,7 @@ void requestAcl(key user) {
     ]), NULL_KEY);
 }
 
-void handleAclResult(string msg) {
+handleAclResult(string msg) {
     if (!jsonHas(msg, ["avatar"]) || !jsonHas(msg, ["level"])) return;
     
     key avatar = (key)llJsonGetValue(msg, ["avatar"]);
@@ -304,7 +304,7 @@ void handleAclResult(string msg) {
    MENUS
    =============================================================== */
 
-void showMain() {
+showMain() {
     SessionId = genSession();
     MenuContext = "main";
     
@@ -361,7 +361,7 @@ void showMain() {
     ]), NULL_KEY);
 }
 
-void showCandidates(string context, string title, string prompt) {
+showCandidates(string context, string title, string prompt) {
     if (llGetListLength(CandidateKeys) == 0) {
         llRegionSayTo(CurrentUser, 0, "No nearby avatars found.");
         showMain();
@@ -391,7 +391,7 @@ void showCandidates(string context, string title, string prompt) {
     ]), NULL_KEY);
 }
 
-void showHonorific(key target, string context) {
+showHonorific(key target, string context) {
     PendingCandidate = target;
     SessionId = genSession();
     MenuContext = context;
@@ -408,7 +408,7 @@ void showHonorific(key target, string context) {
     ]), NULL_KEY);
 }
 
-void showConfirm(string title, string body, string context) {
+showConfirm(string title, string body, string context) {
     SessionId = genSession();
     MenuContext = context;
     
@@ -423,7 +423,7 @@ void showConfirm(string title, string body, string context) {
     ]), NULL_KEY);
 }
 
-void showRemoveTrustee() {
+showRemoveTrustee() {
     if (llGetListLength(TrusteeKeys) == 0) {
         llRegionSayTo(CurrentUser, 0, "No trustees.");
         showMain();
@@ -461,7 +461,7 @@ void showRemoveTrustee() {
    BUTTON HANDLING
    =============================================================== */
 
-void handleButton(string btn) {
+handleButton(string btn) {
     if (btn == "Back") {
         if (MenuContext == "main") {
             llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
@@ -760,7 +760,7 @@ void handleButton(string btn) {
    CLEANUP
    =============================================================== */
 
-void cleanupSession() {
+cleanupSession() {
     CurrentUser = NULL_KEY;
     UserAcl = -999;
     SessionId = "";

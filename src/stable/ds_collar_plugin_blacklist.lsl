@@ -116,7 +116,7 @@ list blacklist_names() {
    LIFECYCLE
    =============================================================== */
 
-void register_self() {
+register_self() {
     string msg = llList2Json(JSON_OBJECT, [
         "type", "register",
         "context", PLUGIN_CONTEXT,
@@ -128,7 +128,7 @@ void register_self() {
     logd("Registered");
 }
 
-void send_pong() {
+send_pong() {
     string msg = llList2Json(JSON_OBJECT, [
         "type", "pong",
         "context", PLUGIN_CONTEXT
@@ -140,14 +140,14 @@ void send_pong() {
    SETTINGS MANAGEMENT
    =============================================================== */
 
-void apply_settings_sync(string msg) {
+apply_settings_sync(string msg) {
     if (!json_has(msg, ["kv"])) return;
     
     string kv_json = llJsonGetValue(msg, ["kv"]);
     apply_blacklist_payload(kv_json);
 }
 
-void apply_settings_delta(string msg) {
+apply_settings_delta(string msg) {
     if (!json_has(msg, ["op"])) return;
     
     string op = llJsonGetValue(msg, ["op"]);
@@ -191,7 +191,7 @@ void apply_settings_delta(string msg) {
     }
 }
 
-void apply_blacklist_payload(string kv_json) {
+apply_blacklist_payload(string kv_json) {
     if (!json_has(kv_json, [KEY_BLACKLIST])) {
         logd("No blacklist key in settings");
         Blacklist = [];
@@ -202,7 +202,7 @@ void apply_blacklist_payload(string kv_json) {
     parse_blacklist_value(raw);
 }
 
-void parse_blacklist_value(string raw) {
+parse_blacklist_value(string raw) {
     if (raw == JSON_INVALID || raw == "[]" || raw == "" || raw == " ") {
         Blacklist = [];
         logd("Blacklist cleared");
@@ -242,7 +242,7 @@ void parse_blacklist_value(string raw) {
     logd("Loaded blacklist (CSV): " + (string)llGetListLength(Blacklist) + " entries");
 }
 
-void persist_blacklist() {
+persist_blacklist() {
     string msg = llList2Json(JSON_OBJECT, [
         "type", "set",
         "key", KEY_BLACKLIST,
@@ -256,7 +256,7 @@ void persist_blacklist() {
    ACL MANAGEMENT
    =============================================================== */
 
-void request_acl(key user_key) {
+request_acl(key user_key) {
     string msg = llList2Json(JSON_OBJECT, [
         "type", "acl_query",
         "avatar", (string)user_key
@@ -265,7 +265,7 @@ void request_acl(key user_key) {
     logd("Requested ACL for " + llKey2Name(user_key));
 }
 
-void handle_acl_result(string msg) {
+handle_acl_result(string msg) {
     if (!json_has(msg, ["avatar"])) return;
     if (!json_has(msg, ["level"])) return;
     
@@ -290,7 +290,7 @@ void handle_acl_result(string msg) {
    MENU DISPLAY
    =============================================================== */
 
-void show_main_menu() {
+show_main_menu() {
     integer count = llGetListLength(Blacklist);
     string body = "Blacklist Management\n\n";
     body += "Currently blacklisted: " + (string)count;
@@ -318,7 +318,7 @@ void show_main_menu() {
     logd("Showing main menu");
 }
 
-void show_remove_menu() {
+show_remove_menu() {
     if (llGetListLength(Blacklist) == 0) {
         llRegionSayTo(CurrentUser, 0, "Blacklist is empty.");
         show_main_menu();
@@ -345,7 +345,7 @@ void show_remove_menu() {
     logd("Showing remove menu");
 }
 
-void show_add_candidates() {
+show_add_candidates() {
     if (llGetListLength(CandidateKeys) == 0) {
         llRegionSayTo(CurrentUser, 0, "No nearby avatars found.");
         show_main_menu();
@@ -386,7 +386,7 @@ void show_add_candidates() {
    NAVIGATION
    =============================================================== */
 
-void return_to_root() {
+return_to_root() {
     string msg = llList2Json(JSON_OBJECT, [
         "type", "return",
         "user", (string)CurrentUser
@@ -399,7 +399,7 @@ void return_to_root() {
    SESSION CLEANUP
    =============================================================== */
 
-void cleanup_session() {
+cleanup_session() {
     CurrentUser = NULL_KEY;
     CurrentUserAcl = -999;
     SessionId = "";
@@ -412,7 +412,7 @@ void cleanup_session() {
    DIALOG HANDLERS
    =============================================================== */
 
-void handle_dialog_response(string msg) {
+handle_dialog_response(string msg) {
     if (!json_has(msg, ["session_id"])) return;
     if (!json_has(msg, ["button"])) return;
     
@@ -487,7 +487,7 @@ void handle_dialog_response(string msg) {
     show_main_menu();
 }
 
-void handle_dialog_timeout(string msg) {
+handle_dialog_timeout(string msg) {
     if (!json_has(msg, ["session_id"])) return;
     
     string session = llJsonGetValue(msg, ["session_id"]);

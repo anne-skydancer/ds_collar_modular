@@ -78,7 +78,7 @@ integer jsonHas(string json_str, list path) {
     return (llJsonGetValue(json_str, path) != JSON_INVALID);
 }
 
-void logd(string msg) {
+logd(string msg) {
     if (DEBUG) {
         llOwnerSay("[RLVRESTRICT] " + msg);
     }
@@ -92,7 +92,7 @@ string generateSessionId() {
    LIFECYCLE
    =============================================================== */
 
-void registerSelf() {
+registerSelf() {
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
         "type", "register",
         "context", PLUGIN_CONTEXT,
@@ -104,14 +104,14 @@ void registerSelf() {
     logd("Registered with kernel");
 }
 
-void sendPong() {
+sendPong() {
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
         "type", "pong",
         "context", PLUGIN_CONTEXT
     ]), NULL_KEY);
 }
 
-void cleanupSession() {
+cleanupSession() {
     if (SessionId != "") {
         llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
             "type", "dialog_close",
@@ -131,7 +131,7 @@ void cleanupSession() {
    SETTINGS PERSISTENCE
    =============================================================== */
 
-void persistRestrictions() {
+persistRestrictions() {
     string csv = llDumpList2String(Restrictions, ",");
     
     llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
@@ -143,7 +143,7 @@ void persistRestrictions() {
     logd("Persisted restrictions: " + csv);
 }
 
-void applySettingsSync(string msg) {
+applySettingsSync(string msg) {
     if (!jsonHas(msg, ["kv"])) return;
     
     string kv = llJsonGetValue(msg, ["kv"]);

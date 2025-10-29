@@ -100,7 +100,7 @@ integer closeSession(string session_id) {
     return FALSE;
 }
 
-void pruneExpiredSessions() {
+pruneExpiredSessions() {
     integer now_unix = now();
     integer i = 0;
     
@@ -168,7 +168,7 @@ integer get_next_channel() {
    DIALOG DISPLAY
    =============================================================== */
 
-void handleDialogOpen(string msg) {
+handleDialogOpen(string msg) {
     if (!jsonHas(msg, ["session_id"])) {
         logd("ERROR: dialog_open missing session_id");
         return;
