@@ -102,7 +102,7 @@ string generateSessionId() {
    LIFECYCLE MANAGEMENT
    =============================================================== */
 
-registerSelf() {
+void registerSelf() {
     string msg = llList2Json(JSON_OBJECT, [
         "type", "register",
         "context", PLUGIN_CONTEXT,
@@ -114,7 +114,7 @@ registerSelf() {
     logd("Registered with kernel");
 }
 
-sendPong() {
+void sendPong() {
     string msg = llList2Json(JSON_OBJECT, [
         "type", "pong",
         "context", PLUGIN_CONTEXT
@@ -126,7 +126,7 @@ sendPong() {
    SETTINGS CONSUMPTION
    =============================================================== */
 
-applySettingsSync(string msg) {
+void applySettingsSync(string msg) {
     if (!jsonHas(msg, ["kv"])) return;
     
     string kv_json = llJsonGetValue(msg, ["kv"]);

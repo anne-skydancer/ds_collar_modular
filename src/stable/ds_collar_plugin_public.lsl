@@ -69,7 +69,7 @@ integer jsonHas(string j, list path) {
    LIFECYCLE MANAGEMENT
    =============================================================== */
 
-registerSelf() {
+void registerSelf() {
     string label = PLUGIN_LABEL_OFF;
     if (PublicModeEnabled) {
         label = PLUGIN_LABEL_ON;
@@ -86,7 +86,7 @@ registerSelf() {
     logd("Registered with kernel as: " + label);
 }
 
-sendPong() {
+void sendPong() {
     string msg = llList2Json(JSON_OBJECT, [
         "type", "pong",
         "context", PLUGIN_CONTEXT
@@ -98,15 +98,15 @@ sendPong() {
    SETTINGS CONSUMPTION
    =============================================================== */
 
-applySettingsSync(string msg) {
-    if (!json_has(msg, ["kv"])) return;
+void applySettingsSync(string msg) {
+    if (!jsonHas(msg, ["kv"])) return;
     
     string kv_json = llJsonGetValue(msg, ["kv"]);
     
     integer old_state = PublicModeEnabled;
     PublicModeEnabled = FALSE;
     
-    if (json_has(kv_json, [KEY_PUBLIC_MODE])) {
+    if (jsonHas(kv_json, [KEY_PUBLIC_MODE])) {
         PublicModeEnabled = (integer)llJsonGetValue(kv_json, [KEY_PUBLIC_MODE]);
     }
     
@@ -114,27 +114,27 @@ applySettingsSync(string msg) {
     
     // If state changed, update label
     if (old_state != PublicModeEnabled) {
-        register_self();
+        registerSelf();
     }
 }
 
-applySettingsDelta(string msg) {
-    if (!json_has(msg, ["op"])) return;
+void applySettingsDelta(string msg) {
+    if (!jsonHas(msg, ["op"])) return;
     
     string op = llJsonGetValue(msg, ["op"]);
     
     if (op == "set") {
-        if (!json_has(msg, ["changes"])) return;
+        if (!jsonHas(msg, ["changes"])) return;
         string changes = llJsonGetValue(msg, ["changes"]);
         
-        if (json_has(changes, [KEY_PUBLIC_MODE])) {
+        if (jsonHas(changes, [KEY_PUBLIC_MODE])) {
             integer old_state = PublicModeEnabled;
             PublicModeEnabled = (integer)llJsonGetValue(changes, [KEY_PUBLIC_MODE]);
             logd("Delta: public_mode = " + (string)PublicModeEnabled);
             
             // If state changed, update label
             if (old_state != PublicModeEnabled) {
-                register_self();
+                registerSelf();
             }
         }
     }
@@ -144,7 +144,7 @@ applySettingsDelta(string msg) {
    SETTINGS MODIFICATION
    =============================================================== */
 
-persistPublicMode(integer new_value) {
+void persistPublicMode(integer new_value) {
     if (new_value != 0) new_value = 1;
     
     string msg = llList2Json(JSON_OBJECT, [
@@ -160,7 +160,7 @@ persistPublicMode(integer new_value) {
    UI LABEL UPDATE
    =============================================================== */
 
-updateUiLabelAndReturn(key user) {
+void updateUiLabelAndReturn(key user) {
     string new_label = PLUGIN_LABEL_OFF;
     if (PublicModeEnabled) {
         new_label = PLUGIN_LABEL_ON;
@@ -187,7 +187,7 @@ updateUiLabelAndReturn(key user) {
    DIRECT TOGGLE ACTION
    =============================================================== */
 
-togglePublicAccess(key user, integer acl_level) {
+void togglePublicAccess(key user, integer acl_level) {
     // Verify ACL (Trustee = 3 minimum)
     if (acl_level < PLUGIN_MIN_ACL) {
         llRegionSayTo(user, 0, "Access denied.");
@@ -198,7 +198,7 @@ togglePublicAccess(key user, integer acl_level) {
     PublicModeEnabled = !PublicModeEnabled;
     
     // Persist change
-    persist_public_mode(PublicModeEnabled);
+    persistPublicMode(PublicModeEnabled);
     
     // Notify user
     if (PublicModeEnabled) {
@@ -209,14 +209,14 @@ togglePublicAccess(key user, integer acl_level) {
     }
     
     // Update UI label and return to root menu
-    update_ui_label_and_return(user);
+    updateUiLabelAndReturn(user);
 }
 
 /* ===============================================================
    ACL VALIDATION
    =============================================================== */
 
-requestAclAndToggle(key user) {
+void requestAclAndToggle(key user) {
     string msg = llList2Json(JSON_OBJECT, [
         "type", "acl_query",
         "avatar", (string)user,
@@ -225,9 +225,9 @@ requestAclAndToggle(key user) {
     llMessageLinked(LINK_SET, AUTH_BUS, msg, NULL_KEY);
 }
 
-handleAclResult(string msg, key expected_user) {
-    if (!json_has(msg, ["avatar"])) return;
-    if (!json_has(msg, ["level"])) return;
+void handleAclResult(string msg, key expected_user) {
+    if (!jsonHas(msg, ["avatar"])) return;
+    if (!jsonHas(msg, ["level"])) return;
     
     key avatar = (key)llJsonGetValue(msg, ["avatar"]);
     if (avatar != expected_user) return;
@@ -235,7 +235,7 @@ handleAclResult(string msg, key expected_user) {
     integer level = (integer)llJsonGetValue(msg, ["level"]);
     
     // Toggle immediately with this ACL level
-    toggle_public_access(avatar, level);
+    togglePublicAccess(avatar, level);
 }
 
 /* ===============================================================
@@ -246,7 +246,7 @@ default {
     state_entry() {
         PublicModeEnabled = FALSE;
         
-        register_self();
+        registerSelf();
         
         // Request settings
         string msg = llList2Json(JSON_OBJECT, [
@@ -270,16 +270,16 @@ default {
     link_message(integer sender, integer num, string msg, key id) {
         // ===== KERNEL LIFECYCLE =====
         if (num == KERNEL_LIFECYCLE) {
-            if (!json_has(msg, ["type"])) return;
+            if (!jsonHas(msg, ["type"])) return;
             string msg_type = llJsonGetValue(msg, ["type"]);
             
             if (msg_type == "register_now") {
-                register_self();
+                registerSelf();
                 return;
             }
             
             if (msg_type == "ping") {
-                send_pong();
+                sendPong();
                 return;
             }
             
@@ -288,16 +288,16 @@ default {
         
         // ===== SETTINGS SYNC/DELTA =====
         if (num == SETTINGS_BUS) {
-            if (!json_has(msg, ["type"])) return;
+            if (!jsonHas(msg, ["type"])) return;
             string msg_type = llJsonGetValue(msg, ["type"]);
             
             if (msg_type == "settings_sync") {
-                apply_settings_sync(msg);
+                applySettingsSync(msg);
                 return;
             }
             
             if (msg_type == "settings_delta") {
-                apply_settings_delta(msg);
+                applySettingsDelta(msg);
                 return;
             }
             
@@ -306,17 +306,17 @@ default {
         
         // ===== UI DIRECT TOGGLE =====
         if (num == UI_BUS) {
-            if (!json_has(msg, ["type"])) return;
+            if (!jsonHas(msg, ["type"])) return;
             string msg_type = llJsonGetValue(msg, ["type"]);
             
             if (msg_type == "start") {
-                if (!json_has(msg, ["context"])) return;
+                if (!jsonHas(msg, ["context"])) return;
                 if (llJsonGetValue(msg, ["context"]) != PLUGIN_CONTEXT) return;
                 
                 if (id == NULL_KEY) return;
                 
                 // Request ACL and toggle
-                request_acl_and_toggle(id);
+                requestAclAndToggle(id);
                 return;
             }
             
@@ -325,17 +325,17 @@ default {
         
         // ===== ACL RESULTS =====
         if (num == AUTH_BUS) {
-            if (!json_has(msg, ["type"])) return;
+            if (!jsonHas(msg, ["type"])) return;
             string msg_type = llJsonGetValue(msg, ["type"]);
             
             if (msg_type == "acl_result") {
-                if (!json_has(msg, ["id"])) return;
+                if (!jsonHas(msg, ["id"])) return;
                 string correlation = llJsonGetValue(msg, ["id"]);
                 
                 if (correlation == PLUGIN_CONTEXT + "_toggle") {
-                    if (!json_has(msg, ["avatar"])) return;
+                    if (!jsonHas(msg, ["avatar"])) return;
                     key user = (key)llJsonGetValue(msg, ["avatar"]);
-                    handle_acl_result(msg, user);
+                    handleAclResult(msg, user);
                 }
                 return;
             }

@@ -69,7 +69,7 @@ void playToggleSound() {
    LIFECYCLE MANAGEMENT
    =============================================================== */
 
-registerSelf() {
+void registerSelf() {
     // Register with appropriate label based on current lock state
     string current_label = PLUGIN_LABEL_UNLOCKED;
     if (Locked) {
@@ -87,7 +87,7 @@ registerSelf() {
     logd("Registered as: " + current_label);
 }
 
-sendPong() {
+void sendPong() {
     string msg = llList2Json(JSON_OBJECT, [
         "type", "pong",
         "context", PLUGIN_CONTEXT
