@@ -95,7 +95,7 @@ integer now() {
 }
 
 // Helper to determine if timer should be running
-integer needs_timer() {
+integer needsTimer() {
     if (LmActive) return TRUE;  // Lockmeister needs pinging
     if (SourcePlugin != "" && ParticlesActive) return TRUE;  // DS rendering active
     return FALSE;
@@ -250,7 +250,7 @@ handleLmMessage(key id, string msg) {
    LEASHPOINT DETECTION
    =============================================================== */
 
-integer find_leashpoint_link() {
+integer findLeashpointLink() {
     integer i = 2;
     integer prim_count = llGetNumberOfPrims();
     

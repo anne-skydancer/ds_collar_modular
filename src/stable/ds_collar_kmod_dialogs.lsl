@@ -131,7 +131,7 @@ pruneExpiredSessions() {
 }
 
 // SECURITY FIX: Check if channel is already in use
-integer is_channel_in_use(integer channel) {
+integer isChannelInUse(integer channel) {
     integer i = 0;
     while (i < llGetListLength(Sessions)) {
         if (llList2Integer(Sessions, i + SESSION_CHANNEL) == channel) {
@@ -142,7 +142,7 @@ integer is_channel_in_use(integer channel) {
     return FALSE;
 }
 
-integer get_next_channel() {
+integer getNextChannel() {
     // SECURITY FIX: Try up to 100 times to find unused channel
     integer attempts = 0;
     integer channel;

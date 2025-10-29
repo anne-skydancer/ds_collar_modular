@@ -130,7 +130,7 @@ integer isAttached() {
 }
 
 // SECURITY: Check if sender is authorized to trigger soft_reset
-integer is_authorized_reset_sender(string from) {
+integer isAuthorizedResetSender(string from) {
     if (from == "kernel") return TRUE;
     if (from == "maintenance") return TRUE;
     if (from == "bootstrap") return TRUE;

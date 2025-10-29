@@ -169,7 +169,7 @@ integer jsonHas(string j, list path) {
 integer now() {
     return llGetUnixTime();
 }
-integer in_allowed_list(integer level, list allowed) {
+integer inAllowedList(integer level, list allowed) {
     return (llListFindList(allowed, [level]) != -1);
 }
 
