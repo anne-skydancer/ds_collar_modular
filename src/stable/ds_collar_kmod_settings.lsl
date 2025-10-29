@@ -297,7 +297,7 @@ integer applyBlacklistAddGuard(string who) {
     }
 
     // Remove from multi-owner list
-    if (kv_listRemoveAll(KEY_OWNER_KEYS, who)) {
+    if (kvListRemoveAll(KEY_OWNER_KEYS, who)) {
         logd("WARNING: Removed owner from multi-owner list (was blacklisted)");
     }
     return TRUE;
@@ -625,14 +625,14 @@ handleListAdd(string msg) {
 handleListRemove(string msg) {
     if (!jsonHas(msg, ["key"])) return;
     if (!jsonHas(msg, ["elem"])) return;
-    
+
     string key_name = llJsonGetValue(msg, ["key"]);
     string elem = llJsonGetValue(msg, ["elem"]);
-    
+
     if (!isAllowedKey(key_name)) return;
-    
-    integer did_change = kv_listRemoveAll(key_name, elem);
-    
+
+    integer did_change = kvListRemoveAll(key_name, elem);
+
     if (did_change) {
         broadcastDeltaListRemove(key_name, elem);
     }
