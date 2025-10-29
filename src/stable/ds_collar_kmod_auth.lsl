@@ -100,14 +100,14 @@ integer listHasKey(list search_list, key k) {
    OWNER CHECKING
    =============================================================== */
 
-integer has_owner() {
+integer hasOwner() {
     if (MultiOwnerMode) {
         return (llGetListLength(OwnerKeys) > 0);
     }
     return (OwnerKey != NULL_KEY);
 }
 
-integer is_owner(key av) {
+integer isOwner(key av) {
     if (MultiOwnerMode) {
         return listHasKey(OwnerKeys, av);
     }
@@ -118,10 +118,10 @@ integer is_owner(key av) {
    ACL COMPUTATION
    =============================================================== */
 
-integer compute_acl_level(key av) {
+integer computeAclLevel(key av) {
     key wearer = llGetOwner();
-    integer owner_set = has_owner();
-    integer is_owner_flag = is_owner(av);
+    integer owner_set = hasOwner();
+    integer is_owner_flag = isOwner(av);
     integer is_wearer = (av == wearer);
     integer is_trustee = listHasKey(TrusteeList, av);
     integer is_blacklisted = listHasKey(Blacklist, av);
@@ -157,8 +157,8 @@ integer compute_acl_level(key av) {
 sendAclResult(key av, string correlation_id) {
     key wearer = llGetOwner();
     integer is_wearer = (av == wearer);
-    integer owner_set = has_owner();
-    integer level = compute_acl_level(av);
+    integer owner_set = hasOwner();
+    integer level = computeAclLevel(av);
     integer is_blacklisted = listHasKey(Blacklist, av);
     
     // Policy flags

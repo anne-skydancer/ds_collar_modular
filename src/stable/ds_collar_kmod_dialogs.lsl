@@ -131,7 +131,7 @@ pruneExpiredSessions() {
 }
 
 // SECURITY FIX: Check if channel is already in use
-integer is_channel_in_use(integer channel) {
+integer isChannelInUse(integer channel) {
     integer i = 0;
     while (i < llGetListLength(Sessions)) {
         if (llList2Integer(Sessions, i + SESSION_CHANNEL) == channel) {
@@ -142,7 +142,7 @@ integer is_channel_in_use(integer channel) {
     return FALSE;
 }
 
-integer get_next_channel() {
+integer getNextChannel() {
     // SECURITY FIX: Try up to 100 times to find unused channel
     integer attempts = 0;
     integer channel;
@@ -152,7 +152,7 @@ integer get_next_channel() {
         NextChannelOffset += 1;
         if (NextChannelOffset > 1000000) NextChannelOffset = 1;
         
-        if (!is_channel_in_use(channel)) {
+        if (!isChannelInUse(channel)) {
             return channel;
         }
         
@@ -224,7 +224,7 @@ handleDialogOpen(string msg) {
     }
     
     // Get channel and create listen
-    integer channel = get_next_channel();
+    integer channel = getNextChannel();
     integer listen_handle = llListen(channel, "", user, "");
     
     // Calculate timeout timestamp
@@ -310,7 +310,7 @@ handleNumberedListDialog(string msg, string session_id, key user) {
     }
     
     // Get channel and create listen
-    integer channel = get_next_channel();
+    integer channel = getNextChannel();
     integer listen_handle = llListen(channel, "", user, "");
     
     // Calculate timeout timestamp
