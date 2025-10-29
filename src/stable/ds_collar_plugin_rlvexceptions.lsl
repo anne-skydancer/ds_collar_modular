@@ -542,7 +542,7 @@ handleButton(string btn) {
    CLEANUP
    =============================================================== */
 
-cleanupSessionSession() {
+cleanupSession() {
     CurrentUser = NULL_KEY;
     UserAcl = -999;
     SessionId = "";
