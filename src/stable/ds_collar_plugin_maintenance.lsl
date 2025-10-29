@@ -408,7 +408,7 @@ do_clear_leash() {
 }
 
 do_reload_collar() {
-    // Send soft reset to ALL plugins
+    // Broadcast soft reset to all plugins
     string msg = llList2Json(JSON_OBJECT, [
         "type", "soft_reset",
         "from", "maintenance"
