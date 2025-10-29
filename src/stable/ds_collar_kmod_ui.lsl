@@ -291,30 +291,26 @@ showRootMenu(key user) {
     Sessions = llListReplaceList(Sessions, [total_pages], session_idx + SESSION_TOTAL_PAGES, session_idx + SESSION_TOTAL_PAGES);
     Sessions = llListReplaceList(Sessions, [current_page], session_idx + SESSION_PAGE, session_idx + SESSION_PAGE);
     
-    list buttons = [];
+    // Build buttons in correct display order (bottom-left to top-right)
     integer start_idx = current_page * MAX_FUNC_BTNS * PLUGIN_STRIDE;
     integer end_idx = start_idx + (MAX_FUNC_BTNS * PLUGIN_STRIDE);
     if (end_idx > llGetListLength(filtered)) {
         end_idx = llGetListLength(filtered);
     }
-    
-    integer i = start_idx;
-    while (i < end_idx) {
+
+    // Build in reverse order to match llDialog display (eliminates reversal loop)
+    list buttons = [];
+    integer i = end_idx - PLUGIN_STRIDE;
+    while (i >= start_idx) {
         string label = llList2String(filtered, i + PLUGIN_LABEL);
         buttons += [label];
-        i += PLUGIN_STRIDE;
+        i -= PLUGIN_STRIDE;
     }
-    
-    list reversed = [];
-    i = llGetListLength(buttons) - 1;
-    while (i >= 0) {
-        reversed += [llList2String(buttons, i)];
-        i = i - 1;
-    }
-    
-    reversed = ["<<", ">>", "Close"] + reversed;
-    
-    string buttons_json = llList2Json(JSON_ARRAY, reversed);
+
+    // Prepend navigation buttons
+    buttons = ["<<", ">>", "Close"] + buttons;
+
+    string buttons_json = llList2Json(JSON_ARRAY, buttons);
     
     string title = "Main Menu";
     if (total_pages > 1) {
