@@ -330,9 +330,11 @@ handleNumberedListDialog(string msg, string session_id, key user) {
 
 handleDialogClose(string msg) {
     if (!jsonHas(msg, ["session_id"])) return;
-    
+
     string session_id = llJsonGetValue(msg, ["session_id"]);
-    closeSession(session_id);
+    if (!closeSession(session_id)) {
+        logd("WARNING: Session not found for close: " + session_id);
+    }
 }
 
 /* ===============================================================

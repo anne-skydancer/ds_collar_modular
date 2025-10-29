@@ -609,8 +609,9 @@ handleListAdd(string msg) {
         }
     }
     else if (key_name == KEY_BLACKLIST) {
-        applyBlacklistAddGuard(elem);
-        did_change = kv_list_add_unique(key_name, elem);
+        if (applyBlacklistAddGuard(elem)) {
+            did_change = kv_list_add_unique(key_name, elem);
+        }
     }
     else {
         did_change = kv_list_add_unique(key_name, elem);
