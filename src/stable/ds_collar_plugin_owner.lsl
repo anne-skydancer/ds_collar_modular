@@ -402,7 +402,7 @@ showHonorific(key target, string context) {
         "session_id", SessionId,
         "user", (string)target,
         "title", "Honorific",
-        "prompt", "What would you like to be called -- ,
+        "prompt", "What would you like to be called?",
         "items", llList2Json(JSON_ARRAY, HONORIFICS),
         "timeout", 60
     ]), NULL_KEY);
@@ -485,10 +485,10 @@ handleButton(string btn) {
             llSensor("", NULL_KEY, AGENT, 10.0, PI);
         }
         else if (btn == "Release") {
-            showConfirm("Confirm Release", "Release " + getName(llGetOwner()) + " -- , "release_owner");
+            showConfirm("Confirm Release", "Release " + getName(llGetOwner()) + "?", "release_owner");
         }
         else if (btn == "Runaway") {
-            showConfirm("Confirm Runaway", "Run away from " + getName(getPrimaryOwner()) + " \n\nThis removes ownership without consent.", "runaway");
+            showConfirm("Confirm Runaway", "Run away from " + getName(getPrimaryOwner()) + "?\n\nThis removes ownership without consent.", "runaway");
         }
         else if (btn == "Runaway: On" || btn == "Runaway: Off") {
             if (RunawayEnabled) {
@@ -550,7 +550,7 @@ handleButton(string btn) {
                 "session_id", SessionId,
                 "user", (string)PendingCandidate,
                 "title", "Accept Ownership",
-                "body", getName(llGetOwner()) + " wishes to submit to you.\n\nAccept -- ,
+                "body", getName(llGetOwner()) + " wishes to submit to you.\n\nAccept?",
                 "buttons", llList2Json(JSON_ARRAY, ["Yes", "No"]),
                 "timeout", 60
             ]), NULL_KEY);
@@ -574,7 +574,7 @@ handleButton(string btn) {
                 "session_id", SessionId,
                 "user", (string)llGetOwner(),
                 "title", "Confirm",
-                "body", "Submit to " + getName(PendingCandidate) + " as your " + PendingHonorific + " -- ,
+                "body", "Submit to " + getName(PendingCandidate) + " as your " + PendingHonorific + "?",
                 "buttons", llList2Json(JSON_ARRAY, ["Yes", "No"]),
                 "timeout", 60
             ]), NULL_KEY);
@@ -603,7 +603,7 @@ handleButton(string btn) {
                 "session_id", SessionId,
                 "user", (string)PendingCandidate,
                 "title", "Accept Transfer",
-                "body", "Accept ownership of " + getName(llGetOwner()) + " -- ,
+                "body", "Accept ownership of " + getName(llGetOwner()) + "?",
                 "buttons", llList2Json(JSON_ARRAY, ["Yes", "No"]),
                 "timeout", 60
             ]), NULL_KEY);
@@ -637,7 +637,7 @@ handleButton(string btn) {
                 "session_id", SessionId,
                 "user", (string)llGetOwner(),
                 "title", "Confirm Release",
-                "body", "Released by " + getName(CurrentUser) + ".\n\nConfirm freedom -- ,
+                "body", "Released by " + getName(CurrentUser) + ".\n\nConfirm freedom?",
                 "buttons", llList2Json(JSON_ARRAY, ["Yes", "No"]),
                 "timeout", 60
             ]), NULL_KEY);
@@ -722,7 +722,7 @@ handleButton(string btn) {
                 "session_id", SessionId,
                 "user", (string)PendingCandidate,
                 "title", "Accept Trustee",
-                "body", getName(llGetOwner()) + " wants you as trustee.\n\nAccept -- ,
+                "body", getName(llGetOwner()) + " wants you as trustee.\n\nAccept?",
                 "buttons", llList2Json(JSON_ARRAY, ["Yes", "No"]),
                 "timeout", 60
             ]), NULL_KEY);
@@ -873,7 +873,7 @@ default {
     
     dataserver(key qid, string data) {
         if (qid != ActiveNameQuery) return;
-        if (data != "" && data != "   -- ) cacheName(ActiveQueryTarget, data);
+        if (data != "" && data != " ") cacheName(ActiveQueryTarget, data);
         ActiveNameQuery = NULL_KEY;
         ActiveQueryTarget = NULL_KEY;
     }
