@@ -58,6 +58,7 @@ string ROOT_CONTEXT = "core_root";
 integer RELAY_CHANNEL = -1812221819;
 integer RLV_RESP_CHANNEL = 4711;
 integer MAX_RELAYS = 5;
+integer RELAY_STRIDE = 4;  // [obj_key, obj_name, session_chan, restrictions_csv]
 
 integer MODE_OFF = 0;
 integer MODE_ON = 1;
@@ -117,14 +118,14 @@ string truncateName(string name, integer max_len) {
     return llGetSubString(name, 0, max_len - 4) + "...";
 }
 
-// Returns number of active relays (Relays list has stride 4)
+// Returns number of active relays
 integer getRelayCount() {
-    return llGetListLength(Relays) / 4;
+    return llGetListLength(Relays) / RELAY_STRIDE;
 }
 
 // Returns TRUE if at max relay capacity
 integer isRelaysFull() {
-    return (llGetListLength(Relays) >= (MAX_RELAYS * 4));
+    return (llGetListLength(Relays) >= (MAX_RELAYS * RELAY_STRIDE));
 }
 
 // Returns TRUE if any relays are active
@@ -254,7 +255,7 @@ safewordClearAll() {
     while (i < relay_count) {
         key obj = llList2Key(Relays, i);
         clearRestrictions(obj);
-        i = i + 4;
+        i += RELAY_STRIDE;
     }
     Relays = [];
     logd("Cleared all relay restrictions");
@@ -474,7 +475,7 @@ showObjectList() {
         message = "Active Relays:\n";
         integer i = 0;
         while (i < relay_count) {
-            integer idx = i * 4;
+            integer idx = i * RELAY_STRIDE;
             string obj_name = llList2String(Relays, idx + 1);
             message += (string)(i + 1) + ". " + truncateName(obj_name, 20) + "\n";
             i++;
