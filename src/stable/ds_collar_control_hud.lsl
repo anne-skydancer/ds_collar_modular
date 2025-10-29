@@ -72,7 +72,7 @@ integer logd(string msg) {
     return FALSE;
 }
 
-integer json_has(string json_str, list path) {
+integer jsonHas(string json_str, list path) {
     return (llJsonGetValue(json_str, path) != JSON_INVALID);
 }
 
@@ -87,7 +87,7 @@ integer deriveSecureChannel(integer base_channel, key owner_key) {
    SESSION MANAGEMENT
    =============================================================== */
 
-cleanup_session() {
+cleanupSession() {
     if (CollarListenHandle != 0) {
         llListenRemove(CollarListenHandle);
         CollarListenHandle = 0;
@@ -111,7 +111,7 @@ cleanup_session() {
    COLLAR DETECTION
    =============================================================== */
 
-add_detected_collar(key avatar_key, key collar_key, string avatar_name) {
+addDetectedCollar(key avatar_key, key collar_key, string avatar_name) {
     // Check if already detected
     integer i = 0;
     while (i < llGetListLength(DetectedCollars)) {
@@ -125,7 +125,7 @@ add_detected_collar(key avatar_key, key collar_key, string avatar_name) {
     logd("Detected collar on " + avatar_name);
 }
 
-broadcast_collar_scan() {
+broadcastCollarScan() {
     // Broadcast to find all nearby collars
     string json_msg = llList2Json(JSON_OBJECT, [
         "type", "collar_scan",
@@ -149,7 +149,7 @@ broadcast_collar_scan() {
     llOwnerSay("Scanning for nearby collars...");
 }
 
-process_scan_results() {
+processScanResults() {
     ScanningForCollars = FALSE;
     llSetTimerEvent(0.0);
     
@@ -179,7 +179,7 @@ process_scan_results() {
    COLLAR SELECTION DIALOG
    =============================================================== */
 
-show_collar_selection_dialog() {
+showCollarSelectionDialog() {
     integer num_collars = llGetListLength(DetectedCollars) / COLLAR_STRIDE;
     
     if (num_collars == 0) return;
@@ -213,7 +213,7 @@ show_collar_selection_dialog() {
    ACL QUERY
    =============================================================== */
 
-request_acl_from_collar(key avatar_key) {
+requestAclFromCollar(key avatar_key) {
     string json_msg = llList2Json(JSON_OBJECT, [
         "type", "acl_query_external",
         "avatar", (string)HudWearer,
@@ -240,7 +240,7 @@ request_acl_from_collar(key avatar_key) {
    MENU TRIGGERING
    =============================================================== */
 
-trigger_collar_menu() {
+triggerCollarMenu() {
     if (TargetCollarKey == NULL_KEY) {
         llOwnerSay("Error: No collar connection established.");
         return;
@@ -267,7 +267,7 @@ trigger_collar_menu() {
    ACL LEVEL PROCESSING
    =============================================================== */
 
-process_acl_result(integer level) {
+processAclResult(integer level) {
     string access_msg = "";
     integer has_access = FALSE;
     
