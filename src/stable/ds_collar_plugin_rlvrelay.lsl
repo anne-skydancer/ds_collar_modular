@@ -678,13 +678,6 @@ handle_relay_message(key sender_id, string sender_name, string raw_msg) {
     if (llSubStringIndex(raw_cmd, "RLV,") == 0) {
         list parts = llParseString2List(raw_cmd, [","], []);
         if (llGetListLength(parts) >= 3) {
-            // Validate target key matches this collar
-            key target_key = (key)llList2String(parts, 1);
-            if (target_key != llGetKey()) {
-                // Command not meant for this collar, ignore it
-                logd("Ignoring command meant for different collar: " + (string)target_key);
-                return;
-            }
             command = llList2String(parts, 2);
         }
     }
