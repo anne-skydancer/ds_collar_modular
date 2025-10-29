@@ -117,6 +117,21 @@ string truncateName(string name, integer max_len) {
     return llGetSubString(name, 0, max_len - 4) + "...";
 }
 
+// Returns number of active relays (Relays list has stride 4)
+integer getRelayCount() {
+    return llGetListLength(Relays) / 4;
+}
+
+// Returns TRUE if at max relay capacity
+integer isRelaysFull() {
+    return (llGetListLength(Relays) >= (MAX_RELAYS * 4));
+}
+
+// Returns TRUE if any relays are active
+integer hasActiveRelays() {
+    return (llGetListLength(Relays) > 0);
+}
+
 /* ===============================================================
    LIFECYCLE MANAGEMENT
    =============================================================== */
@@ -187,7 +202,7 @@ integer addRelay(key obj, string obj_name, integer chan) {
     }
     
     // Check max relays
-    if (llGetListLength(Relays) >= (MAX_RELAYS * 4)) {
+    if (isRelaysFull()) {
         logd("Max relays reached. Ignoring " + obj_name);
         return FALSE;
     }
@@ -372,8 +387,8 @@ showMainMenu() {
         }
     }
     
-    integer relay_count = llGetListLength(Relays) / 4;
-    
+    integer relay_count = getRelayCount();
+
     string message = "RLV Relay Menu\nMode: " + mode_str + "\nActive Relays: " + (string)relay_count;
     
     list buttons = ["Back", "Mode", "Bound by..."];
@@ -448,9 +463,9 @@ showModeMenu() {
 
 showObjectList() {
     SessionId = generateSessionId();
-    
-    integer relay_count = llGetListLength(Relays) / 4;
-    
+
+    integer relay_count = getRelayCount();
+
     string message;
     if (relay_count == 0) {
         message = "No active relays.";
@@ -606,7 +621,7 @@ handleGroundRez() {
     persistHardcore(FALSE);
     
     // Clear any active restrictions
-    if (llGetListLength(Relays) > 0) {
+    if (hasActiveRelays()) {
         safewordClearAll();
     }
     
