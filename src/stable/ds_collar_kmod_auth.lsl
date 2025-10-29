@@ -35,6 +35,7 @@ integer PRODUCTION = TRUE;  // Set FALSE for development builds
 /* ═══════════════════════════════════════════════════════════
    CONSOLIDATED ABI
    ═══════════════════════════════════════════════════════════ */
+integer KERNEL_LIFECYCLE = 500;
 integer AUTH_BUS = 700;
 integer SETTINGS_BUS = 800;
 
@@ -499,11 +500,18 @@ default
     
     link_message(integer sender, integer num, string msg, key id) {
         if (!json_has(msg, ["type"])) return;
-        
+
         string msg_type = llJsonGetValue(msg, ["type"]);
-        
+
+        /* ===== KERNEL LIFECYCLE ===== */
+        if (num == KERNEL_LIFECYCLE) {
+            if (msg_type == "soft_reset" || msg_type == "soft_reset_all") {
+                llResetScript();
+            }
+        }
+
         /* ===== AUTH BUS ===== */
-        if (num == AUTH_BUS) {
+        else if (num == AUTH_BUS) {
             if (msg_type == "acl_query") {
                 handle_acl_query(msg);
             }
