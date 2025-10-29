@@ -19,12 +19,20 @@ integer DEBUG = FALSE;
 /* ===============================================================
    EXTERNAL PROTOCOL CHANNELS
 
-   These channels are derived from the wearer's UUID to provide
-   per-avatar unique channels, reducing eavesdropping risk.
+   TWO-PHASE DESIGN:
+   1. Discovery Phase: Public channels for scanning (all collars listen)
+   2. Session Phase: Per-session secure channels (negotiated after selection)
    =============================================================== */
-integer COLLAR_ACL_QUERY_CHAN;
-integer COLLAR_ACL_REPLY_CHAN;
-integer COLLAR_MENU_CHAN;
+
+// Phase 1: Public discovery channels (fixed, not derived)
+integer PUBLIC_DISCOVERY_CHAN = -8675309;
+integer PUBLIC_DISCOVERY_REPLY_CHAN = -8675310;
+
+// Phase 2: Session channels (derived from HUD wearer + collar owner after selection)
+integer SESSION_BASE_CHAN = -8675320;  // Base channel for session derivation
+integer SESSION_QUERY_CHAN;
+integer SESSION_REPLY_CHAN;
+integer SESSION_MENU_CHAN;
 
 /* ===============================================================
    ACL LEVELS
@@ -52,6 +60,7 @@ integer CollarListenHandle = 0;
 integer DialogListenHandle = 0;
 
 integer ScanningForCollars = FALSE;
+integer SessionPending = FALSE;  // Waiting for session establishment acknowledgment
 integer AclPending = FALSE;
 integer AclLevel = ACL_NOACCESS;
 
@@ -76,11 +85,14 @@ integer jsonHas(string json_str, list path) {
     return (llJsonGetValue(json_str, path) != JSON_INVALID);
 }
 
-/* Derive secure channels based on wearer's UUID
-   Both HUD and collar use this function to calculate matching channels */
-integer deriveSecureChannel(integer base_channel, key owner_key) {
-    integer seed = (integer)("0x" + llGetSubString((string)owner_key, 0, 7));
-    return base_channel + (seed % 1000000);
+/* Derive secure session channels from BOTH HUD wearer and collar owner
+   This creates a unique channel per HUD-collar pair, preventing crosstalk */
+integer deriveSessionChannel(integer base_channel, key hud_wearer, key collar_owner) {
+    // Combine both UUIDs to create unique session channel
+    integer seed1 = (integer)("0x" + llGetSubString((string)hud_wearer, 0, 7));
+    integer seed2 = (integer)("0x" + llGetSubString((string)collar_owner, 0, 7));
+    integer combined = (seed1 ^ seed2);  // XOR for uniqueness
+    return base_channel + (combined % 1000000);
 }
 
 /* ===============================================================
@@ -96,8 +108,9 @@ cleanupSession() {
         llListenRemove(DialogListenHandle);
         DialogListenHandle = 0;
     }
-    
+
     ScanningForCollars = FALSE;
+    SessionPending = FALSE;
     AclPending = FALSE;
     AclLevel = ACL_NOACCESS;
     TargetCollarKey = NULL_KEY;
@@ -126,26 +139,26 @@ addDetectedCollar(key avatar_key, key collar_key, string avatar_name) {
 }
 
 broadcastCollarScan() {
-    // Broadcast to find all nearby collars
+    // Phase 1: Broadcast on PUBLIC discovery channel to find ALL nearby collars
     string json_msg = llList2Json(JSON_OBJECT, [
         "type", "collar_scan",
         "hud_wearer", (string)HudWearer
     ]);
-    
-    // Listen for collar responses
+
+    // Listen for collar responses on public reply channel
     if (CollarListenHandle != 0) {
         llListenRemove(CollarListenHandle);
     }
-    CollarListenHandle = llListen(COLLAR_ACL_REPLY_CHAN, "", NULL_KEY, "");
-    
-    // Broadcast scan
-    llRegionSay(COLLAR_ACL_QUERY_CHAN, json_msg);
-    
+    CollarListenHandle = llListen(PUBLIC_DISCOVERY_REPLY_CHAN, "", NULL_KEY, "");
+
+    // Broadcast scan on public discovery channel (all collars listen here)
+    llRegionSay(PUBLIC_DISCOVERY_CHAN, json_msg);
+
     ScanningForCollars = TRUE;
     DetectedCollars = [];
     llSetTimerEvent(COLLAR_SCAN_TIME);
-    
-    logd("Broadcasting collar scan...");
+
+    logd("Broadcasting collar scan on public channel...");
     llOwnerSay("Scanning for nearby collars...");
 }
 
@@ -157,22 +170,22 @@ processScanResults() {
     
     if (num_collars == 0) {
         llOwnerSay("No collars found nearby.");
-        cleanup_session();
+        cleanupSession();
         return;
     }
-    
+
     if (num_collars == 1) {
         // AUTO-CONNECT to single collar (RLV relay style!)
         key avatar_key = llList2Key(DetectedCollars, 0);
         string avatar_name = llList2String(DetectedCollars, 2);
-        
+
         llOwnerSay("Auto-connecting to " + avatar_name + "...");
-        request_acl_from_collar(avatar_key);
+        requestAclFromCollar(avatar_key);
         return;
     }
-    
+
     // Multiple collars - show dialog
-    show_collar_selection_dialog();
+    showCollarSelectionDialog();
 }
 
 /* ===============================================================
@@ -210,30 +223,81 @@ showCollarSelectionDialog() {
 }
 
 /* ===============================================================
+   SESSION ESTABLISHMENT
+   =============================================================== */
+
+deriveSessionChannels(key collar_owner) {
+    // Phase 2: Derive secure session channels from both HUD wearer + collar owner
+    SESSION_QUERY_CHAN = deriveSessionChannel(SESSION_BASE_CHAN, HudWearer, collar_owner);
+    SESSION_REPLY_CHAN = SESSION_QUERY_CHAN - 1;
+    SESSION_MENU_CHAN = SESSION_QUERY_CHAN - 2;
+
+    logd("Session channels derived:");
+    logd("  Query=" + (string)SESSION_QUERY_CHAN);
+    logd("  Reply=" + (string)SESSION_REPLY_CHAN);
+    logd("  Menu=" + (string)SESSION_MENU_CHAN);
+}
+
+requestSessionEstablishment(key collar_owner) {
+    // Derive session channels
+    deriveSessionChannels(collar_owner);
+
+    // Notify collar about session establishment
+    string json_msg = llList2Json(JSON_OBJECT, [
+        "type", "session_establish",
+        "hud_wearer", (string)HudWearer,
+        "collar_owner", (string)collar_owner,
+        "session_query", (string)SESSION_QUERY_CHAN,
+        "session_reply", (string)SESSION_REPLY_CHAN,
+        "session_menu", (string)SESSION_MENU_CHAN
+    ]);
+
+    // Send session establishment on public channel (collar still listening there)
+    llRegionSay(PUBLIC_DISCOVERY_CHAN, json_msg);
+
+    // Set up listener for session acknowledgment (on public reply channel)
+    if (CollarListenHandle != 0) {
+        llListenRemove(CollarListenHandle);
+    }
+    CollarListenHandle = llListen(PUBLIC_DISCOVERY_REPLY_CHAN, "", NULL_KEY, "");
+
+    SessionPending = TRUE;
+    llSetTimerEvent(QUERY_TIMEOUT_SEC);
+
+    logd("Requesting session establishment for " + llKey2Name(collar_owner));
+}
+
+/* ===============================================================
    ACL QUERY
    =============================================================== */
 
 requestAclFromCollar(key avatar_key) {
+    // First request session establishment (will wait for ack before sending ACL query)
+    TargetAvatarKey = avatar_key;
+    TargetAvatarName = llKey2Name(avatar_key);
+    requestSessionEstablishment(avatar_key);
+}
+
+sendAclQuery() {
+    // Send ACL query on session channel (called after session is established)
     string json_msg = llList2Json(JSON_OBJECT, [
         "type", "acl_query_external",
         "avatar", (string)HudWearer,
         "hud", (string)llGetKey(),
-        "target_avatar", (string)avatar_key
+        "target_avatar", (string)TargetAvatarKey
     ]);
-    
+
     if (CollarListenHandle != 0) {
         llListenRemove(CollarListenHandle);
     }
-    CollarListenHandle = llListen(COLLAR_ACL_REPLY_CHAN, "", NULL_KEY, "");
-    
-    llRegionSay(COLLAR_ACL_QUERY_CHAN, json_msg);
-    
+    CollarListenHandle = llListen(SESSION_REPLY_CHAN, "", NULL_KEY, "");
+
+    llRegionSay(SESSION_QUERY_CHAN, json_msg);
+
     AclPending = TRUE;
-    TargetAvatarKey = avatar_key;
-    TargetAvatarName = llKey2Name(avatar_key);
     llSetTimerEvent(QUERY_TIMEOUT_SEC);
-    
-    logd("ACL query sent for " + TargetAvatarName);
+
+    logd("ACL query sent for " + TargetAvatarName + " on session channel");
 }
 
 /* ===============================================================
@@ -245,22 +309,22 @@ triggerCollarMenu() {
         llOwnerSay("Error: No collar connection established.");
         return;
     }
-    
+
     string json_msg = llList2Json(JSON_OBJECT, [
         "type", "menu_request_external",
         "avatar", (string)HudWearer
     ]);
-    
-    llRegionSayTo(TargetCollarKey, COLLAR_MENU_CHAN, json_msg);
-    
+
+    llRegionSayTo(TargetCollarKey, SESSION_MENU_CHAN, json_msg);
+
     if (TargetAvatarKey == HudWearer) {
         llOwnerSay("Opening your collar menu...");
     }
     else {
         llOwnerSay("Opening " + TargetAvatarName + "'s collar menu...");
     }
-    
-    cleanup_session();
+
+    cleanupSession();
 }
 
 /* ===============================================================
@@ -318,12 +382,12 @@ processAclResult(integer level) {
     }
     
     llOwnerSay(access_msg);
-    
+
     if (has_access) {
-        trigger_collar_menu();
+        triggerCollarMenu();
     }
     else {
-        cleanup_session();
+        cleanupSession();
     }
 }
 
@@ -333,31 +397,30 @@ processAclResult(integer level) {
 
 default {
     state_entry() {
-        cleanup_session();
+        cleanupSession();
         HudWearer = llGetOwner();
 
-        // Derive secure channels based on wearer UUID
-        COLLAR_ACL_QUERY_CHAN = deriveSecureChannel(-8675309, HudWearer);
-        COLLAR_ACL_REPLY_CHAN = COLLAR_ACL_QUERY_CHAN - 1;
-        COLLAR_MENU_CHAN = COLLAR_ACL_QUERY_CHAN - 2;
+        // Session channels will be negotiated after collar selection
+        SESSION_QUERY_CHAN = 0;
+        SESSION_REPLY_CHAN = 0;
+        SESSION_MENU_CHAN = 0;
 
         logd("Control HUD initialized. Owner: " + llKey2Name(HudWearer));
-        logd("Secure channels: Query=" + (string)COLLAR_ACL_QUERY_CHAN +
-             " Reply=" + (string)COLLAR_ACL_REPLY_CHAN +
-             " Menu=" + (string)COLLAR_MENU_CHAN);
+        logd("Public discovery channels: Query=" + (string)PUBLIC_DISCOVERY_CHAN +
+             " Reply=" + (string)PUBLIC_DISCOVERY_REPLY_CHAN);
         llOwnerSay("Control HUD ready. Touch to scan for collars.");
     }
-    
+
     on_rez(integer start_param) {
         llResetScript();
     }
-    
+
     attach(key id) {
         if (id != NULL_KEY) {
             llResetScript();
         }
         else {
-            cleanup_session();
+            cleanupSession();
         }
     }
     
@@ -372,30 +435,53 @@ default {
             llOwnerSay("Scan already in progress...");
             return;
         }
-        
+
         if (AclPending) {
             llOwnerSay("Still waiting for collar response...");
             return;
         }
-        
-        cleanup_session();
+
+        cleanupSession();
         llOwnerSay("Scanning for collars...");
-        broadcast_collar_scan();
+        broadcastCollarScan();
     }
     
     listen(integer channel, string name, key id, string message) {
-        // Handle collar scan responses
-        if (channel == COLLAR_ACL_REPLY_CHAN && ScanningForCollars) {
-            if (!json_has(message, ["type"])) return;
-            
+        // Handle collar scan responses (on public reply channel)
+        if (channel == PUBLIC_DISCOVERY_REPLY_CHAN && ScanningForCollars) {
+            if (!jsonHas(message, ["type"])) return;
+
             string msg_type = llJsonGetValue(message, ["type"]);
             if (msg_type != "collar_scan_response") return;
-            
-            if (!json_has(message, ["collar_owner"])) return;
+
+            if (!jsonHas(message, ["collar_owner"])) return;
             key collar_owner = (key)llJsonGetValue(message, ["collar_owner"]);
             string owner_name = llKey2Name(collar_owner);
-            
-            add_detected_collar(collar_owner, id, owner_name);
+
+            addDetectedCollar(collar_owner, id, owner_name);
+            return;
+        }
+
+        // Handle session establishment acknowledgment (on public reply channel)
+        if (channel == PUBLIC_DISCOVERY_REPLY_CHAN && SessionPending) {
+            if (!jsonHas(message, ["type"])) return;
+
+            string msg_type = llJsonGetValue(message, ["type"]);
+            if (msg_type != "session_established_ack") return;
+
+            if (!jsonHas(message, ["collar_owner"])) return;
+            key collar_owner = (key)llJsonGetValue(message, ["collar_owner"]);
+
+            // Verify this ack is for the collar we're trying to connect to
+            if (collar_owner != TargetAvatarKey) return;
+
+            logd("Session established with " + llKey2Name(collar_owner));
+            llOwnerSay("Session established with " + TargetAvatarName);
+
+            // Session is ready, now we can send the ACL query
+            SessionPending = FALSE;
+            TargetCollarKey = id;  // Save collar object key
+            sendAclQuery();
             return;
         }
         
@@ -404,13 +490,13 @@ default {
             llListenRemove(DialogListenHandle);
             DialogListenHandle = 0;
             llSetTimerEvent(0.0);
-            
+
             if (message == "Cancel") {
                 llOwnerSay("Selection cancelled.");
-                cleanup_session();
+                cleanupSession();
                 return;
             }
-            
+
             // Find selected collar by name
             integer i = 0;
             key selected_avatar = NULL_KEY;
@@ -424,47 +510,47 @@ default {
                     i += COLLAR_STRIDE;
                 }
             }
-            
+
             if (selected_avatar != NULL_KEY) {
                 llOwnerSay("Connecting to " + message + "...");
-                request_acl_from_collar(selected_avatar);
+                requestAclFromCollar(selected_avatar);
             }
             else {
                 llOwnerSay("Error: Selection not found.");
-                cleanup_session();
+                cleanupSession();
             }
             return;
         }
         
-        // Handle ACL responses
-        if (channel == COLLAR_ACL_REPLY_CHAN && AclPending) {
-            if (!json_has(message, ["type"])) return;
-            
+        // Handle ACL responses (on session reply channel)
+        if (channel == SESSION_REPLY_CHAN && AclPending) {
+            if (!jsonHas(message, ["type"])) return;
+
             string msg_type = llJsonGetValue(message, ["type"]);
             if (msg_type != "acl_result_external") return;
-            
-            if (!json_has(message, ["avatar"])) return;
+
+            if (!jsonHas(message, ["avatar"])) return;
             key response_avatar = (key)llJsonGetValue(message, ["avatar"]);
-            
+
             if (response_avatar != HudWearer) return;
-            
-            if (!json_has(message, ["collar_owner"])) return;
+
+            if (!jsonHas(message, ["collar_owner"])) return;
             key collar_owner = (key)llJsonGetValue(message, ["collar_owner"]);
-            
+
             if (collar_owner != TargetAvatarKey) return;
-            
+
             llSetTimerEvent(0.0);
             AclPending = FALSE;
-            
+
             TargetCollarKey = id;
-            
-            if (json_has(message, ["level"])) {
+
+            if (jsonHas(message, ["level"])) {
                 AclLevel = (integer)llJsonGetValue(message, ["level"]);
             }
-            
+
             logd("ACL result: level=" + (string)AclLevel);
-            process_acl_result(AclLevel);
-            
+            processAclResult(AclLevel);
+
             if (CollarListenHandle != 0) {
                 llListenRemove(CollarListenHandle);
                 CollarListenHandle = 0;
@@ -475,19 +561,22 @@ default {
     timer() {
         if (ScanningForCollars) {
             logd("Collar scan complete");
-            process_scan_results();
+            processScanResults();
+        }
+        else if (SessionPending) {
+            logd("Session establishment timeout");
+            llOwnerSay("[FAIL] Session establishment failed: No response from " + TargetAvatarName);
+            cleanupSession();
+        }
+        else if (AclPending) {
+            logd("ACL query timeout");
+            llOwnerSay("[FAIL] Connection failed: No response from " + TargetAvatarName);
+            cleanupSession();
         }
         else {
-            if (AclPending) {
-                logd("ACL query timeout");
-                llOwnerSay("[FAIL] Connection failed: No response from " + TargetAvatarName);
-                cleanup_session();
-            }
-            else {
-                logd("Dialog timeout");
-                llOwnerSay("Selection dialog timed out.");
-                cleanup_session();
-            }
+            logd("Dialog timeout");
+            llOwnerSay("Selection dialog timed out.");
+            cleanupSession();
         }
     }
 }

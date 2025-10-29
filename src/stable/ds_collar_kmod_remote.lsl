@@ -41,12 +41,23 @@ integer UI_BUS = 900;
 /* ===============================================================
    EXTERNAL PROTOCOL CHANNELS
 
-   These channels are derived from the collar owner's UUID to provide
-   per-avatar unique channels, reducing eavesdropping risk.
+   TWO-PHASE DESIGN:
+   1. Discovery Phase: Public channels for scanning (all collars listen)
+   2. Session Phase: Per-session secure channels (negotiated after HUD selects collar)
    =============================================================== */
-integer EXTERNAL_ACL_QUERY_CHAN;  // Listen for ACL queries/scans
-integer EXTERNAL_ACL_REPLY_CHAN;  // Send ACL responses
-integer EXTERNAL_MENU_CHAN;       // Listen for menu requests
+
+// Phase 1: Public discovery channels (fixed, not derived - all collars listen here)
+integer PUBLIC_DISCOVERY_CHAN = -8675309;
+integer PUBLIC_DISCOVERY_REPLY_CHAN = -8675310;
+
+// Phase 2: Session channels (derived from HUD wearer + collar owner, negotiated per-session)
+integer SESSION_BASE_CHAN = -8675320;  // Base channel for session derivation (must match HUD)
+integer SESSION_QUERY_CHAN = 0;
+integer SESSION_REPLY_CHAN = 0;
+integer SESSION_MENU_CHAN = 0;
+
+// Session state
+key ActiveSessionHudWearer = NULL_KEY;  // Which HUD wearer has an active session
 
 float MAX_DETECTION_RANGE = 20.0;  // Maximum range in meters for HUD detection
 
@@ -58,8 +69,9 @@ string ROOT_CONTEXT = "core_root";
 /* ===============================================================
    STATE
    =============================================================== */
-integer AclQueryListenHandle = 0;
-integer MenuRequestListenHandle = 0;
+integer DiscoveryListenHandle = 0;      // Listens on public discovery channel
+integer SessionQueryListenHandle = 0;   // Listens on session query channel (after session established)
+integer SessionMenuListenHandle = 0;    // Listens on session menu channel (after session established)
 key CollarOwner = NULL_KEY;
 
 /* Pending external queries: [hud_wearer_key, hud_object_key, ...] */
@@ -95,11 +107,15 @@ integer now() {
     return llGetUnixTime();
 }
 
-/* Derive secure channels based on collar owner's UUID
-   Both HUD and collar use this function to calculate matching channels */
-integer deriveSecureChannel(integer base_channel, key owner_key) {
-    integer seed = (integer)("0x" + llGetSubString((string)owner_key, 0, 7));
-    return base_channel + (seed % 1000000);
+/* Derive secure session channels from BOTH HUD wearer and collar owner
+   This creates a unique channel per HUD-collar pair, preventing crosstalk
+   Must match the HUD's deriveSessionChannel function exactly */
+integer deriveSessionChannel(integer base_channel, key hud_wearer, key collar_owner) {
+    // Combine both UUIDs to create unique session channel
+    integer seed1 = (integer)("0x" + llGetSubString((string)hud_wearer, 0, 7));
+    integer seed2 = (integer)("0x" + llGetSubString((string)collar_owner, 0, 7));
+    integer combined = (seed1 ^ seed2);  // XOR for uniqueness
+    return base_channel + (combined % 1000000);
 }
 
 /* ===============================================================
@@ -257,10 +273,15 @@ sendExternalAclResponse(key hud_wearer, integer level) {
         "level", (string)level,
         "collar_owner", (string)CollarOwner
     ]);
-    
-    // Send response on region channel - HUD will filter by collar owner
-    llRegionSay(EXTERNAL_ACL_REPLY_CHAN, msg);
-    logd("Sent ACL response: hud_wearer=" + llKey2Name(hud_wearer) + ", level=" + (string)level);
+
+    // CRITICAL: Derive reply channel from hud_wearer parameter, not global SESSION_REPLY_CHAN
+    // This prevents race conditions when multiple HUDs establish sessions concurrently
+    integer hud_session_query = deriveSessionChannel(SESSION_BASE_CHAN, hud_wearer, CollarOwner);
+    integer hud_session_reply = hud_session_query - 1;
+
+    // Send response on THIS hud's session reply channel
+    llRegionSay(hud_session_reply, msg);
+    logd("Sent ACL response: hud_wearer=" + llKey2Name(hud_wearer) + ", level=" + (string)level + " on channel " + (string)hud_session_reply);
 }
 
 /* ===============================================================
@@ -278,6 +299,83 @@ triggerMenuForExternalUser(key user_key) {
     llMessageLinked(LINK_SET, UI_BUS, msg, user_key);
     
     logd("Triggered menu for external user: " + llKey2Name(user_key));
+}
+
+/* ===============================================================
+   SESSION MANAGEMENT
+   =============================================================== */
+
+handleSessionEstablish(string message) {
+    // Extract session parameters
+    if (!jsonHas(message, ["hud_wearer"])) return;
+    if (!jsonHas(message, ["collar_owner"])) return;
+
+    key hud_wearer = (key)llJsonGetValue(message, ["hud_wearer"]);
+    key collar_owner = (key)llJsonGetValue(message, ["collar_owner"]);
+
+    // Verify this session is for OUR collar
+    if (collar_owner != CollarOwner) {
+        logd("Ignoring session - collar_owner mismatch");
+        return;
+    }
+
+    // SECURITY: Rate limit check
+    if (!checkRateLimit(hud_wearer)) return;
+
+    // SECURITY: Check distance to HUD wearer (prevent remote session establishment)
+    list agent_data = llGetObjectDetails(hud_wearer, [OBJECT_POS]);
+    if (llGetListLength(agent_data) == 0) {
+        logd("Could not get position for HUD wearer - rejecting session");
+        return;
+    }
+
+    vector hud_wearer_pos = llList2Vector(agent_data, 0);
+    vector collar_pos = llGetPos();
+    float distance = llVecDist(hud_wearer_pos, collar_pos);
+
+    // Only establish session if within range
+    if (distance > MAX_DETECTION_RANGE) {
+        logd("Session rejected: HUD wearer " + llKey2Name(hud_wearer) + " is " +
+             (string)((integer)distance) + "m away (max: " +
+             (string)((integer)MAX_DETECTION_RANGE) + "m)");
+        return;
+    }
+
+    logd("Establishing session with HUD wearer: " + llKey2Name(hud_wearer) +
+         " at " + (string)((integer)distance) + "m");
+
+    // Derive session channels (must match HUD's calculation exactly)
+    SESSION_QUERY_CHAN = deriveSessionChannel(SESSION_BASE_CHAN, hud_wearer, CollarOwner);
+    SESSION_REPLY_CHAN = SESSION_QUERY_CHAN - 1;
+    SESSION_MENU_CHAN = SESSION_QUERY_CHAN - 2;
+
+    // Clean up old session listeners
+    if (SessionQueryListenHandle != 0) {
+        llListenRemove(SessionQueryListenHandle);
+    }
+    if (SessionMenuListenHandle != 0) {
+        llListenRemove(SessionMenuListenHandle);
+    }
+
+    // Set up new session listeners
+    SessionQueryListenHandle = llListen(SESSION_QUERY_CHAN, "", NULL_KEY, "");
+    SessionMenuListenHandle = llListen(SESSION_MENU_CHAN, "", NULL_KEY, "");
+
+    ActiveSessionHudWearer = hud_wearer;
+
+    logd("Session established - Query=" + (string)SESSION_QUERY_CHAN +
+         " Reply=" + (string)SESSION_REPLY_CHAN +
+         " Menu=" + (string)SESSION_MENU_CHAN);
+
+    // Send acknowledgment to HUD on public reply channel
+    string ack_msg = llList2Json(JSON_OBJECT, [
+        "type", "session_established_ack",
+        "collar_owner", (string)CollarOwner,
+        "hud_wearer", (string)hud_wearer
+    ]);
+
+    llRegionSay(PUBLIC_DISCOVERY_REPLY_CHAN, ack_msg);
+    logd("Sent session acknowledgment to " + llKey2Name(hud_wearer));
 }
 
 /* ===============================================================
@@ -315,13 +413,13 @@ handleCollarScan(string message) {
     }
     
     logd("HUD wearer " + llKey2Name(hud_wearer) + " is " + (string)((integer)distance) + "m away - responding to scan");
-    
+
     string response = llList2Json(JSON_OBJECT, [
         "type", "collar_scan_response",
         "collar_owner", (string)CollarOwner
     ]);
-    
-    llRegionSay(EXTERNAL_ACL_REPLY_CHAN, response);
+
+    llRegionSay(PUBLIC_DISCOVERY_REPLY_CHAN, response);
 }
 
 handleAclQueryExternal(string message) {
@@ -400,13 +498,16 @@ handleMenuRequestExternal(string message) {
 default {
     state_entry() {
         // Clean up any existing listens
-        if (AclQueryListenHandle != 0) {
-            llListenRemove(AclQueryListenHandle);
+        if (DiscoveryListenHandle != 0) {
+            llListenRemove(DiscoveryListenHandle);
         }
-        if (MenuRequestListenHandle != 0) {
-            llListenRemove(MenuRequestListenHandle);
+        if (SessionQueryListenHandle != 0) {
+            llListenRemove(SessionQueryListenHandle);
         }
-        
+        if (SessionMenuListenHandle != 0) {
+            llListenRemove(SessionMenuListenHandle);
+        }
+
         // Initialize state
         PendingQueries = [];
         PendingMenuRequests = [];
@@ -414,24 +515,21 @@ default {
         RequestTimestamps = [];
         CollarOwner = llGetOwner();
 
-        // Derive secure channels based on collar owner UUID
-        EXTERNAL_ACL_QUERY_CHAN = deriveSecureChannel(-8675309, CollarOwner);
-        EXTERNAL_ACL_REPLY_CHAN = EXTERNAL_ACL_QUERY_CHAN - 1;
-        EXTERNAL_MENU_CHAN = EXTERNAL_ACL_QUERY_CHAN - 2;
+        // Reset session state
+        SESSION_QUERY_CHAN = 0;
+        SESSION_REPLY_CHAN = 0;
+        SESSION_MENU_CHAN = 0;
+        ActiveSessionHudWearer = NULL_KEY;
 
-        // Listen for external ACL queries and menu requests
-        AclQueryListenHandle = llListen(EXTERNAL_ACL_QUERY_CHAN, "", NULL_KEY, "");
-        MenuRequestListenHandle = llListen(EXTERNAL_MENU_CHAN, "", NULL_KEY, "");
+        // Phase 1: Listen on PUBLIC discovery channel (all collars listen here)
+        DiscoveryListenHandle = llListen(PUBLIC_DISCOVERY_CHAN, "", NULL_KEY, "");
 
         // Start timer for periodic query pruning
         llSetTimerEvent(60.0);  // Check every 60 seconds
 
         logd("Remote module initialized");
-        logd("Secure channels: Query=" + (string)EXTERNAL_ACL_QUERY_CHAN +
-             " Reply=" + (string)EXTERNAL_ACL_REPLY_CHAN +
-             " Menu=" + (string)EXTERNAL_MENU_CHAN);
-        logd("Listening on channel " + (string)EXTERNAL_ACL_QUERY_CHAN + " for ACL queries");
-        logd("Listening on channel " + (string)EXTERNAL_MENU_CHAN + " for menu requests");
+        logd("Listening on public discovery channel: " + (string)PUBLIC_DISCOVERY_CHAN);
+        logd("Session channels will be negotiated when HUD connects");
     }
     
     on_rez(integer start_param) {
@@ -450,33 +548,47 @@ default {
     }
     
     listen(integer channel, string name, key speaker_id, string message) {
-        // Handle collar scan broadcasts and ACL queries
-        if (channel == EXTERNAL_ACL_QUERY_CHAN) {
+        // Phase 1: Handle public discovery channel messages
+        if (channel == PUBLIC_DISCOVERY_CHAN) {
             if (!jsonHas(message, ["type"])) return;
             string msg_type = llJsonGetValue(message, ["type"]);
-            
+
             // Respond to collar scan
             if (msg_type == "collar_scan") {
                 handleCollarScan(message);
                 return;
             }
-            
+
+            // Handle session establishment
+            if (msg_type == "session_establish") {
+                handleSessionEstablish(message);
+                return;
+            }
+
+            return;
+        }
+
+        // Phase 2: Handle session channel messages (after session established)
+        if (channel == SESSION_QUERY_CHAN) {
+            if (!jsonHas(message, ["type"])) return;
+            string msg_type = llJsonGetValue(message, ["type"]);
+
             // Handle ACL queries
             if (msg_type == "acl_query_external") {
                 handleAclQueryExternal(message);
                 return;
             }
-            
+
             return;
         }
-        
-        // Handle menu requests (only from HUDs we've authorized)
-        if (channel == EXTERNAL_MENU_CHAN) {
+
+        // Handle menu requests on session menu channel
+        if (channel == SESSION_MENU_CHAN) {
             if (!jsonHas(message, ["type"])) return;
-            
+
             string msg_type = llJsonGetValue(message, ["type"]);
             if (msg_type != "menu_request_external") return;
-            
+
             handleMenuRequestExternal(message);
             return;
         }
