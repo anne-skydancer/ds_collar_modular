@@ -282,7 +282,7 @@ handleTpeClick(key user, integer acl_level) {
         string msg_body = "Your owner wants to enable TPE mode.\n\n";
         msg_body += "By clicking Yes, you relinquish all control of this collar.\n\n";
         msg_body += "You will not be able to access the collar menu while TPE is active.\n\n";
-        msg_body += "Do you consent -- ;
+        msg_body += "Do you consent?";
         
         SessionId = gen_session();
         
