@@ -139,7 +139,7 @@ sendPong() {
    =============================================================== */
 
 applySettingsSync(string msg) {
-    if (!json_has(msg, ["kv"])) return;
+    if (!jsonHas(msg, ["kv"])) return;
     
     string kv_json = llJsonGetValue(msg, ["kv"]);
     CachedSettings = kv_json;
@@ -172,8 +172,8 @@ requestAcl(key user_key) {
 }
 
 handleAclResult(string msg) {
-    if (!json_has(msg, ["avatar"])) return;
-    if (!json_has(msg, ["level"])) return;
+    if (!jsonHas(msg, ["avatar"])) return;
+    if (!jsonHas(msg, ["level"])) return;
     
     key avatar = (key)llJsonGetValue(msg, ["avatar"]);
     if (avatar != CurrentUser) return;
@@ -183,12 +183,12 @@ handleAclResult(string msg) {
     
     if (llListFindList(ALLOWED_ACL_VIEW, [level]) == -1) {
         llRegionSayTo(CurrentUser, 0, "Access denied.");
-        return_to_root();
+        returnToRoot();
         return;
     }
     
     logd("ACL result: " + (string)level + " for " + llKey2Name(avatar));
-    show_main_menu();
+    showMainMenu();
 }
 
 /* ===============================================================
@@ -218,7 +218,7 @@ showMainMenu() {
         ];
     }
     
-    SessionId = generate_session_id();
+    SessionId = generateSessionId();
     
     string msg = llList2Json(JSON_OBJECT, [
         "type", "dialog_open",
@@ -277,7 +277,7 @@ doDisplayAccessList() {
     
     // Multi-owner mode check
     integer multi_mode = 0;
-    if (json_has(CachedSettings, ["multi_owner_mode"])) {
+    if (jsonHas(CachedSettings, ["multi_owner_mode"])) {
         multi_mode = (integer)llJsonGetValue(CachedSettings, ["multi_owner_mode"]);
     }
     
@@ -287,10 +287,10 @@ doDisplayAccessList() {
         string owners_json = llJsonGetValue(CachedSettings, ["owner_keys"]);
         string honors_json = llJsonGetValue(CachedSettings, ["owner_honorifics"]);
         
-        if (owners_json != JSON_INVALID && is_json_arr(owners_json)) {
+        if (owners_json != JSON_INVALID && isJsonArr(owners_json)) {
             list owners = llJson2List(owners_json);
             list honors = [];
-            if (honors_json != JSON_INVALID && is_json_arr(honors_json)) {
+            if (honors_json != JSON_INVALID && isJsonArr(honors_json)) {
                 honors = llJson2List(honors_json);
             }
             
@@ -333,10 +333,10 @@ doDisplayAccessList() {
     string trustees_json = llJsonGetValue(CachedSettings, ["trustees"]);
     string t_honors_json = llJsonGetValue(CachedSettings, ["trustee_honorifics"]);
     
-    if (trustees_json != JSON_INVALID && is_json_arr(trustees_json)) {
+    if (trustees_json != JSON_INVALID && isJsonArr(trustees_json)) {
         list trustees = llJson2List(trustees_json);
         list t_honors = [];
-        if (t_honors_json != JSON_INVALID && is_json_arr(t_honors_json)) {
+        if (t_honors_json != JSON_INVALID && isJsonArr(t_honors_json)) {
             t_honors = llJson2List(t_honors_json);
         }
         
@@ -364,7 +364,7 @@ doDisplayAccessList() {
     output += "\nBLACKLISTED:\n";
     string blacklist_json = llJsonGetValue(CachedSettings, ["blacklist"]);
     
-    if (blacklist_json != JSON_INVALID && is_json_arr(blacklist_json)) {
+    if (blacklist_json != JSON_INVALID && isJsonArr(blacklist_json)) {
         list blacklist = llJson2List(blacklist_json);
         if (llGetListLength(blacklist) > 0) {
             integer i = 0;
@@ -390,7 +390,7 @@ doReloadSettings() {
         "type", "settings_get"
     ]);
     llMessageLinked(LINK_SET, SETTINGS_BUS, msg, NULL_KEY);
-    
+
     llRegionSayTo(CurrentUser, 0, "Settings reload requested.");
     logd("Settings reload requested by " + llKey2Name(CurrentUser));
 }
@@ -401,7 +401,7 @@ doClearLeash() {
         "context", "core_leash"
     ]);
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, msg, NULL_KEY);
-    
+
     llRegionSayTo(CurrentUser, 0, "Leash cleared.");
     logd("Leash cleared by " + llKey2Name(CurrentUser));
 }
@@ -451,7 +451,7 @@ returnToRoot() {
         "user", (string)CurrentUser
     ]);
     llMessageLinked(LINK_SET, UI_BUS, msg, NULL_KEY);
-    cleanup_session();
+    cleanupSession();
 }
 
 closeUi() {
@@ -460,7 +460,7 @@ closeUi() {
         "user", (string)CurrentUser
     ]);
     llMessageLinked(LINK_SET, UI_BUS, msg, NULL_KEY);
-    cleanup_session();
+    cleanupSession();
 }
 
 /* ===============================================================
@@ -479,8 +479,8 @@ cleanupSession() {
    =============================================================== */
 
 handleDialogResponse(string msg) {
-    if (!json_has(msg, ["session_id"])) return;
-    if (!json_has(msg, ["button"])) return;
+    if (!jsonHas(msg, ["session_id"])) return;
+    if (!jsonHas(msg, ["button"])) return;
     
     string session = llJsonGetValue(msg, ["session_id"]);
     if (session != SessionId) return;
@@ -490,72 +490,72 @@ handleDialogResponse(string msg) {
     
     // Navigation
     if (button == "Back") {
-        return_to_root();
+        returnToRoot();
         return;
     }
     
     // Admin actions (ACL check)
     if (button == "View Settings") {
         if (llListFindList(ALLOWED_ACL_FULL, [CurrentUserAcl]) != -1) {
-            do_view_settings();
-            show_main_menu();
+            doViewSettings();
+            showMainMenu();
         }
         return;
     }
     
     if (button == "Access List") {
         if (llListFindList(ALLOWED_ACL_FULL, [CurrentUserAcl]) != -1) {
-            do_display_access_list();
-            show_main_menu();
+            doDisplayAccessList();
+            showMainMenu();
         }
         return;
     }
     
     if (button == "Reload Settings") {
         if (llListFindList(ALLOWED_ACL_FULL, [CurrentUserAcl]) != -1) {
-            do_reload_settings();
-            show_main_menu();
+            doReloadSettings();
+            showMainMenu();
         }
         return;
     }
     
     if (button == "Clear Leash") {
         if (llListFindList(ALLOWED_ACL_FULL, [CurrentUserAcl]) != -1) {
-            do_clear_leash();
-            show_main_menu();
+            doClearLeash();
+            showMainMenu();
         }
         return;
     }
     
     if (button == "Reload Collar") {
         if (llListFindList(ALLOWED_ACL_FULL, [CurrentUserAcl]) != -1) {
-            do_reload_collar();
-            show_main_menu();
+            doReloadCollar();
+            showMainMenu();
         }
         return;
     }
     
     // Public actions
     if (button == "Get HUD") {
-        do_give_hud();
-        show_main_menu();
+        doGiveHud();
+        showMainMenu();
         return;
     }
     
     if (button == "User Manual") {
-        do_give_manual();
-        show_main_menu();
+        doGiveManual();
+        showMainMenu();
         return;
     }
 }
 
 handleDialogTimeout(string msg) {
-    if (!json_has(msg, ["session_id"])) return;
+    if (!jsonHas(msg, ["session_id"])) return;
     
     string session = llJsonGetValue(msg, ["session_id"]);
     if (session != SessionId) return;
     
-    cleanup_session();
+    cleanupSession();
     logd("Dialog timeout");
 }
 
@@ -565,8 +565,8 @@ handleDialogTimeout(string msg) {
 
 default {
     state_entry() {
-        cleanup_session();
-        register_self();
+        cleanupSession();
+        registerSelf();
         
         // Request initial settings
         string msg = llList2Json(JSON_OBJECT, [
@@ -590,16 +590,16 @@ default {
     link_message(integer sender, integer num, string msg, key id) {
         // ===== KERNEL LIFECYCLE =====
         if (num == KERNEL_LIFECYCLE) {
-            if (!json_has(msg, ["type"])) return;
+            if (!jsonHas(msg, ["type"])) return;
             string msg_type = llJsonGetValue(msg, ["type"]);
             
             if (msg_type == "register_now") {
-                register_self();
+                registerSelf();
                 return;
             }
             
             if (msg_type == "ping") {
-                send_pong();
+                sendPong();
                 return;
             }
             
@@ -608,16 +608,16 @@ default {
         
         // ===== SETTINGS SYNC/DELTA =====
         if (num == SETTINGS_BUS) {
-            if (!json_has(msg, ["type"])) return;
+            if (!jsonHas(msg, ["type"])) return;
             string msg_type = llJsonGetValue(msg, ["type"]);
             
             if (msg_type == "settings_sync") {
-                apply_settings_sync(msg);
+                applySettingsSync(msg);
                 return;
             }
             
             if (msg_type == "settings_delta") {
-                apply_settings_delta(msg);
+                applySettingsDelta(msg);
                 return;
             }
             
@@ -626,11 +626,11 @@ default {
         
         // ===== ACL RESULTS =====
         if (num == AUTH_BUS) {
-            if (!json_has(msg, ["type"])) return;
+            if (!jsonHas(msg, ["type"])) return;
             string msg_type = llJsonGetValue(msg, ["type"]);
             
             if (msg_type == "acl_result") {
-                handle_acl_result(msg);
+                handleAclResult(msg);
                 return;
             }
             
@@ -639,17 +639,17 @@ default {
         
         // ===== UI START =====
         if (num == UI_BUS) {
-            if (!json_has(msg, ["type"])) return;
+            if (!jsonHas(msg, ["type"])) return;
             string msg_type = llJsonGetValue(msg, ["type"]);
             
             if (msg_type == "start") {
-                if (!json_has(msg, ["context"])) return;
+                if (!jsonHas(msg, ["context"])) return;
                 if (llJsonGetValue(msg, ["context"]) != PLUGIN_CONTEXT) return;
                 
                 if (id == NULL_KEY) return;
                 
                 CurrentUser = id;
-                request_acl(id);
+                requestAcl(id);
                 return;
             }
             
@@ -658,16 +658,16 @@ default {
         
         // ===== DIALOG RESPONSE =====
         if (num == DIALOG_BUS) {
-            if (!json_has(msg, ["type"])) return;
+            if (!jsonHas(msg, ["type"])) return;
             string msg_type = llJsonGetValue(msg, ["type"]);
             
             if (msg_type == "dialog_response") {
-                handle_dialog_response(msg);
+                handleDialogResponse(msg);
                 return;
             }
             
             if (msg_type == "dialog_timeout") {
-                handle_dialog_timeout(msg);
+                handleDialogTimeout(msg);
                 return;
             }
             

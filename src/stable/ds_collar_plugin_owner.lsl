@@ -74,7 +74,7 @@ list HONORIFICS = ["Master", "Mistress", "Daddy", "Mommy", "King", "Queen"];
    HELPERS
    =============================================================== */
 
-void logd(string msg) {
+logd(string msg) {
     if (DEBUG) llOwnerSay("[" + PLUGIN_LABEL + "] " + msg);
 }
 

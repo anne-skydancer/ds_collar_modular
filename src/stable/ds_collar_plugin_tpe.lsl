@@ -97,13 +97,13 @@ string genSession() {
     return (string)llGetKey() + "_" + (string)llGetUnixTime();
 }
 
-void cleanupSession() {
+cleanupSession() {
     CurrentUser = NULL_KEY;
     UserAcl = -999;
     SessionId = "";
 }
 
-void closeUiForUser(key user) {
+closeUiForUser(key user) {
     string msg = llList2Json(JSON_OBJECT, [
         "type", "close",
         "context", PLUGIN_CONTEXT,
@@ -117,7 +117,7 @@ void closeUiForUser(key user) {
    KERNEL MESSAGES
    =============================================================== */
 
-void registerWithKernel() {
+registerWithKernel() {
     string initial_label = PLUGIN_LABEL_OFF;
     if (TpeModeEnabled) {
         initial_label = PLUGIN_LABEL_ON;
@@ -134,7 +134,7 @@ void registerWithKernel() {
     logd("Registered with kernel as: " + initial_label);
 }
 
-void sendPong() {
+sendPong() {
     string msg = llList2Json(JSON_OBJECT, [
         "type", "pong",
         "context", PLUGIN_CONTEXT
@@ -146,7 +146,7 @@ void sendPong() {
    SETTINGS MANAGEMENT
    =============================================================== */
 
-void requestSettingsSync() {
+requestSettingsSync() {
     string msg = llList2Json(JSON_OBJECT, [
         "type", "sync_request"
     ]);
@@ -154,7 +154,7 @@ void requestSettingsSync() {
     logd("Requesting settings sync");
 }
 
-void persistTpeMode(integer new_value) {
+persistTpeMode(integer new_value) {
     if (new_value != 0) new_value = 1;
 
     string msg = llList2Json(JSON_OBJECT, [
@@ -170,7 +170,7 @@ void persistTpeMode(integer new_value) {
    BUTTON HANDLING
    =============================================================== */
 
-void handleButtonClick(string button) {
+handleButtonClick(string button) {
     if (button == "Yes") {
         // Wearer confirmed - enable TPE
         TpeModeEnabled = TRUE;
@@ -234,7 +234,7 @@ void handleButtonClick(string button) {
    TPE TOGGLE LOGIC
    =============================================================== */
 
-void handleTpeClick(key user, integer acl_level) {
+handleTpeClick(key user, integer acl_level) {
     // Verify ACL (only 5=Primary Owner)
     if (acl_level != 5) {
         llRegionSayTo(user, 0, "Access denied. Only primary owner can manage TPE mode.");
@@ -304,14 +304,14 @@ void handleTpeClick(key user, integer acl_level) {
    SETTINGS CONSUMPTION
    =============================================================== */
 
-void applySettingsSync(string kv_json) {
+applySettingsSync(string kv_json) {
     if (jsonHas(kv_json, [KEY_TPE_MODE])) {
         TpeModeEnabled = (integer)llJsonGetValue(kv_json, [KEY_TPE_MODE]);
         logd("TPE mode from sync: " + (string)TpeModeEnabled);
     }
 }
 
-void applySettingsDelta(string msg) {
+applySettingsDelta(string msg) {
     if (!jsonHas(msg, ["op"])) return;
 
     string op = llJsonGetValue(msg, ["op"]);
