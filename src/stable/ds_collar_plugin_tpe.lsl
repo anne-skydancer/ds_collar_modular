@@ -97,13 +97,13 @@ string genSession() {
     return (string)llGetKey() + "_" + (string)llGetUnixTime();
 }
 
-cleanupSession() {
+void cleanupSession() {
     CurrentUser = NULL_KEY;
     UserAcl = -999;
     SessionId = "";
 }
 
-closeUiForUser(key user) {
+void closeUiForUser(key user) {
     string msg = llList2Json(JSON_OBJECT, [
         "type", "close",
         "context", PLUGIN_CONTEXT,
@@ -117,12 +117,12 @@ closeUiForUser(key user) {
    KERNEL MESSAGES
    =============================================================== */
 
-registerWithKernel() {
+void registerWithKernel() {
     string initial_label = PLUGIN_LABEL_OFF;
     if (TpeModeEnabled) {
         initial_label = PLUGIN_LABEL_ON;
     }
-    
+
     string msg = llList2Json(JSON_OBJECT, [
         "type", "register",
         "context", PLUGIN_CONTEXT,
@@ -134,7 +134,7 @@ registerWithKernel() {
     logd("Registered with kernel as: " + initial_label);
 }
 
-sendPong() {
+void sendPong() {
     string msg = llList2Json(JSON_OBJECT, [
         "type", "pong",
         "context", PLUGIN_CONTEXT
@@ -146,7 +146,7 @@ sendPong() {
    SETTINGS MANAGEMENT
    =============================================================== */
 
-requestSettingsSync() {
+void requestSettingsSync() {
     string msg = llList2Json(JSON_OBJECT, [
         "type", "sync_request"
     ]);
@@ -154,9 +154,9 @@ requestSettingsSync() {
     logd("Requesting settings sync");
 }
 
-persistTpeMode(integer new_value) {
+void persistTpeMode(integer new_value) {
     if (new_value != 0) new_value = 1;
-    
+
     string msg = llList2Json(JSON_OBJECT, [
         "type", "set",
         "key", KEY_TPE_MODE,
@@ -170,11 +170,11 @@ persistTpeMode(integer new_value) {
    BUTTON HANDLING
    =============================================================== */
 
-handleButtonClick(string button) {
+void handleButtonClick(string button) {
     if (button == "Yes") {
         // Wearer confirmed - enable TPE
         TpeModeEnabled = TRUE;
-        persist_tpe_mode(TRUE);
+        persistTpeMode(TRUE);
         
         llRegionSayTo(WearerKey, 0, "TPE mode enabled. You have relinquished collar control.");
         if (CurrentUser != WearerKey) {
@@ -190,10 +190,10 @@ handleButtonClick(string button) {
         ]);
         llMessageLinked(LINK_SET, UI_BUS, msg, NULL_KEY);
         logd("Updated UI label to: " + new_label);
-        
+
         // Close UI for wearer (who clicked the dialog)
-        close_ui_for_user(WearerKey);
-        
+        closeUiForUser(WearerKey);
+
         // Return owner to root menu to see updated button (if different from wearer)
         if (CurrentUser != WearerKey) {
             msg = llList2Json(JSON_OBJECT, [
@@ -203,8 +203,8 @@ handleButtonClick(string button) {
             llMessageLinked(LINK_SET, UI_BUS, msg, NULL_KEY);
             logd("Returning owner to root menu");
         }
-        
-        cleanup_session();
+
+        cleanupSession();
     }
     else if (button == "No") {
         // Wearer declined - cancel TPE activation
@@ -212,10 +212,10 @@ handleButtonClick(string button) {
         if (CurrentUser != WearerKey) {
             llRegionSayTo(CurrentUser, 0, "Wearer declined TPE activation.");
         }
-        
+
         // Close UI for wearer (who clicked the dialog)
-        close_ui_for_user(WearerKey);
-        
+        closeUiForUser(WearerKey);
+
         // Return owner to root menu (if different from wearer)
         if (CurrentUser != WearerKey) {
             string msg = llList2Json(JSON_OBJECT, [
@@ -225,8 +225,8 @@ handleButtonClick(string button) {
             llMessageLinked(LINK_SET, UI_BUS, msg, NULL_KEY);
             logd("Returning owner to root menu");
         }
-        
-        cleanup_session();
+
+        cleanupSession();
     }
 }
 
@@ -234,23 +234,23 @@ handleButtonClick(string button) {
    TPE TOGGLE LOGIC
    =============================================================== */
 
-handleTpeClick(key user, integer acl_level) {
+void handleTpeClick(key user, integer acl_level) {
     // Verify ACL (only 5=Primary Owner)
     if (acl_level != 5) {
         llRegionSayTo(user, 0, "Access denied. Only primary owner can manage TPE mode.");
         logd("Access denied for user with ACL " + (string)acl_level);
         return;
     }
-    
+
     CurrentUser = user;
     UserAcl = acl_level;
     WearerKey = llGetOwner();
-    
+
     if (TpeModeEnabled) {
         // TPE is currently ON - disable it directly (no confirmation needed)
         // This allows owner to release TPE without wearer consent
         TpeModeEnabled = FALSE;
-        persist_tpe_mode(FALSE);
+        persistTpeMode(FALSE);
         
         llRegionSayTo(user, 0, "TPE mode disabled. Wearer regains collar access.");
         
@@ -271,20 +271,20 @@ handleTpeClick(key user, integer acl_level) {
         ]);
         llMessageLinked(LINK_SET, UI_BUS, msg, NULL_KEY);
         logd("Returning owner to root menu");
-        
-        cleanup_session();
+
+        cleanupSession();
     }
     else {
         // TPE is currently OFF - requires wearer consent
         // Send dialog to WEARER, not CurrentUser
         logd("TPE activation requested by " + (string)user);
-        
+
         string msg_body = "Your owner wants to enable TPE mode.\n\n";
         msg_body += "By clicking Yes, you relinquish all control of this collar.\n\n";
         msg_body += "You will not be able to access the collar menu while TPE is active.\n\n";
         msg_body += "Do you consent?";
-        
-        SessionId = gen_session();
+
+        SessionId = genSession();
         
         llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
             "type", "dialog_open",
@@ -304,23 +304,23 @@ handleTpeClick(key user, integer acl_level) {
    SETTINGS CONSUMPTION
    =============================================================== */
 
-applySettingsSync(string kv_json) {
-    if (json_has(kv_json, [KEY_TPE_MODE])) {
+void applySettingsSync(string kv_json) {
+    if (jsonHas(kv_json, [KEY_TPE_MODE])) {
         TpeModeEnabled = (integer)llJsonGetValue(kv_json, [KEY_TPE_MODE]);
         logd("TPE mode from sync: " + (string)TpeModeEnabled);
     }
 }
 
-applySettingsDelta(string msg) {
-    if (!json_has(msg, ["op"])) return;
-    
+void applySettingsDelta(string msg) {
+    if (!jsonHas(msg, ["op"])) return;
+
     string op = llJsonGetValue(msg, ["op"]);
-    
+
     if (op == "set") {
-        if (!json_has(msg, ["changes"])) return;
+        if (!jsonHas(msg, ["changes"])) return;
         string changes = llJsonGetValue(msg, ["changes"]);
-        
-        if (json_has(changes, [KEY_TPE_MODE])) {
+
+        if (jsonHas(changes, [KEY_TPE_MODE])) {
             TpeModeEnabled = (integer)llJsonGetValue(changes, [KEY_TPE_MODE]);
             logd("TPE mode from delta: " + (string)TpeModeEnabled);
         }
@@ -339,11 +339,11 @@ default
         WearerKey = llGetOwner();
         AclPending = FALSE;
         logd("WearerKey initialized to: " + (string)WearerKey);
-        cleanup_session();
+        cleanupSession();
         logd("About to register with kernel...");
-        register_with_kernel();
+        registerWithKernel();
         logd("About to request settings sync...");
-        request_settings_sync();
+        requestSettingsSync();
         logd("=== TPE PLUGIN INITIALIZATION COMPLETE ===");
     }
     
@@ -365,12 +365,12 @@ default
         
         if (num == KERNEL_LIFECYCLE) {
             string msg_type = llJsonGetValue(str, ["type"]);
-            
+
             if (msg_type == "register_now") {
-                register_with_kernel();
+                registerWithKernel();
             }
             else if (msg_type == "ping") {
-                send_pong();
+                sendPong();
             }
             else if (msg_type == "soft_reset") {
                 llResetScript();
@@ -378,15 +378,15 @@ default
         }
         else if (num == SETTINGS_BUS) {
             string msg_type = llJsonGetValue(str, ["type"]);
-            
+
             if (msg_type == "sync") {
-                if (json_has(str, ["kv"])) {
+                if (jsonHas(str, ["kv"])) {
                     string kv_json = llJsonGetValue(str, ["kv"]);
-                    apply_settings_sync(kv_json);
+                    applySettingsSync(kv_json);
                 }
             }
             else if (msg_type == "delta") {
-                apply_settings_delta(str);
+                applySettingsDelta(str);
             }
         }
         else if (num == UI_BUS) {
@@ -422,7 +422,7 @@ default
                     logd("Ignoring ACL result - not pending");
                     return;
                 }
-                if (!json_has(str, ["avatar"])) return;
+                if (!jsonHas(str, ["avatar"])) return;
                 
                 key avatar = (key)llJsonGetValue(str, ["avatar"]);
                 logd("ACL result: avatar=" + (string)avatar + " CurrentUser=" + (string)CurrentUser);
@@ -431,17 +431,17 @@ default
                     logd("Skipping ACL result - not for current user");
                     return;
                 }
-                
-                if (!json_has(str, ["level"])) return;
+
+                if (!jsonHas(str, ["level"])) return;
                 integer acl_level = (integer)llJsonGetValue(str, ["level"]);
-                
+
                 AclPending = FALSE;
-                
+
                 logd("TPE button clicked by " + (string)avatar + " (ACL " + (string)acl_level + ")");
                 logd("WearerKey=" + (string)WearerKey + " TpeModeEnabled=" + (string)TpeModeEnabled);
-                
+
                 // Handle click - may show confirmation dialog or toggle directly
-                handle_tpe_click(avatar, acl_level);
+                handleTpeClick(avatar, acl_level);
             }
         }
         else if (num == DIALOG_BUS) {
@@ -453,8 +453,8 @@ default
                 
                 string button = llJsonGetValue(str, ["button"]);
                 logd("Dialog button: " + button);
-                
-                handle_button_click(button);
+
+                handleButtonClick(button);
             }
             else if (msg_type == "dialog_timeout") {
                 string session_id = llJsonGetValue(str, ["session_id"]);
@@ -465,10 +465,10 @@ default
                 if (CurrentUser != WearerKey) {
                     llRegionSayTo(CurrentUser, 0, "TPE confirmation timed out.");
                 }
-                
+
                 // Close UI for wearer
-                close_ui_for_user(WearerKey);
-                
+                closeUiForUser(WearerKey);
+
                 // Return owner to root menu (if different from wearer)
                 if (CurrentUser != WearerKey) {
                     string msg = llList2Json(JSON_OBJECT, [
@@ -478,8 +478,8 @@ default
                     llMessageLinked(LINK_SET, UI_BUS, msg, NULL_KEY);
                     logd("Returning owner to root menu");
                 }
-                
-                cleanup_session();
+
+                cleanupSession();
             }
         }
     }
