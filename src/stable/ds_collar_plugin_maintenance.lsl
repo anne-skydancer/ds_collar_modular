@@ -398,10 +398,11 @@ do_reload_settings() {
 do_clear_leash() {
     string msg = llList2Json(JSON_OBJECT, [
         "type", "soft_reset",
-        "context", "core_leash"
+        "context", "core_leash",
+        "from", "maintenance"
     ]);
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, msg, NULL_KEY);
-    
+
     llRegionSayTo(CurrentUser, 0, "Leash cleared.");
     logd("Leash cleared by " + llKey2Name(CurrentUser));
 }
