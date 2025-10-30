@@ -132,7 +132,6 @@ float TURN_THRESHOLD = 0.1;  // ~5.7 degrees
 integer HOLDER_STATE_IDLE = 0;
 integer HOLDER_STATE_DS_PHASE = 1;
 integer HOLDER_STATE_OC_PHASE = 2;
-integer HOLDER_STATE_FALLBACK = 3;
 integer HOLDER_STATE_COMPLETE = 4;
 
 integer HolderState = 0;
@@ -143,7 +142,6 @@ key HolderTarget = NULL_KEY;
 integer HolderSession = 0;
 float DS_PHASE_DURATION = 2.0;   // 2 seconds for DS native
 float OC_PHASE_DURATION = 2.0;   // 2 seconds for OC
-float TOTAL_TIMEOUT = 4.0;       // Total 4 seconds before fallback
 
 // Offsim detection & auto-reclip (IMPROVED)
 integer OffsimDetected = FALSE;
