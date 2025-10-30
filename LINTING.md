@@ -131,7 +131,7 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
       - name: Install lslint
         run: |
           git clone https://github.com/Makopo/lslint.git

@@ -3,8 +3,6 @@
 # Usage: ./lint.sh [file|directory]
 # If no argument is provided, lints all .lsl files in src/
 
-set -e
-
 LSLINT="lslint"
 LSLINT_FLAGS="-m -p"  # Mono mode, show file paths
 
@@ -17,22 +15,33 @@ NC='\033[0m' # No Color
 total_errors=0
 total_warnings=0
 files_checked=0
+lint_failed=0
 
 lint_file() {
     local file="$1"
     echo -e "${YELLOW}Linting: $file${NC}"
 
-    # Run lslint and capture output
-    if output=$($LSLINT $LSLINT_FLAGS "$file" 2>&1); then
+    # Run lslint and capture both output and exit status
+    local exit_status=0
+    output=$($LSLINT $LSLINT_FLAGS "$file" 2>&1) || exit_status=$?
+
+    # Check if lslint command itself failed (not just found errors)
+    if [ $exit_status -ne 0 ] && ! echo "$output" | grep -q "TOTAL::"; then
+        echo -e "${RED}ERROR: lslint command failed with exit code $exit_status${NC}"
         echo "$output"
-    else
-        echo "$output"
+        lint_failed=1
+        return 1
     fi
+
+    echo "$output"
 
     # Extract error and warning counts
     if echo "$output" | grep -q "TOTAL::"; then
         errors=$(echo "$output" | grep "TOTAL::" | sed -n 's/.*Errors: \([0-9]*\).*/\1/p')
         warnings=$(echo "$output" | grep "TOTAL::" | sed -n 's/.*Warnings: \([0-9]*\).*/\1/p')
+        # Add default values to prevent arithmetic errors on empty strings
+        errors=${errors:-0}
+        warnings=${warnings:-0}
         total_errors=$((total_errors + errors))
         total_warnings=$((total_warnings + warnings))
     fi
@@ -76,6 +85,12 @@ echo "Files checked: $files_checked"
 echo -e "Total errors: ${RED}$total_errors${NC}"
 echo -e "Total warnings: ${YELLOW}$total_warnings${NC}"
 echo "========================================"
+
+# Exit with error if linting command failed or errors were found
+if [ $lint_failed -ne 0 ]; then
+    echo -e "${RED}Linting failed: lslint command encountered errors${NC}"
+    exit 2
+fi
 
 if [ $total_errors -gt 0 ]; then
     exit 1
