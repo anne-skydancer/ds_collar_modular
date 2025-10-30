@@ -41,8 +41,10 @@ integer DIALOG_BUS = 950;
    CONSTANTS
    ═══════════════════════════════════════════════════════════ */
 string ROOT_CONTEXT = "core_root";
+string SOS_CONTEXT = "sos";
 integer MAX_FUNC_BTNS = 9;
 float TOUCH_RANGE_M = 5.0;
+float LONG_TOUCH_THRESHOLD = 1.5;
 
 string BTN_NAV_LEFT = "<<";
 string BTN_NAV_GAP = " ";
@@ -55,7 +57,7 @@ integer PLUGIN_LABEL = 1;
 integer PLUGIN_MIN_ACL = 2;
 
 /* Session list stride - SECURITY FIX: Added SESSION_CREATED_TIME */
-integer SESSION_STRIDE = 8;
+integer SESSION_STRIDE = 9;
 integer SESSION_USER = 0;
 integer SESSION_ACL = 1;
 integer SESSION_IS_BLACKLISTED = 2;
@@ -64,9 +66,20 @@ integer SESSION_TOTAL_PAGES = 4;
 integer SESSION_ID = 5;
 integer SESSION_FILTERED_START = 6;
 integer SESSION_CREATED_TIME = 7;  // SECURITY FIX: Timestamp for ACL refresh
+integer SESSION_CONTEXT = 8;  // Context filter for this session (root or sos)
 
 integer MAX_SESSIONS = 5;
 integer SESSION_MAX_AGE = 60;  // Seconds before ACL refresh required
+
+/* Touch tracking stride */
+integer TOUCH_DATA_STRIDE = 2;
+integer TOUCH_DATA_KEY = 0;
+integer TOUCH_DATA_START_TIME = 1;
+
+/* Pending ACL stride - tracks avatar and requested context */
+integer PENDING_ACL_STRIDE = 2;
+integer PENDING_ACL_AVATAR = 0;
+integer PENDING_ACL_CONTEXT = 1;
 
 /* ═══════════════════════════════════════════════════════════
    STATE
@@ -75,6 +88,7 @@ list AllPlugins = [];
 list Sessions = [];
 list FilteredPluginsData = [];
 list PendingAcl = [];
+list TouchData = [];
 
 /* ═══════════════════════════════════════════════════════════
    HELPERS
@@ -164,44 +178,44 @@ cleanup_session(key user) {
     logd("Session cleaned up for " + llKey2Name(user));
 }
 
-create_session(key user, integer acl, integer is_blacklisted) {
+create_session(key user, integer acl, integer is_blacklisted, string context_filter) {
     integer existing_idx = find_session_idx(user);
     if (existing_idx != -1) {
         logd("Session already exists for " + llKey2Name(user) + ", updating");
         cleanup_session(user);
     }
-    
+
     if (llGetListLength(Sessions) / SESSION_STRIDE >= MAX_SESSIONS) {
         key oldest_user = llList2Key(Sessions, 0 + SESSION_USER);
         logd("Session limit reached, removing oldest: " + llKey2Name(oldest_user));
         cleanup_session(oldest_user);
     }
-    
+
     list filtered = [];
     integer i = 0;
     integer len = llGetListLength(AllPlugins);
-    
+
     while (i < len) {
         string context = llList2String(AllPlugins, i + PLUGIN_CONTEXT);
         string label = llList2String(AllPlugins, i + PLUGIN_LABEL);
         integer min_acl = llList2Integer(AllPlugins, i + PLUGIN_MIN_ACL);
-        
-        if (acl >= min_acl) {
+
+        if (acl >= min_acl && context == context_filter) {
             filtered += [context, label, min_acl];
         }
-        
+
         i += PLUGIN_STRIDE;
     }
-    
+
     integer filtered_start = llGetListLength(FilteredPluginsData);
     FilteredPluginsData += filtered;
-    
+
     // SECURITY FIX: Add timestamp to session
     string session_id = generate_session_id(user);
     integer created_time = llGetUnixTime();
-    Sessions += [user, acl, is_blacklisted, 0, 0, session_id, filtered_start, created_time];
-    
-    logd("Created session for " + llKey2Name(user) + " (ACL=" + (string)acl + ", blacklisted=" + (string)is_blacklisted + ", " + 
+    Sessions += [user, acl, is_blacklisted, 0, 0, session_id, filtered_start, created_time, context_filter];
+
+    logd("Created " + context_filter + " session for " + llKey2Name(user) + " (ACL=" + (string)acl + ", blacklisted=" + (string)is_blacklisted + ", " +
          (string)(llGetListLength(filtered) / PLUGIN_STRIDE) + " plugins)");
 }
 
@@ -343,6 +357,77 @@ show_root_menu(key user) {
     logd("Showing root menu to " + llKey2Name(user) + " (page " + (string)(current_page + 1) + "/" + (string)total_pages + ")");
 }
 
+show_sos_menu(key user) {
+    integer session_idx = find_session_idx(user);
+    if (session_idx == -1) {
+        logd("ERROR: No session for " + llKey2Name(user));
+        return;
+    }
+
+    list filtered = get_session_filtered_plugins(session_idx);
+    integer plugin_count = llGetListLength(filtered) / PLUGIN_STRIDE;
+
+    if (plugin_count == 0) {
+        llRegionSayTo(user, 0, "No emergency options are currently available.");
+        cleanup_session(user);
+        return;
+    }
+
+    integer current_page = llList2Integer(Sessions, session_idx + SESSION_PAGE);
+
+    integer total_pages = (plugin_count + MAX_FUNC_BTNS - 1) / MAX_FUNC_BTNS;
+    if (current_page >= total_pages) current_page = 0;
+    if (current_page < 0) current_page = total_pages - 1;
+
+    Sessions = llListReplaceList(Sessions, [total_pages], session_idx + SESSION_TOTAL_PAGES, session_idx + SESSION_TOTAL_PAGES);
+    Sessions = llListReplaceList(Sessions, [current_page], session_idx + SESSION_PAGE, session_idx + SESSION_PAGE);
+
+    list buttons = [];
+    integer start_idx = current_page * MAX_FUNC_BTNS * PLUGIN_STRIDE;
+    integer end_idx = start_idx + (MAX_FUNC_BTNS * PLUGIN_STRIDE);
+    if (end_idx > llGetListLength(filtered)) {
+        end_idx = llGetListLength(filtered);
+    }
+
+    integer i = start_idx;
+    while (i < end_idx) {
+        string label = llList2String(filtered, i + PLUGIN_LABEL);
+        buttons += [label];
+        i += PLUGIN_STRIDE;
+    }
+
+    list reversed = [];
+    i = llGetListLength(buttons) - 1;
+    while (i >= 0) {
+        reversed += [llList2String(buttons, i)];
+        i = i - 1;
+    }
+
+    reversed = ["<<", ">>", "Close"] + reversed;
+
+    string buttons_json = llList2Json(JSON_ARRAY, reversed);
+
+    string title = "Emergency Menu";
+    if (total_pages > 1) {
+        title += " (" + (string)(current_page + 1) + "/" + (string)total_pages + ")";
+    }
+
+    string session_id = llList2String(Sessions, session_idx + SESSION_ID);
+
+    string msg = llList2Json(JSON_OBJECT, [
+        "type", "dialog_open",
+        "session_id", session_id,
+        "user", (string)user,
+        "title", title,
+        "body", "Emergency options:",
+        "buttons", buttons_json,
+        "timeout", 60
+    ]);
+
+    llMessageLinked(LINK_SET, DIALOG_BUS, msg, NULL_KEY);
+    logd("Showing SOS menu to " + llKey2Name(user) + " (page " + (string)(current_page + 1) + "/" + (string)total_pages + ")");
+}
+
 /* ═══════════════════════════════════════════════════════════
    BUTTON HANDLING
    ═══════════════════════════════════════════════════════════ */
@@ -480,20 +565,37 @@ handle_acl_result(string msg) {
     if (!json_has(msg, ["avatar"])) return;
     if (!json_has(msg, ["level"])) return;
     if (!json_has(msg, ["is_blacklisted"])) return;
-    
+
     key avatar = (key)llJsonGetValue(msg, ["avatar"]);
     integer level = (integer)llJsonGetValue(msg, ["level"]);
     integer is_blacklisted = (integer)llJsonGetValue(msg, ["is_blacklisted"]);
-    
-    integer pending_idx = llListFindList(PendingAcl, [avatar]);
-    if (pending_idx == -1) return;
-    
-    PendingAcl = llDeleteSubList(PendingAcl, pending_idx, pending_idx);
-    
-    logd("ACL result: " + (string)level + " (blacklisted=" + (string)is_blacklisted + ") for " + llKey2Name(avatar));
-    
-    create_session(avatar, level, is_blacklisted);
-    show_root_menu(avatar);
+
+    integer i = 0;
+    integer len = llGetListLength(PendingAcl);
+    string requested_context = "";
+
+    while (i < len) {
+        if (llList2Key(PendingAcl, i + PENDING_ACL_AVATAR) == avatar) {
+            requested_context = llList2String(PendingAcl, i + PENDING_ACL_CONTEXT);
+            PendingAcl = llDeleteSubList(PendingAcl, i, i + PENDING_ACL_STRIDE - 1);
+            jump found;
+        }
+        i += PENDING_ACL_STRIDE;
+    }
+    return;
+
+    @found;
+
+    logd("ACL result: " + (string)level + " (blacklisted=" + (string)is_blacklisted + ") for " + llKey2Name(avatar) + " (context: " + requested_context + ")");
+
+    create_session(avatar, level, is_blacklisted, requested_context);
+
+    if (requested_context == SOS_CONTEXT) {
+        show_sos_menu(avatar);
+    }
+    else {
+        show_root_menu(avatar);
+    }
 }
 
 handle_start(string msg, key user_key) {
@@ -501,22 +603,55 @@ handle_start(string msg, key user_key) {
         start_root_session(user_key);
         return;
     }
-    
+
     string context = llJsonGetValue(msg, ["context"]);
-    
+
     if (context == ROOT_CONTEXT) {
         start_root_session(user_key);
+        return;
+    }
+
+    if (context == SOS_CONTEXT) {
+        start_sos_session(user_key);
         return;
     }
 }
 
 start_root_session(key user_key) {
-    logd("External start request from " + llKey2Name(user_key));
-    
-    if (llListFindList(PendingAcl, [user_key]) == -1) {
-        PendingAcl += [user_key];
+    logd("Root session start request from " + llKey2Name(user_key));
+
+    integer i = 0;
+    integer len = llGetListLength(PendingAcl);
+    while (i < len) {
+        if (llList2Key(PendingAcl, i + PENDING_ACL_AVATAR) == user_key) {
+            return;
+        }
+        i += PENDING_ACL_STRIDE;
     }
-    
+
+    PendingAcl += [user_key, ROOT_CONTEXT];
+
+    string acl_query = llList2Json(JSON_OBJECT, [
+        "type", "acl_query",
+        "avatar", (string)user_key
+    ]);
+    llMessageLinked(LINK_SET, AUTH_BUS, acl_query, NULL_KEY);
+}
+
+start_sos_session(key user_key) {
+    logd("SOS session start request from " + llKey2Name(user_key));
+
+    integer i = 0;
+    integer len = llGetListLength(PendingAcl);
+    while (i < len) {
+        if (llList2Key(PendingAcl, i + PENDING_ACL_AVATAR) == user_key) {
+            return;
+        }
+        i += PENDING_ACL_STRIDE;
+    }
+
+    PendingAcl += [user_key, SOS_CONTEXT];
+
     string acl_query = llList2Json(JSON_OBJECT, [
         "type", "acl_query",
         "avatar", (string)user_key
@@ -526,24 +661,38 @@ start_root_session(key user_key) {
 
 handle_return(string msg) {
     if (!json_has(msg, ["user"])) return;
-    
+
     key user_key = (key)llJsonGetValue(msg, ["user"]);
-    
+
     logd("Return requested for " + llKey2Name(user_key));
-    
+
     // SECURITY FIX: Check session age and re-validate if stale
     integer session_idx = find_session_idx(user_key);
     if (session_idx != -1) {
         integer created_time = llList2Integer(Sessions, session_idx + SESSION_CREATED_TIME);
         integer age = llGetUnixTime() - created_time;
-        
+
         if (age > SESSION_MAX_AGE) {
             logd("Session too old (" + (string)age + "s), re-validating ACL");
+            string session_context = llList2String(Sessions, session_idx + SESSION_CONTEXT);
             cleanup_session(user_key);
-            start_root_session(user_key);
+
+            if (session_context == SOS_CONTEXT) {
+                start_sos_session(user_key);
+            }
+            else {
+                start_root_session(user_key);
+            }
         }
         else {
-            show_root_menu(user_key);
+            string session_context = llList2String(Sessions, session_idx + SESSION_CONTEXT);
+
+            if (session_context == SOS_CONTEXT) {
+                show_sos_menu(user_key);
+            }
+            else {
+                show_root_menu(user_key);
+            }
         }
     }
     else {
@@ -611,8 +760,9 @@ default
         Sessions = [];
         FilteredPluginsData = [];
         PendingAcl = [];
+        TouchData = [];
 
-        logd("UI module started (UUID-based change detection)");
+        logd("UI module started (UUID-based change detection, long-touch support)");
 
         string request = llList2Json(JSON_OBJECT, [
             "type", "plugin_list_request"
@@ -625,14 +775,14 @@ default
         while (i < num_detected) {
             key toucher = llDetectedKey(i);
             vector touch_pos = llDetectedTouchPos(i);
-            
+
             // SECURITY FIX: Reject invalid touches
             if (touch_pos == ZERO_VECTOR) {
                 logd("WARNING: Invalid touch position from " + llKey2Name(toucher));
                 i += 1;
                 jump next_touch;
             }
-            
+
             // Validate touch distance
             float distance = llVecDist(touch_pos, llGetPos());
             if (distance > TOUCH_RANGE_M) {
@@ -640,12 +790,65 @@ default
                 i += 1;
                 jump next_touch;
             }
-            
-            // Valid touch - proceed
-            start_root_session(toucher);
-            logd("Touch from " + llKey2Name(toucher));
-            
+
+            // Record touch start time
+            integer j = 0;
+            integer len = llGetListLength(TouchData);
+            integer found = FALSE;
+
+            while (j < len) {
+                if (llList2Key(TouchData, j + TOUCH_DATA_KEY) == toucher) {
+                    TouchData = llListReplaceList(TouchData, [llGetTime()], j + TOUCH_DATA_START_TIME, j + TOUCH_DATA_START_TIME);
+                    found = TRUE;
+                    jump recorded;
+                }
+                j += TOUCH_DATA_STRIDE;
+            }
+
+            if (found == FALSE) {
+                TouchData += [toucher, llGetTime()];
+            }
+
+            @recorded;
+            logd("Touch start from " + llKey2Name(toucher));
+
             @next_touch;
+            i += 1;
+        }
+    }
+
+    touch_end(integer num_detected) {
+        key wearer = llGetOwner();
+        integer i = 0;
+
+        while (i < num_detected) {
+            key toucher = llDetectedKey(i);
+
+            integer j = 0;
+            integer len = llGetListLength(TouchData);
+
+            while (j < len) {
+                if (llList2Key(TouchData, j + TOUCH_DATA_KEY) == toucher) {
+                    float start_time = llList2Float(TouchData, j + TOUCH_DATA_START_TIME);
+                    float duration = llGetTime() - start_time;
+
+                    TouchData = llDeleteSubList(TouchData, j, j + TOUCH_DATA_STRIDE - 1);
+
+                    logd("Touch end from " + llKey2Name(toucher) + " (duration: " + (string)duration + "s)");
+
+                    if (duration >= LONG_TOUCH_THRESHOLD && toucher == wearer) {
+                        start_sos_session(toucher);
+                    }
+                    else {
+                        start_root_session(toucher);
+                    }
+
+                    jump next_toucher;
+                }
+                j += TOUCH_DATA_STRIDE;
+            }
+
+            @next_toucher;
             i += 1;
         }
     }

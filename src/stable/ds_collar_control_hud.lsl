@@ -40,6 +40,13 @@ integer ACL_PRIMARY_OWNER = 5;
 float QUERY_TIMEOUT_SEC = 3.0;
 float COLLAR_SCAN_TIME = 2.0;
 integer DIALOG_CHANNEL = -98765;
+float LONG_TOUCH_THRESHOLD = 1.5;
+
+/* ═══════════════════════════════════════════════════════════
+   CONTEXT TYPES
+   ═══════════════════════════════════════════════════════════ */
+string ROOT_CONTEXT = "core_root";
+string SOS_CONTEXT = "sos";
 
 /* ═══════════════════════════════════════════════════════════
    STATE (PascalCase for globals)
@@ -59,6 +66,10 @@ string TargetAvatarName = "";
 /* Detected collars: [avatar_key, collar_key, avatar_name, ...] */
 list DetectedCollars = [];
 integer COLLAR_STRIDE = 3;
+
+/* Touch tracking */
+float TouchStartTime = 0.0;
+string RequestedContext = "";
 
 /* ═══════════════════════════════════════════════════════════
    HELPERS
@@ -86,7 +97,7 @@ cleanup_session() {
         llListenRemove(DialogListenHandle);
         DialogListenHandle = 0;
     }
-    
+
     ScanningForCollars = FALSE;
     AclPending = FALSE;
     AclLevel = ACL_NOACCESS;
@@ -94,6 +105,8 @@ cleanup_session() {
     TargetAvatarKey = NULL_KEY;
     TargetAvatarName = "";
     DetectedCollars = [];
+    TouchStartTime = 0.0;
+    RequestedContext = "";
     llSetTimerEvent(0.0);
 }
 
@@ -115,28 +128,37 @@ add_detected_collar(key avatar_key, key collar_key, string avatar_name) {
     logd("Detected collar on " + avatar_name);
 }
 
-broadcast_collar_scan() {
+broadcast_collar_scan(string context) {
+    // Store the requested context for later use
+    RequestedContext = context;
+
     // Broadcast to find all nearby collars
     string json_msg = llList2Json(JSON_OBJECT, [
         "type", "collar_scan",
         "hud_wearer", (string)HudWearer
     ]);
-    
+
     // Listen for collar responses
     if (CollarListenHandle != 0) {
         llListenRemove(CollarListenHandle);
     }
     CollarListenHandle = llListen(COLLAR_ACL_REPLY_CHAN, "", NULL_KEY, "");
-    
+
     // Broadcast scan
     llRegionSay(COLLAR_ACL_QUERY_CHAN, json_msg);
-    
+
     ScanningForCollars = TRUE;
     DetectedCollars = [];
     llSetTimerEvent(COLLAR_SCAN_TIME);
-    
-    logd("Broadcasting collar scan...");
-    llOwnerSay("Scanning for nearby collars...");
+
+    logd("Broadcasting collar scan for " + context + " menu...");
+
+    if (context == SOS_CONTEXT) {
+        llOwnerSay("Emergency access - scanning for your collar...");
+    }
+    else {
+        llOwnerSay("Scanning for nearby collars...");
+    }
 }
 
 process_scan_results() {
@@ -235,21 +257,27 @@ trigger_collar_menu() {
         llOwnerSay("Error: No collar connection established.");
         return;
     }
-    
+
     string json_msg = llList2Json(JSON_OBJECT, [
         "type", "menu_request_external",
-        "avatar", (string)HudWearer
+        "avatar", (string)HudWearer,
+        "context", RequestedContext
     ]);
-    
+
     llRegionSayTo(TargetCollarKey, COLLAR_MENU_CHAN, json_msg);
-    
+
     if (TargetAvatarKey == HudWearer) {
-        llOwnerSay("Opening your collar menu...");
+        if (RequestedContext == SOS_CONTEXT) {
+            llOwnerSay("Opening emergency menu on your collar...");
+        }
+        else {
+            llOwnerSay("Opening your collar menu...");
+        }
     }
     else {
         llOwnerSay("Opening " + TargetAvatarName + "'s collar menu...");
     }
-    
+
     cleanup_session();
 }
 
@@ -325,8 +353,10 @@ default {
     state_entry() {
         cleanup_session();
         HudWearer = llGetOwner();
-        logd("Control HUD initialized. Owner: " + llKey2Name(HudWearer));
-        llOwnerSay("Control HUD ready. Touch to scan for collars.");
+        TouchStartTime = 0.0;
+        RequestedContext = "";
+        logd("Control HUD initialized with long-touch support. Owner: " + llKey2Name(HudWearer));
+        llOwnerSay("Control HUD ready. Touch to scan for collars, long-touch for emergency access.");
     }
     
     on_rez(integer start_param) {
@@ -353,15 +383,41 @@ default {
             llOwnerSay("Scan already in progress...");
             return;
         }
-        
+
         if (AclPending) {
             llOwnerSay("Still waiting for collar response...");
             return;
         }
-        
+
+        // Record touch start time
+        TouchStartTime = llGetTime();
+        logd("Touch start recorded");
+    }
+
+    touch_end(integer num_detected) {
+        if (ScanningForCollars || AclPending) {
+            return;
+        }
+
+        // Calculate touch duration
+        float duration = llGetTime() - TouchStartTime;
+        TouchStartTime = 0.0;
+
+        logd("Touch duration: " + (string)duration + "s");
+
         cleanup_session();
-        llOwnerSay("Scanning for collars...");
-        broadcast_collar_scan();
+
+        // Determine context based on touch duration
+        string context = ROOT_CONTEXT;
+        if (duration >= LONG_TOUCH_THRESHOLD) {
+            context = SOS_CONTEXT;
+            logd("Long touch detected - requesting SOS menu");
+        }
+        else {
+            logd("Short touch detected - requesting root menu");
+        }
+
+        broadcast_collar_scan(context);
     }
     
     listen(integer channel, string name, key id, string message) {
