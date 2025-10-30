@@ -69,6 +69,9 @@ integer MODE_HARDCORE = 2;
 
 integer SOS_MSG_NUM = 555;  // SOS emergency channel
 
+// ORG relay spec wildcard UUID (accepts commands from any avatar)
+key WILDCARD_UUID = "ffffffff-ffff-ffff-ffff-ffffffffffff";
+
 /* ═══════════════════════════════════════════════════════════
    SETTINGS KEYS
    ═══════════════════════════════════════════════════════════ */
@@ -688,7 +691,7 @@ handle_relay_message(key sender_id, string sender_name, string raw_msg) {
 
         // Check if command is meant for this wearer (or wildcard)
         key wearer = llGetOwner();
-        if (target_uuid != wearer && target_uuid != "ffffffff-ffff-ffff-ffff-ffffffffffff") {
+        if (target_uuid != wearer && target_uuid != WILDCARD_UUID) {
             // Command not meant for this wearer, ignore it
             logd("Ignoring command meant for " + (string)target_uuid);
             return;
