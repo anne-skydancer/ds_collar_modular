@@ -685,20 +685,33 @@ handle_relay_message(key sender_id, string sender_name, string raw_msg) {
     list parts = llParseString2List(raw_cmd, [","], []);
     string command = raw_cmd;
 
-    // If message has at least 3 comma-separated parts, validate target UUID
+    // Validate ORG format: check if parts[1] looks like a UUID
+    // UUIDs are 36 chars (8-4-4-4-12) with hyphens at positions 8,13,18,23
     if (llGetListLength(parts) >= 3) {
-        // Extract target UUID (field 1)
-        key target_uuid = llList2Key(parts, 1);
+        string potential_uuid = llList2String(parts, 1);
+        integer uuid_len = llStringLength(potential_uuid);
 
-        // Check if command is meant for this wearer (or wildcard)
-        if (target_uuid != WearerKey && target_uuid != WILDCARD_UUID) {
-            // Command not meant for this wearer, ignore it
-            logd("Ignoring command meant for " + (string)target_uuid);
-            return;
+        // Check if this looks like a UUID (36 chars with hyphens in right places)
+        if (uuid_len == 36 &&
+            llGetSubString(potential_uuid, 8, 8) == "-" &&
+            llGetSubString(potential_uuid, 13, 13) == "-" &&
+            llGetSubString(potential_uuid, 18, 18) == "-" &&
+            llGetSubString(potential_uuid, 23, 23) == "-") {
+
+            // This is ORG format, validate target UUID
+            key target_uuid = (key)potential_uuid;
+
+            // Check if command is meant for this wearer (or wildcard)
+            if (target_uuid != WearerKey && target_uuid != WILDCARD_UUID) {
+                // Command not meant for this wearer, ignore it
+                logd("Ignoring command meant for " + (string)target_uuid);
+                return;
+            }
+
+            // Extract commands (field 2 onwards)
+            command = llList2String(parts, 2);
         }
-
-        // Extract commands (field 2 onwards)
-        command = llList2String(parts, 2);
+        // else: not ORG format, treat entire raw_cmd as command
     }
     
     // Handle version queries
