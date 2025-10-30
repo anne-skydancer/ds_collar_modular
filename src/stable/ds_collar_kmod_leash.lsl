@@ -171,8 +171,9 @@ float YANK_COOLDOWN = 5.0;  // 5 seconds between yanks
 float FOLLOW_TICK = 0.5;
 
 // ===== HELPERS =====
-logd(string msg) {
+integer logd(string msg) {
     if (DEBUG && !PRODUCTION) llOwnerSay("[LEASH-KMOD] " + msg);
+    return FALSE;
 }
 integer jsonHas(string j, list path) {
     return (llJsonGetValue(j, path) != JSON_INVALID);
