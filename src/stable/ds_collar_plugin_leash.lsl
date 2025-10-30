@@ -45,6 +45,8 @@ integer AUTH_BUS = 700;
 integer UI_BUS = 900;
 integer DIALOG_BUS = 950;
 
+float STATE_QUERY_DELAY = 0.15;  // 150ms delay for non-blocking state queries
+
 string PLUGIN_CONTEXT = "core_leash";
 string PLUGIN_LABEL = "Leash";
 integer PLUGIN_MIN_ACL = 1;
@@ -609,7 +611,7 @@ queryState() {
 scheduleStateQuery(string next_menu_context) {
     PendingStateQuery = TRUE;
     PendingQueryContext = next_menu_context;
-    llSetTimerEvent(0.15);  // Query after 150ms (non-blocking)
+    llSetTimerEvent(STATE_QUERY_DELAY);
     logd("Scheduled state query, will show: " + next_menu_context);
 }
 

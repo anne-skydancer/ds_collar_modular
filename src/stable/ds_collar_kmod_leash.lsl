@@ -798,6 +798,8 @@ coffleLeashInternal(key user, key target_collar) {
     }
 
     // Verify target is a valid object and get its owner
+    // NOTE: OBJECT_OWNER returns the avatar wearing the collar, not the ACL owner (Dom)
+    // This validation allows coffling between different subs with the same Dom
     list details = llGetObjectDetails(target_collar, [OBJECT_POS, OBJECT_NAME, OBJECT_OWNER]);
     if (llGetListLength(details) == 0) {
         llRegionSayTo(user, 0, "Target collar not found or out of range.");
@@ -805,8 +807,12 @@ coffleLeashInternal(key user, key target_collar) {
     }
 
     key collar_owner = llList2Key(details, 2);
-    if (collar_owner == NULL_KEY || collar_owner == llGetOwner()) {
-        llRegionSayTo(user, 0, "Invalid coffle target.");
+    if (collar_owner == NULL_KEY) {
+        llRegionSayTo(user, 0, "Cannot coffle: target collar has no owner.");
+        return;
+    }
+    if (collar_owner == llGetOwner()) {
+        llRegionSayTo(user, 0, "Cannot coffle to yourself.");
         return;
     }
 
@@ -1008,8 +1014,7 @@ followTick() {
 default
 {
     state_entry() {
-        closeHolderListen();
-        closeHolderListenOc();
+        closeAllHolderListens();
         HolderTarget = NULL_KEY;
         HolderState = HOLDER_STATE_IDLE;
         AclPending = FALSE;
