@@ -198,14 +198,6 @@ denyAccess(key user, string reason, string action, integer acl) {
     llRegionSayTo(user, 0, "Access denied: " + reason);
     logd(action + " denied for ACL " + (string)acl + " - " + reason);
 }
-integer validateObjectExists(key object, key user, string error_msg) {
-    list details = llGetObjectDetails(object, [OBJECT_POS]);
-    if (llGetListLength(details) == 0) {
-        if (user != NULL_KEY) llRegionSayTo(user, 0, error_msg);
-        return FALSE;
-    }
-    return TRUE;
-}
 
 /* ===============================================================
    PROTOCOL MESSAGE HELPERS - State-based delta pattern
