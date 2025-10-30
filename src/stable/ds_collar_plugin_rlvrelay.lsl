@@ -1,5 +1,5 @@
 /* =============================================================================
-   PLUGIN: ds_collar_plugin_rlvrelay.lsl (v2.0 - Consolidated ABI)
+   PLUGIN: ds_collar_plugin_rlvrelay.lsl (v2.1 - ORG Spec Compliance)
    
    PURPOSE: RLV relay with mode toggle + hardcore + safeword integration
    
@@ -19,6 +19,10 @@
    - Fixed: ACL race condition handling
    - Fixed: Object name truncation in display
    - Fixed: Session cleanup properly cancels dialogs
+
+   BUG FIXES V2.1:
+   - Fixed: Relay now validates target UUID per ORG spec (prevents processing
+     commands meant for other avatars)
    
    NAMING: PascalCase globals, ALL_CAPS constants, snake_case locals
    ============================================================================= */
@@ -664,7 +668,7 @@ handle_dialog_timeout(string msg) {
 handle_relay_message(key sender_id, string sender_name, string raw_msg) {
     // Only process relay commands when attached
     if (!IsAttached) return;
-    
+
     // Parse message format: "command|channel" or just "command"
     list parsed = llParseString2List(raw_msg, ["|"], []);
     string raw_cmd = llList2String(parsed, 0);
@@ -672,14 +676,26 @@ handle_relay_message(key sender_id, string sender_name, string raw_msg) {
     if (llGetListLength(parsed) > 1) {
         session_chan = (integer)llList2String(parsed, 1);
     }
-    
-    // Extract command from RLV wrapper if present
+
+    // Parse ORG standard format: "<ident>,<target_uuid>,<commands>"
+    list parts = llParseString2List(raw_cmd, [","], []);
     string command = raw_cmd;
-    if (llSubStringIndex(raw_cmd, "RLV,") == 0) {
-        list parts = llParseString2List(raw_cmd, [","], []);
-        if (llGetListLength(parts) >= 3) {
-            command = llList2String(parts, 2);
+
+    // If message has at least 3 comma-separated parts, validate target UUID
+    if (llGetListLength(parts) >= 3) {
+        // Extract target UUID (field 1)
+        key target_uuid = llList2Key(parts, 1);
+
+        // Check if command is meant for this wearer (or wildcard)
+        key wearer = llGetOwner();
+        if (target_uuid != wearer && target_uuid != "ffffffff-ffff-ffff-ffff-ffffffffffff") {
+            // Command not meant for this wearer, ignore it
+            logd("Ignoring command meant for " + (string)target_uuid);
+            return;
         }
+
+        // Extract commands (field 2 onwards)
+        command = llList2String(parts, 2);
     }
     
     // Handle version queries
