@@ -784,10 +784,16 @@ passLeashInternal(key new_leasher) {
     key old_leasher = Leasher;
     Leasher = new_leasher;
     LastLeasher = new_leasher;
+
+    // Reset to avatar mode (if was in coffle/post, revert to standard leashing)
+    LeashMode = MODE_AVATAR;
+    LeashTarget = NULL_KEY;
+    CoffleTargetAvatar = NULL_KEY;
+
     persistLeashState(TRUE, new_leasher);
 
-    // Update particles target
-    updateParticlesTarget(new_leasher);
+    // Start holder handshake for new leasher
+    beginHolderHandshake(new_leasher);
 
     // Update Lockmeister authorization
     AuthorizedLmController = new_leasher;
