@@ -6,7 +6,8 @@
    NEW FEATURES v2.0:
    - Added Coffle mode (collar-to-collar leashing, ACL 3,5 only)
    - Added Post mode (leash to object, ACL 1,3,5)
-   - Sensor menus for selecting coffle and post targets
+   - Uses llGetAgentList for avatar detection (Pass/Offer) - more efficient
+   - Sensor only used for object detection (Coffle/Post)
 
    CHANGES v1.0:
    - Added offer acceptance dialog (targets can Accept/Decline offers)
@@ -229,7 +230,53 @@ showLengthMenu() {
 showPassMenu() {
     SensorMode = "pass";
     MenuContext = "pass";
-    llSensor("", NULL_KEY, AGENT, 96.0, PI);
+    buildAvatarMenu();
+}
+
+buildAvatarMenu() {
+    // Use llGetAgentList for nearby avatars (more efficient than sensor)
+    list nearby = llGetAgentList(AGENT_LIST_PARCEL, []);
+
+    key owner = llGetOwner();
+    SensorCandidates = [];
+    integer i = 0;
+    integer count = 0;
+
+    while (i < llGetListLength(nearby) && count < 9) {
+        key detected = llList2Key(nearby, i);
+        if (detected != owner && detected != Leasher) {
+            string name = llKey2Name(detected);
+            SensorCandidates += [name, detected];
+            count++;
+        }
+        i++;
+    }
+
+    if (llGetListLength(SensorCandidates) == 0) {
+        llRegionSayTo(CurrentUser, 0, "No nearby avatars found.");
+        showMainMenu();
+        SensorMode = "";
+        return;
+    }
+
+    list names = [];
+    i = 0;
+    while (i < llGetListLength(SensorCandidates)) {
+        names += [llList2String(SensorCandidates, i)];
+        i = i + 2;
+    }
+
+    list menu_buttons = ["<<", ">>", "Back"] + names;
+
+    string title = "";
+    if (IsOfferMode) {
+        title = "Offer Leash";
+    }
+    else {
+        title = "Pass Leash";
+    }
+
+    showMenu("pass", title, "Select avatar:", menu_buttons);
 }
 
 showCoffleMenu() {
@@ -738,42 +785,30 @@ default
     }
     
     sensor(integer num) {
+        // Sensor only used for coffle and post (object detection)
+        // Avatar detection uses llGetAgentList instead
         if (SensorMode == "") return;
         if (CurrentUser == NULL_KEY) return;
+        if (SensorMode != "coffle" && SensorMode != "post") return;
 
         key owner = llGetOwner();
+        key my_key = llGetKey();
         SensorCandidates = [];
         integer i = 0;
 
-        if (SensorMode == "pass") {
-            // For pass/offer, only detect avatars
-            while (i < num && i < 9) {
-                key detected = llDetectedKey(i);
-                if (detected != owner && detected != Leasher) {
-                    SensorCandidates += [llDetectedName(i), detected];
-                }
-                i = i + 1;
+        // Detect objects for coffle/post
+        while (i < num && i < 9) {
+            key detected = llDetectedKey(i);
+            // Exclude self (collar) and owner avatar
+            if (detected != my_key && detected != owner) {
+                string name = llDetectedName(i);
+                SensorCandidates += [name, detected];
             }
-        }
-        else if (SensorMode == "coffle" || SensorMode == "post") {
-            // For coffle/post, detect objects
-            while (i < num && i < 9) {
-                key detected = llDetectedKey(i);
-                // Exclude self (collar) and current leash target
-                key my_key = llGetKey();
-                if (detected != my_key && detected != owner) {
-                    string name = llDetectedName(i);
-                    SensorCandidates += [name, detected];
-                }
-                i = i + 1;
-            }
+            i = i + 1;
         }
 
         if (llGetListLength(SensorCandidates) == 0) {
-            if (SensorMode == "pass") {
-                llRegionSayTo(CurrentUser, 0, "No nearby avatars found.");
-            }
-            else if (SensorMode == "coffle") {
+            if (SensorMode == "coffle") {
                 llRegionSayTo(CurrentUser, 0, "No nearby objects found for coffle.");
             }
             else if (SensorMode == "post") {
@@ -793,20 +828,10 @@ default
 
         list menu_buttons = ["<<", ">>", "Back"] + names;
 
-        MenuContext = SensorMode;
         string title = "";
         string body = "";
 
-        if (SensorMode == "pass") {
-            if (IsOfferMode) {
-                title = "Offer Leash";
-            }
-            else {
-                title = "Pass Leash";
-            }
-            body = "Select avatar:";
-        }
-        else if (SensorMode == "coffle") {
+        if (SensorMode == "coffle") {
             title = "Coffle";
             body = "Select collar to coffle to:";
         }
@@ -819,11 +844,11 @@ default
     }
     
     no_sensor() {
+        // Only handles coffle and post (pass/offer use llGetAgentList)
         if (SensorMode == "") return;
-        if (SensorMode == "pass") {
-            llRegionSayTo(CurrentUser, 0, "No nearby avatars found.");
-        }
-        else if (SensorMode == "coffle") {
+        if (SensorMode != "coffle" && SensorMode != "post") return;
+
+        if (SensorMode == "coffle") {
             llRegionSayTo(CurrentUser, 0, "No nearby objects found for coffle.");
         }
         else if (SensorMode == "post") {

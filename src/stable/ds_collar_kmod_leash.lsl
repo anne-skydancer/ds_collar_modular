@@ -5,9 +5,11 @@
 
    NEW FEATURES v2.0:
    - Added three leash modes: Avatar, Coffle, Post
+   - Avatar mode: PRESERVES ALL EXISTING LOGIC (holder detection, offsim, etc.)
    - Coffle: Collar-to-collar leashing (leashpoint to leashpoint)
    - Post: Leash to a static object in world
    - Mode-specific ACL restrictions (Coffle: ACL 3,5 | Post: ACL 1,3,5)
+   - Coffle and Post are NEW code paths that don't affect avatar behavior
    
    NEW FEATURES v1.0:
    - Added offer acceptance dialog for leash offers
