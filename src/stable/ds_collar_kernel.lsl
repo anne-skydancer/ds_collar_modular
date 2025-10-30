@@ -1,14 +1,21 @@
 /* =============================================================================
-   MODULE: ds_collar_kernel.lsl (v3.0 - Unix Kernel-Style Queue Architecture)
+   MODULE: ds_collar_kernel.lsl (v3.1 - Conditional Timer Optimization)
    SECURITY AUDIT: ALL ISSUES FIXED
 
    ROLE: Plugin registry, lifecycle management, heartbeat monitoring
 
    ARCHITECTURE: Unix modprobe-style plugin queue system
    - Event-driven registration (no arbitrary time windows)
+   - Conditional timer (0.1s batch mode, 5s heartbeat mode)
    - Batch queue processing (prevents broadcast storms)
    - Registry versioning (tracks changes, enables deduplication)
    - Atomic operations (consistent state transitions)
+
+   PERFORMANCE OPTIMIZATIONS:
+   - Timer only runs at 0.1s when queue has items (batch window)
+   - Automatically switches to 5s heartbeat mode when queue empty
+   - Eliminates CPU waste from constant 0.5s polling
+   - link_message events trigger batch timer on-demand
 
    CHANNELS:
    - 500 (KERNEL_LIFECYCLE): All lifecycle operations
@@ -41,7 +48,7 @@ integer KERNEL_LIFECYCLE = 500;
 float   PING_INTERVAL_SEC     = 5.0;
 integer PING_TIMEOUT_SEC      = 15;
 float   INV_SWEEP_INTERVAL    = 3.0;
-float   QUEUE_PROCESS_INTERVAL = 0.5;  // Process queue twice per second
+float   BATCH_WINDOW_SEC      = 0.1;  // Small batch window during startup burst
 
 /* Registry stride: [context, label, min_acl, script, last_seen_unix] */
 integer REG_STRIDE = 5;
@@ -69,7 +76,7 @@ list AUTHORIZED_RESET_SENDERS = ["bootstrap", "maintenance"];
 list PluginRegistry = [];           // Active plugin registry
 list RegistrationQueue = [];        // Pending operations queue (Unix modprobe style)
 integer RegistryVersion = 0;        // Increments on any registry change
-integer LastQueueProcessUnix = 0;   // Last queue processing time
+integer PendingBatchTimer = FALSE;  // TRUE if batch timer is active
 integer LastPingUnix = 0;
 integer LastInvSweepUnix = 0;
 key LastOwner = NULL_KEY;
@@ -123,6 +130,7 @@ integer is_authorized_sender(string sender_name) {
    ═══════════════════════════════════════════════════════════ */
 
 // Add operation to queue (deduplicates by context)
+// Schedules batch processing if not already scheduled
 queue_add(string op_type, string context, string label, integer min_acl, string script) {
     // Remove any existing queue entry for this context (newest operation wins)
     list new_queue = [];
@@ -142,12 +150,29 @@ queue_add(string op_type, string context, string label, integer min_acl, string 
     RegistrationQueue = new_queue;
 
     logd("Queued " + op_type + ": " + context + " (" + label + ")");
+
+    // Schedule batch processing if not already scheduled
+    // This creates a small batching window for startup bursts
+    if (!PendingBatchTimer) {
+        PendingBatchTimer = TRUE;
+        llSetTimerEvent(BATCH_WINDOW_SEC);
+        logd("Batch timer started (" + (string)BATCH_WINDOW_SEC + "s window)");
+    }
 }
 
 // Process all pending queue operations (atomic batch)
 // Returns TRUE if any changes were made to registry
+// Resets timer to heartbeat interval after processing
 integer process_queue() {
-    if (llGetListLength(RegistrationQueue) == 0) return FALSE;
+    if (llGetListLength(RegistrationQueue) == 0) {
+        // No operations in queue - switch to heartbeat mode
+        if (PendingBatchTimer) {
+            PendingBatchTimer = FALSE;
+            llSetTimerEvent(PING_INTERVAL_SEC);
+            logd("Batch timer stopped - switching to heartbeat mode");
+        }
+        return FALSE;
+    }
 
     integer changes_made = FALSE;
     integer i = 0;
@@ -176,6 +201,10 @@ integer process_queue() {
 
     // Clear queue
     RegistrationQueue = [];
+
+    // Reset to heartbeat mode
+    PendingBatchTimer = FALSE;
+    llSetTimerEvent(PING_INTERVAL_SEC);
 
     // Increment version if changes were made
     if (changes_made) {
@@ -458,9 +487,10 @@ handle_soft_reset(string msg) {
     PluginRegistry = [];
     RegistrationQueue = [];
     RegistryVersion = 0;
-    LastQueueProcessUnix = now();
+    PendingBatchTimer = FALSE;
     LastPingUnix = now();
     LastInvSweepUnix = now();
+    llSetTimerEvent(PING_INTERVAL_SEC);
     broadcast_register_now();
 }
 
@@ -475,18 +505,18 @@ default
         PluginRegistry = [];
         RegistrationQueue = [];
         RegistryVersion = 0;
-        LastQueueProcessUnix = now();
+        PendingBatchTimer = FALSE;
         LastPingUnix = now();
         LastInvSweepUnix = now();
         LastScriptCount = count_scripts();
 
-        logd("Kernel started (queue-based plugin management)");
+        logd("Kernel started (event-driven queue, conditional timer)");
 
         // Immediately broadcast register_now (plugins add to queue)
         broadcast_register_now();
 
-        // Start timer for queue processing, heartbeat, and inventory sweeps
-        llSetTimerEvent(0.5);  // Check twice per second
+        // Start timer in heartbeat mode (batch timer will override when needed)
+        llSetTimerEvent(PING_INTERVAL_SEC);
     }
     
     on_rez(integer start_param) {
@@ -502,51 +532,49 @@ default
         integer now_unix = now();
         if (now_unix == 0) return; // Overflow protection
 
-        // Process plugin queue (Unix modprobe-style batch processing)
-        integer queue_elapsed = now_unix - LastQueueProcessUnix;
-        if (queue_elapsed < 0) queue_elapsed = 0; // Overflow protection
-
-        if (queue_elapsed >= QUEUE_PROCESS_INTERVAL) {
+        // DUAL-MODE TIMER: Batch mode (0.1s) or Heartbeat mode (5s)
+        if (PendingBatchTimer) {
+            // Batch mode: Process queue and broadcast
             integer changes = process_queue();
             if (changes) {
-                // Registry changed - broadcast new version
                 broadcast_plugin_list();
             }
-            LastQueueProcessUnix = now_unix;
+            // process_queue() automatically switches back to heartbeat mode
         }
+        else {
+            // Heartbeat mode: Periodic maintenance only
+            integer ping_elapsed = now_unix - LastPingUnix;
+            if (ping_elapsed < 0) ping_elapsed = 0; // Overflow protection
 
-        // Periodic heartbeat and pruning
-        integer ping_elapsed = now_unix - LastPingUnix;
-        if (ping_elapsed < 0) ping_elapsed = 0; // Overflow protection
+            if (ping_elapsed >= PING_INTERVAL_SEC) {
+                broadcast_ping();
 
-        if (ping_elapsed >= PING_INTERVAL_SEC) {
-            broadcast_ping();
+                // Prune dead plugins and update registry version if needed
+                integer pruned = prune_dead_plugins();
+                if (pruned > 0) {
+                    RegistryVersion = RegistryVersion + 1;
+                    logd("Pruned " + (string)pruned + " dead plugins - version " + (string)RegistryVersion);
+                    broadcast_plugin_list();
+                }
 
-            // Prune dead plugins and update registry version if needed
-            integer pruned = prune_dead_plugins();
-            if (pruned > 0) {
-                RegistryVersion = RegistryVersion + 1;
-                logd("Pruned " + (string)pruned + " dead plugins - version " + (string)RegistryVersion);
-                broadcast_plugin_list();
+                LastPingUnix = now_unix;
             }
 
-            LastPingUnix = now_unix;
-        }
+            // Periodic inventory sweep
+            integer inv_elapsed = now_unix - LastInvSweepUnix;
+            if (inv_elapsed < 0) inv_elapsed = 0; // Overflow protection
 
-        // Periodic inventory sweep
-        integer inv_elapsed = now_unix - LastInvSweepUnix;
-        if (inv_elapsed < 0) inv_elapsed = 0; // Overflow protection
+            if (inv_elapsed >= INV_SWEEP_INTERVAL) {
+                // Prune missing scripts and update registry version if needed
+                integer pruned = prune_missing_scripts();
+                if (pruned > 0) {
+                    RegistryVersion = RegistryVersion + 1;
+                    logd("Pruned " + (string)pruned + " missing scripts - version " + (string)RegistryVersion);
+                    broadcast_plugin_list();
+                }
 
-        if (inv_elapsed >= INV_SWEEP_INTERVAL) {
-            // Prune missing scripts and update registry version if needed
-            integer pruned = prune_missing_scripts();
-            if (pruned > 0) {
-                RegistryVersion = RegistryVersion + 1;
-                logd("Pruned " + (string)pruned + " missing scripts - version " + (string)RegistryVersion);
-                broadcast_plugin_list();
+                LastInvSweepUnix = now_unix;
             }
-
-            LastInvSweepUnix = now_unix;
         }
     }
     
@@ -587,6 +615,8 @@ default
                 PluginRegistry = [];
                 RegistrationQueue = [];
                 RegistryVersion = 0;
+                PendingBatchTimer = FALSE;
+                llSetTimerEvent(PING_INTERVAL_SEC);
                 broadcast_register_now();
             }
         }
