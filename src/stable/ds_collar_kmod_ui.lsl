@@ -200,7 +200,19 @@ create_session(key user, integer acl, integer is_blacklisted, string context_fil
         string label = llList2String(AllPlugins, i + PLUGIN_LABEL);
         integer min_acl = llList2Integer(AllPlugins, i + PLUGIN_MIN_ACL);
 
-        if (acl >= min_acl && context == context_filter) {
+        integer should_include = FALSE;
+
+        if (acl >= min_acl) {
+            if (context_filter == SOS_CONTEXT) {
+                // SOS context: only include SOS plugins
+                should_include = (context == SOS_CONTEXT);
+            } else {
+                // Root context: include all non-SOS plugins
+                should_include = (context != SOS_CONTEXT);
+            }
+        }
+
+        if (should_include) {
             filtered += [context, label, min_acl];
         }
 
@@ -449,26 +461,39 @@ handle_button_click(key user, string button) {
     
     integer current_page = llList2Integer(Sessions, session_idx + SESSION_PAGE);
     integer total_pages = llList2Integer(Sessions, session_idx + SESSION_TOTAL_PAGES);
+    string session_context = llList2String(Sessions, session_idx + SESSION_CONTEXT);
     list filtered = get_session_filtered_plugins(session_idx);
-    
+
     if (button == "<<") {
         current_page -= 1;
         if (current_page < 0) current_page = total_pages - 1;
         Sessions = llListReplaceList(Sessions, [current_page], session_idx + SESSION_PAGE, session_idx + SESSION_PAGE);
-        show_root_menu(user);
+
+        // Respect the session context
+        if (session_context == SOS_CONTEXT) {
+            show_sos_menu(user);
+        } else {
+            show_root_menu(user);
+        }
         return;
     }
-    
+
     if (button == "Close") {
         cleanup_session(user);
         return;
     }
-    
+
     if (button == ">>") {
         current_page += 1;
         if (current_page >= total_pages) current_page = 0;
         Sessions = llListReplaceList(Sessions, [current_page], session_idx + SESSION_PAGE, session_idx + SESSION_PAGE);
-        show_root_menu(user);
+
+        // Respect the session context
+        if (session_context == SOS_CONTEXT) {
+            show_sos_menu(user);
+        } else {
+            show_root_menu(user);
+        }
         return;
     }
     
@@ -805,9 +830,8 @@ default
                 j += TOUCH_DATA_STRIDE;
             }
 
-            if (found == FALSE) {
-                TouchData += [toucher, llGetTime()];
-            }
+            // If we reach here, toucher was not found in TouchData
+            TouchData += [toucher, llGetTime()];
 
             @recorded;
             logd("Touch start from " + llKey2Name(toucher));

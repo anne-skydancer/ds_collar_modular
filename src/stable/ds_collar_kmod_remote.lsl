@@ -532,7 +532,7 @@ default {
                 // SECURITY: Only allow SOS context for collar wearer
                 // Non-wearers requesting SOS get downgraded to root menu
                 string final_context = requested_context;
-                if (requested_context == SOS_CONTEXT && avatar_key != CollarOwner) {
+                if (requested_context == SOS_CONTEXT && avatar_key != llGetOwner()) {
                     final_context = ROOT_CONTEXT;
                     logd("SOS context request from non-wearer " + llKey2Name(avatar_key) + " downgraded to root");
                 }

@@ -836,10 +836,15 @@ default
                 handle_start(msg);
             }
             else if (msg_type == "emergency_relay_clear") {
-                // Emergency SOS clear - bypasses ACL (ACL 0 emergency access)
-                safeword_clear_all();
-                llOwnerSay("[SOS] All relay restrictions cleared.");
-                logd("Emergency relay clear executed");
+                // Emergency SOS clear - only allow if sender is the collar wearer
+                // The id parameter contains the requesting user's key
+                if (id == llGetOwner()) {
+                    safeword_clear_all();
+                    llOwnerSay("[SOS] All relay restrictions cleared.");
+                    logd("Emergency relay clear executed");
+                } else {
+                    logd("Emergency relay clear denied: sender " + llKey2Name(id) + " is not wearer.");
+                }
             }
         }
 

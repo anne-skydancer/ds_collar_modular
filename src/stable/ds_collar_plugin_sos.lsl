@@ -99,10 +99,9 @@ request_acl(key user) {
 show_sos_menu() {
     SessionId = generate_session_id();
 
-    // Back button at index 0, followed by 3 action buttons
-    // llDialog layout (bottom-left to top-right):
-    // [Clear Relay]
-    // [Back] [Unleash] [Clear RLV]
+    // llDialog displays buttons in rows of 3, bottom-left to top-right
+    // Row 1 (bottom): [Back] [Unleash] [Clear RLV]
+    // Row 2 (top):    [Clear Relay]
     list buttons = ["Back", "Unleash", "Clear RLV", "Clear Relay"];
 
     string body = "EMERGENCY ACCESS\n\n";
