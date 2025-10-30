@@ -600,11 +600,17 @@ default
             if (type == "start") {
                 if (!json_has(msg, ["context"])) return;
                 string context = llJsonGetValue(msg, ["context"]);
-                
+
                 if (context == PLUGIN_CONTEXT) {
                     CurrentUser = id;
                     request_acl(CurrentUser);
                 }
+            }
+            else if (type == "emergency_restrict_clear") {
+                // Emergency SOS clear - bypasses ACL (ACL 0 emergency access)
+                remove_all_restrictions();
+                llOwnerSay("[SOS] All RLV restrictions cleared.");
+                logd("Emergency restrict clear executed");
             }
         }
         // Dialogs

@@ -26,7 +26,6 @@ integer KERNEL_LIFECYCLE = 500;
 integer AUTH_BUS = 700;
 integer UI_BUS = 900;
 integer DIALOG_BUS = 950;
-integer SOS_BUS = 555;  // SOS emergency channel for relay plugin
 
 /* ═══════════════════════════════════════════════════════════
    PLUGIN IDENTITY
@@ -141,21 +140,26 @@ action_unleash() {
 }
 
 action_clear_rlv() {
-    // Clear all RLV restrictions using the RLV @clear command
+    // Send emergency restrict clear on UI_BUS (bypasses ACL)
+    llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
+        "type", "emergency_restrict_clear"
+    ]), CurrentUser);
+
+    // Also send @clear directly to viewer as fallback
     llOwnerSay("@clear");
 
     llRegionSayTo(CurrentUser, 0, "[SOS] All RLV restrictions cleared.");
-    logd("RLV clear triggered by " + llKey2Name(CurrentUser));
+    logd("Emergency RLV clear triggered by " + llKey2Name(CurrentUser));
 }
 
 action_clear_relay() {
-    // Send SOS release to relay plugin
-    llMessageLinked(LINK_SET, SOS_BUS, llList2Json(JSON_OBJECT, [
-        "type", "sos_release"
-    ]), NULL_KEY);
+    // Send emergency relay clear on UI_BUS (bypasses ACL)
+    llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
+        "type", "emergency_relay_clear"
+    ]), CurrentUser);
 
     llRegionSayTo(CurrentUser, 0, "[SOS] All relay restrictions cleared.");
-    logd("Relay clear triggered by " + llKey2Name(CurrentUser));
+    logd("Emergency relay clear triggered by " + llKey2Name(CurrentUser));
 }
 
 /* ═══════════════════════════════════════════════════════════
