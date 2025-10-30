@@ -451,14 +451,24 @@ update_plugin_label(string context, string new_label) {
 
 handle_plugin_list(string msg) {
     logd("handle_plugin_list called");
-    
+
     if (!json_has(msg, ["plugins"])) {
         logd("ERROR: No 'plugins' field in message!");
         return;
     }
-    
+
     string plugins_json = llJsonGetValue(msg, ["plugins"]);
     apply_plugin_list(plugins_json);
+
+    // FIX: Invalidate all existing sessions when plugin list changes
+    // This prevents race condition where sessions have stale FilteredPluginsData
+    // after late plugin registrations or plugin removals
+    if (llGetListLength(Sessions) > 0) {
+        logd("Plugin list updated - invalidating " + (string)(llGetListLength(Sessions) / SESSION_STRIDE) + " active sessions");
+        Sessions = [];
+        FilteredPluginsData = [];
+        PendingAcl = [];
+    }
 }
 
 handle_acl_result(string msg) {

@@ -435,40 +435,50 @@ default
     timer() {
         integer now_unix = now();
         if (now_unix == 0) return; // Overflow protection
-        
+
         // Check if registration window should close
         if (RegistrationWindowOpen) {
             integer elapsed = now_unix - RegistrationWindowStartTime;
             if (elapsed < 0) elapsed = 0; // Overflow protection
-            
+
             if (elapsed >= REGISTRATION_WINDOW_SEC) {
                 close_registration_window();
             }
         }
-        
+
         // Handle pending late broadcast (debounced)
         if (PendingLateBroadcast && !RegistrationWindowOpen) {
             PendingLateBroadcast = FALSE;
             broadcast_plugin_list();
             logd("Late registration broadcast completed");
         }
-        
+
         // Periodic heartbeat
         integer ping_elapsed = now_unix - LastPingUnix;
         if (ping_elapsed < 0) ping_elapsed = 0; // Overflow protection
-        
+
         if (ping_elapsed >= PING_INTERVAL_SEC) {
             broadcast_ping();
-            prune_dead_plugins();
+            // FIX: Broadcast updated plugin list if any plugins were pruned
+            integer pruned = prune_dead_plugins();
+            if (pruned > 0 && !RegistrationWindowOpen) {
+                logd("Pruned " + (string)pruned + " dead plugins - broadcasting update");
+                broadcast_plugin_list();
+            }
             LastPingUnix = now_unix;
         }
-        
+
         // Periodic inventory sweep
         integer inv_elapsed = now_unix - LastInvSweepUnix;
         if (inv_elapsed < 0) inv_elapsed = 0; // Overflow protection
-        
+
         if (inv_elapsed >= INV_SWEEP_INTERVAL) {
-            prune_missing_scripts();
+            // FIX: Broadcast updated plugin list if any scripts were removed
+            integer pruned = prune_missing_scripts();
+            if (pruned > 0 && !RegistrationWindowOpen) {
+                logd("Pruned " + (string)pruned + " missing scripts - broadcasting update");
+                broadcast_plugin_list();
+            }
             LastInvSweepUnix = now_unix;
         }
     }
