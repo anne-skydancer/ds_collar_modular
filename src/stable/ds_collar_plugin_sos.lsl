@@ -102,8 +102,8 @@ show_sos_menu() {
 
     // Back button at index 0, followed by 3 action buttons
     // llDialog layout (bottom-left to top-right):
-    // [Clear RLV] [Clear Relay]
-    // [Back]      [Unleash]
+    // [Clear Relay]
+    // [Back] [Unleash] [Clear RLV]
     list buttons = ["Back", "Unleash", "Clear RLV", "Clear Relay"];
 
     string body = "EMERGENCY ACCESS\n\n";
