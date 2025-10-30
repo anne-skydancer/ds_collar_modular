@@ -184,8 +184,8 @@ integer logd(string msg) {
 integer jsonHas(string j, list path) {
     return (llJsonGetValue(j, path) != JSON_INVALID);
 }
-string jsonGet(string j, string key, string default_val) {
-    if (jsonHas(j, [key])) return llJsonGetValue(j, [key]);
+string jsonGet(string j, string k, string default_val) {
+    if (jsonHas(j, [k])) return llJsonGetValue(j, [k]);
     return default_val;
 }
 integer now() {
