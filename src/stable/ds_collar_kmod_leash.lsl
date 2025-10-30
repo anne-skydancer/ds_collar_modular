@@ -171,9 +171,8 @@ float YANK_COOLDOWN = 5.0;  // 5 seconds between yanks
 float FOLLOW_TICK = 0.5;
 
 // ===== HELPERS =====
-integer logd(string msg) {
-    if (DEBUG && !PRODUCTION) llOwnerSay("[LEASH-KMOD] " + msg);
-    return FALSE;
+logd(string msg) {
+    if (DEBUG) llOwnerSay("[LEASH-KMOD] " + msg);
 }
 integer jsonHas(string j, list path) {
     return (llJsonGetValue(j, path) != JSON_INVALID);
@@ -338,7 +337,7 @@ requestAclForAction(key user, string action, key pass_target) {
     logd("ACL query for " + action + " by " + llKey2Name(user));
 }
 
-handleAclResult(string msg, key id) {
+handleAclResult(string msg) {
     if (!AclPending) return;
     if (!jsonHas(msg, ["avatar"]) || !jsonHas(msg, ["level"])) return;
     
@@ -1143,7 +1142,7 @@ default
         
         if (num == AUTH_BUS) {
             if (msg_type == "acl_result") {
-                handleAclResult(msg, id);
+                handleAclResult(msg);
             }
             return;
         }
