@@ -1,5 +1,5 @@
 /* =============================================================================
-   MODULE: ds_collar_kernel.lsl (v3.1 - Conditional Timer Optimization)
+   MODULE: ds_collar_kernel.lsl (v3.2 - UUID-Based Change Detection)
    SECURITY AUDIT: ALL ISSUES FIXED
 
    ROLE: Plugin registry, lifecycle management, heartbeat monitoring
@@ -9,7 +9,7 @@
    - Conditional timer (0.1s batch mode, 5s heartbeat mode)
    - Batch queue processing (prevents broadcast storms)
    - Registry versioning (tracks changes, enables deduplication)
-   - Automatic change detection (label/ACL updates trigger version bump)
+   - UUID-based change detection (script recompile/update auto-detected)
    - Atomic operations (consistent state transitions)
 
    PERFORMANCE OPTIMIZATIONS:
@@ -51,13 +51,14 @@ integer PING_TIMEOUT_SEC      = 15;
 float   INV_SWEEP_INTERVAL    = 3.0;
 float   BATCH_WINDOW_SEC      = 0.1;  // Small batch window during startup burst
 
-/* Registry stride: [context, label, min_acl, script, last_seen_unix] */
-integer REG_STRIDE = 5;
+/* Registry stride: [context, label, min_acl, script, script_uuid, last_seen_unix] */
+integer REG_STRIDE = 6;
 integer REG_CONTEXT = 0;
 integer REG_LABEL = 1;
 integer REG_MIN_ACL = 2;
 integer REG_SCRIPT = 3;
-integer REG_LAST_SEEN = 4;
+integer REG_SCRIPT_UUID = 4;
+integer REG_LAST_SEEN = 5;
 
 /* Plugin operation queue stride: [op_type, context, label, min_acl, script, timestamp] */
 integer QUEUE_STRIDE = 6;
@@ -235,43 +236,43 @@ integer registry_find(string context) {
 }
 
 // Add or update plugin in registry
-// Returns TRUE if new plugin added OR existing plugin data changed
-// Returns FALSE only if re-registering with identical data
+// Returns TRUE if new plugin added OR script UUID changed (recompiled/updated)
+// Returns FALSE only if re-registering with identical UUID
 integer registry_upsert(string context, string label, integer min_acl, string script) {
     integer idx = registry_find(context);
     integer now_unix = now();
 
+    // Get script UUID - changes when script is recompiled/replaced
+    key script_uuid = llGetInventoryKey(script);
+
     if (idx == -1) {
         // New plugin - add to registry
-        PluginRegistry += [context, label, min_acl, script, now_unix];
-        logd("Registered: " + context + " (" + label + ")");
+        PluginRegistry += [context, label, min_acl, script, script_uuid, now_unix];
+        logd("Registered: " + context + " (" + label + ") UUID=" + (string)script_uuid);
         return TRUE;
     }
     else {
-        // Existing plugin - check if data changed
-        string old_label = llList2String(PluginRegistry, idx + REG_LABEL);
-        integer old_min_acl = llList2Integer(PluginRegistry, idx + REG_MIN_ACL);
-        string old_script = llList2String(PluginRegistry, idx + REG_SCRIPT);
+        // Existing plugin - check if script UUID changed
+        key old_uuid = llList2Key(PluginRegistry, idx + REG_SCRIPT_UUID);
 
-        integer data_changed = FALSE;
-        if (old_label != label) data_changed = TRUE;
-        if (old_min_acl != min_acl) data_changed = TRUE;
-        if (old_script != script) data_changed = TRUE;
+        integer uuid_changed = (old_uuid != script_uuid);
 
         // Update registry (timestamp always updates)
         PluginRegistry = llListReplaceList(PluginRegistry, [label], idx + REG_LABEL, idx + REG_LABEL);
         PluginRegistry = llListReplaceList(PluginRegistry, [min_acl], idx + REG_MIN_ACL, idx + REG_MIN_ACL);
         PluginRegistry = llListReplaceList(PluginRegistry, [script], idx + REG_SCRIPT, idx + REG_SCRIPT);
+        PluginRegistry = llListReplaceList(PluginRegistry, [script_uuid], idx + REG_SCRIPT_UUID, idx + REG_SCRIPT_UUID);
         PluginRegistry = llListReplaceList(PluginRegistry, [now_unix], idx + REG_LAST_SEEN, idx + REG_LAST_SEEN);
 
-        if (data_changed) {
-            logd("Updated (changed): " + context + " (" + label + ")");
+        if (uuid_changed) {
+            logd("Updated (UUID changed): " + context + " (" + label + ") " +
+                 (string)old_uuid + " -> " + (string)script_uuid);
         }
         else {
             logd("Updated (no change): " + context);
         }
 
-        return data_changed;
+        return uuid_changed;
     }
 }
 
