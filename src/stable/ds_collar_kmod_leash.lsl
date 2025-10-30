@@ -172,7 +172,7 @@ float FOLLOW_TICK = 0.5;
 
 // ===== HELPERS =====
 logd(string msg) {
-    if (DEBUG) llOwnerSay("[LEASH-KMOD] " + msg);
+    if (DEBUG && !PRODUCTION) llOwnerSay("[LEASH-KMOD] " + msg);
 }
 integer jsonHas(string j, list path) {
     return (llJsonGetValue(j, path) != JSON_INVALID);
