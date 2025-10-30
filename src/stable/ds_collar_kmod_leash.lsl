@@ -184,11 +184,19 @@ integer logd(string msg) {
 integer jsonHas(string j, list path) {
     return (llJsonGetValue(j, path) != JSON_INVALID);
 }
+string jsonGet(string j, string key, string default_val) {
+    if (jsonHas(j, [key])) return llJsonGetValue(j, [key]);
+    return default_val;
+}
 integer now() {
     return llGetUnixTime();
 }
 integer inAllowedList(integer level, list allowed) {
     return (llListFindList(allowed, [level]) != -1);
+}
+denyAccess(key user, string reason, string action, integer acl) {
+    llRegionSayTo(user, 0, "Access denied: " + reason);
+    logd(action + " denied for ACL " + (string)acl + " - " + reason);
 }
 
 /* ===============================================================
@@ -349,75 +357,45 @@ handleAclResult(string msg, key id) {
     logd("ACL result: " + (string)acl_level + " for " + PendingAction);
     
     // Execute pending action with ACL verification
-    if (PendingAction == "grab") {
-        if (inAllowedList(acl_level, ALLOWED_ACL_GRAB)) {
-            grabLeashInternal(PendingActionUser);
-        } else {
-            llRegionSayTo(PendingActionUser, 0, "Access denied: insufficient permissions to grab leash.");
-            logd("Grab denied for ACL " + (string)acl_level);
-        }
-    }
-    else if (PendingAction == "release") {
-        // Release has special logic: current leasher OR level 2+ can release
+
+    // Special case: release (current leasher OR level 2+ can release)
+    if (PendingAction == "release") {
         if (PendingActionUser == Leasher || acl_level >= 2) {
             releaseLeashInternal(PendingActionUser);
         } else {
-            llRegionSayTo(PendingActionUser, 0, "Access denied: only leasher or authorized users can release.");
-            logd("Release denied for ACL " + (string)acl_level);
+            denyAccess(PendingActionUser, "only leasher or authorized users can release", "release", acl_level);
         }
     }
+    // Special case: pass (current leasher OR level 3+ can pass, then verify target)
     else if (PendingAction == "pass") {
-        // Pass requires user to be current leasher OR have level 3+
         if (PendingActionUser == Leasher || inAllowedList(acl_level, ALLOWED_ACL_PASS)) {
-            // Now verify target ACL
             requestAclForPassTarget(PendingPassTarget);
             return;  // Don't clear pending state yet
         } else {
-            llRegionSayTo(PendingActionUser, 0, "Access denied: insufficient permissions to pass leash.");
-            logd("Pass denied for ACL " + (string)acl_level);
+            denyAccess(PendingActionUser, "insufficient permissions to pass leash", "pass", acl_level);
         }
     }
+    // Special case: offer (ACL 2 only, when NOT currently leashed, then verify target)
     else if (PendingAction == "offer") {
-        // Offer is for ACL 2 (Owned wearer) only, and only when NOT currently leashed
         if (inAllowedList(acl_level, ALLOWED_ACL_OFFER) && !Leashed) {
-            // Set flag so target check knows this is offer, not pass
             PendingIsOffer = TRUE;
-            // Now verify target ACL
             requestAclForPassTarget(PendingPassTarget);
             return;  // Don't clear pending state yet
         } else if (Leashed) {
             llRegionSayTo(PendingActionUser, 0, "Cannot offer leash: already leashed.");
             logd("Offer denied: already leashed");
         } else {
-            llRegionSayTo(PendingActionUser, 0, "Access denied: insufficient permissions to offer leash.");
-            logd("Offer denied for ACL " + (string)acl_level);
+            denyAccess(PendingActionUser, "insufficient permissions to offer leash", "offer", acl_level);
         }
     }
-    else if (PendingAction == "coffle") {
-        // Coffle requires ACL 3 or 5 (Trustee or Owner)
-        if (inAllowedList(acl_level, ALLOWED_ACL_COFFLE)) {
-            coffleLeashInternal(PendingActionUser, PendingPassTarget);
-        } else {
-            llRegionSayTo(PendingActionUser, 0, "Access denied: coffle requires trustee or owner access.");
-            logd("Coffle denied for ACL " + (string)acl_level);
-        }
-    }
-    else if (PendingAction == "post") {
-        // Post requires ACL 1, 3, or 5 (Public, Trustee, or Owner)
-        if (inAllowedList(acl_level, ALLOWED_ACL_POST)) {
-            postLeashInternal(PendingActionUser, PendingPassTarget);
-        } else {
-            llRegionSayTo(PendingActionUser, 0, "Access denied: insufficient permissions to post.");
-            logd("Post denied for ACL " + (string)acl_level);
-        }
-    }
+    // Special case: pass_target_check (verifying the target's ACL for pass/offer)
     else if (PendingAction == "pass_target_check") {
         // This is the target verification for pass/offer action
         // Target must be level 1+ (public or higher) to receive leash
         key target = (key)llJsonGetValue(msg, ["avatar"]);
-        
+
         logd("Target ACL check: " + llKey2Name(target) + " has ACL " + (string)acl_level + ", IsOfferMode=" + (string)PendingIsOffer);
-        
+
         if (acl_level >= 1) {
             // Offer sends message to plugin for dialog, pass directly transfers
             if (PendingIsOffer) {
@@ -440,24 +418,44 @@ handleAclResult(string msg, key id) {
             llRegionSayTo(PendingPassOriginalUser, 0, "Cannot " + action_name + " leash: target has insufficient permissions.");
             logd(action_name + " denied: target ACL " + (string)acl_level + " too low");
         }
-        
+
         // Clear pass-specific state
         PendingPassOriginalUser = NULL_KEY;
         PendingIsOffer = FALSE;
     }
-    else if (PendingAction == "set_length") {
-        if (inAllowedList(acl_level, ALLOWED_ACL_SETTINGS)) {
-            // PendingPassTarget is repurposed to store length as key
-            setLengthInternal((integer)((string)PendingPassTarget));
-        } else {
-            llRegionSayTo(PendingActionUser, 0, "Access denied: insufficient permissions to change settings.");
+    // Standard ACL pattern for simple actions
+    else {
+        list allowed_acl;
+        integer authorized = FALSE;
+
+        if (PendingAction == "grab") {
+            allowed_acl = ALLOWED_ACL_GRAB;
+            authorized = inAllowedList(acl_level, allowed_acl);
+            if (authorized) grabLeashInternal(PendingActionUser);
         }
-    }
-    else if (PendingAction == "toggle_turn") {
-        if (inAllowedList(acl_level, ALLOWED_ACL_SETTINGS)) {
-            toggleTurnInternal();
-        } else {
-            llRegionSayTo(PendingActionUser, 0, "Access denied: insufficient permissions to change settings.");
+        else if (PendingAction == "coffle") {
+            allowed_acl = ALLOWED_ACL_COFFLE;
+            authorized = inAllowedList(acl_level, allowed_acl);
+            if (authorized) coffleLeashInternal(PendingActionUser, PendingPassTarget);
+        }
+        else if (PendingAction == "post") {
+            allowed_acl = ALLOWED_ACL_POST;
+            authorized = inAllowedList(acl_level, allowed_acl);
+            if (authorized) postLeashInternal(PendingActionUser, PendingPassTarget);
+        }
+        else if (PendingAction == "set_length") {
+            allowed_acl = ALLOWED_ACL_SETTINGS;
+            authorized = inAllowedList(acl_level, allowed_acl);
+            if (authorized) setLengthInternal((integer)((string)PendingPassTarget));
+        }
+        else if (PendingAction == "toggle_turn") {
+            allowed_acl = ALLOWED_ACL_SETTINGS;
+            authorized = inAllowedList(acl_level, allowed_acl);
+            if (authorized) toggleTurnInternal();
+        }
+
+        if (!authorized) {
+            denyAccess(PendingActionUser, "insufficient permissions", PendingAction, acl_level);
         }
     }
     
@@ -713,9 +711,9 @@ applySettingsSync(string msg) {
 }
 
 applySettingsDelta(string msg) {
-    if (jsonHas(msg, ["key"]) && jsonHas(msg, ["value"])) {
-        string setting_key = llJsonGetValue(msg, ["key"]);
-        string value = llJsonGetValue(msg, ["value"]);
+    string setting_key = jsonGet(msg, "key", "");
+    string value = jsonGet(msg, "value", "");
+    if (setting_key != "" && value != "") {
         if (setting_key == KEY_LEASHED) Leashed = (integer)value;
         else if (setting_key == KEY_LEASHER) Leasher = (key)value;
         else if (setting_key == KEY_LEASH_LENGTH) LeashLength = clampLeashLength((integer)value);
@@ -803,7 +801,7 @@ coffleLeashInternal(key user, key target_collar) {
         return;
     }
 
-    // Verify target is a valid object and get its owner
+    // Verify target exists and get its owner
     // NOTE: OBJECT_OWNER returns the avatar wearing the collar, not the ACL owner (Dom)
     // This validation allows coffling between different subs with the same Dom
     list details = llGetObjectDetails(target_collar, [OBJECT_POS, OBJECT_NAME, OBJECT_OWNER]);
@@ -875,11 +873,13 @@ postLeashInternal(key user, key post_object) {
 
 yankToLeasher() {
     if (!Leashed || Leasher == NULL_KEY) return;
+
     list details = llGetObjectDetails(Leasher, [OBJECT_POS]);
     if (llGetListLength(details) == 0) {
         llOwnerSay("Cannot yank: leasher not in range.");
         return;
     }
+
     vector leasher_pos = llList2Vector(details, 0);
     llOwnerSay("@tpto:" + (string)leasher_pos + "=force");
     llOwnerSay("Yanked to " + llKey2Name(Leasher));
@@ -1061,8 +1061,8 @@ default
             
             // Commands from config plugin - NOW WITH ACL VERIFICATION
             if (msg_type == "leash_action") {
-                if (!jsonHas(msg, ["action"])) return;
-                string action = llJsonGetValue(msg, ["action"]);
+                string action = jsonGet(msg, "action", "");
+                if (action == "") return;
                 key user = id;
                 
                 // Query state doesn't need ACL
@@ -1089,53 +1089,22 @@ default
                 }
                 
                 // All other actions require ACL verification
-                if (action == "grab") {
-                    requestAclForAction(user, "grab", NULL_KEY);
+                key target = (key)jsonGet(msg, "target", (string)NULL_KEY);
+
+                // Special case: set_length repurposes target field for length value
+                if (action == "set_length") {
+                    target = (key)jsonGet(msg, "length", "0");
                 }
-                else if (action == "release") {
-                    requestAclForAction(user, "release", NULL_KEY);
-                }
-                else if (action == "pass") {
-                    if (jsonHas(msg, ["target"])) {
-                        key target = (key)llJsonGetValue(msg, ["target"]);
-                        requestAclForAction(user, "pass", target);
-                    }
-                }
-                else if (action == "offer") {
-                    if (jsonHas(msg, ["target"])) {
-                        key target = (key)llJsonGetValue(msg, ["target"]);
-                        requestAclForAction(user, "offer", target);
-                    }
-                }
-                else if (action == "coffle") {
-                    if (jsonHas(msg, ["target"])) {
-                        key target = (key)llJsonGetValue(msg, ["target"]);
-                        requestAclForAction(user, "coffle", target);
-                    }
-                }
-                else if (action == "post") {
-                    if (jsonHas(msg, ["target"])) {
-                        key target = (key)llJsonGetValue(msg, ["target"]);
-                        requestAclForAction(user, "post", target);
-                    }
-                }
-                else if (action == "set_length") {
-                    if (jsonHas(msg, ["length"])) {
-                        integer length = (integer)llJsonGetValue(msg, ["length"]);
-                        // Store length in pass_target field (repurposing)
-                        requestAclForAction(user, "set_length", (key)((string)length));
-                    }
-                }
-                else if (action == "toggle_turn") {
-                    requestAclForAction(user, "toggle_turn", NULL_KEY);
-                }
+
+                // Single call handles all actions
+                requestAclForAction(user, action, target);
                 return;
             }
             
             // Lockmeister notifications from particles - VERIFY AUTHORIZATION
             if (msg_type == "lm_grabbed") {
-                if (!jsonHas(msg, ["controller"])) return;
-                key controller = (key)llJsonGetValue(msg, ["controller"]);
+                key controller = (key)jsonGet(msg, "controller", (string)NULL_KEY);
+                if (controller == NULL_KEY) return;
                 
                 // SECURITY: Only accept if this controller was authorized
                 if (controller != AuthorizedLmController) {
