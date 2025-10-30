@@ -149,7 +149,60 @@ Common events to implement thoughtfully:
 * ❌ Timers left running across state transitions.
 * ❌ Overuse of `llSleep` and sub‑second timers.
 * ❌ Large JSON objects built per click without reuse.
-* ❌ Use of **reserved expressions or keywords as variable names** (e.g., `state`, `vector`, `default`).
+* ❌ **CRITICAL: Use of LSL reserved terms as variable names** — See Section 17.1 for complete list.
+
+### 17.1) LSL Reserved Terms — NEVER Use as Variable Names
+
+**⚠️ CRITICAL WARNING:** Using any LSL reserved term as a variable, function, parameter, label, or state name will cause compilation failure or undefined behavior. This is a hard language constraint.
+
+#### Flow Control Keywords (NEVER use as variable names)
+* `do`, `else`, `for`, `if`, `jump`, `return`, `while`
+
+#### Data Type Keywords (NEVER use as variable names)
+* `float`, `integer`, `key`, `list`, `quaternion`, `rotation`, `string`, `vector`
+
+#### State Keywords (NEVER use as variable names)
+* `default`, `state`
+
+#### Event Names (NEVER use as variable names)
+All 44 LSL event handler names are reserved:
+* `at_rot_target`, `at_target`, `attach`, `changed`, `collision`, `collision_end`, `collision_start`
+* `control`, `dataserver`, `email`, `experience_permissions`, `experience_permissions_denied`
+* `final_damage`, `game_control`, `http_request`, `http_response`
+* `land_collision`, `land_collision_end`, `land_collision_start`, `link_message`, `linkset_data`, `listen`
+* `money`, `moving_end`, `moving_start`, `no_sensor`, `not_at_rot_target`, `not_at_target`
+* `object_rez`, `on_damage`, `on_death`, `on_rez`, `path_update`, `remote_data`
+* `run_time_permissions`, `sensor`, `state_entry`, `state_exit`
+* `timer`, `touch`, `touch_end`, `touch_start`, `transaction_result`
+
+#### Common Built-in Constants (NEVER use as variable names)
+LSL has 690+ built-in constants. The most common ones include:
+* Boolean: `TRUE`, `FALSE`
+* Keys: `NULL_KEY`
+* Vectors: `ZERO_VECTOR`
+* Rotations: `ZERO_ROTATION`
+* Math: `PI`, `TWO_PI`, `PI_BY_TWO`
+* Other: `EOF`
+* Plus hundreds of constant flags (PRIM_*, CHANGED_*, PERMISSION_*, STATUS_*, etc.)
+
+#### Function Prefix Restriction
+* All function names starting with `ll` (lowercase L's) are reserved for "Linden Library" built-in functions
+* Never create user-defined functions starting with `ll`
+
+#### Safe Alternatives
+When you need a variable name related to a reserved term, use these patterns:
+* ✅ `reg_delta` instead of ❌ `changed`
+* ✅ `avatar_key` instead of ❌ `key`
+* ✅ `current_state` instead of ❌ `state`
+* ✅ `is_attached` instead of ❌ `attach`
+* ✅ `obj_rotation` instead of ❌ `rotation`
+* ✅ `tick_timer` instead of ❌ `timer`
+
+#### Enforcement Rule
+**Before declaring any variable, function, parameter, label, or state name:**
+1. Check it against this list
+2. If in doubt, prefix it (e.g., `my_`, `local_`, or use a more descriptive name)
+3. NEVER assume a term is safe — verify it's not reserved
 
 ## 18) Minimal Reusable Snippets) Minimal Reusable Snippets
 
