@@ -535,6 +535,7 @@ default {
                 if (requested_context == SOS_CONTEXT && avatar_key != llGetOwner()) {
                     final_context = ROOT_CONTEXT;
                     logd("SOS context request from non-wearer " + llKey2Name(avatar_key) + " downgraded to root");
+                    llRegionSayTo(avatar_key, 0, "Only the collar wearer can access the SOS menu. Showing main menu instead.");
                 }
 
                 trigger_menu_for_external_user(avatar_key, final_context);

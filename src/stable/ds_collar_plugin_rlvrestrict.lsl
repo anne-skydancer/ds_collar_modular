@@ -609,9 +609,9 @@ default
             else if (type == "emergency_restrict_clear") {
                 // Emergency SOS clear - only allow if sender is the collar wearer
                 // The id parameter contains the requesting user's key
+                // NOTE: User feedback is sent by SOS plugin, not here (avoid duplicate messages)
                 if (id == llGetOwner()) {
                     remove_all_restrictions();
-                    llOwnerSay("[SOS] All RLV restrictions cleared.");
                     logd("Emergency restrict clear executed");
                 } else {
                     logd("Emergency restrict clear denied: sender " + llKey2Name(id) + " is not wearer.");

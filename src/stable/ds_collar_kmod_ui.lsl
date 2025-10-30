@@ -819,12 +819,10 @@ default
             // Record touch start time
             integer j = 0;
             integer len = llGetListLength(TouchData);
-            integer found = FALSE;
 
             while (j < len) {
                 if (llList2Key(TouchData, j + TOUCH_DATA_KEY) == toucher) {
                     TouchData = llListReplaceList(TouchData, [llGetTime()], j + TOUCH_DATA_START_TIME, j + TOUCH_DATA_START_TIME);
-                    found = TRUE;
                     jump recorded;
                 }
                 j += TOUCH_DATA_STRIDE;
@@ -864,6 +862,11 @@ default
                         start_sos_session(toucher);
                     }
                     else {
+                        // Provide feedback if non-wearer attempted long-touch (SOS is wearer-only)
+                        if (duration >= LONG_TOUCH_THRESHOLD && toucher != wearer) {
+                            logd("Non-wearer " + llKey2Name(toucher) + " performed long touch; SOS is wearer-only");
+                            llRegionSayTo(toucher, 0, "Long-touch SOS is only available to the wearer.");
+                        }
                         start_root_session(toucher);
                     }
 

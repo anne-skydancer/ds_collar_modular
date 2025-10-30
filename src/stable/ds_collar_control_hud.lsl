@@ -396,6 +396,7 @@ default {
 
     touch_end(integer num_detected) {
         if (ScanningForCollars || AclPending) {
+            TouchStartTime = 0.0;  // Clear stale timestamp to prevent incorrect duration calculations
             return;
         }
 
