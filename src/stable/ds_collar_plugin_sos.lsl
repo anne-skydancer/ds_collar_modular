@@ -128,15 +128,13 @@ show_sos_menu() {
    EMERGENCY ACTIONS
    ═══════════════════════════════════════════════════════════ */
 action_unleash() {
-    // Send leash release action
+    // Send emergency leash release on UI_BUS (bypasses ACL)
     llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
-        "type", "leash_action",
-        "action", "release",
-        "acl_verified", "1"
+        "type", "emergency_leash_release"
     ]), CurrentUser);
 
     llRegionSayTo(CurrentUser, 0, "[SOS] Leash released.");
-    logd("Unleash triggered by " + llKey2Name(CurrentUser));
+    logd("Emergency leash release triggered by " + llKey2Name(CurrentUser));
 }
 
 action_clear_rlv() {

@@ -987,6 +987,16 @@ default
                 }
                 return;
             }
+
+            if (msg_type == "emergency_leash_release") {
+                // Emergency SOS release - bypasses ACL (ACL 0 emergency access)
+                if (Leashed) {
+                    release_leash_internal(id);
+                    llOwnerSay("[SOS] Emergency leash release executed.");
+                    logd("Emergency leash release executed");
+                }
+                return;
+            }
             return;
         }
         
