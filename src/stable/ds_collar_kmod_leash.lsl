@@ -84,15 +84,11 @@ integer UI_BUS = 900;
    PROTOCOL CONSTANTS - Moved to top for easy maintenance
    =============================================================== */
 
-// Holder object name (change here if needed)
-string DS_HOLDER_NAME = "DS Leash Holder";
-
 // Lockmeister/OpenCollar channel
 integer LEASH_CHAN_LM = -8888;
 integer LEASH_CHAN_DS = -192837465;
 
 string PLUGIN_CONTEXT = "core_leash";
-string PLUGIN_LABEL = "Leash";
 
 // ACL definitions for leash operations
 list ALLOWED_ACL_GRAB = [1, 3, 4, 5];     // Public, Trustee, Unowned, Owner
