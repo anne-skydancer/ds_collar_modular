@@ -5,11 +5,11 @@
 
    NEW FEATURES v2.0:
    - Added three leash modes: Avatar, Coffle, Post
+   - ALL modes enforce distance limit using existing follow mechanics
    - Avatar mode: PRESERVES ALL EXISTING LOGIC (holder detection, offsim, etc.)
-   - Coffle: Collar-to-collar leashing (leashpoint to leashpoint)
-   - Post: Leash to a static object in world
+   - Coffle: Collar-to-collar - follow the other collar wearer, stay within LeashLength
+   - Post: Object tether - stay within LeashLength of post object
    - Mode-specific ACL restrictions (Coffle: ACL 3,5 | Post: ACL 1,3,5)
-   - Coffle and Post are NEW code paths that don't affect avatar behavior
    
    NEW FEATURES v1.0:
    - Added offer acceptance dialog for leash offers
@@ -120,6 +120,7 @@ integer LeashLength = 3;
 integer TurnToFace = FALSE;
 integer LeashMode = MODE_AVATAR;  // Current leash mode
 key LeashTarget = NULL_KEY;       // Target object for coffle/post modes
+key CoffleTargetAvatar = NULL_KEY; // Avatar wearing the target collar (coffle mode only)
 
 // Follow mechanics
 integer FollowActive = FALSE;
@@ -561,6 +562,7 @@ autoReleaseOffsim() {
     Leasher = NULL_KEY;
     LeashMode = MODE_AVATAR;
     LeashTarget = NULL_KEY;
+    CoffleTargetAvatar = NULL_KEY;
     persistLeashState(FALSE, NULL_KEY);
     HolderTarget = NULL_KEY;
     HolderState = HOLDER_STATE_IDLE;
@@ -684,6 +686,7 @@ grabLeashInternal(key user) {
     LastLeasher = user;
     LeashMode = MODE_AVATAR;  // Standard avatar leashing
     LeashTarget = NULL_KEY;   // No special target for avatar mode
+    CoffleTargetAvatar = NULL_KEY;  // Not used in avatar mode
     persistLeashState(TRUE, user);
     beginHolderHandshake(user);
     
@@ -712,6 +715,7 @@ releaseLeashInternal(key user) {
     Leasher = NULL_KEY;
     LeashMode = MODE_AVATAR;  // Reset to default mode
     LeashTarget = NULL_KEY;   // Clear coffle/post target
+    CoffleTargetAvatar = NULL_KEY;  // Clear coffle target avatar
     persistLeashState(FALSE, NULL_KEY);
     HolderTarget = NULL_KEY;
     HolderState = HOLDER_STATE_IDLE;
@@ -774,10 +778,16 @@ coffleLeashInternal(key user, key target_collar) {
         return;
     }
 
-    // Verify target is a valid object
-    list details = llGetObjectDetails(target_collar, [OBJECT_POS, OBJECT_NAME]);
+    // Verify target is a valid object and get its owner
+    list details = llGetObjectDetails(target_collar, [OBJECT_POS, OBJECT_NAME, OBJECT_OWNER]);
     if (llGetListLength(details) == 0) {
         llRegionSayTo(user, 0, "Target collar not found or out of range.");
+        return;
+    }
+
+    key collar_owner = llList2Key(details, 2);
+    if (collar_owner == NULL_KEY || collar_owner == llGetOwner()) {
+        llRegionSayTo(user, 0, "Invalid coffle target.");
         return;
     }
 
@@ -786,9 +796,10 @@ coffleLeashInternal(key user, key target_collar) {
     LastLeasher = user;
     LeashMode = MODE_COFFLE;
     LeashTarget = target_collar;
+    CoffleTargetAvatar = collar_owner;  // Store the avatar wearing the target collar
     persistLeashState(TRUE, user);
 
-    // Start particles to target collar (no holder handshake needed)
+    // Start particles to target collar
     llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
         "type", "particles_start",
         "source", PLUGIN_CONTEXT,
@@ -796,14 +807,14 @@ coffleLeashInternal(key user, key target_collar) {
         "style", "chain"
     ]), NULL_KEY);
 
-    // No follow mechanics for coffle (they're chained, not following)
-    // No Lockmeister needed for coffle mode
+    // Enable follow mechanics to the target avatar (the one wearing the collar)
+    startFollow();
 
     string target_name = llList2String(details, 1);
-    llRegionSayTo(user, 0, "Coffled to " + target_name);
-    llOwnerSay("Coffled to " + target_name + " by " + llKey2Name(user));
+    llRegionSayTo(user, 0, "Coffled to " + llKey2Name(collar_owner) + " (" + target_name + ")");
+    llOwnerSay("Coffled to " + llKey2Name(collar_owner) + " by " + llKey2Name(user));
     broadcastState();
-    logd("Coffled to " + target_name + " by " + llKey2Name(user));
+    logd("Coffled to " + llKey2Name(collar_owner) + " by " + llKey2Name(user));
 }
 
 postLeashInternal(key user, key post_object) {
@@ -824,6 +835,7 @@ postLeashInternal(key user, key post_object) {
     LastLeasher = user;
     LeashMode = MODE_POST;
     LeashTarget = post_object;
+    CoffleTargetAvatar = NULL_KEY;  // Not used for post mode
     persistLeashState(TRUE, user);
 
     // Start particles to post object
@@ -834,8 +846,8 @@ postLeashInternal(key user, key post_object) {
         "style", "chain"
     ]), NULL_KEY);
 
-    // No follow mechanics for post mode (they're posted to an object)
-    // No Lockmeister needed for post mode
+    // Enable distance enforcement (via follow mechanics)
+    startFollow();
 
     string object_name = llList2String(details, 1);
     llRegionSayTo(user, 0, "Posted to " + object_name);
@@ -880,18 +892,21 @@ toggleTurnInternal() {
 
 // ===== FOLLOW MECHANICS (IMPROVED TURN THROTTLING) =====
 startFollow() {
-    if (!Leashed || Leasher == NULL_KEY) return;
-
-    // Only activate follow for avatar mode
-    if (LeashMode != MODE_AVATAR) {
-        logd("Follow disabled for mode " + (string)LeashMode);
-        return;
-    }
+    if (!Leashed) return;
 
     FollowActive = TRUE;
-    llOwnerSay("@follow:" + (string)Leasher + "=force");
+
+    // Set RLV follow based on mode
+    if (LeashMode == MODE_AVATAR && Leasher != NULL_KEY) {
+        llOwnerSay("@follow:" + (string)Leasher + "=force");
+    }
+    else if (LeashMode == MODE_COFFLE && CoffleTargetAvatar != NULL_KEY) {
+        llOwnerSay("@follow:" + (string)CoffleTargetAvatar + "=force");
+    }
+    // Post mode: no RLV follow (we enforce distance manually)
+
     llRequestPermissions(llGetOwner(), PERMISSION_TAKE_CONTROLS);
-    logd("Follow started");
+    logd("Follow started for mode " + (string)LeashMode);
 }
 
 stopFollow() {
@@ -904,15 +919,15 @@ stopFollow() {
     logd("Follow stopped");
 }
 
-turnToLeasher() {
-    if (!TurnToFace || !Leashed || Leasher == NULL_KEY) return;
-    list details = llGetObjectDetails(Leasher, [OBJECT_POS]);
+turnToTarget(key target) {
+    if (!TurnToFace || !Leashed || target == NULL_KEY) return;
+    list details = llGetObjectDetails(target, [OBJECT_POS]);
     if (llGetListLength(details) == 0) return;
-    vector leasher_pos = llList2Vector(details, 0);
+    vector target_pos = llList2Vector(details, 0);
     vector wearer_pos = llGetRootPosition();
-    vector direction = llVecNorm(leasher_pos - wearer_pos);
+    vector direction = llVecNorm(target_pos - wearer_pos);
     float angle = llAtan2(direction.y, direction.x);
-    
+
     // Only send command if angle changed significantly
     if (llFabs(angle - LastTurnAngle) > TURN_THRESHOLD) {
         llOwnerSay("@setrot:" + (string)angle + "=force");
@@ -921,43 +936,69 @@ turnToLeasher() {
 }
 
 followTick() {
-    if (!FollowActive || !Leashed || Leasher == NULL_KEY) return;
-    
-    vector leasher_pos;
-    if (HolderTarget != NULL_KEY) {
-        list details = llGetObjectDetails(HolderTarget, [OBJECT_POS]);
-        if (llGetListLength(details) == 0) {
-            HolderTarget = NULL_KEY;
-            llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
-                "type", "particles_update",
-                "target", (string)Leasher
-            ]), NULL_KEY);
-            return;
+    if (!FollowActive || !Leashed) return;
+
+    // Determine target position based on mode
+    vector target_pos;
+    key follow_target = NULL_KEY;
+
+    if (LeashMode == MODE_AVATAR) {
+        // Avatar mode: follow holder or leasher
+        if (HolderTarget != NULL_KEY) {
+            list details = llGetObjectDetails(HolderTarget, [OBJECT_POS]);
+            if (llGetListLength(details) == 0) {
+                HolderTarget = NULL_KEY;
+                llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
+                    "type", "particles_update",
+                    "target", (string)Leasher
+                ]), NULL_KEY);
+                return;
+            }
+            target_pos = llList2Vector(details, 0);
+            follow_target = Leasher;
         }
-        leasher_pos = llList2Vector(details, 0);
+        else {
+            list details = llGetObjectDetails(Leasher, [OBJECT_POS]);
+            if (llGetListLength(details) == 0) return;
+            target_pos = llList2Vector(details, 0);
+            follow_target = Leasher;
+        }
     }
-    else {
-        list details = llGetObjectDetails(Leasher, [OBJECT_POS]);
+    else if (LeashMode == MODE_COFFLE) {
+        // Coffle mode: follow the avatar wearing the target collar
+        if (CoffleTargetAvatar == NULL_KEY) return;
+        list details = llGetObjectDetails(CoffleTargetAvatar, [OBJECT_POS]);
         if (llGetListLength(details) == 0) return;
-        leasher_pos = llList2Vector(details, 0);
+        target_pos = llList2Vector(details, 0);
+        follow_target = CoffleTargetAvatar;
     }
-    
+    else if (LeashMode == MODE_POST) {
+        // Post mode: stay near the post object
+        if (LeashTarget == NULL_KEY) return;
+        list details = llGetObjectDetails(LeashTarget, [OBJECT_POS]);
+        if (llGetListLength(details) == 0) return;
+        target_pos = llList2Vector(details, 0);
+        follow_target = LeashTarget;
+    }
+
     vector wearer_pos = llGetRootPosition();
-    float distance = llVecDist(wearer_pos, leasher_pos);
-    
+    float distance = llVecDist(wearer_pos, target_pos);
+
     if (ControlsOk && distance > (float)LeashLength) {
-        vector target_pos = leasher_pos + llVecNorm(wearer_pos - leasher_pos) * (float)LeashLength * 0.98;
-        if (llVecMag(target_pos - LastTargetPos) > 0.2) {
-            llMoveToTarget(target_pos, 0.5);
-            LastTargetPos = target_pos;
+        vector pull_pos = target_pos + llVecNorm(wearer_pos - target_pos) * (float)LeashLength * 0.98;
+        if (llVecMag(pull_pos - LastTargetPos) > 0.2) {
+            llMoveToTarget(pull_pos, 0.5);
+            LastTargetPos = pull_pos;
         }
-        if (TurnToFace) turnToLeasher();
+        if (TurnToFace && follow_target != NULL_KEY) {
+            turnToTarget(follow_target);
+        }
     }
     else if (LastDistance >= 0.0 && LastDistance > (float)LeashLength) {
         llStopMoveToTarget();
         LastTargetPos = ZERO_VECTOR;
     }
-    
+
     LastDistance = distance;
 }
 
