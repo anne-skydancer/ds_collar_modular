@@ -191,6 +191,136 @@ integer inAllowedList(integer level, list allowed) {
     return (llListFindList(allowed, [level]) != -1);
 }
 
+/* ===============================================================
+   PROTOCOL MESSAGE HELPERS - State-based delta pattern
+   These define JSON contracts with other modules/objects
+   =============================================================== */
+
+// ===== LOCKMEISTER PROTOCOL =====
+setLockmeisterState(integer enabled, key controller) {
+    string msg;
+    if (enabled) {
+        msg = llList2Json(JSON_OBJECT, [
+            "type", "lm_enable",
+            "controller", (string)controller
+        ]);
+    } else {
+        msg = llList2Json(JSON_OBJECT, [
+            "type", "lm_disable"
+        ]);
+    }
+    llMessageLinked(LINK_SET, UI_BUS, msg, NULL_KEY);
+}
+
+// ===== PARTICLES PROTOCOL =====
+setParticlesState(integer active, key target) {
+    string msg;
+    if (active) {
+        msg = llList2Json(JSON_OBJECT, [
+            "type", "particles_start",
+            "source", PLUGIN_CONTEXT,
+            "target", (string)target,
+            "style", "chain"
+        ]);
+    } else {
+        msg = llList2Json(JSON_OBJECT, [
+            "type", "particles_stop",
+            "source", PLUGIN_CONTEXT
+        ]);
+    }
+    llMessageLinked(LINK_SET, UI_BUS, msg, NULL_KEY);
+}
+
+updateParticlesTarget(key target) {
+    llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
+        "type", "particles_update",
+        "target", (string)target
+    ]), NULL_KEY);
+}
+
+// ===== OFFER PROTOCOL =====
+sendOfferPending(key target, key originator) {
+    llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
+        "type", "offer_pending",
+        "target", (string)target,
+        "originator", (string)originator
+    ]), NULL_KEY);
+}
+
+/* ===============================================================
+   STATE MANAGEMENT HELPERS
+   =============================================================== */
+
+// Clamp leash length to valid range
+integer clampLeashLength(integer len) {
+    if (len < 1) return 1;
+    if (len > 20) return 20;
+    return len;
+}
+
+// Close all holder protocol listeners
+closeAllHolderListens() {
+    if (HolderListen != 0) {
+        llListenRemove(HolderListen);
+        HolderListen = 0;
+    }
+    if (HolderListenOC != 0) {
+        llListenRemove(HolderListenOC);
+        HolderListenOC = 0;
+    }
+    logd("Holder listens closed");
+}
+
+// Clear all leash state (used by release and auto-release)
+clearLeashState(integer clear_reclip) {
+    Leashed = FALSE;
+    Leasher = NULL_KEY;
+    LeashMode = MODE_AVATAR;
+    LeashTarget = NULL_KEY;
+    CoffleTargetAvatar = NULL_KEY;
+    persistLeashState(FALSE, NULL_KEY);
+    HolderTarget = NULL_KEY;
+    HolderState = HOLDER_STATE_IDLE;
+    AuthorizedLmController = NULL_KEY;
+    closeAllHolderListens();
+
+    if (clear_reclip) {
+        LastLeasher = NULL_KEY;
+        ReclipScheduled = 0;
+        ReclipAttempts = 0;
+    }
+
+    setLockmeisterState(FALSE, NULL_KEY);
+    setParticlesState(FALSE, NULL_KEY);
+    stopFollow();
+    broadcastState();
+}
+
+/* ===============================================================
+   NOTIFICATION HELPERS
+   =============================================================== */
+
+// Notify all parties about a leash action
+notifyLeashAction(key actor, string action_msg, string owner_details) {
+    llRegionSayTo(actor, 0, action_msg);
+
+    if (owner_details != "") {
+        llOwnerSay(action_msg + " - " + owner_details);
+    } else {
+        llOwnerSay(action_msg);
+    }
+
+    logd(action_msg);
+}
+
+// For multi-party notifications (like pass)
+notifyLeashTransfer(key from_user, key to_user, string action) {
+    llRegionSayTo(from_user, 0, "Leash " + action + " to " + llKey2Name(to_user));
+    llRegionSayTo(to_user, 0, "Leash received from " + llKey2Name(from_user));
+    llOwnerSay("Leash " + action + " to " + llKey2Name(to_user) + " by " + llKey2Name(from_user));
+    logd(action + " to " + llKey2Name(to_user) + " by " + llKey2Name(from_user));
+}
+
 // ===== ACL VERIFICATION SYSTEM (NEW) =====
 requestAclForAction(key user, string action, key pass_target) {
     AclPending = TRUE;
@@ -292,11 +422,7 @@ handleAclResult(string msg, key id) {
             // Offer sends message to plugin for dialog, pass directly transfers
             if (PendingIsOffer) {
                 // Send offer_pending to plugin - plugin will handle dialog
-                llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
-                    "type", "offer_pending",
-                    "target", (string)PendingPassTarget,
-                    "originator", (string)PendingPassOriginalUser
-                ]), NULL_KEY);
+                sendOfferPending(PendingPassTarget, PendingPassOriginalUser);
                 logd("Offer pending sent to plugin: target=" + llKey2Name(PendingPassTarget) + ", originator=" + llKey2Name(PendingPassOriginalUser));
             }
             else {
@@ -362,44 +488,20 @@ requestAclForPassTarget(key target) {
 }
 
 // ===== DS HOLDER PROTOCOL (IMPROVED STATE MACHINE) =====
-openHolderListen() {
-    if (HolderListen == 0) {
-        HolderListen = llListen(-192837465, "", NULL_KEY, "");
-        logd("DS holder listen opened");
-    }
-}
-closeHolderListen() {
-    if (HolderListen != 0) {
-        llListenRemove(HolderListen);
-        HolderListen = 0;
-        logd("DS holder listen closed");
-    }
-}
-openHolderListenOc() {
-    if (HolderListenOC == 0) {
-        HolderListenOC = llListen(-8888, "", NULL_KEY, "");
-        logd("OC holder listen opened");
-    }
-}
-closeHolderListenOc() {
-    if (HolderListenOC != 0) {
-        llListenRemove(HolderListenOC);
-        HolderListenOC = 0;
-        logd("OC holder listen closed");
-    }
-}
-
 beginHolderHandshake(key user) {
     // Improved randomness for session ID using multiple entropy sources
     integer key_entropy = (integer)("0x" + llGetSubString((string)llGetOwner(), 0, 7));
-    HolderSession = (integer)(llFrand(999999.0) + 
-                              (now() % 1000000) + 
+    HolderSession = (integer)(llFrand(999999.0) +
+                              (now() % 1000000) +
                               (key_entropy % 1000));
     HolderState = HOLDER_STATE_DS_PHASE;
     HolderPhaseStart = now();
-    
+
     // Phase 1: DS native only
-    openHolderListen();
+    if (HolderListen == 0) {
+        HolderListen = llListen(LEASH_CHAN_DS, "", NULL_KEY, "");
+        logd("DS holder listen opened");
+    }
     
     // Send DS native JSON format on DS channel
     string msg = llList2Json(JSON_OBJECT, [
@@ -426,19 +528,12 @@ handleHolderResponseDs(string msg) {
     string holder_name = llJsonGetValue(msg, ["name"]);
     
     logd("DS holder response: target=" + (string)HolderTarget + " name=" + holder_name);
-    
+
     HolderState = HOLDER_STATE_COMPLETE;
-    closeHolderListen();
-    closeHolderListenOc();
-    
-    string particles_msg = llList2Json(JSON_OBJECT, [
-        "type", "particles_start",
-        "source", PLUGIN_CONTEXT,
-        "target", (string)HolderTarget,
-        "style", "chain"
-    ]);
-    llMessageLinked(LINK_SET, UI_BUS, particles_msg, NULL_KEY);
-    
+    closeAllHolderListens();
+
+    setParticlesState(TRUE, HolderTarget);
+
     logd("DS holder mode activated");
 }
 
@@ -449,21 +544,14 @@ handleHolderResponseOc(key holder_prim, string msg) {
     if (msg != expected) return;
     
     HolderTarget = holder_prim;
-    
+
     logd("OC holder response: target=" + (string)HolderTarget);
-    
+
     HolderState = HOLDER_STATE_COMPLETE;
-    closeHolderListen();
-    closeHolderListenOc();
-    
-    string particles_msg = llList2Json(JSON_OBJECT, [
-        "type", "particles_start",
-        "source", PLUGIN_CONTEXT,
-        "target", (string)HolderTarget,
-        "style", "chain"
-    ]);
-    llMessageLinked(LINK_SET, UI_BUS, particles_msg, NULL_KEY);
-    
+    closeAllHolderListens();
+
+    setParticlesState(TRUE, HolderTarget);
+
     logd("OC holder mode activated");
 }
 
@@ -478,8 +566,14 @@ advanceHolderStateMachine() {
             logd("Holder handshake Phase 2 (OC, 2s)");
             HolderState = HOLDER_STATE_OC_PHASE;
             HolderPhaseStart = now();
-            closeHolderListen();
-            openHolderListenOc();
+            if (HolderListen != 0) {
+                llListenRemove(HolderListen);
+                HolderListen = 0;
+            }
+            if (HolderListenOC == 0) {
+                HolderListenOC = llListen(LEASH_CHAN_LM, "", NULL_KEY, "");
+                logd("OC holder listen opened");
+            }
             
             // CRITICAL FIX: Send controller UUID + "collar" AND "handle" per LM protocol (Code Review Fix #4)
             // The holder script expects the controller's UUID, not the wearer's UUID
@@ -493,16 +587,10 @@ advanceHolderStateMachine() {
             // Fallback to avatar direct
             logd("Holder timeout - using avatar direct mode");
             HolderState = HOLDER_STATE_COMPLETE;
-            closeHolderListen();
-            closeHolderListenOc();
-            
+            closeAllHolderListens();
+
             if (Leasher != NULL_KEY) {
-                llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
-                    "type", "particles_start",
-                    "source", PLUGIN_CONTEXT,
-                    "target", (string)Leasher,
-                    "style", "chain"
-                ]), NULL_KEY);
+                setParticlesState(TRUE, Leasher);
             }
         }
     }
@@ -558,27 +646,8 @@ checkLeasherPresence() {
 }
 
 autoReleaseOffsim() {
-    Leashed = FALSE;
-    Leasher = NULL_KEY;
-    LeashMode = MODE_AVATAR;
-    LeashTarget = NULL_KEY;
-    CoffleTargetAvatar = NULL_KEY;
-    persistLeashState(FALSE, NULL_KEY);
-    HolderTarget = NULL_KEY;
-    HolderState = HOLDER_STATE_IDLE;
-    closeHolderListen();
-    closeHolderListenOc();
-    llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
-        "type", "particles_stop",
-        "source", PLUGIN_CONTEXT
-    ]), NULL_KEY);
-    llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
-        "type", "lm_disable"
-    ]), NULL_KEY);
-    stopFollow();
+    clearLeashState(FALSE);  // FALSE = don't clear reclip (we want to try reclipping)
     llOwnerSay("Auto-released (offsim)");
-    broadcastState();
-    logd("Auto-released");
 }
 
 checkAutoReclip() {
@@ -635,9 +704,7 @@ applySettingsSync(string msg) {
         Leasher = (key)llJsonGetValue(settings_json, [KEY_LEASHER]);
     }
     if (jsonHas(settings_json, [KEY_LEASH_LENGTH])) {
-        LeashLength = (integer)llJsonGetValue(settings_json, [KEY_LEASH_LENGTH]);
-        if (LeashLength < 1) LeashLength = 1;
-        if (LeashLength > 20) LeashLength = 20;
+        LeashLength = clampLeashLength((integer)llJsonGetValue(settings_json, [KEY_LEASH_LENGTH]));
     }
     if (jsonHas(settings_json, [KEY_LEASH_TURNTO])) {
         TurnToFace = (integer)llJsonGetValue(settings_json, [KEY_LEASH_TURNTO]);
@@ -651,11 +718,7 @@ applySettingsDelta(string msg) {
         string value = llJsonGetValue(msg, ["value"]);
         if (setting_key == KEY_LEASHED) Leashed = (integer)value;
         else if (setting_key == KEY_LEASHER) Leasher = (key)value;
-        else if (setting_key == KEY_LEASH_LENGTH) {
-            LeashLength = (integer)value;
-            if (LeashLength < 1) LeashLength = 1;
-            if (LeashLength > 20) LeashLength = 20;
-        }
+        else if (setting_key == KEY_LEASH_LENGTH) LeashLength = clampLeashLength((integer)value);
         else if (setting_key == KEY_LEASH_TURNTO) TurnToFace = (integer)value;
     }
 }
@@ -689,19 +752,14 @@ grabLeashInternal(key user) {
     CoffleTargetAvatar = NULL_KEY;  // Not used in avatar mode
     persistLeashState(TRUE, user);
     beginHolderHandshake(user);
-    
+
     // Enable Lockmeister for this authorized controller
     AuthorizedLmController = user;
-    llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
-        "type", "lm_enable",
-        "controller", (string)user
-    ]), NULL_KEY);
-    
+    setLockmeisterState(TRUE, user);
+
     startFollow();
-    llRegionSayTo(user, 0, "Leash grabbed.");
-    llOwnerSay("Leashed by " + llKey2Name(user));
+    notifyLeashAction(user, "Leash grabbed", "by " + llKey2Name(user));
     broadcastState();
-    logd("Grabbed by " + llKey2Name(user));
 }
 
 releaseLeashInternal(key user) {
@@ -710,38 +768,8 @@ releaseLeashInternal(key user) {
         return;
     }
 
-    key old_leasher = Leasher;
-    Leashed = FALSE;
-    Leasher = NULL_KEY;
-    LeashMode = MODE_AVATAR;  // Reset to default mode
-    LeashTarget = NULL_KEY;   // Clear coffle/post target
-    CoffleTargetAvatar = NULL_KEY;  // Clear coffle target avatar
-    persistLeashState(FALSE, NULL_KEY);
-    HolderTarget = NULL_KEY;
-    HolderState = HOLDER_STATE_IDLE;
-    closeHolderListen();
-    closeHolderListenOc();
-
-    // CRITICAL BUG FIX: Clear auto-reclip state on explicit release
-    // Without this, the system tries to re-leash after explicit unleash
-    LastLeasher = NULL_KEY;
-    ReclipScheduled = 0;
-    ReclipAttempts = 0;
-
-    AuthorizedLmController = NULL_KEY;
-    llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
-        "type", "lm_disable"
-    ]), NULL_KEY);
-    llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
-        "type", "particles_stop",
-        "source", PLUGIN_CONTEXT
-    ]), NULL_KEY);
-
-    stopFollow();
-    llRegionSayTo(user, 0, "Leash released.");
-    llOwnerSay("Released by " + llKey2Name(user));
-    broadcastState();
-    logd("Released by " + llKey2Name(user));
+    clearLeashState(TRUE);  // TRUE = clear reclip attempts
+    notifyLeashAction(user, "Leash released", "by " + llKey2Name(user));
 }
 
 passLeashInternal(key new_leasher) {
@@ -753,23 +781,14 @@ passLeashInternal(key new_leasher) {
     persistLeashState(TRUE, new_leasher);
 
     // Update particles target
-    llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
-        "type", "particles_update",
-        "target", (string)new_leasher
-    ]), NULL_KEY);
+    updateParticlesTarget(new_leasher);
 
     // Update Lockmeister authorization
     AuthorizedLmController = new_leasher;
-    llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
-        "type", "lm_enable",
-        "controller", (string)new_leasher
-    ]), NULL_KEY);
+    setLockmeisterState(TRUE, new_leasher);
 
-    llRegionSayTo(old_leasher, 0, "Leash passed to " + llKey2Name(new_leasher));
-    llRegionSayTo(new_leasher, 0, "Leash received from " + llKey2Name(old_leasher));
-    llOwnerSay("Leash passed to " + llKey2Name(new_leasher));
+    notifyLeashTransfer(old_leasher, new_leasher, "passed");
     broadcastState();
-    logd("Passed to " + llKey2Name(new_leasher));
 }
 
 coffleLeashInternal(key user, key target_collar) {
@@ -800,21 +819,14 @@ coffleLeashInternal(key user, key target_collar) {
     persistLeashState(TRUE, user);
 
     // Start particles to target collar
-    llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
-        "type", "particles_start",
-        "source", PLUGIN_CONTEXT,
-        "target", (string)target_collar,
-        "style", "chain"
-    ]), NULL_KEY);
+    setParticlesState(TRUE, target_collar);
 
     // Enable follow mechanics to the target avatar (the one wearing the collar)
     startFollow();
 
     string target_name = llList2String(details, 1);
-    llRegionSayTo(user, 0, "Coffled to " + llKey2Name(collar_owner) + " (" + target_name + ")");
-    llOwnerSay("Coffled to " + llKey2Name(collar_owner) + " by " + llKey2Name(user));
+    notifyLeashAction(user, "Coffled to " + llKey2Name(collar_owner), target_name);
     broadcastState();
-    logd("Coffled to " + llKey2Name(collar_owner) + " by " + llKey2Name(user));
 }
 
 postLeashInternal(key user, key post_object) {
@@ -839,21 +851,14 @@ postLeashInternal(key user, key post_object) {
     persistLeashState(TRUE, user);
 
     // Start particles to post object
-    llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
-        "type", "particles_start",
-        "source", PLUGIN_CONTEXT,
-        "target", (string)post_object,
-        "style", "chain"
-    ]), NULL_KEY);
+    setParticlesState(TRUE, post_object);
 
     // Enable distance enforcement (via follow mechanics)
     startFollow();
 
     string object_name = llList2String(details, 1);
-    llRegionSayTo(user, 0, "Posted to " + object_name);
-    llOwnerSay("Posted to " + object_name + " by " + llKey2Name(user));
+    notifyLeashAction(user, "Posted to " + object_name, "by " + llKey2Name(user));
     broadcastState();
-    logd("Posted to " + object_name + " by " + llKey2Name(user));
 }
 
 yankToLeasher() {
@@ -948,10 +953,7 @@ followTick() {
             list details = llGetObjectDetails(HolderTarget, [OBJECT_POS]);
             if (llGetListLength(details) == 0) {
                 HolderTarget = NULL_KEY;
-                llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
-                    "type", "particles_update",
-                    "target", (string)Leasher
-                ]), NULL_KEY);
+                updateParticlesTarget(Leasher);
                 return;
             }
             target_pos = llList2Vector(details, 0);
