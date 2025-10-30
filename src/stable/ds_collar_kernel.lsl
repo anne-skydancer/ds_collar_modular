@@ -131,7 +131,14 @@ integer is_authorized_sender(string sender_name) {
 
 // Add operation to queue (deduplicates by context)
 // Schedules batch processing if not already scheduled
-queue_add(string op_type, string context, string label, integer min_acl, string script) {
+// Returns: 1 (void function)
+//
+// PERFORMANCE NOTE: Deduplication is O(n) but intentional:
+// - Typical startup has ~15 plugins (n is small)
+// - Deduplicating at insertion prevents duplicate operations in batch
+// - Guarantees queue contains at most one operation per context
+// - Alternative (defer to batch) would process duplicates and cause multiple broadcasts
+integer queue_add(string op_type, string context, string label, integer min_acl, string script) {
     // Remove any existing queue entry for this context (newest operation wins)
     list new_queue = [];
     integer i = 0;
@@ -158,6 +165,8 @@ queue_add(string op_type, string context, string label, integer min_acl, string 
         llSetTimerEvent(BATCH_WINDOW_SEC);
         logd("Batch timer started (" + (string)BATCH_WINDOW_SEC + "s window)");
     }
+
+    return 1;
 }
 
 // Process all pending queue operations (atomic batch)
@@ -235,6 +244,11 @@ integer registry_upsert(string context, string label, integer min_acl, string sc
     integer now_unix = now();
 
     // Get script UUID - changes when script is recompiled/replaced
+    // PERFORMANCE NOTE: llGetInventoryKey() is called on every upsert (intentional):
+    // - This is the ONLY way to detect script recompilation
+    // - Caching would defeat the purpose (we need to detect UUID changes)
+    // - Inventory lookup is O(1) by name, not expensive for single-prim design
+    // - Only called during registration bursts, not in steady state
     key script_uuid = llGetInventoryKey(script);
 
     if (idx == -1) {
@@ -280,12 +294,15 @@ integer registry_remove(string context) {
 }
 
 // Update last_seen timestamp for plugin
-update_last_seen(string context) {
+// Returns: 1 (void function)
+integer update_last_seen(string context) {
     integer idx = registry_find(context);
     if (idx != -1) {
         integer now_unix = now();
         PluginRegistry = llListReplaceList(PluginRegistry, [now_unix], idx + REG_LAST_SEEN, idx + REG_LAST_SEEN);
     }
+
+    return 1;
 }
 
 // Remove dead plugins (haven't responded to ping in PING_TIMEOUT_SEC)
