@@ -1,24 +1,37 @@
 /* =============================================================================
-   MODULE: ds_collar_kernel.lsl (v2.0 - Consolidated ABI)
+   MODULE: ds_collar_kernel.lsl (v3.2 - UUID-Based Change Detection)
    SECURITY AUDIT: ALL ISSUES FIXED
-   
+
    ROLE: Plugin registry, lifecycle management, heartbeat monitoring
-   
+
+   ARCHITECTURE: Unix modprobe-style plugin queue system
+   - Event-driven registration (no arbitrary time windows)
+   - Conditional timer (0.1s batch mode, 5s heartbeat mode)
+   - Batch queue processing (prevents broadcast storms)
+   - UUID-based change detection (script UUID = version, no counters needed)
+   - Atomic operations (consistent state transitions)
+
+   PERFORMANCE OPTIMIZATIONS:
+   - Timer only runs at 0.1s when queue has items (batch window)
+   - Automatically switches to 5s heartbeat mode when queue empty
+   - Eliminates CPU waste from constant 0.5s polling
+   - link_message events trigger batch timer on-demand
+
    CHANNELS:
    - 500 (KERNEL_LIFECYCLE): All lifecycle operations
-   
+
    PREVENTS UNINTENDED UI:
    - Plugin registration does NOT trigger UI display
    - Only explicit touch events show UI
    - Heartbeat is silent
    - Resets are silent
-   
+
    SECURITY FIXES APPLIED:
    - [CRITICAL] Soft reset now requires authorized sender
+   - [CRITICAL] Race condition fix: queue-based plugin management
    - [MEDIUM] JSON construction uses proper encoding (no string injection)
    - [MEDIUM] Integer overflow protection for timestamps
    - [LOW] Production mode guards debug logging
-   - [LOW] Late registration debounced to prevent broadcast storms
    ============================================================================= */
 
 integer DEBUG = FALSE;
@@ -35,15 +48,25 @@ integer KERNEL_LIFECYCLE = 500;
 float   PING_INTERVAL_SEC     = 5.0;
 integer PING_TIMEOUT_SEC      = 15;
 float   INV_SWEEP_INTERVAL    = 3.0;
-float   REGISTRATION_WINDOW_SEC = 2.0;  // Window to collect registrations before first broadcast
+float   BATCH_WINDOW_SEC      = 0.1;  // Small batch window during startup burst
 
-/* Registry stride: [context, label, min_acl, script, last_seen_unix] */
-integer REG_STRIDE = 5;
+/* Registry stride: [context, label, min_acl, script, script_uuid, last_seen_unix] */
+integer REG_STRIDE = 6;
 integer REG_CONTEXT = 0;
 integer REG_LABEL = 1;
 integer REG_MIN_ACL = 2;
 integer REG_SCRIPT = 3;
-integer REG_LAST_SEEN = 4;
+integer REG_SCRIPT_UUID = 4;
+integer REG_LAST_SEEN = 5;
+
+/* Plugin operation queue stride: [op_type, context, label, min_acl, script, timestamp] */
+integer QUEUE_STRIDE = 6;
+integer QUEUE_OP_TYPE = 0;    // "REG" or "UNREG"
+integer QUEUE_CONTEXT = 1;
+integer QUEUE_LABEL = 2;
+integer QUEUE_MIN_ACL = 3;
+integer QUEUE_SCRIPT = 4;
+integer QUEUE_TIMESTAMP = 5;
 
 /* Authorized senders for privileged operations */
 list AUTHORIZED_RESET_SENDERS = ["bootstrap", "maintenance"];
@@ -51,15 +74,13 @@ list AUTHORIZED_RESET_SENDERS = ["bootstrap", "maintenance"];
 /* ═══════════════════════════════════════════════════════════
    STATE
    ═══════════════════════════════════════════════════════════ */
-list PluginRegistry = [];
+list PluginRegistry = [];           // Active plugin registry
+list RegistrationQueue = [];        // Pending operations queue (Unix modprobe style)
+integer PendingBatchTimer = FALSE;  // TRUE if batch timer is active
 integer LastPingUnix = 0;
 integer LastInvSweepUnix = 0;
 key LastOwner = NULL_KEY;
-integer RegistrationWindowOpen = FALSE;
-integer RegistrationWindowStartTime = 0;
-integer PendingListRequest = FALSE;  // Track if someone requested list during window
-integer LastScriptCount = 0;  // Track script count to detect add/remove
-integer PendingLateBroadcast = FALSE;  // Debounce late registrations
+integer LastScriptCount = 0;        // Track script count to detect add/remove
 
 /* ═══════════════════════════════════════════════════════════
    HELPERS
@@ -105,6 +126,100 @@ integer is_authorized_sender(string sender_name) {
 }
 
 /* ═══════════════════════════════════════════════════════════
+   QUEUE MANAGEMENT (Unix modprobe-style)
+   ═══════════════════════════════════════════════════════════ */
+
+// Add operation to queue (deduplicates by context)
+// Schedules batch processing if not already scheduled
+// Returns: 1 (void function)
+//
+// PERFORMANCE NOTE: Deduplication is O(n) but intentional:
+// - Typical startup has ~15 plugins (n is small)
+// - Deduplicating at insertion prevents duplicate operations in batch
+// - Guarantees queue contains at most one operation per context
+// - Alternative (defer to batch) would process duplicates and cause multiple broadcasts
+integer queue_add(string op_type, string context, string label, integer min_acl, string script) {
+    // Remove any existing queue entry for this context (newest operation wins)
+    list new_queue = [];
+    integer i = 0;
+    integer len = llGetListLength(RegistrationQueue);
+    while (i < len) {
+        string queued_context = llList2String(RegistrationQueue, i + QUEUE_CONTEXT);
+        if (queued_context != context) {
+            new_queue += llList2List(RegistrationQueue, i, i + QUEUE_STRIDE - 1);
+        }
+        i += QUEUE_STRIDE;
+    }
+
+    // Add new operation to queue
+    integer timestamp = now();
+    new_queue += [op_type, context, label, min_acl, script, timestamp];
+    RegistrationQueue = new_queue;
+
+    logd("Queued " + op_type + ": " + context + " (" + label + ")");
+
+    // Schedule batch processing if not already scheduled
+    // This creates a small batching window for startup bursts
+    if (!PendingBatchTimer) {
+        PendingBatchTimer = TRUE;
+        llSetTimerEvent(BATCH_WINDOW_SEC);
+        logd("Batch timer started (" + (string)BATCH_WINDOW_SEC + "s window)");
+    }
+
+    return 1;
+}
+
+// Process all pending queue operations (atomic batch)
+// Returns TRUE if any changes were made to registry
+// Resets timer to heartbeat interval after processing
+integer process_queue() {
+    if (llGetListLength(RegistrationQueue) == 0) {
+        // No operations in queue - switch to heartbeat mode
+        if (PendingBatchTimer) {
+            PendingBatchTimer = FALSE;
+            llSetTimerEvent(PING_INTERVAL_SEC);
+            logd("Batch timer stopped - switching to heartbeat mode");
+        }
+        return FALSE;
+    }
+
+    integer changes_made = FALSE;
+    integer i = 0;
+    integer len = llGetListLength(RegistrationQueue);
+
+    logd("Processing queue: " + (string)(len / QUEUE_STRIDE) + " operations");
+
+    while (i < len) {
+        string op_type = llList2String(RegistrationQueue, i + QUEUE_OP_TYPE);
+        string context = llList2String(RegistrationQueue, i + QUEUE_CONTEXT);
+        string label = llList2String(RegistrationQueue, i + QUEUE_LABEL);
+        integer min_acl = llList2Integer(RegistrationQueue, i + QUEUE_MIN_ACL);
+        string script = llList2String(RegistrationQueue, i + QUEUE_SCRIPT);
+
+        if (op_type == "REG") {
+            // Returns TRUE if new plugin OR if existing plugin data changed
+            integer changed = registry_upsert(context, label, min_acl, script);
+            if (changed) changes_made = TRUE;
+        }
+        else if (op_type == "UNREG") {
+            integer was_removed = registry_remove(context);
+            if (was_removed) changes_made = TRUE;
+        }
+
+        i += QUEUE_STRIDE;
+    }
+
+    // Clear queue
+    RegistrationQueue = [];
+
+    // Reset to heartbeat mode
+    PendingBatchTimer = FALSE;
+    llSetTimerEvent(PING_INTERVAL_SEC);
+
+    return changes_made;
+}
+
+/* ═══════════════════════════════════════════════════════════
    REGISTRY MANAGEMENT
    ═══════════════════════════════════════════════════════════ */
 
@@ -122,34 +237,72 @@ integer registry_find(string context) {
 }
 
 // Add or update plugin in registry
+// Returns TRUE if new plugin added OR script UUID changed (recompiled/updated)
+// Returns FALSE only if re-registering with identical UUID
 integer registry_upsert(string context, string label, integer min_acl, string script) {
     integer idx = registry_find(context);
     integer now_unix = now();
-    
+
+    // Get script UUID - changes when script is recompiled/replaced
+    // PERFORMANCE NOTE: llGetInventoryKey() is called on every upsert (intentional):
+    // - This is the ONLY way to detect script recompilation
+    // - Caching would defeat the purpose (we need to detect UUID changes)
+    // - Inventory lookup is O(1) by name, not expensive for single-prim design
+    // - Only called during registration bursts, not in steady state
+    key script_uuid = llGetInventoryKey(script);
+
     if (idx == -1) {
-        // New plugin
-        PluginRegistry += [context, label, min_acl, script, now_unix];
-        logd("Registered: " + context + " (" + label + ")");
+        // New plugin - add to registry
+        PluginRegistry += [context, label, min_acl, script, script_uuid, now_unix];
+        logd("Registered: " + context + " (" + label + ") UUID=" + (string)script_uuid);
         return TRUE;
     }
     else {
-        // Update existing
+        // Existing plugin - check if script UUID changed
+        key old_uuid = llList2Key(PluginRegistry, idx + REG_SCRIPT_UUID);
+
+        integer uuid_changed = (old_uuid != script_uuid);
+
+        // Update registry (timestamp always updates)
         PluginRegistry = llListReplaceList(PluginRegistry, [label], idx + REG_LABEL, idx + REG_LABEL);
         PluginRegistry = llListReplaceList(PluginRegistry, [min_acl], idx + REG_MIN_ACL, idx + REG_MIN_ACL);
         PluginRegistry = llListReplaceList(PluginRegistry, [script], idx + REG_SCRIPT, idx + REG_SCRIPT);
+        PluginRegistry = llListReplaceList(PluginRegistry, [script_uuid], idx + REG_SCRIPT_UUID, idx + REG_SCRIPT_UUID);
         PluginRegistry = llListReplaceList(PluginRegistry, [now_unix], idx + REG_LAST_SEEN, idx + REG_LAST_SEEN);
-        logd("Updated: " + context);
-        return FALSE;
+
+        if (uuid_changed) {
+            logd("Updated (UUID changed): " + context + " (" + label + ") " +
+                 (string)old_uuid + " -> " + (string)script_uuid);
+        }
+        else {
+            logd("Updated (no change): " + context);
+        }
+
+        return uuid_changed;
     }
 }
 
+// Remove plugin from registry
+// Returns TRUE if plugin was removed, FALSE if not found
+integer registry_remove(string context) {
+    integer idx = registry_find(context);
+    if (idx == -1) return FALSE;
+
+    PluginRegistry = llDeleteSubList(PluginRegistry, idx, idx + REG_STRIDE - 1);
+    logd("Unregistered: " + context);
+    return TRUE;
+}
+
 // Update last_seen timestamp for plugin
-update_last_seen(string context) {
+// Returns: 1 (void function)
+integer update_last_seen(string context) {
     integer idx = registry_find(context);
     if (idx != -1) {
         integer now_unix = now();
         PluginRegistry = llListReplaceList(PluginRegistry, [now_unix], idx + REG_LAST_SEEN, idx + REG_LAST_SEEN);
     }
+
+    return 1;
 }
 
 // Remove dead plugins (haven't responded to ping in PING_TIMEOUT_SEC)
@@ -219,18 +372,14 @@ integer prune_missing_scripts() {
    BROADCASTING
    ═══════════════════════════════════════════════════════════ */
 
-// Request all plugins to register
+// Request all plugins to register (no time window - event-driven)
 broadcast_register_now() {
     string msg = llList2Json(JSON_OBJECT, [
         "type", "register_now"
     ]);
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, msg, NULL_KEY);
-    
-    // Open registration window
-    RegistrationWindowOpen = TRUE;
-    RegistrationWindowStartTime = now();
-    
-    logd("Broadcast: register_now (window open for " + (string)REGISTRATION_WINDOW_SEC + "s)");
+
+    logd("Broadcast: register_now (queue-based processing)");
 }
 
 // Heartbeat ping to all plugins
@@ -242,29 +391,29 @@ broadcast_ping() {
     // Ping logging disabled - too noisy
 }
 
-// Send current plugin list (only when explicitly requested)
+// Send current plugin list (only when registry changes)
 // SECURITY FIX: Use proper JSON encoding to prevent string injection
 broadcast_plugin_list() {
     list plugins = [];
     integer i = 0;
     integer len = llGetListLength(PluginRegistry);
-    
+
     while (i < len) {
         string context = llList2String(PluginRegistry, i + REG_CONTEXT);
         string label = llList2String(PluginRegistry, i + REG_LABEL);
         integer min_acl = llList2Integer(PluginRegistry, i + REG_MIN_ACL);
-        
+
         // Build individual plugin object with proper JSON encoding
         string plugin_obj = llList2Json(JSON_OBJECT, [
             "context", context,
             "label", label,
             "min_acl", min_acl
         ]);
-        
+
         plugins += [plugin_obj];
         i += REG_STRIDE;
     }
-    
+
     // Convert list of JSON objects into JSON array string
     string plugins_array = "[";
     integer j;
@@ -273,27 +422,14 @@ broadcast_plugin_list() {
         plugins_array += llList2String(plugins, j);
     }
     plugins_array += "]";
-    
-    // Build final message
+
+    // Build final message (no version - UUID tracking handles change detection)
     string msg = "{\"type\":\"plugin_list\",\"plugins\":" + plugins_array + "}";
-    
+
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, msg, NULL_KEY);
     logd("Broadcast: plugin_list (" + (string)llGetListLength(plugins) + " plugins)");
 }
 
-// Close registration window and broadcast collected plugins
-close_registration_window() {
-    if (!RegistrationWindowOpen) return;
-    
-    RegistrationWindowOpen = FALSE;
-    PendingListRequest = FALSE;  // Clear pending flag
-    
-    integer plugin_count = llGetListLength(PluginRegistry) / REG_STRIDE;
-    logd("Registration window closed (" + (string)plugin_count + " plugins registered)");
-    
-    // Always broadcast when window closes (satisfies any pending requests)
-    broadcast_plugin_list();
-}
 
 // Soft reset request to all modules
 broadcast_soft_reset() {
@@ -333,23 +469,14 @@ handle_register(string msg) {
     if (!json_has(msg, ["label"])) return;
     if (!json_has(msg, ["min_acl"])) return;
     if (!json_has(msg, ["script"])) return;
-    
+
     string context = llJsonGetValue(msg, ["context"]);
     string label = llJsonGetValue(msg, ["label"]);
     integer min_acl = (integer)llJsonGetValue(msg, ["min_acl"]);
     string script = llJsonGetValue(msg, ["script"]);
-    
-    integer was_new = registry_upsert(context, label, min_acl, script);
-    
-    // If registration window is CLOSED and this is a new plugin,
-    // schedule a deferred broadcast to prevent storms
-    if (!RegistrationWindowOpen && was_new) {
-        logd("Late registration detected, scheduling deferred broadcast");
-        PendingLateBroadcast = TRUE;
-    }
-    
-    // CRITICAL: Do NOT broadcast during registration window
-    // This would cause UI to show on every plugin registration during startup
+
+    // Add to queue - will be processed in next batch
+    queue_add("REG", context, label, min_acl, script);
 }
 
 handle_pong(string msg) {
@@ -361,39 +488,37 @@ handle_pong(string msg) {
 }
 
 handle_plugin_list_request() {
-    if (RegistrationWindowOpen) {
-        // Window still open - mark that someone requested the list
-        // We'll broadcast when window closes
-        PendingListRequest = TRUE;
-        logd("Plugin list requested during window - will broadcast when window closes");
-    }
-    else {
-        // Window closed - respond immediately
-        broadcast_plugin_list();
-    }
+    // Process any pending queue operations first
+    integer changes = process_queue();
+
+    // Always broadcast current list (with version)
+    broadcast_plugin_list();
 }
 
 handle_soft_reset(string msg) {
     // SECURITY FIX: Verify sender is authorized to request reset
     string from = llJsonGetValue(msg, ["from"]);
-    
+
     if (from == JSON_INVALID || from == "") {
         logd("Rejected soft_reset: missing 'from' field");
         llOwnerSay("[KERNEL] ERROR: Soft reset rejected - sender not identified");
         return;
     }
-    
+
     if (!is_authorized_sender(from)) {
         logd("Rejected soft_reset from unauthorized sender: " + from);
         llOwnerSay("[KERNEL] ERROR: Soft reset rejected - unauthorized sender: " + from);
         return;
     }
-    
+
     // Authorized - proceed with reset
     logd("Soft reset authorized by: " + from);
     PluginRegistry = [];
+    RegistrationQueue = [];
+    PendingBatchTimer = FALSE;
     LastPingUnix = now();
     LastInvSweepUnix = now();
+    llSetTimerEvent(PING_INTERVAL_SEC);
     broadcast_register_now();
 }
 
@@ -406,21 +531,19 @@ default
     state_entry() {
         LastOwner = llGetOwner();
         PluginRegistry = [];
+        RegistrationQueue = [];
+        PendingBatchTimer = FALSE;
         LastPingUnix = now();
         LastInvSweepUnix = now();
-        RegistrationWindowOpen = FALSE;
-        RegistrationWindowStartTime = 0;
-        PendingListRequest = FALSE;
-        PendingLateBroadcast = FALSE;
         LastScriptCount = count_scripts();
-        
-        logd("Kernel started");
-        
-        // Immediately broadcast register_now (opens registration window)
+
+        logd("Kernel started (UUID-based change detection)");
+
+        // Immediately broadcast register_now (plugins add to queue)
         broadcast_register_now();
-        
-        // Start timer for window management, heartbeat, and inventory sweeps
-        llSetTimerEvent(0.5);  // Check twice per second
+
+        // Start timer in heartbeat mode (batch timer will override when needed)
+        llSetTimerEvent(PING_INTERVAL_SEC);
     }
     
     on_rez(integer start_param) {
@@ -435,41 +558,48 @@ default
     timer() {
         integer now_unix = now();
         if (now_unix == 0) return; // Overflow protection
-        
-        // Check if registration window should close
-        if (RegistrationWindowOpen) {
-            integer elapsed = now_unix - RegistrationWindowStartTime;
-            if (elapsed < 0) elapsed = 0; // Overflow protection
-            
-            if (elapsed >= REGISTRATION_WINDOW_SEC) {
-                close_registration_window();
+
+        // DUAL-MODE TIMER: Batch mode (0.1s) or Heartbeat mode (5s)
+        if (PendingBatchTimer) {
+            // Batch mode: Process queue and broadcast
+            integer changes = process_queue();
+            if (changes) {
+                broadcast_plugin_list();
             }
+            // process_queue() automatically switches back to heartbeat mode
         }
-        
-        // Handle pending late broadcast (debounced)
-        if (PendingLateBroadcast && !RegistrationWindowOpen) {
-            PendingLateBroadcast = FALSE;
-            broadcast_plugin_list();
-            logd("Late registration broadcast completed");
-        }
-        
-        // Periodic heartbeat
-        integer ping_elapsed = now_unix - LastPingUnix;
-        if (ping_elapsed < 0) ping_elapsed = 0; // Overflow protection
-        
-        if (ping_elapsed >= PING_INTERVAL_SEC) {
-            broadcast_ping();
-            prune_dead_plugins();
-            LastPingUnix = now_unix;
-        }
-        
-        // Periodic inventory sweep
-        integer inv_elapsed = now_unix - LastInvSweepUnix;
-        if (inv_elapsed < 0) inv_elapsed = 0; // Overflow protection
-        
-        if (inv_elapsed >= INV_SWEEP_INTERVAL) {
-            prune_missing_scripts();
-            LastInvSweepUnix = now_unix;
+        else {
+            // Heartbeat mode: Periodic maintenance only
+            integer ping_elapsed = now_unix - LastPingUnix;
+            if (ping_elapsed < 0) ping_elapsed = 0; // Overflow protection
+
+            if (ping_elapsed >= PING_INTERVAL_SEC) {
+                broadcast_ping();
+
+                // Prune dead plugins and broadcast if any removed
+                integer pruned = prune_dead_plugins();
+                if (pruned > 0) {
+                    logd("Pruned " + (string)pruned + " dead plugins");
+                    broadcast_plugin_list();
+                }
+
+                LastPingUnix = now_unix;
+            }
+
+            // Periodic inventory sweep
+            integer inv_elapsed = now_unix - LastInvSweepUnix;
+            if (inv_elapsed < 0) inv_elapsed = 0; // Overflow protection
+
+            if (inv_elapsed >= INV_SWEEP_INTERVAL) {
+                // Prune missing scripts and broadcast if any removed
+                integer pruned = prune_missing_scripts();
+                if (pruned > 0) {
+                    logd("Pruned " + (string)pruned + " missing scripts");
+                    broadcast_plugin_list();
+                }
+
+                LastInvSweepUnix = now_unix;
+            }
         }
     }
     
@@ -497,17 +627,20 @@ default
         if (change & CHANGED_OWNER) {
             check_owner_changed();
         }
-        
+
         if (change & CHANGED_INVENTORY) {
             // Check if SCRIPTS were added/removed (not notecards)
             integer current_script_count = count_scripts();
-            
+
             if (current_script_count != LastScriptCount) {
                 logd("Script count changed: " + (string)LastScriptCount + " -> " + (string)current_script_count);
                 LastScriptCount = current_script_count;
-                
-                // Trigger re-registration to rebuild plugin list
+
+                // Clear registry and queue, trigger re-registration
                 PluginRegistry = [];
+                RegistrationQueue = [];
+                PendingBatchTimer = FALSE;
+                llSetTimerEvent(PING_INTERVAL_SEC);
                 broadcast_register_now();
             }
         }

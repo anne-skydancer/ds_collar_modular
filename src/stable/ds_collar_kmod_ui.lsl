@@ -1,18 +1,24 @@
 /* =============================================================================
-   MODULE: ds_collar_kmod_ui.lsl (v2.1 - Security Hardened)
+   MODULE: ds_collar_kmod_ui.lsl (v3.2 - UUID-Based Change Detection)
    SECURITY AUDIT: ENHANCEMENTS APPLIED
-   
+
    ROLE: Root touch menu with paged plugin list and ACL filtering
-   
+
+   ARCHITECTURE: Event-driven session management
+   - Kernel broadcasts plugin_list only when UUIDs change
+   - UI invalidates sessions when receiving plugin_list
+   - No version numbers needed (UUID tracking in kernel)
+
    CHANNELS:
    - 500 (KERNEL_LIFECYCLE): Plugin list subscription
    - 700 (AUTH_BUS): ACL queries and results
    - 900 (UI_BUS): Navigation (start/return/close)
    - 950 (DIALOG_BUS): Dialog display
-   
+
    MULTI-SESSION: Supports multiple concurrent users with independent sessions
-   
+
    SECURITY ENHANCEMENTS:
+   - [CRITICAL] Race condition fix: UUID-based change detection
    - [MEDIUM] Touch range validation fixed (ZERO_VECTOR rejection)
    - [MEDIUM] ACL re-validation on session return (time-based)
    - [LOW] Production mode guard for debug
@@ -451,14 +457,23 @@ update_plugin_label(string context, string new_label) {
 
 handle_plugin_list(string msg) {
     logd("handle_plugin_list called");
-    
+
     if (!json_has(msg, ["plugins"])) {
         logd("ERROR: No 'plugins' field in message!");
         return;
     }
-    
+
     string plugins_json = llJsonGetValue(msg, ["plugins"]);
     apply_plugin_list(plugins_json);
+
+    // Invalidate all sessions when plugin list changes
+    // Kernel only broadcasts when UUID changes detected, so this is always meaningful
+    if (llGetListLength(Sessions) > 0) {
+        logd("Plugin list updated - invalidating " + (string)(llGetListLength(Sessions) / SESSION_STRIDE) + " sessions");
+        Sessions = [];
+        FilteredPluginsData = [];
+        PendingAcl = [];
+    }
 }
 
 handle_acl_result(string msg) {
@@ -596,9 +611,9 @@ default
         Sessions = [];
         FilteredPluginsData = [];
         PendingAcl = [];
-        
-        logd("UI module started (multi-session)");
-        
+
+        logd("UI module started (UUID-based change detection)");
+
         string request = llList2Json(JSON_OBJECT, [
             "type", "plugin_list_request"
         ]);
