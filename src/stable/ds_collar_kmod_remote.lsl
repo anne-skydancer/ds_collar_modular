@@ -52,6 +52,7 @@ float MAX_DETECTION_RANGE = 20.0;  // Maximum range in meters for HUD detection
    PROTOCOL MESSAGE TYPES
    ═══════════════════════════════════════════════════════════ */
 string ROOT_CONTEXT = "core_root";
+string SOS_CONTEXT = "sos";
 
 /* ═══════════════════════════════════════════════════════════
    STATE
@@ -64,8 +65,9 @@ key CollarOwner = NULL_KEY;
 list PendingQueries = [];
 integer QUERY_STRIDE = 2;
 
-/* Pending menu requests waiting for ACL verification */
+/* Pending menu requests waiting for ACL verification: [hud_wearer_key, context, ...] */
 list PendingMenuRequests = [];
+integer MENU_REQUEST_STRIDE = 2;
 
 /* Query timeout tracking: [hud_wearer_key, timestamp, ...] */
 list QueryTimestamps = [];
@@ -258,17 +260,17 @@ send_external_acl_response(key hud_wearer, integer level) {
    MENU TRIGGERING
    ═══════════════════════════════════════════════════════════ */
 
-trigger_menu_for_external_user(key user_key) {
+trigger_menu_for_external_user(key user_key, string context) {
     // Send start message to UI module with external user
     string msg = llList2Json(JSON_OBJECT, [
         "type", "start",
-        "context", ROOT_CONTEXT
+        "context", context
     ]);
-    
+
     // Pass the external user's key as the id parameter
     llMessageLinked(LINK_SET, UI_BUS, msg, user_key);
-    
-    logd("Triggered menu for external user: " + llKey2Name(user_key));
+
+    logd("Triggered " + context + " menu for external user: " + llKey2Name(user_key));
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -350,38 +352,52 @@ handle_acl_query_external(string message) {
 handle_menu_request_external(string message) {
     // Extract menu request parameters
     if (!json_has(message, ["avatar"])) return;
-    
+
     key hud_wearer = (key)llJsonGetValue(message, ["avatar"]);
     if (hud_wearer == NULL_KEY) return;
-    
+
+    // Extract context (default to ROOT_CONTEXT if not specified)
+    string context = ROOT_CONTEXT;
+    if (json_has(message, ["context"])) {
+        context = llJsonGetValue(message, ["context"]);
+    }
+
     // SECURITY: Rate limit check
     if (!check_rate_limit(hud_wearer)) return;
-    
+
     // SECURITY: Check range first
     list agent_data = llGetObjectDetails(hud_wearer, [OBJECT_POS]);
     if (llGetListLength(agent_data) == 0) {
         logd("Cannot verify HUD wearer position for menu request");
         return;
     }
-    
+
     vector hud_wearer_pos = llList2Vector(agent_data, 0);
     float distance = llVecDist(hud_wearer_pos, llGetPos());
-    
+
     if (distance > MAX_DETECTION_RANGE) {
-        logd("Menu request from " + llKey2Name(hud_wearer) + 
-             " ignored - " + (string)((integer)distance) + "m away (max: " + 
+        logd("Menu request from " + llKey2Name(hud_wearer) +
+             " ignored - " + (string)((integer)distance) + "m away (max: " +
              (string)((integer)MAX_DETECTION_RANGE) + "m)");
         return;
     }
-    
-    logd("Received menu request from " + llKey2Name(hud_wearer) + 
+
+    logd("Received " + context + " menu request from " + llKey2Name(hud_wearer) +
          " at " + (string)((integer)distance) + "m");
-    
-    // SECURITY: Verify ACL before triggering menu
-    if (llListFindList(PendingMenuRequests, [hud_wearer]) == -1) {
-        PendingMenuRequests += [hud_wearer];
-        request_internal_acl(hud_wearer);
+
+    // Check if already pending for this user
+    integer i = 0;
+    integer len = llGetListLength(PendingMenuRequests);
+    while (i < len) {
+        if (llList2Key(PendingMenuRequests, i) == hud_wearer) {
+            return;
+        }
+        i += MENU_REQUEST_STRIDE;
     }
+
+    // SECURITY: Verify ACL before triggering menu
+    PendingMenuRequests += [hud_wearer, context];
+    request_internal_acl(hud_wearer);
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -494,20 +510,42 @@ default {
             }
             
             // Check if this is a menu request ACL verification
-            integer menu_idx = llListFindList(PendingMenuRequests, [avatar_key]);
-            if (menu_idx != -1) {
-                // This is a menu request ACL check
-                PendingMenuRequests = llDeleteSubList(PendingMenuRequests, menu_idx, menu_idx);
-                
-                // Only trigger menu if ACL >= 1 (public or higher)
-                if (level >= 1) {
-                    trigger_menu_for_external_user(avatar_key);
-                    logd("Menu request approved for " + llKey2Name(avatar_key) + " (ACL " + (string)level + ")");
-                } else {
-                    logd("Menu request denied for " + llKey2Name(avatar_key) + " (ACL " + (string)level + ")");
+            integer menu_idx = 0;
+            integer len = llGetListLength(PendingMenuRequests);
+            string requested_context = "";
+
+            while (menu_idx < len) {
+                if (llList2Key(PendingMenuRequests, menu_idx) == avatar_key) {
+                    requested_context = llList2String(PendingMenuRequests, menu_idx + 1);
+                    PendingMenuRequests = llDeleteSubList(PendingMenuRequests, menu_idx, menu_idx + MENU_REQUEST_STRIDE - 1);
+                    jump found_menu_request;
                 }
-                return;
+                menu_idx += MENU_REQUEST_STRIDE;
             }
+            jump not_menu_request;
+
+            @found_menu_request;
+            // This is a menu request ACL check
+
+            // Only trigger menu if ACL >= 1 (public or higher)
+            if (level >= 1) {
+                // SECURITY: Only allow SOS context for collar wearer
+                // Non-wearers requesting SOS get downgraded to root menu
+                string final_context = requested_context;
+                if (requested_context == SOS_CONTEXT && avatar_key != llGetOwner()) {
+                    final_context = ROOT_CONTEXT;
+                    logd("SOS context request from non-wearer " + llKey2Name(avatar_key) + " downgraded to root");
+                    llRegionSayTo(avatar_key, 0, "Only the collar wearer can access the SOS menu. Showing main menu instead.");
+                }
+
+                trigger_menu_for_external_user(avatar_key, final_context);
+                logd("Menu request approved for " + llKey2Name(avatar_key) + " (ACL " + (string)level + ", context: " + final_context + ")");
+            } else {
+                logd("Menu request denied for " + llKey2Name(avatar_key) + " (ACL " + (string)level + ")");
+            }
+            return;
+
+            @not_menu_request;
             
             // Check if this is a response to a pending external query
             integer query_idx = find_pending_query(avatar_key);

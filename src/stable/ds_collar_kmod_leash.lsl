@@ -987,6 +987,21 @@ default
                 }
                 return;
             }
+
+            if (msg_type == "emergency_leash_release") {
+                // Emergency SOS release - only allow if sender is the collar wearer
+                // The id parameter contains the requesting user's key
+                // NOTE: User feedback is sent by SOS plugin, not here (avoid duplicate messages)
+                if (id == llGetOwner()) {
+                    if (Leashed) {
+                        release_leash_internal(id);
+                        logd("Emergency leash release executed");
+                    }
+                } else {
+                    logd("Emergency leash release denied: sender " + llKey2Name(id) + " is not wearer.");
+                }
+                return;
+            }
             return;
         }
         
