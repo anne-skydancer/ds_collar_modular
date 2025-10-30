@@ -1034,6 +1034,11 @@ default
         ]), NULL_KEY);
         llSetTimerEvent(FOLLOW_TICK);
         llRequestPermissions(llGetOwner(), PERMISSION_TAKE_CONTROLS);
+
+        // Memory diagnostics
+        integer used = llGetUsedMemory();
+        integer free = llGetFreeMemory();
+        llOwnerSay("Leash kmod ready (v2.0) - Memory: " + (string)used + " used, " + (string)free + " free");
         logd("Leash kmod ready (v2.0 MULTI-MODE)");
     }
     
