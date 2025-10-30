@@ -198,8 +198,8 @@ integer process_queue() {
 
         if (op_type == "REG") {
             // Returns TRUE if new plugin OR if existing plugin data changed
-            integer changed = registry_upsert(context, label, min_acl, script);
-            if (changed) changes_made = TRUE;
+            integer reg_delta = registry_upsert(context, label, min_acl, script);
+            if (reg_delta) changes_made = TRUE;
         }
         else if (op_type == "UNREG") {
             integer was_removed = registry_remove(context);
