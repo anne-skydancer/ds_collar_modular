@@ -30,7 +30,7 @@ integer DIALOG_BUS = 950;
 /* ═══════════════════════════════════════════════════════════
    PLUGIN IDENTITY
    ═══════════════════════════════════════════════════════════ */
-string PLUGIN_CONTEXT = "sos";
+string PLUGIN_CONTEXT = "sos_911";
 string PLUGIN_LABEL = "SOS";
 integer PLUGIN_MIN_ACL = 0;  // ACL 0 - accessible to all (including no access)
 

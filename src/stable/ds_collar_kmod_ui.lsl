@@ -42,6 +42,7 @@ integer DIALOG_BUS = 950;
    ═══════════════════════════════════════════════════════════ */
 string ROOT_CONTEXT = "core_root";
 string SOS_CONTEXT = "sos";
+string SOS_PREFIX = "sos_";  // Prefix for SOS plugin contexts
 integer MAX_FUNC_BTNS = 9;
 float TOUCH_RANGE_M = 5.0;
 float LONG_TOUCH_THRESHOLD = 1.5;
@@ -105,6 +106,13 @@ integer json_has(string j, list path) {
 
 string generate_session_id(key user) {
     return "ui_" + (string)user + "_" + (string)llGetUnixTime();
+}
+
+integer starts_with(string str, string prefix) {
+    integer prefix_len = llStringLength(prefix);
+    if (prefix_len == 0) return TRUE;
+    if (llStringLength(str) < prefix_len) return FALSE;
+    return (llGetSubString(str, 0, prefix_len - 1) == prefix);
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -201,14 +209,15 @@ create_session(key user, integer acl, integer is_blacklisted, string context_fil
         integer min_acl = llList2Integer(AllPlugins, i + PLUGIN_MIN_ACL);
 
         integer should_include = FALSE;
+        integer is_sos_plugin = starts_with(context, SOS_PREFIX);
 
         if (acl >= min_acl) {
             if (context_filter == SOS_CONTEXT) {
-                // SOS context: only include SOS plugins
-                should_include = (context == SOS_CONTEXT);
+                // SOS context: only include plugins with sos_ prefix
+                should_include = is_sos_plugin;
             } else {
-                // Root context: include all non-SOS plugins
-                should_include = (context != SOS_CONTEXT);
+                // Root context: include all non-SOS plugins (no sos_ prefix)
+                should_include = !is_sos_plugin;
             }
         }
 
