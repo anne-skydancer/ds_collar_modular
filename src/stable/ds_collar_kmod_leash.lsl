@@ -84,15 +84,11 @@ integer UI_BUS = 900;
    PROTOCOL CONSTANTS - Moved to top for easy maintenance
    =============================================================== */
 
-// Holder object name (change here if needed)
-string DS_HOLDER_NAME = "D/s Leash Holder";
-
 // Lockmeister/OpenCollar channel
 integer LEASH_CHAN_LM = -8888;
 integer LEASH_CHAN_DS = -192837465;
 
 string PLUGIN_CONTEXT = "core_leash";
-string PLUGIN_LABEL = "Leash";
 
 // ACL definitions for leash operations
 list ALLOWED_ACL_GRAB = [1, 3, 4, 5];     // Public, Trustee, Unowned, Owner
@@ -136,7 +132,6 @@ float TURN_THRESHOLD = 0.1;  // ~5.7 degrees
 integer HOLDER_STATE_IDLE = 0;
 integer HOLDER_STATE_DS_PHASE = 1;
 integer HOLDER_STATE_OC_PHASE = 2;
-integer HOLDER_STATE_FALLBACK = 3;
 integer HOLDER_STATE_COMPLETE = 4;
 
 integer HolderState = 0;
@@ -147,7 +142,6 @@ key HolderTarget = NULL_KEY;
 integer HolderSession = 0;
 float DS_PHASE_DURATION = 2.0;   // 2 seconds for DS native
 float OC_PHASE_DURATION = 2.0;   // 2 seconds for OC
-float TOTAL_TIMEOUT = 4.0;       // Total 4 seconds before fallback
 
 // Offsim detection & auto-reclip (IMPROVED)
 integer OffsimDetected = FALSE;
@@ -344,7 +338,7 @@ requestAclForAction(key user, string action, key pass_target) {
     logd("ACL query for " + action + " by " + llKey2Name(user));
 }
 
-handleAclResult(string msg, key id) {
+handleAclResult(string msg) {
     if (!AclPending) return;
     if (!jsonHas(msg, ["avatar"]) || !jsonHas(msg, ["level"])) return;
     
@@ -1149,7 +1143,7 @@ default
         
         if (num == AUTH_BUS) {
             if (msg_type == "acl_result") {
-                handleAclResult(msg, id);
+                handleAclResult(msg);
             }
             return;
         }
