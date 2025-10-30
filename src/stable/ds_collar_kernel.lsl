@@ -9,6 +9,7 @@
    - Conditional timer (0.1s batch mode, 5s heartbeat mode)
    - Batch queue processing (prevents broadcast storms)
    - Registry versioning (tracks changes, enables deduplication)
+   - Automatic change detection (label/ACL updates trigger version bump)
    - Atomic operations (consistent state transitions)
 
    PERFORMANCE OPTIMIZATIONS:
@@ -188,8 +189,9 @@ integer process_queue() {
         string script = llList2String(RegistrationQueue, i + QUEUE_SCRIPT);
 
         if (op_type == "REG") {
-            integer was_new = registry_upsert(context, label, min_acl, script);
-            if (was_new) changes_made = TRUE;
+            // Returns TRUE if new plugin OR if existing plugin data changed
+            integer changed = registry_upsert(context, label, min_acl, script);
+            if (changed) changes_made = TRUE;
         }
         else if (op_type == "UNREG") {
             integer was_removed = registry_remove(context);
@@ -233,25 +235,43 @@ integer registry_find(string context) {
 }
 
 // Add or update plugin in registry
-// Returns TRUE if new plugin added, FALSE if updated existing
+// Returns TRUE if new plugin added OR existing plugin data changed
+// Returns FALSE only if re-registering with identical data
 integer registry_upsert(string context, string label, integer min_acl, string script) {
     integer idx = registry_find(context);
     integer now_unix = now();
 
     if (idx == -1) {
-        // New plugin
+        // New plugin - add to registry
         PluginRegistry += [context, label, min_acl, script, now_unix];
         logd("Registered: " + context + " (" + label + ")");
         return TRUE;
     }
     else {
-        // Update existing
+        // Existing plugin - check if data changed
+        string old_label = llList2String(PluginRegistry, idx + REG_LABEL);
+        integer old_min_acl = llList2Integer(PluginRegistry, idx + REG_MIN_ACL);
+        string old_script = llList2String(PluginRegistry, idx + REG_SCRIPT);
+
+        integer data_changed = FALSE;
+        if (old_label != label) data_changed = TRUE;
+        if (old_min_acl != min_acl) data_changed = TRUE;
+        if (old_script != script) data_changed = TRUE;
+
+        // Update registry (timestamp always updates)
         PluginRegistry = llListReplaceList(PluginRegistry, [label], idx + REG_LABEL, idx + REG_LABEL);
         PluginRegistry = llListReplaceList(PluginRegistry, [min_acl], idx + REG_MIN_ACL, idx + REG_MIN_ACL);
         PluginRegistry = llListReplaceList(PluginRegistry, [script], idx + REG_SCRIPT, idx + REG_SCRIPT);
         PluginRegistry = llListReplaceList(PluginRegistry, [now_unix], idx + REG_LAST_SEEN, idx + REG_LAST_SEEN);
-        logd("Updated: " + context);
-        return FALSE;
+
+        if (data_changed) {
+            logd("Updated (changed): " + context + " (" + label + ")");
+        }
+        else {
+            logd("Updated (no change): " + context);
+        }
+
+        return data_changed;
     }
 }
 
