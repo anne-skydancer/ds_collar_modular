@@ -8,8 +8,7 @@
    - Event-driven registration (no arbitrary time windows)
    - Conditional timer (0.1s batch mode, 5s heartbeat mode)
    - Batch queue processing (prevents broadcast storms)
-   - Registry versioning (tracks changes, enables deduplication)
-   - UUID-based change detection (script recompile/update auto-detected)
+   - UUID-based change detection (script UUID = version, no counters needed)
    - Atomic operations (consistent state transitions)
 
    PERFORMANCE OPTIMIZATIONS:
@@ -77,7 +76,6 @@ list AUTHORIZED_RESET_SENDERS = ["bootstrap", "maintenance"];
    ═══════════════════════════════════════════════════════════ */
 list PluginRegistry = [];           // Active plugin registry
 list RegistrationQueue = [];        // Pending operations queue (Unix modprobe style)
-integer RegistryVersion = 0;        // Increments on any registry change
 integer PendingBatchTimer = FALSE;  // TRUE if batch timer is active
 integer LastPingUnix = 0;
 integer LastInvSweepUnix = 0;
@@ -208,12 +206,6 @@ integer process_queue() {
     // Reset to heartbeat mode
     PendingBatchTimer = FALSE;
     llSetTimerEvent(PING_INTERVAL_SEC);
-
-    // Increment version if changes were made
-    if (changes_made) {
-        RegistryVersion = RegistryVersion + 1;
-        logd("Registry updated to version " + (string)RegistryVersion);
-    }
 
     return changes_made;
 }
@@ -382,7 +374,7 @@ broadcast_ping() {
     // Ping logging disabled - too noisy
 }
 
-// Send current plugin list with version number
+// Send current plugin list (only when registry changes)
 // SECURITY FIX: Use proper JSON encoding to prevent string injection
 broadcast_plugin_list() {
     list plugins = [];
@@ -414,12 +406,11 @@ broadcast_plugin_list() {
     }
     plugins_array += "]";
 
-    // Build final message with version
-    string msg = "{\"type\":\"plugin_list\",\"version\":" + (string)RegistryVersion +
-                 ",\"plugins\":" + plugins_array + "}";
+    // Build final message (no version - UUID tracking handles change detection)
+    string msg = "{\"type\":\"plugin_list\",\"plugins\":" + plugins_array + "}";
 
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, msg, NULL_KEY);
-    logd("Broadcast: plugin_list v" + (string)RegistryVersion + " (" + (string)llGetListLength(plugins) + " plugins)");
+    logd("Broadcast: plugin_list (" + (string)llGetListLength(plugins) + " plugins)");
 }
 
 
@@ -507,7 +498,6 @@ handle_soft_reset(string msg) {
     logd("Soft reset authorized by: " + from);
     PluginRegistry = [];
     RegistrationQueue = [];
-    RegistryVersion = 0;
     PendingBatchTimer = FALSE;
     LastPingUnix = now();
     LastInvSweepUnix = now();
@@ -525,13 +515,12 @@ default
         LastOwner = llGetOwner();
         PluginRegistry = [];
         RegistrationQueue = [];
-        RegistryVersion = 0;
         PendingBatchTimer = FALSE;
         LastPingUnix = now();
         LastInvSweepUnix = now();
         LastScriptCount = count_scripts();
 
-        logd("Kernel started (event-driven queue, conditional timer)");
+        logd("Kernel started (UUID-based change detection)");
 
         // Immediately broadcast register_now (plugins add to queue)
         broadcast_register_now();
@@ -570,11 +559,10 @@ default
             if (ping_elapsed >= PING_INTERVAL_SEC) {
                 broadcast_ping();
 
-                // Prune dead plugins and update registry version if needed
+                // Prune dead plugins and broadcast if any removed
                 integer pruned = prune_dead_plugins();
                 if (pruned > 0) {
-                    RegistryVersion = RegistryVersion + 1;
-                    logd("Pruned " + (string)pruned + " dead plugins - version " + (string)RegistryVersion);
+                    logd("Pruned " + (string)pruned + " dead plugins");
                     broadcast_plugin_list();
                 }
 
@@ -586,11 +574,10 @@ default
             if (inv_elapsed < 0) inv_elapsed = 0; // Overflow protection
 
             if (inv_elapsed >= INV_SWEEP_INTERVAL) {
-                // Prune missing scripts and update registry version if needed
+                // Prune missing scripts and broadcast if any removed
                 integer pruned = prune_missing_scripts();
                 if (pruned > 0) {
-                    RegistryVersion = RegistryVersion + 1;
-                    logd("Pruned " + (string)pruned + " missing scripts - version " + (string)RegistryVersion);
+                    logd("Pruned " + (string)pruned + " missing scripts");
                     broadcast_plugin_list();
                 }
 
@@ -635,7 +622,6 @@ default
                 // Clear registry and queue, trigger re-registration
                 PluginRegistry = [];
                 RegistrationQueue = [];
-                RegistryVersion = 0;
                 PendingBatchTimer = FALSE;
                 llSetTimerEvent(PING_INTERVAL_SEC);
                 broadcast_register_now();

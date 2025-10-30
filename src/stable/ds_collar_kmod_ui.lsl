@@ -1,16 +1,16 @@
 /* =============================================================================
-   MODULE: ds_collar_kmod_ui.lsl (v3.0 - Version-Tracked Sessions)
+   MODULE: ds_collar_kmod_ui.lsl (v3.2 - UUID-Based Change Detection)
    SECURITY AUDIT: ENHANCEMENTS APPLIED
 
    ROLE: Root touch menu with paged plugin list and ACL filtering
 
-   ARCHITECTURE: Version-tracked session management
-   - Tracks kernel registry version to detect changes
-   - Invalidates sessions only when version changes
-   - Prevents redundant processing of same version
+   ARCHITECTURE: Event-driven session management
+   - Kernel broadcasts plugin_list only when UUIDs change
+   - UI invalidates sessions when receiving plugin_list
+   - No version numbers needed (UUID tracking in kernel)
 
    CHANNELS:
-   - 500 (KERNEL_LIFECYCLE): Plugin list subscription (with version)
+   - 500 (KERNEL_LIFECYCLE): Plugin list subscription
    - 700 (AUTH_BUS): ACL queries and results
    - 900 (UI_BUS): Navigation (start/return/close)
    - 950 (DIALOG_BUS): Dialog display
@@ -18,7 +18,7 @@
    MULTI-SESSION: Supports multiple concurrent users with independent sessions
 
    SECURITY ENHANCEMENTS:
-   - [CRITICAL] Race condition fix: version-based session invalidation
+   - [CRITICAL] Race condition fix: UUID-based change detection
    - [MEDIUM] Touch range validation fixed (ZERO_VECTOR rejection)
    - [MEDIUM] ACL re-validation on session return (time-based)
    - [LOW] Production mode guard for debug
@@ -72,7 +72,6 @@ integer SESSION_MAX_AGE = 60;  // Seconds before ACL refresh required
    STATE
    ═══════════════════════════════════════════════════════════ */
 list AllPlugins = [];
-integer PluginListVersion = 0;  // Track kernel registry version
 list Sessions = [];
 list FilteredPluginsData = [];
 list PendingAcl = [];
@@ -464,36 +463,16 @@ handle_plugin_list(string msg) {
         return;
     }
 
-    // Check version to avoid redundant processing
-    integer new_version = 0;
-    if (json_has(msg, ["version"])) {
-        new_version = (integer)llJsonGetValue(msg, ["version"]);
-    }
-
-    if (new_version > 0 && new_version == PluginListVersion) {
-        logd("Plugin list v" + (string)new_version + " already processed - ignoring");
-        return;
-    }
-
     string plugins_json = llJsonGetValue(msg, ["plugins"]);
     apply_plugin_list(plugins_json);
 
-    // Version-based session invalidation (Unix modprobe-style)
-    // Only invalidate if version changed (prevents unnecessary disruption)
-    if (new_version != PluginListVersion) {
-        integer old_version = PluginListVersion;
-        PluginListVersion = new_version;
-
-        if (llGetListLength(Sessions) > 0) {
-            logd("Registry v" + (string)old_version + " -> v" + (string)new_version +
-                 " - invalidating " + (string)(llGetListLength(Sessions) / SESSION_STRIDE) + " sessions");
-            Sessions = [];
-            FilteredPluginsData = [];
-            PendingAcl = [];
-        }
-        else {
-            logd("Registry updated to v" + (string)new_version);
-        }
+    // Invalidate all sessions when plugin list changes
+    // Kernel only broadcasts when UUID changes detected, so this is always meaningful
+    if (llGetListLength(Sessions) > 0) {
+        logd("Plugin list updated - invalidating " + (string)(llGetListLength(Sessions) / SESSION_STRIDE) + " sessions");
+        Sessions = [];
+        FilteredPluginsData = [];
+        PendingAcl = [];
     }
 }
 
@@ -629,12 +608,11 @@ default
 {
     state_entry() {
         AllPlugins = [];
-        PluginListVersion = 0;
         Sessions = [];
         FilteredPluginsData = [];
         PendingAcl = [];
 
-        logd("UI module started (version-tracked multi-session)");
+        logd("UI module started (UUID-based change detection)");
 
         string request = llList2Json(JSON_OBJECT, [
             "type", "plugin_list_request"
