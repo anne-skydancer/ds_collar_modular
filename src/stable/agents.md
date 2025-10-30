@@ -204,7 +204,7 @@ When you need a variable name related to a reserved term, use these patterns:
 2. If in doubt, prefix it (e.g., `my_`, `local_`, or use a more descriptive name)
 3. NEVER assume a term is safe — verify it's not reserved
 
-## 18) Minimal Reusable Snippets) Minimal Reusable Snippets
+## 18) Minimal Reusable Snippets
 
 **Debug logger**
 
