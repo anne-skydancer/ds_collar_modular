@@ -1,8 +1,13 @@
 /* ===============================================================
-   DS Collar - Leash Plugin (v1.0 OFFER DIALOG)
-   
+   DS Collar - Leash Plugin (v2.0 MULTI-MODE)
+
    PURPOSE: User interface and configuration for leashing system
-   
+
+   NEW FEATURES v2.0:
+   - Added Coffle mode (collar-to-collar leashing, ACL 3,5 only)
+   - Added Post mode (leash to object, ACL 1,3,5)
+   - Sensor menus for selecting coffle and post targets
+
    CHANGES v1.0:
    - Added offer acceptance dialog (targets can Accept/Decline offers)
    - Handles offer_pending messages from kernel module
@@ -46,12 +51,16 @@ string ROOT_CONTEXT = "core_root";
 
 list ALLOWED_ACL_GRAB  = [1, 3, 4, 5];
 list ALLOWED_ACL_SETTINGS = [3, 4, 5];
+list ALLOWED_ACL_COFFLE = [3, 5];   // Trustee, Owner
+list ALLOWED_ACL_POST = [1, 3, 5];  // Public, Trustee, Owner
 
 // Current leash state (synced from core)
 integer Leashed = FALSE;
 key Leasher = NULL_KEY;
 integer LeashLength = 3;
 integer TurnToFace = FALSE;
+integer LeashMode = 0;       // 0=avatar, 1=coffle, 2=post
+key LeashTarget = NULL_KEY;  // Target for coffle/post
 
 // Session/menu state
 key CurrentUser = NULL_KEY;
@@ -138,7 +147,7 @@ sendPong() {
 showMainMenu() {
     // Build buttons in display order (left-to-right, top-to-bottom)
     list buttons = ["Back"];
-    
+
     // Action buttons
     if (!Leashed) {
         if (inAllowedList(UserAcl, ALLOWED_ACL_GRAB)) {
@@ -146,6 +155,14 @@ showMainMenu() {
         }
         if (UserAcl == 2) {
             buttons += ["Offer"];
+        }
+        // Coffle button - ACL 3, 5 only
+        if (inAllowedList(UserAcl, ALLOWED_ACL_COFFLE)) {
+            buttons += ["Coffle"];
+        }
+        // Post button - ACL 1, 3, 5
+        if (inAllowedList(UserAcl, ALLOWED_ACL_POST)) {
+            buttons += ["Post"];
         }
     }
     else {
@@ -156,25 +173,38 @@ showMainMenu() {
             buttons += ["Unclip", "Pass", "Yank"];
         }
     }
-    
+
     // Get Holder button - ACL 1, 3, 4, 5 (NOT ACL 2)
     if (UserAcl == 1 || UserAcl >= 3) {
         buttons += ["Get Holder"];
     }
-    
+
     // Settings button - ACL 1, 3, 4, 5 (NOT ACL 2)
     if (UserAcl == 1 || inAllowedList(UserAcl, ALLOWED_ACL_SETTINGS)) {
         buttons += ["Settings"];
     }
-    
+
     string body;
     if (Leashed) {
-        body = "Leashed to: " + llKey2Name(Leasher) + "\nLength: " + (string)LeashLength + "m";
+        string mode_text = "Avatar";
+        if (LeashMode == 1) mode_text = "Coffle";
+        else if (LeashMode == 2) mode_text = "Post";
+
+        body = "Mode: " + mode_text + "\n";
+        body += "Leashed to: " + llKey2Name(Leasher) + "\n";
+        body += "Length: " + (string)LeashLength + "m";
+
+        if (LeashTarget != NULL_KEY) {
+            list details = llGetObjectDetails(LeashTarget, [OBJECT_NAME]);
+            if (llGetListLength(details) > 0) {
+                body += "\nTarget: " + llList2String(details, 0);
+            }
+        }
     }
     else {
         body = "Not leashed";
     }
-    
+
     showMenu("main", "Leash", body, buttons);
 }
 
@@ -200,6 +230,20 @@ showPassMenu() {
     SensorMode = "pass";
     MenuContext = "pass";
     llSensor("", NULL_KEY, AGENT, 96.0, PI);
+}
+
+showCoffleMenu() {
+    SensorMode = "coffle";
+    MenuContext = "coffle";
+    // Scan for objects (potential collars) within range
+    llSensor("", NULL_KEY, SCRIPTED, 96.0, PI);
+}
+
+showPostMenu() {
+    SensorMode = "post";
+    MenuContext = "post";
+    // Scan for all objects (posts) within range
+    llSensor("", NULL_KEY, PASSIVE | ACTIVE | SCRIPTED, 96.0, PI);
 }
 
 // ===== OFFER DIALOG (NEW v1.0) =====
@@ -330,6 +374,12 @@ handleButtonClick(string button) {
             IsOfferMode = TRUE;
             showPassMenu();
         }
+        else if (button == "Coffle") {
+            showCoffleMenu();
+        }
+        else if (button == "Post") {
+            showPostMenu();
+        }
         else if (button == "Yank") {
             sendLeashAction("yank");
             showMainMenu();
@@ -397,7 +447,7 @@ handleButtonClick(string button) {
                     i = i + 2;
                 }
             }
-            
+
             if (selected != NULL_KEY) {
                 string action;
                 if (IsOfferMode) {
@@ -411,6 +461,68 @@ handleButtonClick(string button) {
             }
             else {
                 llRegionSayTo(CurrentUser, 0, "Avatar not found.");
+                showMainMenu();
+            }
+        }
+    }
+    else if (MenuContext == "coffle") {
+        if (button == "Back") {
+            showMainMenu();
+        }
+        else if (button == "<<" || button == ">>") {
+            showCoffleMenu();
+        }
+        else {
+            // Find selected object in SensorCandidates
+            key selected = NULL_KEY;
+            integer i = 0;
+            while (i < llGetListLength(SensorCandidates)) {
+                if (llList2String(SensorCandidates, i) == button) {
+                    selected = llList2Key(SensorCandidates, i + 1);
+                    i = llGetListLength(SensorCandidates);
+                }
+                else {
+                    i = i + 2;
+                }
+            }
+
+            if (selected != NULL_KEY) {
+                sendLeashActionWithTarget("coffle", selected);
+                cleanupSession();
+            }
+            else {
+                llRegionSayTo(CurrentUser, 0, "Target not found.");
+                showMainMenu();
+            }
+        }
+    }
+    else if (MenuContext == "post") {
+        if (button == "Back") {
+            showMainMenu();
+        }
+        else if (button == "<<" || button == ">>") {
+            showPostMenu();
+        }
+        else {
+            // Find selected object in SensorCandidates
+            key selected = NULL_KEY;
+            integer i = 0;
+            while (i < llGetListLength(SensorCandidates)) {
+                if (llList2String(SensorCandidates, i) == button) {
+                    selected = llList2Key(SensorCandidates, i + 1);
+                    i = llGetListLength(SensorCandidates);
+                }
+                else {
+                    i = i + 2;
+                }
+            }
+
+            if (selected != NULL_KEY) {
+                sendLeashActionWithTarget("post", selected);
+                cleanupSession();
+            }
+            else {
+                llRegionSayTo(CurrentUser, 0, "Target not found.");
                 showMainMenu();
             }
         }
@@ -461,7 +573,7 @@ default
         cleanupSession();
         registerSelf();
         queryState();
-        logd("Leash UI ready (v1.0 OFFER DIALOG)");
+        logd("Leash UI ready (v2.0 MULTI-MODE)");
     }
     
     on_rez(integer start_param) {
@@ -523,6 +635,12 @@ default
                 }
                 if (jsonHas(msg, ["turnto"])) {
                     TurnToFace = (integer)llJsonGetValue(msg, ["turnto"]);
+                }
+                if (jsonHas(msg, ["mode"])) {
+                    LeashMode = (integer)llJsonGetValue(msg, ["mode"]);
+                }
+                if (jsonHas(msg, ["target"])) {
+                    LeashTarget = (key)llJsonGetValue(msg, ["target"]);
                 }
                 logd("State synced");
 
@@ -622,41 +740,63 @@ default
     sensor(integer num) {
         if (SensorMode == "") return;
         if (CurrentUser == NULL_KEY) return;
-        
+
         key owner = llGetOwner();
         SensorCandidates = [];
         integer i = 0;
-        
-        while (i < num && i < 9) {
-            key detected = llDetectedKey(i);
-            if (detected != owner && detected != Leasher) {
-                SensorCandidates += [llDetectedName(i), detected];
+
+        if (SensorMode == "pass") {
+            // For pass/offer, only detect avatars
+            while (i < num && i < 9) {
+                key detected = llDetectedKey(i);
+                if (detected != owner && detected != Leasher) {
+                    SensorCandidates += [llDetectedName(i), detected];
+                }
+                i = i + 1;
             }
-            i = i + 1;
         }
-        
+        else if (SensorMode == "coffle" || SensorMode == "post") {
+            // For coffle/post, detect objects
+            while (i < num && i < 9) {
+                key detected = llDetectedKey(i);
+                // Exclude self (collar) and current leash target
+                key my_key = llGetKey();
+                if (detected != my_key && detected != owner) {
+                    string name = llDetectedName(i);
+                    SensorCandidates += [name, detected];
+                }
+                i = i + 1;
+            }
+        }
+
         if (llGetListLength(SensorCandidates) == 0) {
             if (SensorMode == "pass") {
                 llRegionSayTo(CurrentUser, 0, "No nearby avatars found.");
-                showMainMenu();
             }
+            else if (SensorMode == "coffle") {
+                llRegionSayTo(CurrentUser, 0, "No nearby objects found for coffle.");
+            }
+            else if (SensorMode == "post") {
+                llRegionSayTo(CurrentUser, 0, "No nearby objects found to post to.");
+            }
+            showMainMenu();
             SensorMode = "";
             return;
         }
-        
+
         list names = [];
         i = 0;
         while (i < llGetListLength(SensorCandidates)) {
             names += [llList2String(SensorCandidates, i)];
             i = i + 2;
         }
-        
+
         list menu_buttons = ["<<", ">>", "Back"] + names;
-        
+
         MenuContext = SensorMode;
         string title = "";
         string body = "";
-        
+
         if (SensorMode == "pass") {
             if (IsOfferMode) {
                 title = "Offer Leash";
@@ -666,7 +806,15 @@ default
             }
             body = "Select avatar:";
         }
-        
+        else if (SensorMode == "coffle") {
+            title = "Coffle";
+            body = "Select collar to coffle to:";
+        }
+        else if (SensorMode == "post") {
+            title = "Post";
+            body = "Select object to post to:";
+        }
+
         showMenu(SensorMode, title, body, menu_buttons);
     }
     
@@ -674,8 +822,14 @@ default
         if (SensorMode == "") return;
         if (SensorMode == "pass") {
             llRegionSayTo(CurrentUser, 0, "No nearby avatars found.");
-            showMainMenu();
         }
+        else if (SensorMode == "coffle") {
+            llRegionSayTo(CurrentUser, 0, "No nearby objects found for coffle.");
+        }
+        else if (SensorMode == "post") {
+            llRegionSayTo(CurrentUser, 0, "No nearby objects found to post to.");
+        }
+        showMainMenu();
         SensorMode = "";
     }
 }

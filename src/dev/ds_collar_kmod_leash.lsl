@@ -1,7 +1,13 @@
 /* ===============================================================
-   DS Collar - Leash Kernel Module (v1.0 OFFER DIALOG)
-   
+   DS Collar - Leash Kernel Module (v2.0 MULTI-MODE)
+
    PURPOSE: Leashing engine - provides leash services to plugins
+
+   NEW FEATURES v2.0:
+   - Added three leash modes: Avatar, Coffle, Post
+   - Coffle: Collar-to-collar leashing (leashpoint to leashpoint)
+   - Post: Leash to a static object in world
+   - Mode-specific ACL restrictions (Coffle: ACL 3,5 | Post: ACL 1,3,5)
    
    NEW FEATURES v1.0:
    - Added offer acceptance dialog for leash offers
@@ -91,6 +97,13 @@ list ALLOWED_ACL_GRAB = [1, 3, 4, 5];     // Public, Trustee, Unowned, Owner
 list ALLOWED_ACL_SETTINGS = [3, 4, 5];    // Trustee, Unowned, Owner
 list ALLOWED_ACL_PASS = [3, 4, 5];        // Trustee, Unowned, Owner (plus current leasher)
 list ALLOWED_ACL_OFFER = [2];             // Owned wearer only (when not currently leashed)
+list ALLOWED_ACL_COFFLE = [3, 5];         // Trustee, Owner only
+list ALLOWED_ACL_POST = [1, 3, 5];        // Public, Trustee, Owner
+
+// Leash mode constants
+integer MODE_AVATAR = 0;  // Standard leash to avatar
+integer MODE_COFFLE = 1;  // Collar-to-collar leashpoint connection
+integer MODE_POST = 2;    // Posted to a static object
 
 // Settings keys
 string KEY_LEASHED = "leashed";
@@ -103,6 +116,8 @@ integer Leashed = FALSE;
 key Leasher = NULL_KEY;
 integer LeashLength = 3;
 integer TurnToFace = FALSE;
+integer LeashMode = MODE_AVATAR;  // Current leash mode
+key LeashTarget = NULL_KEY;       // Target object for coffle/post modes
 
 // Follow mechanics
 integer FollowActive = FALSE;
@@ -243,6 +258,24 @@ handleAclResult(string msg, key id) {
         } else {
             llRegionSayTo(PendingActionUser, 0, "Access denied: insufficient permissions to offer leash.");
             logd("Offer denied for ACL " + (string)acl_level);
+        }
+    }
+    else if (PendingAction == "coffle") {
+        // Coffle requires ACL 3 or 5 (Trustee or Owner)
+        if (inAllowedList(acl_level, ALLOWED_ACL_COFFLE)) {
+            coffleLeashInternal(PendingActionUser, PendingPassTarget);
+        } else {
+            llRegionSayTo(PendingActionUser, 0, "Access denied: coffle requires trustee or owner access.");
+            logd("Coffle denied for ACL " + (string)acl_level);
+        }
+    }
+    else if (PendingAction == "post") {
+        // Post requires ACL 1, 3, or 5 (Public, Trustee, or Owner)
+        if (inAllowedList(acl_level, ALLOWED_ACL_POST)) {
+            postLeashInternal(PendingActionUser, PendingPassTarget);
+        } else {
+            llRegionSayTo(PendingActionUser, 0, "Access denied: insufficient permissions to post.");
+            logd("Post denied for ACL " + (string)acl_level);
         }
     }
     else if (PendingAction == "pass_target_check") {
@@ -524,6 +557,8 @@ checkLeasherPresence() {
 autoReleaseOffsim() {
     Leashed = FALSE;
     Leasher = NULL_KEY;
+    LeashMode = MODE_AVATAR;
+    LeashTarget = NULL_KEY;
     persistLeashState(FALSE, NULL_KEY);
     HolderTarget = NULL_KEY;
     HolderState = HOLDER_STATE_IDLE;
@@ -628,7 +663,9 @@ broadcastState() {
         "leashed", (string)Leashed,
         "leasher", (string)Leasher,
         "length", (string)LeashLength,
-        "turnto", (string)TurnToFace
+        "turnto", (string)TurnToFace,
+        "mode", (string)LeashMode,
+        "target", (string)LeashTarget
     ]);
     llMessageLinked(LINK_SET, UI_BUS, msg, NULL_KEY);
 }
@@ -639,10 +676,12 @@ grabLeashInternal(key user) {
         llRegionSayTo(user, 0, "Already leashed to " + llKey2Name(Leasher));
         return;
     }
-    
+
     Leashed = TRUE;
     Leasher = user;
     LastLeasher = user;
+    LeashMode = MODE_AVATAR;  // Standard avatar leashing
+    LeashTarget = NULL_KEY;   // No special target for avatar mode
     persistLeashState(TRUE, user);
     beginHolderHandshake(user);
     
@@ -665,22 +704,24 @@ releaseLeashInternal(key user) {
         llRegionSayTo(user, 0, "Not currently leashed.");
         return;
     }
-    
+
     key old_leasher = Leasher;
     Leashed = FALSE;
     Leasher = NULL_KEY;
+    LeashMode = MODE_AVATAR;  // Reset to default mode
+    LeashTarget = NULL_KEY;   // Clear coffle/post target
     persistLeashState(FALSE, NULL_KEY);
     HolderTarget = NULL_KEY;
     HolderState = HOLDER_STATE_IDLE;
     closeHolderListen();
     closeHolderListenOc();
-    
+
     // CRITICAL BUG FIX: Clear auto-reclip state on explicit release
     // Without this, the system tries to re-leash after explicit unleash
     LastLeasher = NULL_KEY;
     ReclipScheduled = 0;
     ReclipAttempts = 0;
-    
+
     AuthorizedLmController = NULL_KEY;
     llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
         "type", "lm_disable"
@@ -689,7 +730,7 @@ releaseLeashInternal(key user) {
         "type", "particles_stop",
         "source", PLUGIN_CONTEXT
     ]), NULL_KEY);
-    
+
     stopFollow();
     llRegionSayTo(user, 0, "Leash released.");
     llOwnerSay("Released by " + llKey2Name(user));
@@ -699,30 +740,106 @@ releaseLeashInternal(key user) {
 
 passLeashInternal(key new_leasher) {
     if (!Leashed) return;
-    
+
     key old_leasher = Leasher;
     Leasher = new_leasher;
     LastLeasher = new_leasher;
     persistLeashState(TRUE, new_leasher);
-    
+
     // Update particles target
     llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
         "type", "particles_update",
         "target", (string)new_leasher
     ]), NULL_KEY);
-    
+
     // Update Lockmeister authorization
     AuthorizedLmController = new_leasher;
     llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
         "type", "lm_enable",
         "controller", (string)new_leasher
     ]), NULL_KEY);
-    
+
     llRegionSayTo(old_leasher, 0, "Leash passed to " + llKey2Name(new_leasher));
     llRegionSayTo(new_leasher, 0, "Leash received from " + llKey2Name(old_leasher));
     llOwnerSay("Leash passed to " + llKey2Name(new_leasher));
     broadcastState();
     logd("Passed to " + llKey2Name(new_leasher));
+}
+
+coffleLeashInternal(key user, key target_collar) {
+    if (Leashed) {
+        llRegionSayTo(user, 0, "Already leashed. Unclip first.");
+        return;
+    }
+
+    // Verify target is a valid object
+    list details = llGetObjectDetails(target_collar, [OBJECT_POS, OBJECT_NAME]);
+    if (llGetListLength(details) == 0) {
+        llRegionSayTo(user, 0, "Target collar not found or out of range.");
+        return;
+    }
+
+    Leashed = TRUE;
+    Leasher = user;
+    LastLeasher = user;
+    LeashMode = MODE_COFFLE;
+    LeashTarget = target_collar;
+    persistLeashState(TRUE, user);
+
+    // Start particles to target collar (no holder handshake needed)
+    llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
+        "type", "particles_start",
+        "source", PLUGIN_CONTEXT,
+        "target", (string)target_collar,
+        "style", "chain"
+    ]), NULL_KEY);
+
+    // No follow mechanics for coffle (they're chained, not following)
+    // No Lockmeister needed for coffle mode
+
+    string target_name = llList2String(details, 1);
+    llRegionSayTo(user, 0, "Coffled to " + target_name);
+    llOwnerSay("Coffled to " + target_name + " by " + llKey2Name(user));
+    broadcastState();
+    logd("Coffled to " + target_name + " by " + llKey2Name(user));
+}
+
+postLeashInternal(key user, key post_object) {
+    if (Leashed) {
+        llRegionSayTo(user, 0, "Already leashed. Unclip first.");
+        return;
+    }
+
+    // Verify target is a valid object
+    list details = llGetObjectDetails(post_object, [OBJECT_POS, OBJECT_NAME]);
+    if (llGetListLength(details) == 0) {
+        llRegionSayTo(user, 0, "Post object not found or out of range.");
+        return;
+    }
+
+    Leashed = TRUE;
+    Leasher = user;
+    LastLeasher = user;
+    LeashMode = MODE_POST;
+    LeashTarget = post_object;
+    persistLeashState(TRUE, user);
+
+    // Start particles to post object
+    llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
+        "type", "particles_start",
+        "source", PLUGIN_CONTEXT,
+        "target", (string)post_object,
+        "style", "chain"
+    ]), NULL_KEY);
+
+    // No follow mechanics for post mode (they're posted to an object)
+    // No Lockmeister needed for post mode
+
+    string object_name = llList2String(details, 1);
+    llRegionSayTo(user, 0, "Posted to " + object_name);
+    llOwnerSay("Posted to " + object_name + " by " + llKey2Name(user));
+    broadcastState();
+    logd("Posted to " + object_name + " by " + llKey2Name(user));
 }
 
 yankToLeasher() {
@@ -762,6 +879,13 @@ toggleTurnInternal() {
 // ===== FOLLOW MECHANICS (IMPROVED TURN THROTTLING) =====
 startFollow() {
     if (!Leashed || Leasher == NULL_KEY) return;
+
+    // Only activate follow for avatar mode
+    if (LeashMode != MODE_AVATAR) {
+        logd("Follow disabled for mode " + (string)LeashMode);
+        return;
+    }
+
     FollowActive = TRUE;
     llOwnerSay("@follow:" + (string)Leasher + "=force");
     llRequestPermissions(llGetOwner(), PERMISSION_TAKE_CONTROLS);
@@ -854,7 +978,7 @@ default
         ]), NULL_KEY);
         llSetTimerEvent(FOLLOW_TICK);
         llRequestPermissions(llGetOwner(), PERMISSION_TAKE_CONTROLS);
-        logd("Leash kmod ready (v1.0 OFFER DIALOG)");
+        logd("Leash kmod ready (v2.0 MULTI-MODE)");
     }
     
     on_rez(integer start_param) {
@@ -925,6 +1049,18 @@ default
                     if (jsonHas(msg, ["target"])) {
                         key target = (key)llJsonGetValue(msg, ["target"]);
                         requestAclForAction(user, "offer", target);
+                    }
+                }
+                else if (action == "coffle") {
+                    if (jsonHas(msg, ["target"])) {
+                        key target = (key)llJsonGetValue(msg, ["target"]);
+                        requestAclForAction(user, "coffle", target);
+                    }
+                }
+                else if (action == "post") {
+                    if (jsonHas(msg, ["target"])) {
+                        key target = (key)llJsonGetValue(msg, ["target"]);
+                        requestAclForAction(user, "post", target);
                     }
                 }
                 else if (action == "set_length") {
