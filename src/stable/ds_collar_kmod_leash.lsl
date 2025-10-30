@@ -85,7 +85,7 @@ integer UI_BUS = 900;
    =============================================================== */
 
 // Holder object name (change here if needed)
-string DS_HOLDER_NAME = "DS Leash Holder";
+string DS_HOLDER_NAME = "D/s Leash Holder";
 
 // Lockmeister/OpenCollar channel
 integer LEASH_CHAN_LM = -8888;
