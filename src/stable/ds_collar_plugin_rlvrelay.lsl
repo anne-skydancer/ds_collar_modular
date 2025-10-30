@@ -86,6 +86,7 @@ integer Mode = MODE_ON;
 integer Hardcore = FALSE;
 integer IsAttached = FALSE;
 integer RelayListenHandle = 0;
+key WearerKey = NULL_KEY;  // Cached owner UUID for performance
 
 // Relays: [obj_key, obj_name, session_chan, restrictions_csv] * N
 list Relays = [];
@@ -690,8 +691,7 @@ handle_relay_message(key sender_id, string sender_name, string raw_msg) {
         key target_uuid = llList2Key(parts, 1);
 
         // Check if command is meant for this wearer (or wildcard)
-        key wearer = llGetOwner();
-        if (target_uuid != wearer && target_uuid != WILDCARD_UUID) {
+        if (target_uuid != WearerKey && target_uuid != WILDCARD_UUID) {
             // Command not meant for this wearer, ignore it
             logd("Ignoring command meant for " + (string)target_uuid);
             return;
@@ -746,17 +746,18 @@ default
 {
     state_entry() {
         cleanup_session();
-        
+
         // Check attachment state
         IsAttached = (llGetAttached() != 0);
-        
+        WearerKey = llGetOwner();
+
         // Handle ground rez
         if (!IsAttached) {
             handle_ground_rez();
         }
-        
+
         logd("Plugin started (Attached=" + (string)IsAttached + ")");
-        
+
         // Request settings
         string request = llList2Json(JSON_OBJECT, [
             "type", "settings_get"
@@ -777,6 +778,7 @@ default
         else {
             // Attached
             IsAttached = TRUE;
+            WearerKey = id;  // Update cached wearer UUID
             update_relay_listen_state();
             llOwnerSay("[RELAY] Collar attached - Relay state restored");
         }
