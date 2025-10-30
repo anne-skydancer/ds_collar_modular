@@ -1,5 +1,5 @@
 /* =============================================================================
-   PLUGIN: ds_collar_plugin_rlvrelay.lsl (v2.0 - Consolidated ABI)
+   PLUGIN: ds_collar_plugin_rlvrelay.lsl (v2.1 - ORG Spec Compliance)
    
    PURPOSE: RLV relay with mode toggle + hardcore + safeword integration
    
@@ -19,6 +19,10 @@
    - Fixed: ACL race condition handling
    - Fixed: Object name truncation in display
    - Fixed: Session cleanup properly cancels dialogs
+
+   BUG FIXES V2.1:
+   - Fixed: Relay now validates target UUID per ORG spec (prevents processing
+     commands meant for other avatars)
    
    NAMING: PascalCase globals, ALL_CAPS constants, snake_case locals
    ============================================================================= */
@@ -65,6 +69,9 @@ integer MODE_HARDCORE = 2;
 
 integer SOS_MSG_NUM = 555;  // SOS emergency channel
 
+// ORG relay spec wildcard UUID (accepts commands from any avatar)
+key WILDCARD_UUID = "ffffffff-ffff-ffff-ffff-ffffffffffff";
+
 /* ═══════════════════════════════════════════════════════════
    SETTINGS KEYS
    ═══════════════════════════════════════════════════════════ */
@@ -79,6 +86,7 @@ integer Mode = MODE_ON;
 integer Hardcore = FALSE;
 integer IsAttached = FALSE;
 integer RelayListenHandle = 0;
+key WearerKey = NULL_KEY;  // Cached owner UUID for performance
 
 // Relays: [obj_key, obj_name, session_chan, restrictions_csv] * N
 list Relays = [];
@@ -664,7 +672,7 @@ handle_dialog_timeout(string msg) {
 handle_relay_message(key sender_id, string sender_name, string raw_msg) {
     // Only process relay commands when attached
     if (!IsAttached) return;
-    
+
     // Parse message format: "command|channel" or just "command"
     list parsed = llParseString2List(raw_msg, ["|"], []);
     string raw_cmd = llList2String(parsed, 0);
@@ -672,14 +680,38 @@ handle_relay_message(key sender_id, string sender_name, string raw_msg) {
     if (llGetListLength(parsed) > 1) {
         session_chan = (integer)llList2String(parsed, 1);
     }
-    
-    // Extract command from RLV wrapper if present
+
+    // Parse ORG standard format: "<ident>,<target_uuid>,<commands>"
+    list parts = llParseString2List(raw_cmd, [","], []);
     string command = raw_cmd;
-    if (llSubStringIndex(raw_cmd, "RLV,") == 0) {
-        list parts = llParseString2List(raw_cmd, [","], []);
-        if (llGetListLength(parts) >= 3) {
+
+    // Validate ORG format: check if parts[1] looks like a UUID
+    // UUIDs are 36 chars (8-4-4-4-12) with hyphens at positions 8,13,18,23
+    if (llGetListLength(parts) >= 3) {
+        string potential_uuid = llList2String(parts, 1);
+        integer uuid_len = llStringLength(potential_uuid);
+
+        // Check if this looks like a UUID (36 chars with hyphens in right places)
+        if (uuid_len == 36 &&
+            llGetSubString(potential_uuid, 8, 8) == "-" &&
+            llGetSubString(potential_uuid, 13, 13) == "-" &&
+            llGetSubString(potential_uuid, 18, 18) == "-" &&
+            llGetSubString(potential_uuid, 23, 23) == "-") {
+
+            // This is ORG format, validate target UUID
+            key target_uuid = (key)potential_uuid;
+
+            // Check if command is meant for this wearer (or wildcard)
+            if (target_uuid != WearerKey && target_uuid != WILDCARD_UUID) {
+                // Command not meant for this wearer, ignore it
+                logd("Ignoring command meant for " + (string)target_uuid);
+                return;
+            }
+
+            // Extract commands (field 2 onwards)
             command = llList2String(parts, 2);
         }
+        // else: not ORG format, treat entire raw_cmd as command
     }
     
     // Handle version queries
@@ -727,17 +759,18 @@ default
 {
     state_entry() {
         cleanup_session();
-        
+
         // Check attachment state
         IsAttached = (llGetAttached() != 0);
-        
+        WearerKey = llGetOwner();
+
         // Handle ground rez
         if (!IsAttached) {
             handle_ground_rez();
         }
-        
+
         logd("Plugin started (Attached=" + (string)IsAttached + ")");
-        
+
         // Request settings
         string request = llList2Json(JSON_OBJECT, [
             "type", "settings_get"
@@ -758,6 +791,7 @@ default
         else {
             // Attached
             IsAttached = TRUE;
+            WearerKey = id;  // Update cached wearer UUID
             update_relay_listen_state();
             llOwnerSay("[RELAY] Collar attached - Relay state restored");
         }
