@@ -529,8 +529,16 @@ default {
 
             // Only trigger menu if ACL >= 1 (public or higher)
             if (level >= 1) {
-                trigger_menu_for_external_user(avatar_key, requested_context);
-                logd("Menu request approved for " + llKey2Name(avatar_key) + " (ACL " + (string)level + ", context: " + requested_context + ")");
+                // SECURITY: Only allow SOS context for collar wearer
+                // Non-wearers requesting SOS get downgraded to root menu
+                string final_context = requested_context;
+                if (requested_context == SOS_CONTEXT && avatar_key != CollarOwner) {
+                    final_context = ROOT_CONTEXT;
+                    logd("SOS context request from non-wearer " + llKey2Name(avatar_key) + " downgraded to root");
+                }
+
+                trigger_menu_for_external_user(avatar_key, final_context);
+                logd("Menu request approved for " + llKey2Name(avatar_key) + " (ACL " + (string)level + ", context: " + final_context + ")");
             } else {
                 logd("Menu request denied for " + llKey2Name(avatar_key) + " (ACL " + (string)level + ")");
             }
