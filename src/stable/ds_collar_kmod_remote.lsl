@@ -74,12 +74,18 @@ list QueryTimestamps = [];
 integer MAX_PENDING_QUERIES = 20;
 float QUERY_TIMEOUT = 30.0;  // 30 seconds
 
-/* Per-request-type rate limiting: [avatar_key, timestamp, ...] */
-list ScanTimestamps = [];
-list AclQueryTimestamps = [];
-list MenuRequestTimestamps = [];
-integer RATE_LIMIT_STRIDE = 2;
+/* Per-request-type rate limiting: [avatar_key, request_type, timestamp, ...] */
+list RateLimitTimestamps = [];
+integer RATE_LIMIT_STRIDE = 3;
+integer RATE_LIMIT_KEY = 0;
+integer RATE_LIMIT_TYPE = 1;
+integer RATE_LIMIT_TIME = 2;
 float REQUEST_COOLDOWN = 2.0;  // 2 seconds between requests per user per type
+
+// Request type identifiers
+integer REQUEST_TYPE_SCAN = 1;
+integer REQUEST_TYPE_ACL_QUERY = 2;
+integer REQUEST_TYPE_MENU = 3;
 
 /* ═══════════════════════════════════════════════════════════
    HELPERS
@@ -101,63 +107,37 @@ integer now() {
    RATE LIMITING (per-request-type)
    ══════════════════════════════════════════════════════════════════════════════ */
 
-integer check_scan_rate_limit(key requester) {
+integer check_rate_limit(key requester, integer request_type, string request_name) {
     integer now_time = now();
-    integer idx = llListFindList(ScanTimestamps, [requester]);
 
-    if (idx != -1) {
-        integer last_request = llList2Integer(ScanTimestamps, idx + 1);
-        if ((now_time - last_request) < REQUEST_COOLDOWN) {
-            logd("Rate limit (scan): " + llKey2Name(requester) + " requested too soon");
-            return FALSE;
+    // Find this requester's last request of this type
+    integer idx = 0;
+    integer len = llGetListLength(RateLimitTimestamps);
+    while (idx < len) {
+        if (llList2Key(RateLimitTimestamps, idx + RATE_LIMIT_KEY) == requester &&
+            llList2Integer(RateLimitTimestamps, idx + RATE_LIMIT_TYPE) == request_type) {
+
+            integer last_request = llList2Integer(RateLimitTimestamps, idx + RATE_LIMIT_TIME);
+            if ((now_time - last_request) < REQUEST_COOLDOWN) {
+                logd("Rate limit (" + request_name + "): " + llKey2Name(requester) + " requested too soon");
+                return FALSE;
+            }
+
+            // Update timestamp
+            RateLimitTimestamps = llListReplaceList(RateLimitTimestamps, [now_time], idx + RATE_LIMIT_TIME, idx + RATE_LIMIT_TIME);
+            return TRUE;
         }
-        ScanTimestamps = llListReplaceList(ScanTimestamps, [now_time], idx + 1, idx + 1);
-    } else {
-        ScanTimestamps += [requester, now_time];
-        if (llGetListLength(ScanTimestamps) > 40) {
-            ScanTimestamps = llList2List(ScanTimestamps, -40, -1);
-        }
+        idx += RATE_LIMIT_STRIDE;
     }
-    return TRUE;
-}
 
-integer check_acl_query_rate_limit(key requester) {
-    integer now_time = now();
-    integer idx = llListFindList(AclQueryTimestamps, [requester]);
+    // First request of this type from this user
+    RateLimitTimestamps += [requester, request_type, now_time];
 
-    if (idx != -1) {
-        integer last_request = llList2Integer(AclQueryTimestamps, idx + 1);
-        if ((now_time - last_request) < REQUEST_COOLDOWN) {
-            logd("Rate limit (ACL query): " + llKey2Name(requester) + " requested too soon");
-            return FALSE;
-        }
-        AclQueryTimestamps = llListReplaceList(AclQueryTimestamps, [now_time], idx + 1, idx + 1);
-    } else {
-        AclQueryTimestamps += [requester, now_time];
-        if (llGetListLength(AclQueryTimestamps) > 40) {
-            AclQueryTimestamps = llList2List(AclQueryTimestamps, -40, -1);
-        }
+    // Prune old entries if list gets large
+    if (llGetListLength(RateLimitTimestamps) > 120) {  // 40 entries * 3 stride
+        RateLimitTimestamps = llList2List(RateLimitTimestamps, -120, -1);
     }
-    return TRUE;
-}
 
-integer check_menu_request_rate_limit(key requester) {
-    integer now_time = now();
-    integer idx = llListFindList(MenuRequestTimestamps, [requester]);
-
-    if (idx != -1) {
-        integer last_request = llList2Integer(MenuRequestTimestamps, idx + 1);
-        if ((now_time - last_request) < REQUEST_COOLDOWN) {
-            logd("Rate limit (menu): " + llKey2Name(requester) + " requested too soon");
-            return FALSE;
-        }
-        MenuRequestTimestamps = llListReplaceList(MenuRequestTimestamps, [now_time], idx + 1, idx + 1);
-    } else {
-        MenuRequestTimestamps += [requester, now_time];
-        if (llGetListLength(MenuRequestTimestamps) > 40) {
-            MenuRequestTimestamps = llList2List(MenuRequestTimestamps, -40, -1);
-        }
-    }
     return TRUE;
 }
 
@@ -320,8 +300,8 @@ handle_collar_scan(string message) {
     key hud_wearer = (key)llJsonGetValue(message, ["hud_wearer"]);
     if (hud_wearer == NULL_KEY) return;
 
-    // SECURITY: Rate limit check (per scan type)
-    if (!check_scan_rate_limit(hud_wearer)) return;
+    // SECURITY: Rate limit check
+    if (!check_rate_limit(hud_wearer, REQUEST_TYPE_SCAN, "scan")) return;
     
     // Check distance to HUD wearer
     list agent_data = llGetObjectDetails(hud_wearer, [OBJECT_POS]);
@@ -364,8 +344,8 @@ handle_acl_query_external(string message) {
     if (hud_object == NULL_KEY) return;
     if (target_avatar == NULL_KEY) return;
 
-    // SECURITY: Rate limit check (per ACL query type)
-    if (!check_acl_query_rate_limit(hud_wearer)) return;
+    // SECURITY: Rate limit check
+    if (!check_rate_limit(hud_wearer, REQUEST_TYPE_ACL_QUERY, "ACL query")) return;
     
     // Check if this query is for OUR collar (target matches our owner)
     if (target_avatar != CollarOwner) {
@@ -397,8 +377,8 @@ handle_menu_request_external(string message) {
 
     logd("Received menu request - context='" + context + "' (length=" + (string)llStringLength(context) + "), SOS_CONTEXT='" + SOS_CONTEXT + "', match=" + (string)(context == SOS_CONTEXT));
 
-    // SECURITY: Rate limit check (per menu request type)
-    if (!check_menu_request_rate_limit(hud_wearer)) return;
+    // SECURITY: Rate limit check
+    if (!check_rate_limit(hud_wearer, REQUEST_TYPE_MENU, "menu")) return;
 
     // SECURITY: Check range
     list agent_data = llGetObjectDetails(hud_wearer, [OBJECT_POS]);
@@ -453,9 +433,7 @@ default {
         PendingQueries = [];
         PendingMenuRequests = [];
         QueryTimestamps = [];
-        ScanTimestamps = [];
-        AclQueryTimestamps = [];
-        MenuRequestTimestamps = [];
+        RateLimitTimestamps = [];
         CollarOwner = llGetOwner();
         
         // Listen for external ACL queries and menu requests
