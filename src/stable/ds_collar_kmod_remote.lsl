@@ -364,9 +364,6 @@ handle_menu_request_external(string message) {
 
     logd("Received menu request - context='" + context + "' (length=" + (string)llStringLength(context) + "), SOS_CONTEXT='" + SOS_CONTEXT + "', match=" + (string)(context == SOS_CONTEXT));
 
-    // SECURITY: Rate limit check
-    if (!check_rate_limit(hud_wearer)) return;
-
     // SECURITY: Check range first
     list agent_data = llGetObjectDetails(hud_wearer, [OBJECT_POS]);
     if (llGetListLength(agent_data) == 0) {
