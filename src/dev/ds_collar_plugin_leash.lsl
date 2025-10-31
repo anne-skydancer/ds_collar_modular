@@ -71,6 +71,7 @@ string SessionId = "";
 string MenuContext = "";
 string SensorMode = "";
 list SensorCandidates = [];
+integer SensorPage = 0;  // Current page for sensor results (0-based)
 integer IsOfferMode = FALSE;  // TRUE if ACL 2 offering, FALSE if higher ACL passing
 
 // Offer dialog state (NEW v1.0)
@@ -282,6 +283,7 @@ buildAvatarMenu() {
 showCoffleMenu() {
     SensorMode = "coffle";
     MenuContext = "coffle";
+    SensorPage = 0;
     // Scan for objects (potential collars) within range
     llSensor("", NULL_KEY, SCRIPTED, 96.0, PI);
 }
@@ -289,6 +291,7 @@ showCoffleMenu() {
 showPostMenu() {
     SensorMode = "post";
     MenuContext = "post";
+    SensorPage = 0;
     // Scan for all objects (posts) within range
     llSensor("", NULL_KEY, PASSIVE | ACTIVE | SCRIPTED, 96.0, PI);
 }
@@ -516,29 +519,41 @@ handleButtonClick(string button) {
         if (button == "Back") {
             showMainMenu();
         }
-        else if (button == "<<" || button == ">>") {
+        else if (button == "<<") {
+            // Previous page
+            if (SensorPage > 0) {
+                SensorPage--;
+            }
+            showCoffleMenu();
+        }
+        else if (button == ">>") {
+            // Next page
+            integer total_items = llGetListLength(SensorCandidates) / 2;
+            integer total_pages = (total_items + 8) / 9;
+            if (SensorPage < (total_pages - 1)) {
+                SensorPage++;
+            }
             showCoffleMenu();
         }
         else {
-            // Find selected object in SensorCandidates
-            key selected = NULL_KEY;
-            integer i = 0;
-            while (i < llGetListLength(SensorCandidates)) {
-                if (llList2String(SensorCandidates, i) == button) {
-                    selected = llList2Key(SensorCandidates, i + 1);
-                    i = llGetListLength(SensorCandidates);
+            // Numbered selection - convert to actual index
+            integer button_num = (integer)button;
+            if (button_num >= 1 && button_num <= 9) {
+                integer actual_index = (SensorPage * 9) + (button_num - 1);
+                integer list_index = actual_index * 2;  // SensorCandidates is [name, key, name, key, ...]
+
+                if (list_index < llGetListLength(SensorCandidates)) {
+                    key selected = llList2Key(SensorCandidates, list_index + 1);
+                    sendLeashActionWithTarget("coffle", selected);
+                    cleanupSession();
                 }
                 else {
-                    i = i + 2;
+                    llRegionSayTo(CurrentUser, 0, "Invalid selection.");
+                    showMainMenu();
                 }
             }
-
-            if (selected != NULL_KEY) {
-                sendLeashActionWithTarget("coffle", selected);
-                cleanupSession();
-            }
             else {
-                llRegionSayTo(CurrentUser, 0, "Target not found.");
+                llRegionSayTo(CurrentUser, 0, "Invalid selection.");
                 showMainMenu();
             }
         }
@@ -547,29 +562,41 @@ handleButtonClick(string button) {
         if (button == "Back") {
             showMainMenu();
         }
-        else if (button == "<<" || button == ">>") {
+        else if (button == "<<") {
+            // Previous page
+            if (SensorPage > 0) {
+                SensorPage--;
+            }
+            showPostMenu();
+        }
+        else if (button == ">>") {
+            // Next page
+            integer total_items = llGetListLength(SensorCandidates) / 2;
+            integer total_pages = (total_items + 8) / 9;
+            if (SensorPage < (total_pages - 1)) {
+                SensorPage++;
+            }
             showPostMenu();
         }
         else {
-            // Find selected object in SensorCandidates
-            key selected = NULL_KEY;
-            integer i = 0;
-            while (i < llGetListLength(SensorCandidates)) {
-                if (llList2String(SensorCandidates, i) == button) {
-                    selected = llList2Key(SensorCandidates, i + 1);
-                    i = llGetListLength(SensorCandidates);
+            // Numbered selection - convert to actual index
+            integer button_num = (integer)button;
+            if (button_num >= 1 && button_num <= 9) {
+                integer actual_index = (SensorPage * 9) + (button_num - 1);
+                integer list_index = actual_index * 2;  // SensorCandidates is [name, key, name, key, ...]
+
+                if (list_index < llGetListLength(SensorCandidates)) {
+                    key selected = llList2Key(SensorCandidates, list_index + 1);
+                    sendLeashActionWithTarget("post", selected);
+                    cleanupSession();
                 }
                 else {
-                    i = i + 2;
+                    llRegionSayTo(CurrentUser, 0, "Invalid selection.");
+                    showMainMenu();
                 }
             }
-
-            if (selected != NULL_KEY) {
-                sendLeashActionWithTarget("post", selected);
-                cleanupSession();
-            }
             else {
-                llRegionSayTo(CurrentUser, 0, "Target not found.");
+                llRegionSayTo(CurrentUser, 0, "Invalid selection.");
                 showMainMenu();
             }
         }
@@ -593,6 +620,7 @@ cleanupSession() {
     MenuContext = "";
     SensorMode = "";
     SensorCandidates = [];
+    SensorPage = 0;
     IsOfferMode = FALSE;
     logd("Session cleaned up");
 }
@@ -796,8 +824,8 @@ default
         SensorCandidates = [];
         integer i = 0;
 
-        // Detect objects for coffle/post
-        while (i < num && i < 9) {
+        // Detect ALL objects for coffle/post (no limit, we'll paginate)
+        while (i < num) {
             key detected = llDetectedKey(i);
             // Exclude self (collar) and owner avatar
             if (detected != my_key && detected != owner) {
@@ -819,25 +847,43 @@ default
             return;
         }
 
-        list names = [];
-        i = 0;
-        while (i < llGetListLength(SensorCandidates)) {
-            names += [llList2String(SensorCandidates, i)];
-            i = i + 2;
+        // Calculate pagination (9 items per page)
+        integer total_items = llGetListLength(SensorCandidates) / 2;
+        integer total_pages = (total_items + 8) / 9;  // Ceiling division
+        integer start_index = SensorPage * 9;
+        integer end_index = start_index + 9;
+        if (end_index > total_items) end_index = total_items;
+
+        // Build numbered list body text
+        string body = "";
+        i = start_index;
+        integer display_num = 1;
+        while (i < end_index) {
+            string obj_name = llList2String(SensorCandidates, i * 2);
+            body += (string)display_num + ". " + obj_name + "\n";
+            display_num++;
+            i++;
         }
 
-        list menu_buttons = ["<<", ">>", "Back"] + names;
+        // Build numbered buttons (only for items on this page)
+        list menu_buttons = ["<<", ">>", "Back"];
+        i = 1;
+        while (i <= (end_index - start_index)) {
+            menu_buttons += [(string)i];
+            i++;
+        }
+
+        // Add pagination info to body
+        if (total_pages > 1) {
+            body += "\nPage " + (string)(SensorPage + 1) + "/" + (string)total_pages;
+        }
 
         string title = "";
-        string body = "";
-
         if (SensorMode == "coffle") {
             title = "Coffle";
-            body = "Select collar to coffle to:";
         }
         else if (SensorMode == "post") {
             title = "Post";
-            body = "Select object to post to:";
         }
 
         showMenu(SensorMode, title, body, menu_buttons);
