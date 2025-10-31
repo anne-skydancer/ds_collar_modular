@@ -74,10 +74,18 @@ list QueryTimestamps = [];
 integer MAX_PENDING_QUERIES = 20;
 float QUERY_TIMEOUT = 30.0;  // 30 seconds
 
-/* Rate limiting: [avatar_key, timestamp, ...] */
-list RequestTimestamps = [];
-integer REQUEST_STRIDE = 2;
-float REQUEST_COOLDOWN = 2.0;  // 2 seconds between requests per user
+/* Per-request-type rate limiting: [avatar_key, request_type, timestamp, ...] */
+list RateLimitTimestamps = [];
+integer RATE_LIMIT_STRIDE = 3;
+integer RATE_LIMIT_KEY = 0;
+integer RATE_LIMIT_TYPE = 1;
+integer RATE_LIMIT_TIME = 2;
+float REQUEST_COOLDOWN = 2.0;  // 2 seconds between requests per user per type
+
+// Request type identifiers
+integer REQUEST_TYPE_SCAN = 1;
+integer REQUEST_TYPE_ACL_QUERY = 2;
+integer REQUEST_TYPE_MENU = 3;
 
 /* ═══════════════════════════════════════════════════════════
    HELPERS
@@ -96,36 +104,41 @@ integer now() {
 }
 
 /* ══════════════════════════════════════════════════════════════════════════════
-   RATE LIMITING
+   RATE LIMITING (per-request-type)
    ══════════════════════════════════════════════════════════════════════════════ */
 
-integer check_rate_limit(key requester) {
+integer check_rate_limit(key requester, integer request_type, string request_name) {
     integer now_time = now();
-    
-    // Find this requester's last request
-    integer idx = llListFindList(RequestTimestamps, [requester]);
-    
-    if (idx != -1) {
-        integer last_request = llList2Integer(RequestTimestamps, idx + 1);
-        
-        if ((now_time - last_request) < REQUEST_COOLDOWN) {
-            logd("Rate limit: " + llKey2Name(requester) + " requested too soon");
-            return FALSE;  // Rate limited
+
+    // Find this requester's last request of this type
+    integer idx = 0;
+    integer len = llGetListLength(RateLimitTimestamps);
+    while (idx < len) {
+        if (llList2Key(RateLimitTimestamps, idx + RATE_LIMIT_KEY) == requester &&
+            llList2Integer(RateLimitTimestamps, idx + RATE_LIMIT_TYPE) == request_type) {
+
+            integer last_request = llList2Integer(RateLimitTimestamps, idx + RATE_LIMIT_TIME);
+            if ((now_time - last_request) < REQUEST_COOLDOWN) {
+                logd("Rate limit (" + request_name + "): " + llKey2Name(requester) + " requested too soon");
+                return FALSE;
+            }
+
+            // Update timestamp
+            RateLimitTimestamps = llListReplaceList(RateLimitTimestamps, [now_time], idx + RATE_LIMIT_TIME, idx + RATE_LIMIT_TIME);
+            return TRUE;
         }
-        
-        // Update timestamp
-        RequestTimestamps = llListReplaceList(RequestTimestamps, [now_time], idx + 1, idx + 1);
-    } else {
-        // First request from this user
-        RequestTimestamps += [requester, now_time];
-        
-        // Prune old entries if list gets large
-        if (llGetListLength(RequestTimestamps) > 40) {
-            RequestTimestamps = llList2List(RequestTimestamps, -40, -1);
-        }
+        idx += RATE_LIMIT_STRIDE;
     }
-    
-    return TRUE;  // Allowed
+
+    // First request of this type from this user
+    RateLimitTimestamps += [requester, request_type, now_time];
+
+    // Prune old entries if list gets large
+    if (llGetListLength(RateLimitTimestamps) > 120) {  // 40 entries * 3 stride
+        RateLimitTimestamps = llList2List(RateLimitTimestamps, -120, -1);
+    }
+
+    return TRUE;
 }
 
 /* ══════════════════════════════════════════════════════════════════════════════
@@ -283,12 +296,12 @@ handle_collar_scan(string message) {
         logd("collar_scan missing hud_wearer field");
         return;
     }
-    
+
     key hud_wearer = (key)llJsonGetValue(message, ["hud_wearer"]);
     if (hud_wearer == NULL_KEY) return;
-    
+
     // SECURITY: Rate limit check
-    if (!check_rate_limit(hud_wearer)) return;
+    if (!check_rate_limit(hud_wearer, REQUEST_TYPE_SCAN, "scan")) return;
     
     // Check distance to HUD wearer
     list agent_data = llGetObjectDetails(hud_wearer, [OBJECT_POS]);
@@ -322,17 +335,17 @@ handle_acl_query_external(string message) {
     if (!json_has(message, ["avatar"])) return;
     if (!json_has(message, ["hud"])) return;
     if (!json_has(message, ["target_avatar"])) return;
-    
+
     key hud_wearer = (key)llJsonGetValue(message, ["avatar"]);
     key hud_object = (key)llJsonGetValue(message, ["hud"]);
     key target_avatar = (key)llJsonGetValue(message, ["target_avatar"]);
-    
+
     if (hud_wearer == NULL_KEY) return;
     if (hud_object == NULL_KEY) return;
     if (target_avatar == NULL_KEY) return;
-    
+
     // SECURITY: Rate limit check
-    if (!check_rate_limit(hud_wearer)) return;
+    if (!check_rate_limit(hud_wearer, REQUEST_TYPE_ACL_QUERY, "ACL query")) return;
     
     // Check if this query is for OUR collar (target matches our owner)
     if (target_avatar != CollarOwner) {
@@ -365,9 +378,9 @@ handle_menu_request_external(string message) {
     logd("Received menu request - context='" + context + "' (length=" + (string)llStringLength(context) + "), SOS_CONTEXT='" + SOS_CONTEXT + "', match=" + (string)(context == SOS_CONTEXT));
 
     // SECURITY: Rate limit check
-    if (!check_rate_limit(hud_wearer)) return;
+    if (!check_rate_limit(hud_wearer, REQUEST_TYPE_MENU, "menu")) return;
 
-    // SECURITY: Check range first
+    // SECURITY: Check range
     list agent_data = llGetObjectDetails(hud_wearer, [OBJECT_POS]);
     if (llGetListLength(agent_data) == 0) {
         logd("Cannot verify HUD wearer position for menu request");
@@ -415,12 +428,12 @@ default {
         if (MenuRequestListenHandle != 0) {
             llListenRemove(MenuRequestListenHandle);
         }
-        
+
         // Initialize state
         PendingQueries = [];
         PendingMenuRequests = [];
         QueryTimestamps = [];
-        RequestTimestamps = [];
+        RateLimitTimestamps = [];
         CollarOwner = llGetOwner();
         
         // Listen for external ACL queries and menu requests
