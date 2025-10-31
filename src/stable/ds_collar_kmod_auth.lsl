@@ -645,7 +645,13 @@ default
         PluginAclRegistry = [];
 
         logd("Auth module started (with plugin ACL registry)");
-        
+
+        // Request ACL registry repopulation from kernel (P1 security fix)
+        string acl_request = llList2Json(JSON_OBJECT, [
+            "type", "acl_registry_request"
+        ]);
+        llMessageLinked(LINK_SET, AUTH_BUS, acl_request, NULL_KEY);
+
         // Request settings
         string request = llList2Json(JSON_OBJECT, [
             "type", "settings_get"

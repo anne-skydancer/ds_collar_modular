@@ -63,13 +63,14 @@ float   INV_SWEEP_INTERVAL    = 3.0;
 float   BATCH_WINDOW_SEC      = 0.1;  // Small batch window during startup burst
 float   DISCOVERY_INTERVAL_SEC = 5.0;  // Active plugin discovery interval
 
-/* Registry stride: [context, label, script, script_uuid, last_seen_unix] */
-integer REG_STRIDE = 5;
+/* Registry stride: [context, label, script, script_uuid, last_seen_unix, min_acl] */
+integer REG_STRIDE = 6;
 integer REG_CONTEXT = 0;
 integer REG_LABEL = 1;
 integer REG_SCRIPT = 2;
 integer REG_SCRIPT_UUID = 3;
 integer REG_LAST_SEEN = 4;
+integer REG_MIN_ACL = 5;    // Stored for auth module recovery (not used for decisions)
 
 /* Plugin operation queue stride: [op_type, context, label, script, timestamp] */
 integer QUEUE_STRIDE = 6;
@@ -157,7 +158,7 @@ integer is_plugin_script(string script_name) {
 // - Deduplicating at insertion prevents duplicate operations in batch
 // - Guarantees queue contains at most one operation per context
 // - Alternative (defer to batch) would process duplicates and cause multiple broadcasts
-integer queue_add(string op_type, string context, string label, string script) {
+integer queue_add(string op_type, string context, string label, string script, integer min_acl) {
     // Remove any existing queue entry for this context (newest operation wins)
     list new_queue = [];
     integer i = 0;
@@ -172,10 +173,10 @@ integer queue_add(string op_type, string context, string label, string script) {
 
     // Add new operation to queue
     integer timestamp = now();
-    new_queue += [op_type, context, label, script, timestamp];
+    new_queue += [op_type, context, label, script, min_acl, timestamp];
     RegistrationQueue = new_queue;
 
-    logd("Queued " + op_type + ": " + context + " (" + label + ")");
+    logd("Queued " + op_type + ": " + context + " (" + label + ") min_acl=" + (string)min_acl);
 
     // Schedule batch processing if not already scheduled
     // This creates a small batching window for startup bursts
@@ -213,10 +214,11 @@ integer process_queue() {
         string context = llList2String(RegistrationQueue, i + QUEUE_CONTEXT);
         string label = llList2String(RegistrationQueue, i + QUEUE_LABEL);
         string script = llList2String(RegistrationQueue, i + QUEUE_SCRIPT);
+        integer min_acl = llList2Integer(RegistrationQueue, i + QUEUE_MIN_ACL);
 
         if (op_type == "REG") {
             // Returns TRUE if new plugin OR if existing plugin data changed
-            integer reg_delta = registry_upsert(context, label, script);
+            integer reg_delta = registry_upsert(context, label, script, min_acl);
             if (reg_delta) changes_made = TRUE;
         }
         else if (op_type == "UNREG") {
@@ -269,7 +271,7 @@ integer registry_find_by_script(string script_name) {
 // Add or update plugin in registry
 // Returns TRUE if new plugin added OR script UUID changed (recompiled/updated)
 // Returns FALSE only if re-registering with identical UUID
-integer registry_upsert(string context, string label, string script) {
+integer registry_upsert(string context, string label, string script, integer min_acl) {
     integer idx = registry_find(context);
     integer now_unix = now();
 
@@ -283,8 +285,8 @@ integer registry_upsert(string context, string label, string script) {
 
     if (idx == -1) {
         // New plugin - add to registry
-        PluginRegistry += [context, label, script, script_uuid, now_unix];
-        logd("Registered: " + context + " (" + label + ") UUID=" + (string)script_uuid);
+        PluginRegistry += [context, label, script, script_uuid, now_unix, min_acl];
+        logd("Registered: " + context + " (" + label + ") min_acl=" + (string)min_acl + " UUID=" + (string)script_uuid);
         return TRUE;
     }
     else {
@@ -293,18 +295,19 @@ integer registry_upsert(string context, string label, string script) {
 
         integer uuid_changed = (old_uuid != script_uuid);
 
-        // Update registry (timestamp always updates)
+        // Update registry (timestamp and min_acl always update)
         PluginRegistry = llListReplaceList(PluginRegistry, [label], idx + REG_LABEL, idx + REG_LABEL);
         PluginRegistry = llListReplaceList(PluginRegistry, [script], idx + REG_SCRIPT, idx + REG_SCRIPT);
         PluginRegistry = llListReplaceList(PluginRegistry, [script_uuid], idx + REG_SCRIPT_UUID, idx + REG_SCRIPT_UUID);
         PluginRegistry = llListReplaceList(PluginRegistry, [now_unix], idx + REG_LAST_SEEN, idx + REG_LAST_SEEN);
+        PluginRegistry = llListReplaceList(PluginRegistry, [min_acl], idx + REG_MIN_ACL, idx + REG_MIN_ACL);
 
         if (uuid_changed) {
-            logd("Updated (UUID changed): " + context + " (" + label + ") " +
+            logd("Updated (UUID changed): " + context + " (" + label + ") min_acl=" + (string)min_acl + " " +
                  (string)old_uuid + " -> " + (string)script_uuid);
         }
         else {
-            logd("Updated (no change): " + context);
+            logd("Updated (no change): " + context + " min_acl=" + (string)min_acl);
         }
 
         return uuid_changed;
@@ -537,10 +540,10 @@ handle_register(string msg) {
     integer min_acl = (integer)llJsonGetValue(msg, ["min_acl"]);
     string script = llJsonGetValue(msg, ["script"]);
 
-    // Add to lifecycle queue (kernel's concern)
-    queue_add("REG", context, label, script);
+    // Add to lifecycle queue (kernel stores min_acl for auth recovery, not enforcement)
+    queue_add("REG", context, label, script, min_acl);
 
-    // Forward ACL requirement to auth module (auth's concern)
+    // Forward ACL requirement to auth module (auth's concern for enforcement)
     string auth_msg = llList2Json(JSON_OBJECT, [
         "type", "register_acl",
         "context", context,
@@ -601,6 +604,32 @@ handle_soft_reset(string msg) {
     LastDiscoveryUnix = now();
     llSetTimerEvent(PING_INTERVAL_SEC);
     broadcast_register_now();
+}
+
+handle_acl_registry_request() {
+    // Auth module requesting ACL repopulation (recovery from reset)
+    // Send all ACL data from kernel's registry
+    logd("ACL registry request received from auth module");
+
+    integer i = 0;
+    integer len = llGetListLength(PluginRegistry);
+
+    while (i < len) {
+        string context = llList2String(PluginRegistry, i + REG_CONTEXT);
+        integer min_acl = llList2Integer(PluginRegistry, i + REG_MIN_ACL);
+
+        // Send register_acl message for each plugin
+        string auth_msg = llList2Json(JSON_OBJECT, [
+            "type", "register_acl",
+            "context", context,
+            "min_acl", min_acl
+        ]);
+        llMessageLinked(LINK_SET, AUTH_BUS, auth_msg, NULL_KEY);
+
+        i += REG_STRIDE;
+    }
+
+    logd("ACL registry sent: " + (string)(len / REG_STRIDE) + " entries");
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -703,22 +732,28 @@ default
     }
     
     link_message(integer sender, integer num, string msg, key id) {
-        if (num != KERNEL_LIFECYCLE) return;
         if (!json_has(msg, ["type"])) return;
-        
+
         string msg_type = llJsonGetValue(msg, ["type"]);
-        
-        if (msg_type == "register") {
-            handle_register(msg);
+
+        if (num == KERNEL_LIFECYCLE) {
+            if (msg_type == "register") {
+                handle_register(msg);
+            }
+            else if (msg_type == "pong") {
+                handle_pong(msg);
+            }
+            else if (msg_type == "plugin_list_request") {
+                handle_plugin_list_request();
+            }
+            else if (msg_type == "soft_reset" || msg_type == "soft_reset_all") {
+                handle_soft_reset(msg);
+            }
         }
-        else if (msg_type == "pong") {
-            handle_pong(msg);
-        }
-        else if (msg_type == "plugin_list_request") {
-            handle_plugin_list_request();
-        }
-        else if (msg_type == "soft_reset" || msg_type == "soft_reset_all") {
-            handle_soft_reset(msg);
+        else if (num == AUTH_BUS) {
+            if (msg_type == "acl_registry_request") {
+                handle_acl_registry_request();
+            }
         }
     }
     
