@@ -57,6 +57,7 @@ integer DialogListenHandle = 0;
 
 integer ScanningForCollars = FALSE;
 integer AclPending = FALSE;
+integer DisplayNamePending = FALSE;
 integer AclLevel = ACL_NOACCESS;
 
 key TargetCollarKey = NULL_KEY;
@@ -70,6 +71,9 @@ integer COLLAR_STRIDE = 3;
 /* Touch tracking */
 float TouchStartTime = 0.0;
 string RequestedContext = "";
+
+/* Display name lookup */
+key DisplayNameQueryId = NULL_KEY;
 
 /* ═══════════════════════════════════════════════════════════
    HELPERS
@@ -100,6 +104,7 @@ cleanup_session() {
 
     ScanningForCollars = FALSE;
     AclPending = FALSE;
+    DisplayNamePending = FALSE;
     AclLevel = ACL_NOACCESS;
     TargetCollarKey = NULL_KEY;
     TargetAvatarKey = NULL_KEY;
@@ -107,6 +112,7 @@ cleanup_session() {
     DetectedCollars = [];
     TouchStartTime = 0.0;
     RequestedContext = "";
+    DisplayNameQueryId = NULL_KEY;
     llSetTimerEvent(0.0);
 }
 
@@ -152,13 +158,7 @@ broadcast_collar_scan(string context) {
     llSetTimerEvent(COLLAR_SCAN_TIME);
 
     logd("Broadcasting collar scan for " + context + " menu...");
-
-    if (context == SOS_CONTEXT) {
-        llOwnerSay("Emergency access - scanning for your collar...");
-    }
-    else {
-        llOwnerSay("Scanning for nearby collars...");
-    }
+    llOwnerSay("Scanning for nearby collars...");
 }
 
 process_scan_results() {
@@ -177,8 +177,7 @@ process_scan_results() {
         // AUTO-CONNECT to single collar (RLV relay style!)
         key avatar_key = llList2Key(DetectedCollars, 0);
         string avatar_name = llList2String(DetectedCollars, 2);
-        
-        llOwnerSay("Auto-connecting to " + avatar_name + "...");
+
         request_acl_from_collar(avatar_key);
         return;
     }
@@ -260,28 +259,12 @@ trigger_collar_menu() {
 
     logd("Triggering collar menu with context: '" + RequestedContext + "' (SOS_CONTEXT='" + SOS_CONTEXT + "', match=" + (string)(RequestedContext == SOS_CONTEXT) + ")");
 
-    string json_msg = llList2Json(JSON_OBJECT, [
-        "type", "menu_request_external",
-        "avatar", (string)HudWearer,
-        "context", RequestedContext
-    ]);
+    // Request display name via dataserver
+    DisplayNameQueryId = llRequestAgentData(TargetAvatarKey, DATA_NAME);
+    DisplayNamePending = TRUE;
+    llSetTimerEvent(QUERY_TIMEOUT_SEC);
 
-    logd("Sending menu request: " + json_msg);
-    llRegionSayTo(TargetCollarKey, COLLAR_MENU_CHAN, json_msg);
-
-    if (TargetAvatarKey == HudWearer) {
-        if (RequestedContext == SOS_CONTEXT) {
-            llOwnerSay("Opening emergency menu on your collar...");
-        }
-        else {
-            llOwnerSay("Opening your collar menu...");
-        }
-    }
-    else {
-        llOwnerSay("Opening " + TargetAvatarName + "'s collar menu...");
-    }
-
-    cleanup_session();
+    // The actual menu triggering and success message will be handled in dataserver()
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -289,70 +272,27 @@ trigger_collar_menu() {
    ═══════════════════════════════════════════════════════════ */
 
 process_acl_result(integer level) {
-    string access_msg = "";
-    integer has_access = FALSE;
-
-    // Check access level (no ternary, nested if/else per preferences)
-    if (level == ACL_PRIMARY_OWNER) {
-        access_msg = "✓ Access granted: PRIMARY OWNER";
-        has_access = TRUE;
-    }
-    else {
-        if (level == ACL_TRUSTEE) {
-            access_msg = "✓ Access granted: TRUSTEE";
-            has_access = TRUE;
-        }
-        else {
-            if (level == ACL_OWNED) {
-                access_msg = "✓ Access granted: OWNED";
-                has_access = TRUE;
-            }
-            else {
-                if (level == ACL_UNOWNED) {
-                    access_msg = "✓ Access granted: UNOWNED (wearer)";
-                    has_access = TRUE;
-                }
-                else {
-                    if (level == ACL_PUBLIC) {
-                        access_msg = "✓ Access granted: PUBLIC";
-                        has_access = TRUE;
-                    }
-                    else {
-                        if (level == ACL_NOACCESS) {
-                            access_msg = "✗ Access denied: NO ACCESS";
-                            has_access = FALSE;
-                        }
-                        else {
-                            if (level == ACL_BLACKLIST) {
-                                access_msg = "✗ Access denied: BLACKLISTED";
-                                has_access = FALSE;
-                            }
-                            else {
-                                access_msg = "✗ Access denied: Unknown level " + (string)level;
-                                has_access = FALSE;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
+    // Explicitly whitelist known ACL levels that grant access
+    // Reject unknown/malformed levels for security
+    integer has_access = (
+        level == ACL_PRIMARY_OWNER ||
+        level == ACL_TRUSTEE ||
+        level == ACL_OWNED ||
+        level == ACL_UNOWNED ||
+        level == ACL_PUBLIC
+    );
 
     // EMERGENCY ACCESS: Allow wearer to access SOS menu even with ACL 0
     // This handles TPE mode where wearer has no normal access to their collar
-    integer emergency_access = (level == ACL_NOACCESS && RequestedContext == SOS_CONTEXT && (HudWearer == TargetAvatarKey));
-
-    if (emergency_access) {
-        access_msg = "✓ Emergency access granted - opening SOS menu";
+    if (level == ACL_NOACCESS && RequestedContext == SOS_CONTEXT && HudWearer == TargetAvatarKey) {
         has_access = TRUE;
     }
-
-    llOwnerSay(access_msg);
 
     if (has_access) {
         trigger_collar_menu();
     }
     else {
+        llOwnerSay("Access denied.");
         cleanup_session();
     }
 }
@@ -476,7 +416,6 @@ default {
             }
             
             if (selected_avatar != NULL_KEY) {
-                llOwnerSay("Connecting to " + message + "...");
                 request_acl_from_collar(selected_avatar);
             }
             else {
@@ -522,6 +461,35 @@ default {
         }
     }
     
+    dataserver(key query_id, string data) {
+        if (query_id == DisplayNameQueryId) {
+            DisplayNameQueryId = NULL_KEY;
+            DisplayNamePending = FALSE;
+            llSetTimerEvent(0.0);
+
+            // Validate that session state is still valid
+            if (TargetCollarKey == NULL_KEY) {
+                logd("Session cleared before dataserver response");
+                return;
+            }
+
+            // Show simple connection message
+            llOwnerSay("Connected to " + data + "'s collar.");
+
+            // Send menu request to collar
+            string json_msg = llList2Json(JSON_OBJECT, [
+                "type", "menu_request_external",
+                "avatar", (string)HudWearer,
+                "context", RequestedContext
+            ]);
+
+            logd("Sending menu request: " + json_msg);
+            llRegionSayTo(TargetCollarKey, COLLAR_MENU_CHAN, json_msg);
+
+            cleanup_session();
+        }
+    }
+
     timer() {
         if (ScanningForCollars) {
             logd("Collar scan complete");
@@ -530,13 +498,20 @@ default {
         else {
             if (AclPending) {
                 logd("ACL query timeout");
-                llOwnerSay("✗ Connection failed: No response from " + TargetAvatarName);
+                llOwnerSay("Connection failed: No response from collar.");
                 cleanup_session();
             }
             else {
-                logd("Dialog timeout");
-                llOwnerSay("Selection dialog timed out.");
-                cleanup_session();
+                if (DisplayNamePending) {
+                    logd("Display name query timeout");
+                    llOwnerSay("Connection failed: Unable to retrieve name.");
+                    cleanup_session();
+                }
+                else {
+                    logd("Dialog timeout");
+                    llOwnerSay("Selection dialog timed out.");
+                    cleanup_session();
+                }
             }
         }
     }
