@@ -599,18 +599,18 @@ The collar supports pre-configuration via a notecard named **"settings"** in the
 # DS Collar Settings
 # Lines starting with # are comments
 # Format: key=value
-# Lists: key=[uuid1,uuid2,uuid3]
+# Lists use comma-separated UUIDs in brackets: key=[uuid1,uuid2,uuid3]
 
 # Ownership
-owner_key=12345678-1234-1234-1234-123456789abc
+owner_key=a1b2c3d4-e5f6-7890-abcd-ef1234567890
 owner_hon=Master
 multi_owner_mode=0
 
 # Access Control
 public_mode=1
-trustees=[uuid1,uuid2,uuid3]
+trustees=[12345678-90ab-cdef-1234-567890abcdef,abcdef01-2345-6789-abcd-ef0123456789]
 trustee_honorifics=[Mistress,Master,Daddy]
-blacklist=[uuid4,uuid5]
+blacklist=[fedcba98-7654-3210-fedc-ba9876543210]
 
 # Collar State
 locked=0
@@ -631,14 +631,14 @@ bell_sound=bell_sound_name
 
 | Key | Type | Description | Example |
 |-----|------|-------------|---------|
-| `owner_key` | UUID | Owner's avatar UUID (single owner mode) | `12345678-1234-...` |
-| `owner_keys` | List | Owner UUIDs (multi-owner mode, notecard only) | `[uuid1,uuid2]` |
+| `owner_key` | UUID | Owner's avatar UUID (single owner mode) | `a1b2c3d4-e5f6-7890-abcd-ef1234567890` |
+| `owner_keys` | List | Owner UUIDs (multi-owner mode, notecard only) | `[a1b2c3d4-e5f6-7890-abcd-ef1234567890,12345678-90ab-cdef-1234-567890abcdef]` |
 | `owner_hon` | String | Owner's honorific (single owner) | `Master`, `Mistress` |
 | `owner_honorifics` | List | Owner honorifics (multi-owner mode) | `[Master,Mistress]` |
 | `multi_owner_mode` | 0/1 | Enable multi-owner (notecard only) | `0` = off, `1` = on |
-| `trustees` | List | Trustee UUIDs | `[uuid1,uuid2]` |
+| `trustees` | List | Trustee UUIDs | `[12345678-90ab-cdef-1234-567890abcdef,abcdef01-2345-6789-abcd-ef0123456789]` |
 | `trustee_honorifics` | List | Trustee titles | `[Master,Mistress]` |
-| `blacklist` | List | Blacklisted UUIDs | `[uuid1,uuid2]` |
+| `blacklist` | List | Blacklisted UUIDs | `[fedcba98-7654-3210-fedc-ba9876543210,00000000-0000-0000-0000-000000000000]` |
 
 **Collar State:**
 
