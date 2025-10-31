@@ -277,6 +277,10 @@ apply_plugin_list(string plugins_json) {
             string label = llJsonGetValue(plugin_obj, ["label"]);
 
             // Add with default min_acl=0 (will be updated when ACL list arrives)
+            // RACE MITIGATION: Sessions are invalidated when plugin_list updates,
+            // so no active sessions exist during this window. New sessions only
+            // created after ACL query completes (handle_acl_result), ensuring
+            // ACL data is always present before access decisions are made.
             AllPlugins += [context, label, 0];
         }
 
@@ -314,12 +318,14 @@ apply_plugin_acl_list(string acl_json) {
             integer min_acl = (integer)llJsonGetValue(acl_obj, ["min_acl"]);
 
             // Find this context in AllPlugins and update min_acl
+            // OPTIMIZATION: Jump to next_acl after match (acts as break)
+            // Each context appears at most once, so no need to continue searching
             integer j = 0;
             integer len = llGetListLength(AllPlugins);
             while (j < len) {
                 if (llList2String(AllPlugins, j + PLUGIN_CONTEXT) == context) {
                     AllPlugins = llListReplaceList(AllPlugins, [min_acl], j + PLUGIN_MIN_ACL, j + PLUGIN_MIN_ACL);
-                    jump next_acl;
+                    jump next_acl;  // Break after match (each context is unique)
                 }
                 j += PLUGIN_STRIDE;
             }
