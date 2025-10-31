@@ -546,18 +546,29 @@ default {
             logd("Collar owner: " + (string)llGetOwner() + " (" + llKey2Name(llGetOwner()) + ")");
             logd("Requester: " + (string)avatar_key + " (" + llKey2Name(avatar_key) + ")");
 
-            // Only trigger menu if ACL >= 1 (public or higher)
-            if (level >= 1) {
+            // TPE MODE EMERGENCY ACCESS: Allow wearer to access SOS menu even with ACL 0
+            integer is_wearer = (avatar_key == llGetOwner());
+            integer emergency_access = (level == 0 && requested_context == SOS_CONTEXT && is_wearer);
+
+            // Only trigger menu if ACL >= 1 (public or higher) OR emergency access (TPE mode)
+            if (level >= 1 || emergency_access) {
                 // SECURITY: Only allow SOS context for collar wearer
                 // Non-wearers requesting SOS get downgraded to root menu
                 string final_context = requested_context;
-                if (requested_context == SOS_CONTEXT && avatar_key != llGetOwner()) {
+                if (requested_context == SOS_CONTEXT && !is_wearer) {
                     final_context = ROOT_CONTEXT;
                     logd("SOS context request from non-wearer " + llKey2Name(avatar_key) + " downgraded to root");
                     llRegionSayTo(avatar_key, 0, "Only the collar wearer can access the SOS menu. Showing main menu instead.");
                 }
                 else if (requested_context == SOS_CONTEXT) {
                     logd("SOS context request from WEARER " + llKey2Name(avatar_key) + " - keeping SOS context");
+                }
+
+                // SECURITY: In TPE mode (emergency access), only allow SOS menu
+                if (emergency_access && requested_context != SOS_CONTEXT) {
+                    logd("TPE wearer attempted to access non-SOS menu - denied");
+                    llRegionSayTo(avatar_key, 0, "In TPE mode, you can only access the emergency menu (long-touch the HUD).");
+                    return;
                 }
 
                 trigger_menu_for_external_user(avatar_key, final_context);
