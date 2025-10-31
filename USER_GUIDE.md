@@ -919,7 +919,7 @@ A: Yes. The collar is open source. All scripts are available at: https://github.
 **Q: How do I update to a new version?**
 A: Replace old scripts with new scripts from the latest release. The kernel version compatibility ensures plugins work across versions. Always backup your settings notecard first.
 
-**Q: Why doesn't the collar use llDialog for menus?**
+**Q: How does the collar implement menus?**
 A: The collar uses llDialog extensively. All menus are standard SL dialog boxes. The centralized dialog system (channel 950) ensures efficient dialog management across all plugins.
 
 ### Feature Requests
