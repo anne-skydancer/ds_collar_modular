@@ -554,11 +554,13 @@ TPE mode gives complete control to the owner by removing wearer's collar access.
 2. Wearer receives confirmation dialog: "Accept TPE mode? You will have no collar access."
 3. Wearer must click **Accept**
 4. Wearer loses all normal collar access
+5. Wearer receives notification: "TPE mode enabled. You have relinquished collar control."
 
 **Disabling TPE (Owner):**
 1. Touch collar → **TPE** → **Disable**
-2. No confirmation required
+2. No wearer confirmation required - owner decision only
 3. Wearer returns to normal owned status
+4. Wearer receives notification: "Your collar access has been restored."
 
 **Important Notes:**
 - **Wearer always retains SOS menu access** (long-touch)
