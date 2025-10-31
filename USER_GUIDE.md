@@ -68,7 +68,7 @@ The collar uses a modular architecture with a central kernel and plugins, making
 
 ## Understanding Access Levels
 
-The collar uses a 7-level Access Control List (ACL) system to determine who can do what:
+The collar uses 7 access levels ranging from -1 to 5 in its Access Control List (ACL) system to determine who can do what:
 
 | Level | Name | Who Has It | What They Can Do |
 |-------|------|-----------|------------------|
