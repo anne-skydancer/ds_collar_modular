@@ -564,13 +564,6 @@ default {
                     logd("SOS context request from WEARER " + llKey2Name(avatar_key) + " - keeping SOS context");
                 }
 
-                // SECURITY: In TPE mode (emergency access), only allow SOS menu
-                if (emergency_access && requested_context != SOS_CONTEXT) {
-                    logd("TPE wearer attempted to access non-SOS menu - denied");
-                    llRegionSayTo(avatar_key, 0, "In TPE mode, you can only access the emergency menu (long-touch the HUD).");
-                    return;
-                }
-
                 trigger_menu_for_external_user(avatar_key, final_context);
                 logd("Menu request approved for " + llKey2Name(avatar_key) + " (ACL " + (string)level + ", context: " + final_context + ")");
             } else {
