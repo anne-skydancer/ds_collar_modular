@@ -208,7 +208,7 @@ tpe_mode = 1
 
 ### Core Module: `ds_collar_kmod_settings.lsl`
 
-**Location:** `src/stable/ds_collar_kmod_settings.lsl` (737 lines)
+**Location:** `src/stable/ds_collar_kmod_settings.lsl`
 
 **Responsibilities:**
 - Load settings from notecard at startup
