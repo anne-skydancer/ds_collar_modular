@@ -78,7 +78,7 @@ integer QUEUE_CONTEXT = 1;
 integer QUEUE_LABEL = 2;
 integer QUEUE_MIN_ACL = 3;
 integer QUEUE_SCRIPT = 4;
-integer QUEUE_TIMESTAMP = 5;
+// QUEUE_TIMESTAMP at index 5 (stored but not accessed via constant)
 
 /* Authorized senders for privileged operations */
 list AUTHORIZED_RESET_SENDERS = ["bootstrap", "maintenance"];
@@ -507,17 +507,6 @@ broadcast_plugin_list() {
     logd("Broadcast: plugin_list (" + (string)llGetListLength(plugins) + " plugins)");
 }
 
-
-// Soft reset request to all modules
-broadcast_soft_reset() {
-    string msg = llList2Json(JSON_OBJECT, [
-        "type", "soft_reset",
-        "from", "kernel"
-    ]);
-    llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, msg, NULL_KEY);
-    logd("Broadcast: soft_reset");
-}
-
 /* ═══════════════════════════════════════════════════════════
    OWNER CHANGE DETECTION
    ═══════════════════════════════════════════════════════════ */
@@ -574,7 +563,7 @@ handle_plugin_list_request() {
     }
 
     // Process any pending queue operations first
-    integer changes = process_queue();
+    process_queue();
 
     // Broadcast current list
     broadcast_plugin_list();
