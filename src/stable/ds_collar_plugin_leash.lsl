@@ -848,6 +848,7 @@ default
     no_sensor() {
         // Only handles coffle and post (pass/offer use llGetAgentList)
         if (SensorMode == "") return;
+        if (CurrentUser == NULL_KEY) return;
         if (SensorMode != "coffle" && SensorMode != "post") return;
 
         if (SensorMode == "coffle") {
