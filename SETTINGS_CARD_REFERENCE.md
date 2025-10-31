@@ -826,7 +826,7 @@ bell_sound = 16fcf579-82cb-b110-c1a4-5fa5e1385406
 
 | Version | Date | Changes |
 |---------|------|---------|
-| 1.0 | 2025-10-31 | Initial comprehensive reference guide |
+| 1.0 | 2025-10-01 | Initial comprehensive reference guide |
 | 1.1 | 2025-10-31 | Security fix: Added TPE mode validation to notecard parsing; documented notecard ordering requirement |
 
 ---
