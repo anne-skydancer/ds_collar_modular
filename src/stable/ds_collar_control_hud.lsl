@@ -268,41 +268,13 @@ trigger_collar_menu() {
    ═══════════════════════════════════════════════════════════ */
 
 process_acl_result(integer level) {
-    integer has_access = FALSE;
-
-    // Check access level (no ternary, nested if/else per preferences)
-    if (level == ACL_PRIMARY_OWNER) {
-        has_access = TRUE;
-    }
-    else {
-        if (level == ACL_TRUSTEE) {
-            has_access = TRUE;
-        }
-        else {
-            if (level == ACL_OWNED) {
-                has_access = TRUE;
-            }
-            else {
-                if (level == ACL_UNOWNED) {
-                    has_access = TRUE;
-                }
-                else {
-                    if (level == ACL_PUBLIC) {
-                        has_access = TRUE;
-                    }
-                    else {
-                        has_access = FALSE;
-                    }
-                }
-            }
-        }
-    }
+    // ACL levels are ordered: any level >= ACL_PUBLIC (1) grants access
+    // ACL_BLACKLIST(-1) and ACL_NOACCESS(0) deny access by default
+    integer has_access = (level >= ACL_PUBLIC);
 
     // EMERGENCY ACCESS: Allow wearer to access SOS menu even with ACL 0
     // This handles TPE mode where wearer has no normal access to their collar
-    integer emergency_access = (level == ACL_NOACCESS && RequestedContext == SOS_CONTEXT && (HudWearer == TargetAvatarKey));
-
-    if (emergency_access) {
+    if (level == ACL_NOACCESS && RequestedContext == SOS_CONTEXT && HudWearer == TargetAvatarKey) {
         has_access = TRUE;
     }
 
