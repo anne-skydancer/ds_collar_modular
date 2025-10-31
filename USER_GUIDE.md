@@ -620,38 +620,48 @@ tpe_mode=0
 bell_visible=1
 bell_sound_enabled=1
 bell_volume=0.3
-
-# RLV Settings
-rlv_relay_mode=1
-rlv_restrictions=[]
-rlv_exceptions=[]
-
-# Leash Settings
-leash_length=3
-leash_turn2face=1
+bell_sound=bell_sound_name
 ```
+
+**Note:** RLV settings (relay mode, restrictions, exceptions) and leash settings (length, turn-to-face) cannot be pre-configured via notecard. These must be set through the collar menus after startup.
 
 ### Available Settings Keys
 
+**Ownership & Access Control:**
+
 | Key | Type | Description | Example |
 |-----|------|-------------|---------|
-| `owner_key` | UUID | Owner's avatar UUID | `12345678-1234-...` |
-| `owner_hon` | String | Owner's honorific | `Master`, `Mistress` |
-| `multi_owner_mode` | 0/1 | Enable multi-owner | `0` = off, `1` = on |
-| `public_mode` | 0/1 | Public access | `0` = off, `1` = on |
-| `locked` | 0/1 | Lock state | `0` = unlocked, `1` = locked |
-| `tpe_mode` | 0/1 | TPE mode | `0` = off, `1` = on |
-| `bell_visible` | 0/1 | Bell visibility | `0` = hidden, `1` = visible |
-| `bell_sound_enabled` | 0/1 | Bell sound | `0` = silent, `1` = enabled |
-| `bell_volume` | Float | Bell volume | `0.0` to `1.0` |
-| `leash_length` | Integer | Leash length in meters | `1` to `20` |
-| `leash_turn2face` | 0/1 | Turn to face | `0` = off, `1` = on |
+| `owner_key` | UUID | Owner's avatar UUID (single owner mode) | `12345678-1234-...` |
+| `owner_keys` | List | Owner UUIDs (multi-owner mode, notecard only) | `[uuid1,uuid2]` |
+| `owner_hon` | String | Owner's honorific (single owner) | `Master`, `Mistress` |
+| `owner_honorifics` | List | Owner honorifics (multi-owner mode) | `[Master,Mistress]` |
+| `multi_owner_mode` | 0/1 | Enable multi-owner (notecard only) | `0` = off, `1` = on |
 | `trustees` | List | Trustee UUIDs | `[uuid1,uuid2]` |
 | `trustee_honorifics` | List | Trustee titles | `[Master,Mistress]` |
 | `blacklist` | List | Blacklisted UUIDs | `[uuid1,uuid2]` |
-| `rlv_relay_mode` | 0/1/2 | Relay mode | `0`=OFF, `1`=ON, `2`=HARDCORE |
-| `rlv_restrictions` | List | Active restrictions | `[detach,sendchat]` |
-| `rlv_exceptions` | List | RLV exceptions | `[im_owner,tp_trustee]` |
+
+**Collar State:**
+
+| Key | Type | Description | Example |
+|-----|------|-------------|---------|
+| `public_mode` | 0/1 | Public access | `0` = off, `1` = on |
+| `locked` | 0/1 | Lock state | `0` = unlocked, `1` = locked |
+| `tpe_mode` | 0/1 | TPE mode | `0` = off, `1` = on |
+
+**Bell Settings:**
+
+| Key | Type | Description | Example |
+|-----|------|-------------|---------|
+| `bell_visible` | 0/1 | Bell visibility | `0` = hidden, `1` = visible |
+| `bell_sound_enabled` | 0/1 | Bell sound | `0` = silent, `1` = enabled |
+| `bell_volume` | Float | Bell volume | `0.0` to `1.0` |
+| `bell_sound` | String | Bell sound name from inventory | `bell_jingle` |
+
+**Notes:**
+- Keys marked "notecard only" can only be set via settings notecard, not via runtime messages
+- RLV settings (relay, restrictions, exceptions) are **not supported** in notecard configuration
+- Leash settings (length, turn-to-face) are **not supported** in notecard configuration
+- All non-notecard-only settings persist automatically when changed via menus
 
 ### Finding Avatar UUIDs
 
