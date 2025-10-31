@@ -574,7 +574,7 @@ The DS Collar Control HUD allows owners/trustees to control the collar from a di
 **Benefits:**
 - Control collar without being physically next to wearer
 - Multiple collar management
-- Discrete control interface
+- Discreet control interface
 - Same security as direct touch
 
 ---
