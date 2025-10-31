@@ -200,6 +200,8 @@ tpe_mode = 1
 
 **Security Requirement:** Cannot enable TPE mode without an external owner set.
 
+**⚠️ CRITICAL NOTECARD ORDERING:** When configuring TPE mode in the notecard, you MUST set `owner_key` (or `owner_keys`) BEFORE `tpe_mode`. The collar validates the external owner requirement line-by-line during notecard parsing. If `tpe_mode = 1` appears before the owner is set, the collar will reject it and display an error.
+
 ---
 
 ## Settings Architecture
@@ -330,13 +332,22 @@ Some keys can **only** be set via notecard, never through the API:
 
 ### 5. TPE Mode Protection
 
-Cannot enable TPE mode unless an external owner is set.
+Cannot enable TPE mode unless an external owner is set. This validation applies to **both** runtime API changes and notecard configuration.
 
+**Runtime API:**
 ```
 ERROR: Cannot enable TPE - requires external owner
 ```
 
+**Notecard Parsing:**
+```
+ERROR: Cannot enable TPE via notecard - requires external owner
+HINT: Set owner_key or owner_keys BEFORE tpe_mode in notecard
+```
+
 **Why:** Prevents the wearer from locking themselves out with no way to recover.
+
+**Implementation Note:** Notecard parsing is sequential (line-by-line). The owner must be defined in the notecard BEFORE the `tpe_mode` line, otherwise the validation will fail even if an owner is specified later in the notecard.
 
 ### 6. List Size Limits
 
@@ -568,8 +579,16 @@ integer kv_list_remove_all(string key_name, string elem)
 ### Can't Enable TPE Mode
 
 **Symptom:** Error message when trying to enable TPE mode
+
+**Runtime API Error:**
 ```
 ERROR: Cannot enable TPE - requires external owner
+```
+
+**Notecard Error:**
+```
+ERROR: Cannot enable TPE via notecard - requires external owner
+HINT: Set owner_key or owner_keys BEFORE tpe_mode in notecard
 ```
 
 **Explanation:** TPE mode requires an external owner (not the wearer) for safety.
@@ -578,6 +597,19 @@ ERROR: Cannot enable TPE - requires external owner
 1. Ensure `owner_key` is set to someone else's UUID
 2. Verify the owner UUID is not the wearer's UUID
 3. In multi-owner mode, ensure at least one owner is not the wearer
+4. **For notecard configuration:** Ensure `owner_key` or `owner_keys` appears BEFORE `tpe_mode` in the notecard (order matters!)
+
+**Correct Notecard Order:**
+```
+owner_key = 12345678-1234-1234-1234-123456789abc
+tpe_mode = 1  # Owner is set, TPE can be enabled
+```
+
+**Incorrect Notecard Order:**
+```
+tpe_mode = 1  # ERROR! No owner set yet
+owner_key = 12345678-1234-1234-1234-123456789abc
+```
 
 ### List Operations Don't Work
 
@@ -795,6 +827,7 @@ bell_sound = 16fcf579-82cb-b110-c1a4-5fa5e1385406
 | Version | Date | Changes |
 |---------|------|---------|
 | 1.0 | 2025-10-31 | Initial comprehensive reference guide |
+| 1.1 | 2025-10-31 | Security fix: Added TPE mode validation to notecard parsing; documented notecard ordering requirement |
 
 ---
 

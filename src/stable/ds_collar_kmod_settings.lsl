@@ -1,21 +1,22 @@
 /* =============================================================================
-   MODULE: ds_collar_kmod_settings.lsl (v2.1 - Security Hardened)
+   MODULE: ds_collar_kmod_settings.lsl (v2.2 - Security Hardened)
    SECURITY AUDIT: CRITICAL ISSUES FIXED
-   
+
    ROLE: Persistent key-value store with notecard loading and delta updates
-   
+
    CHANNELS:
    - 800 (SETTINGS_BUS): All settings operations
-   
+
    NOTECARD FORMAT:
    - File: "settings" in inventory
    - Lines: key=value
    - Lists: key=[uuid1,uuid2,uuid3]
    - Comments: # comment
-   
+
    SECURITY FIXES APPLIED:
    - [CRITICAL] Wearer-owner separation enforcement
-   - [CRITICAL] TPE-external-owner requirement validation
+   - [CRITICAL] TPE-external-owner requirement validation (runtime API)
+   - [CRITICAL] TPE-external-owner requirement validation (notecard parsing) v2.2
    - [MEDIUM] Blacklist guards in notecard parsing
    - [MEDIUM] Multi-owner support in trustee guards
    - [MEDIUM] Multi-owner support in blacklist guards
@@ -458,15 +459,28 @@ parse_notecard_line(string line) {
         // Scalar value
         if (key_name == KEY_MULTI_OWNER_MODE) value = normalize_bool(value);
         if (key_name == KEY_PUBLIC_ACCESS) value = normalize_bool(value);
-        if (key_name == KEY_TPE_MODE) value = normalize_bool(value);
         if (key_name == KEY_LOCKED) value = normalize_bool(value);
-        
+
+        // SECURITY FIX: Validate TPE mode in notecard (same as runtime API)
+        if (key_name == KEY_TPE_MODE) {
+            value = normalize_bool(value);
+
+            if ((integer)value == 1) {
+                if (!has_external_owner()) {
+                    llOwnerSay("ERROR: Cannot enable TPE via notecard - requires external owner");
+                    llOwnerSay("HINT: Set owner_key or owner_keys BEFORE tpe_mode in notecard");
+                    logd("CRITICAL: Blocked TPE enable from notecard (no external owner)");
+                    return;  // Don't set TPE
+                }
+            }
+        }
+
         if (key_name == KEY_OWNER_KEY) {
             if (!apply_owner_set_guard(value)) {
                 return;  // Rejected (self-ownership)
             }
         }
-        
+
         kv_set_scalar(key_name, value);
     }
 }
