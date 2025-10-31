@@ -1,5 +1,5 @@
 /* =============================================================================
-   MODULE: ds_collar_kernel.lsl (v3.2 - UUID-Based Change Detection)
+   MODULE: ds_collar_kernel.lsl (v3.3 - Plugin Discovery Race Condition Fix)
    SECURITY AUDIT: ALL ISSUES FIXED
 
    ROLE: Plugin registry, lifecycle management, heartbeat monitoring
@@ -10,6 +10,7 @@
    - Batch queue processing (prevents broadcast storms)
    - UUID-based change detection (script UUID = version, no counters needed)
    - Atomic operations (consistent state transitions)
+   - Deferred plugin_list responses during active registration
 
    PERFORMANCE OPTIMIZATIONS:
    - Timer only runs at 0.1s when queue has items (batch window)
@@ -29,6 +30,7 @@
    SECURITY FIXES APPLIED:
    - [CRITICAL] Soft reset now requires authorized sender
    - [CRITICAL] Race condition fix: queue-based plugin management
+   - [CRITICAL] Race condition fix: deferred plugin_list_request during batch
    - [MEDIUM] JSON construction uses proper encoding (no string injection)
    - [MEDIUM] Integer overflow protection for timestamps
    - [LOW] Production mode guards debug logging
@@ -77,6 +79,7 @@ list AUTHORIZED_RESET_SENDERS = ["bootstrap", "maintenance"];
 list PluginRegistry = [];           // Active plugin registry
 list RegistrationQueue = [];        // Pending operations queue (Unix modprobe style)
 integer PendingBatchTimer = FALSE;  // TRUE if batch timer is active
+integer PendingPluginListRequest = FALSE;  // TRUE if plugin_list_request received during batch
 integer LastPingUnix = 0;
 integer LastInvSweepUnix = 0;
 key LastOwner = NULL_KEY;
@@ -488,11 +491,20 @@ handle_pong(string msg) {
 }
 
 handle_plugin_list_request() {
+    // RACE CONDITION FIX: If batch timer is active, defer broadcast
+    // until registration window completes
+    if (PendingBatchTimer) {
+        PendingPluginListRequest = TRUE;
+        logd("Plugin list request deferred - waiting for registration batch to complete");
+        return;
+    }
+
     // Process any pending queue operations first
     integer changes = process_queue();
 
-    // Always broadcast current list (with version)
+    // Broadcast current list
     broadcast_plugin_list();
+    logd("Plugin list broadcast (immediate response)");
 }
 
 handle_soft_reset(string msg) {
@@ -516,6 +528,7 @@ handle_soft_reset(string msg) {
     PluginRegistry = [];
     RegistrationQueue = [];
     PendingBatchTimer = FALSE;
+    PendingPluginListRequest = FALSE;
     LastPingUnix = now();
     LastInvSweepUnix = now();
     llSetTimerEvent(PING_INTERVAL_SEC);
@@ -533,6 +546,7 @@ default
         PluginRegistry = [];
         RegistrationQueue = [];
         PendingBatchTimer = FALSE;
+        PendingPluginListRequest = FALSE;
         LastPingUnix = now();
         LastInvSweepUnix = now();
         LastScriptCount = count_scripts();
@@ -563,8 +577,14 @@ default
         if (PendingBatchTimer) {
             // Batch mode: Process queue and broadcast
             integer changes = process_queue();
-            if (changes) {
+
+            // RACE CONDITION FIX: Broadcast if changes OR if plugin_list_request pending
+            if (changes || PendingPluginListRequest) {
                 broadcast_plugin_list();
+                if (PendingPluginListRequest) {
+                    logd("Plugin list broadcast (deferred response to request)");
+                }
+                PendingPluginListRequest = FALSE;
             }
             // process_queue() automatically switches back to heartbeat mode
         }
@@ -640,6 +660,7 @@ default
                 PluginRegistry = [];
                 RegistrationQueue = [];
                 PendingBatchTimer = FALSE;
+                PendingPluginListRequest = FALSE;
                 llSetTimerEvent(PING_INTERVAL_SEC);
                 broadcast_register_now();
             }

@@ -1,14 +1,14 @@
 /* =============================================================================
-   MODULE: ds_collar_kmod_ui.lsl (v3.3 - Plugin Discovery Race Condition Fix)
+   MODULE: ds_collar_kmod_ui.lsl (v3.2 - UUID-Based Change Detection)
    SECURITY AUDIT: ENHANCEMENTS APPLIED
 
    ROLE: Root touch menu with paged plugin list and ACL filtering
 
    ARCHITECTURE: Event-driven session management
    - Kernel broadcasts plugin_list only when UUIDs change
+   - Kernel defers plugin_list responses during active registration (race fix)
    - UI invalidates sessions when receiving plugin_list
    - No version numbers needed (UUID tracking in kernel)
-   - UI delays plugin discovery request to avoid startup race condition
 
    CHANNELS:
    - 500 (KERNEL_LIFECYCLE): Plugin list subscription
@@ -20,12 +20,13 @@
 
    SECURITY ENHANCEMENTS:
    - [CRITICAL] Race condition fix: UUID-based change detection
-   - [CRITICAL] Race condition fix: Delayed plugin discovery on UI reset
    - [MEDIUM] Touch range validation fixed (ZERO_VECTOR rejection)
    - [MEDIUM] ACL re-validation on session return (time-based)
    - [LOW] Production mode guard for debug
    - [LOW] Owner change handler
    - [LOW] Blacklist check in button handler
+
+   NOTE: Plugin discovery race condition fixed in kernel (deferred responses)
    ============================================================================= */
 
 integer DEBUG = FALSE;
@@ -48,7 +49,6 @@ string SOS_PREFIX = "sos_";  // Prefix for SOS plugin contexts
 integer MAX_FUNC_BTNS = 9;
 float TOUCH_RANGE_M = 5.0;
 float LONG_TOUCH_THRESHOLD = 1.5;
-float PLUGIN_DISCOVERY_DELAY = 0.3;  // Seconds to wait before requesting plugin list
 
 string BTN_NAV_LEFT = "<<";
 string BTN_NAV_GAP = " ";
@@ -93,7 +93,6 @@ list Sessions = [];
 list FilteredPluginsData = [];
 list PendingAcl = [];
 list TouchData = [];
-integer AwaitingPluginDiscovery = FALSE;  // Track if waiting for startup delay
 
 /* ═══════════════════════════════════════════════════════════
    HELPERS
@@ -799,13 +798,14 @@ default
         FilteredPluginsData = [];
         PendingAcl = [];
         TouchData = [];
-        AwaitingPluginDiscovery = TRUE;
 
         logd("UI module started (UUID-based change detection, long-touch support)");
-        logd("Waiting " + (string)PLUGIN_DISCOVERY_DELAY + "s for plugins to register...");
 
-        // RACE CONDITION FIX: Delay plugin discovery to allow plugins to register
-        llSetTimerEvent(PLUGIN_DISCOVERY_DELAY);
+        // Request plugin list (kernel defers response during active registration)
+        string request = llList2Json(JSON_OBJECT, [
+            "type", "plugin_list_request"
+        ]);
+        llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, request, NULL_KEY);
     }
     
     touch_start(integer num_detected) {
@@ -890,19 +890,6 @@ default
 
             @next_toucher;
             i += 1;
-        }
-    }
-
-    timer() {
-        if (AwaitingPluginDiscovery) {
-            AwaitingPluginDiscovery = FALSE;
-            llSetTimerEvent(0.0);  // Stop timer
-
-            logd("Requesting plugin list from kernel");
-            string request = llList2Json(JSON_OBJECT, [
-                "type", "plugin_list_request"
-            ]);
-            llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, request, NULL_KEY);
         }
     }
 
