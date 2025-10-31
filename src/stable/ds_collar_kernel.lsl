@@ -1,22 +1,31 @@
 /* =============================================================================
-   MODULE: ds_collar_kernel.lsl (v3.3 - Plugin Discovery Race Condition Fix)
+   MODULE: ds_collar_kernel.lsl (v3.4 - Active Plugin Discovery)
    SECURITY AUDIT: ALL ISSUES FIXED
 
    ROLE: Plugin registry, lifecycle management, heartbeat monitoring
 
-   ARCHITECTURE: Unix modprobe-style plugin queue system
+   ARCHITECTURE: Unix modprobe-style plugin queue system with active discovery
    - Event-driven registration (no arbitrary time windows)
    - Conditional timer (0.1s batch mode, 5s heartbeat mode)
    - Batch queue processing (prevents broadcast storms)
    - UUID-based change detection (script UUID = version, no counters needed)
    - Atomic operations (consistent state transitions)
    - Deferred plugin_list responses during active registration
+   - Active plugin discovery (pull-based, detects new/recompiled scripts)
+
+   ACTIVE DISCOVERY:
+   - Periodic inventory enumeration (every 5 seconds)
+   - Detects new plugin scripts added to inventory
+   - Detects UUID changes (recompiled/replaced scripts)
+   - Automatically triggers registration for discovered changes
+   - No manual intervention required for dynamic plugin loading
 
    PERFORMANCE OPTIMIZATIONS:
    - Timer only runs at 0.1s when queue has items (batch window)
    - Automatically switches to 5s heartbeat mode when queue empty
    - Eliminates CPU waste from constant 0.5s polling
    - link_message events trigger batch timer on-demand
+   - Discovery only scans plugin scripts (filters system modules)
 
    CHANNELS:
    - 500 (KERNEL_LIFECYCLE): All lifecycle operations
@@ -51,6 +60,7 @@ float   PING_INTERVAL_SEC     = 5.0;
 integer PING_TIMEOUT_SEC      = 15;
 float   INV_SWEEP_INTERVAL    = 3.0;
 float   BATCH_WINDOW_SEC      = 0.1;  // Small batch window during startup burst
+float   DISCOVERY_INTERVAL_SEC = 5.0;  // Active plugin discovery interval
 
 /* Registry stride: [context, label, min_acl, script, script_uuid, last_seen_unix] */
 integer REG_STRIDE = 6;
@@ -82,6 +92,7 @@ integer PendingBatchTimer = FALSE;  // TRUE if batch timer is active
 integer PendingPluginListRequest = FALSE;  // TRUE if plugin_list_request received during batch
 integer LastPingUnix = 0;
 integer LastInvSweepUnix = 0;
+integer LastDiscoveryUnix = 0;      // Track last active plugin discovery
 key LastOwner = NULL_KEY;
 integer LastScriptCount = 0;        // Track script count to detect add/remove
 
@@ -126,6 +137,11 @@ integer is_authorized_sender(string sender_name) {
         }
     }
     return FALSE;
+}
+
+integer is_plugin_script(string script_name) {
+    // Plugins all start with ds_collar_plugin_
+    return (llSubStringIndex(script_name, "ds_collar_plugin_") == 0);
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -232,6 +248,18 @@ integer registry_find(string context) {
     integer len = llGetListLength(PluginRegistry);
     while (i < len) {
         if (llList2String(PluginRegistry, i + REG_CONTEXT) == context) {
+            return i;
+        }
+        i += REG_STRIDE;
+    }
+    return -1;
+}
+
+integer registry_find_by_script(string script_name) {
+    integer i = 0;
+    integer len = llGetListLength(PluginRegistry);
+    while (i < len) {
+        if (llList2String(PluginRegistry, i + REG_SCRIPT) == script_name) {
             return i;
         }
         i += REG_STRIDE;
@@ -369,6 +397,52 @@ integer prune_missing_scripts() {
     
     PluginRegistry = new_registry;
     return pruned;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   PLUGIN DISCOVERY (Active pull-based detection)
+   ═══════════════════════════════════════════════════════════ */
+
+// Actively discover new or changed plugin scripts
+// Enumerates inventory, detects new/recompiled plugins, triggers registration
+integer discover_plugins() {
+    integer inv_count = llGetInventoryNumber(INVENTORY_SCRIPT);
+    integer i;
+    integer discoveries = 0;
+
+    for (i = 0; i < inv_count; i = i + 1) {
+        string script_name = llGetInventoryName(INVENTORY_SCRIPT, i);
+
+        // Only check plugin scripts (not kernel modules)
+        if (!is_plugin_script(script_name)) jump next_script;
+
+        key script_uuid = llGetInventoryKey(script_name);
+        integer idx = registry_find_by_script(script_name);
+
+        // New script - not in registry
+        if (idx == -1) {
+            discoveries = discoveries + 1;
+            logd("Discovered new plugin: " + script_name);
+            jump next_script;
+        }
+
+        // Check if UUID changed (recompiled/replaced)
+        key registered_uuid = llList2Key(PluginRegistry, idx + REG_SCRIPT_UUID);
+        if (registered_uuid != script_uuid) {
+            discoveries = discoveries + 1;
+            logd("Detected UUID change: " + script_name);
+        }
+
+        @next_script;
+    }
+
+    // If we found new/changed scripts, broadcast register_now
+    if (discoveries > 0) {
+        logd("Active discovery: " + (string)discoveries + " new/changed plugins");
+        broadcast_register_now();
+    }
+
+    return discoveries;
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -531,6 +605,7 @@ handle_soft_reset(string msg) {
     PendingPluginListRequest = FALSE;
     LastPingUnix = now();
     LastInvSweepUnix = now();
+    LastDiscoveryUnix = now();
     llSetTimerEvent(PING_INTERVAL_SEC);
     broadcast_register_now();
 }
@@ -549,9 +624,10 @@ default
         PendingPluginListRequest = FALSE;
         LastPingUnix = now();
         LastInvSweepUnix = now();
+        LastDiscoveryUnix = now();
         LastScriptCount = count_scripts();
 
-        logd("Kernel started (UUID-based change detection)");
+        logd("Kernel started (UUID-based change detection, active plugin discovery)");
 
         // Immediately broadcast register_now (plugins add to queue)
         broadcast_register_now();
@@ -619,6 +695,16 @@ default
                 }
 
                 LastInvSweepUnix = now_unix;
+            }
+
+            // Periodic active plugin discovery
+            integer discovery_elapsed = now_unix - LastDiscoveryUnix;
+            if (discovery_elapsed < 0) discovery_elapsed = 0; // Overflow protection
+
+            if (discovery_elapsed >= DISCOVERY_INTERVAL_SEC) {
+                // Discover new/changed plugins (triggers register_now if found)
+                discover_plugins();
+                LastDiscoveryUnix = now_unix;
             }
         }
     }
