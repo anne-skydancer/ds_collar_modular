@@ -398,7 +398,8 @@ doReloadSettings() {
 doClearLeash() {
     string msg = llList2Json(JSON_OBJECT, [
         "type", "soft_reset",
-        "context", "core_leash"
+        "context", "core_leash",
+        "from", "maintenance"
     ]);
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, msg, NULL_KEY);
 
@@ -407,12 +408,13 @@ doClearLeash() {
 }
 
 doReloadCollar() {
-    // Send soft reset to ALL plugins
+    // Broadcast soft reset to all plugins
     string msg = llList2Json(JSON_OBJECT, [
-        "type", "soft_reset_all"
+        "type", "soft_reset",
+        "from", "maintenance"
     ]);
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, msg, NULL_KEY);
-    
+
     llRegionSayTo(CurrentUser, 0, "Collar reload initiated.");
     logd("Collar reload requested by " + llKey2Name(CurrentUser));
 }
@@ -602,7 +604,19 @@ default {
                 sendPong();
                 return;
             }
-            
+
+            if (msg_type == "soft_reset" || msg_type == "soft_reset_all") {
+                // Check if this is a targeted reset
+                if (jsonHas(msg, ["context"])) {
+                    string target_context = llJsonGetValue(msg, ["context"]);
+                    if (target_context != "" && target_context != PLUGIN_CONTEXT) {
+                        return; // Not for us, ignore
+                    }
+                }
+                // Either no context (broadcast) or matches our context
+                llResetScript();
+            }
+
             return;
         }
         
