@@ -72,7 +72,7 @@ integer REG_SCRIPT_UUID = 3;
 integer REG_LAST_SEEN = 4;
 integer REG_MIN_ACL = 5;    // Stored for auth module recovery (not used for decisions)
 
-/* Plugin operation queue stride: [op_type, context, label, script, timestamp] */
+/* Plugin operation queue stride: [op_type, context, label, script, min_acl, timestamp] */
 integer QUEUE_STRIDE = 6;
 integer QUEUE_OP_TYPE = 0;    // "REG" or "UNREG"
 integer QUEUE_CONTEXT = 1;

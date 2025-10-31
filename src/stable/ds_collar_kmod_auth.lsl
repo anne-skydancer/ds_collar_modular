@@ -205,7 +205,8 @@ broadcast_plugin_acl_list() {
     // pre-serialized JSON objects; llList2Json would quote them incorrectly
     string acl_array = "[";
     integer j;
-    for (j = 0; j < llGetListLength(acl_data); j = j + 1) {
+    integer acl_data_len = llGetListLength(acl_data);
+    for (j = 0; j < acl_data_len; j = j + 1) {
         if (j > 0) acl_array += ",";
         acl_array += llList2String(acl_data, j);
     }
