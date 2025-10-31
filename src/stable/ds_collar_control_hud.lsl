@@ -340,8 +340,7 @@ process_acl_result(integer level) {
 
     // EMERGENCY ACCESS: Allow wearer to access SOS menu even with ACL 0
     // This handles TPE mode where wearer has no normal access to their collar
-    integer is_wearer = (HudWearer == TargetAvatarKey);
-    integer emergency_access = (level == ACL_NOACCESS && RequestedContext == SOS_CONTEXT && is_wearer);
+    integer emergency_access = (level == ACL_NOACCESS && RequestedContext == SOS_CONTEXT && (HudWearer == TargetAvatarKey));
 
     if (emergency_access) {
         access_msg = "✓ Emergency access granted - opening SOS menu";
