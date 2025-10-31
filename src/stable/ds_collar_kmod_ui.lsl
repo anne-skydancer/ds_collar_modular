@@ -701,7 +701,8 @@ handle_start(string msg, key user_key) {
         return;
     }
 
-    if (context == SOS_CONTEXT) {
+    // Accept both "sos" (internal/collar touch) and "sos_root" (external/HUD)
+    if (context == SOS_CONTEXT || context == "sos_root") {
         start_sos_session(user_key);
         return;
     }

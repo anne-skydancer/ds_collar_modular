@@ -52,7 +52,7 @@ float MAX_DETECTION_RANGE = 20.0;  // Maximum range in meters for HUD detection
    PROTOCOL MESSAGE TYPES
    ═══════════════════════════════════════════════════════════ */
 string ROOT_CONTEXT = "core_root";
-string SOS_CONTEXT = "sos";
+string SOS_CONTEXT = "sos_root";
 
 /* ═══════════════════════════════════════════════════════════
    STATE

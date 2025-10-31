@@ -46,7 +46,7 @@ float LONG_TOUCH_THRESHOLD = 1.5;
    CONTEXT TYPES
    ═══════════════════════════════════════════════════════════ */
 string ROOT_CONTEXT = "core_root";
-string SOS_CONTEXT = "sos";
+string SOS_CONTEXT = "sos_root";
 
 /* ═══════════════════════════════════════════════════════════
    STATE (PascalCase for globals)
