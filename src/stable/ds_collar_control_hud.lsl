@@ -291,7 +291,7 @@ trigger_collar_menu() {
 process_acl_result(integer level) {
     string access_msg = "";
     integer has_access = FALSE;
-    
+
     // Check access level (no ternary, nested if/else per preferences)
     if (level == ACL_PRIMARY_OWNER) {
         access_msg = "✓ Access granted: PRIMARY OWNER";
@@ -299,7 +299,7 @@ process_acl_result(integer level) {
     }
     else {
         if (level == ACL_TRUSTEE) {
-            access_msg = "✓ Access granted: TRUSTEE"; 
+            access_msg = "✓ Access granted: TRUSTEE";
             has_access = TRUE;
         }
         else {
@@ -337,9 +337,19 @@ process_acl_result(integer level) {
             }
         }
     }
-    
+
+    // EMERGENCY ACCESS: Allow wearer to access SOS menu even with ACL 0
+    // This handles TPE mode where wearer has no normal access to their collar
+    integer is_wearer = (HudWearer == TargetAvatarKey);
+    integer emergency_access = (level == ACL_NOACCESS && RequestedContext == SOS_CONTEXT && is_wearer);
+
+    if (emergency_access) {
+        access_msg = "✓ Emergency access granted - opening SOS menu";
+        has_access = TRUE;
+    }
+
     llOwnerSay(access_msg);
-    
+
     if (has_access) {
         trigger_collar_menu();
     }
