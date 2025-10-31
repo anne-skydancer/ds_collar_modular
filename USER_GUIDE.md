@@ -297,7 +297,7 @@ The collar supports multiple leashing protocols for compatibility:
 
 ## RLV Features
 
-RLV (Restrained Lovemaking Viewer) provides advanced control over the wearer's viewer capabilities. **RLV-compatible viewer required** (Firestorm, RLVa, etc.).
+RLV (Restrained Love Viewer) provides advanced control over the wearer's viewer capabilities. **RLV-compatible viewer required** (Firestorm, RLVa, etc.).
 
 ### RLV Relay
 
