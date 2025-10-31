@@ -29,8 +29,8 @@
    NOTE: Plugin discovery race condition fixed in kernel (deferred responses)
    ============================================================================= */
 
-integer DEBUG = FALSE;
-integer PRODUCTION = TRUE;  // Set FALSE for development builds
+integer DEBUG = TRUE;
+integer PRODUCTION = FALSE;  // Set FALSE for development builds
 
 /* ═══════════════════════════════════════════════════════════
    CONSOLIDATED ABI
@@ -44,7 +44,7 @@ integer DIALOG_BUS = 950;
    CONSTANTS
    ═══════════════════════════════════════════════════════════ */
 string ROOT_CONTEXT = "core_root";
-string SOS_CONTEXT = "sos";
+string SOS_CONTEXT = "sos_root";
 string SOS_PREFIX = "sos_";  // Prefix for SOS plugin contexts
 integer MAX_FUNC_BTNS = 9;
 float TOUCH_RANGE_M = 5.0;
