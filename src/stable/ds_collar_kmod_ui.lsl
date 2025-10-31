@@ -44,7 +44,7 @@ integer DIALOG_BUS = 950;
    CONSTANTS
    ═══════════════════════════════════════════════════════════ */
 string ROOT_CONTEXT = "core_root";
-string SOS_CONTEXT = "sos";
+string SOS_CONTEXT = "sos_root";
 string SOS_PREFIX = "sos_";  // Prefix for SOS plugin contexts
 integer MAX_FUNC_BTNS = 9;
 float TOUCH_RANGE_M = 5.0;
@@ -701,8 +701,7 @@ handle_start(string msg, key user_key) {
         return;
     }
 
-    // Accept both "sos" (internal/collar touch) and "sos_root" (external/HUD)
-    if (context == SOS_CONTEXT || context == "sos_root") {
+    if (context == SOS_CONTEXT) {
         start_sos_session(user_key);
         return;
     }
