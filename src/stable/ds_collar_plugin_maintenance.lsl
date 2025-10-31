@@ -470,6 +470,15 @@ close_ui() {
    ═══════════════════════════════════════════════════════════ */
 
 cleanup_session() {
+    // Close the dialog session in the dialog manager
+    if (SessionId != "") {
+        string msg = llList2Json(JSON_OBJECT, [
+            "type", "dialog_close",
+            "session_id", SessionId
+        ]);
+        llMessageLinked(LINK_SET, DIALOG_BUS, msg, NULL_KEY);
+    }
+
     CurrentUser = NULL_KEY;
     CurrentUserAcl = -999;
     SessionId = "";
@@ -674,17 +683,33 @@ default {
         if (num == DIALOG_BUS) {
             if (!json_has(msg, ["type"])) return;
             string msg_type = llJsonGetValue(msg, ["type"]);
-            
+
             if (msg_type == "dialog_response") {
                 handle_dialog_response(msg);
                 return;
             }
-            
+
             if (msg_type == "dialog_timeout") {
                 handle_dialog_timeout(msg);
                 return;
             }
-            
+
+            if (msg_type == "dialog_close") {
+                // Dialog was closed externally (e.g., replaced by another dialog)
+                // Clean up our session if it matches
+                if (json_has(msg, ["session_id"])) {
+                    string session = llJsonGetValue(msg, ["session_id"]);
+                    if (session == SessionId) {
+                        // Don't send another dialog_close since we're responding to one
+                        CurrentUser = NULL_KEY;
+                        CurrentUserAcl = -999;
+                        SessionId = "";
+                        logd("Dialog closed externally");
+                    }
+                }
+                return;
+            }
+
             return;
         }
     }
