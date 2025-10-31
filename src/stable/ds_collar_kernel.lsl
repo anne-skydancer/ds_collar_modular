@@ -1,21 +1,31 @@
 /* =============================================================================
-   MODULE: ds_collar_kernel.lsl (v3.2 - UUID-Based Change Detection)
+   MODULE: ds_collar_kernel.lsl (v3.4 - Active Plugin Discovery)
    SECURITY AUDIT: ALL ISSUES FIXED
 
    ROLE: Plugin registry, lifecycle management, heartbeat monitoring
 
-   ARCHITECTURE: Unix modprobe-style plugin queue system
+   ARCHITECTURE: Unix modprobe-style plugin queue system with active discovery
    - Event-driven registration (no arbitrary time windows)
    - Conditional timer (0.1s batch mode, 5s heartbeat mode)
    - Batch queue processing (prevents broadcast storms)
    - UUID-based change detection (script UUID = version, no counters needed)
    - Atomic operations (consistent state transitions)
+   - Deferred plugin_list responses during active registration
+   - Active plugin discovery (pull-based, detects new/recompiled scripts)
+
+   ACTIVE DISCOVERY:
+   - Periodic inventory enumeration (every 5 seconds)
+   - Detects new plugin scripts added to inventory
+   - Detects UUID changes (recompiled/replaced scripts)
+   - Automatically triggers registration for discovered changes
+   - No manual intervention required for dynamic plugin loading
 
    PERFORMANCE OPTIMIZATIONS:
    - Timer only runs at 0.1s when queue has items (batch window)
    - Automatically switches to 5s heartbeat mode when queue empty
    - Eliminates CPU waste from constant 0.5s polling
    - link_message events trigger batch timer on-demand
+   - Discovery only scans plugin scripts (filters system modules)
 
    CHANNELS:
    - 500 (KERNEL_LIFECYCLE): All lifecycle operations
@@ -29,6 +39,7 @@
    SECURITY FIXES APPLIED:
    - [CRITICAL] Soft reset now requires authorized sender
    - [CRITICAL] Race condition fix: queue-based plugin management
+   - [CRITICAL] Race condition fix: deferred plugin_list_request during batch
    - [MEDIUM] JSON construction uses proper encoding (no string injection)
    - [MEDIUM] Integer overflow protection for timestamps
    - [LOW] Production mode guards debug logging
@@ -41,6 +52,7 @@ integer PRODUCTION = TRUE;  // Set FALSE for development builds
    CONSOLIDATED ABI
    ═══════════════════════════════════════════════════════════ */
 integer KERNEL_LIFECYCLE = 500;
+integer AUTH_BUS = 700;
 
 /* ═══════════════════════════════════════════════════════════
    CONSTANTS
@@ -49,24 +61,25 @@ float   PING_INTERVAL_SEC     = 5.0;
 integer PING_TIMEOUT_SEC      = 15;
 float   INV_SWEEP_INTERVAL    = 3.0;
 float   BATCH_WINDOW_SEC      = 0.1;  // Small batch window during startup burst
+float   DISCOVERY_INTERVAL_SEC = 5.0;  // Active plugin discovery interval
 
-/* Registry stride: [context, label, min_acl, script, script_uuid, last_seen_unix] */
+/* Registry stride: [context, label, script, script_uuid, last_seen_unix, min_acl] */
 integer REG_STRIDE = 6;
 integer REG_CONTEXT = 0;
 integer REG_LABEL = 1;
-integer REG_MIN_ACL = 2;
-integer REG_SCRIPT = 3;
-integer REG_SCRIPT_UUID = 4;
-integer REG_LAST_SEEN = 5;
+integer REG_SCRIPT = 2;
+integer REG_SCRIPT_UUID = 3;
+integer REG_LAST_SEEN = 4;
+integer REG_MIN_ACL = 5;    // Stored for auth module recovery (not used for decisions)
 
-/* Plugin operation queue stride: [op_type, context, label, min_acl, script, timestamp] */
+/* Plugin operation queue stride: [op_type, context, label, script, min_acl, timestamp] */
 integer QUEUE_STRIDE = 6;
 integer QUEUE_OP_TYPE = 0;    // "REG" or "UNREG"
 integer QUEUE_CONTEXT = 1;
 integer QUEUE_LABEL = 2;
-integer QUEUE_MIN_ACL = 3;
-integer QUEUE_SCRIPT = 4;
-integer QUEUE_TIMESTAMP = 5;
+integer QUEUE_SCRIPT = 3;
+integer QUEUE_MIN_ACL = 4;    // Stored for auth module recovery (not used for decisions)
+integer QUEUE_TIMESTAMP = 5;  // Registration timestamp
 
 /* Authorized senders for privileged operations */
 list AUTHORIZED_RESET_SENDERS = ["bootstrap", "maintenance"];
@@ -77,8 +90,10 @@ list AUTHORIZED_RESET_SENDERS = ["bootstrap", "maintenance"];
 list PluginRegistry = [];           // Active plugin registry
 list RegistrationQueue = [];        // Pending operations queue (Unix modprobe style)
 integer PendingBatchTimer = FALSE;  // TRUE if batch timer is active
+integer PendingPluginListRequest = FALSE;  // TRUE if plugin_list_request received during batch
 integer LastPingUnix = 0;
 integer LastInvSweepUnix = 0;
+integer LastDiscoveryUnix = 0;      // Track last active plugin discovery
 key LastOwner = NULL_KEY;
 integer LastScriptCount = 0;        // Track script count to detect add/remove
 
@@ -125,6 +140,11 @@ integer is_authorized_sender(string sender_name) {
     return FALSE;
 }
 
+integer is_plugin_script(string script_name) {
+    // Plugins all start with ds_collar_plugin_
+    return (llSubStringIndex(script_name, "ds_collar_plugin_") == 0);
+}
+
 /* ═══════════════════════════════════════════════════════════
    QUEUE MANAGEMENT (Unix modprobe-style)
    ═══════════════════════════════════════════════════════════ */
@@ -138,7 +158,7 @@ integer is_authorized_sender(string sender_name) {
 // - Deduplicating at insertion prevents duplicate operations in batch
 // - Guarantees queue contains at most one operation per context
 // - Alternative (defer to batch) would process duplicates and cause multiple broadcasts
-integer queue_add(string op_type, string context, string label, integer min_acl, string script) {
+integer queue_add(string op_type, string context, string label, string script, integer min_acl) {
     // Remove any existing queue entry for this context (newest operation wins)
     list new_queue = [];
     integer i = 0;
@@ -153,10 +173,10 @@ integer queue_add(string op_type, string context, string label, integer min_acl,
 
     // Add new operation to queue
     integer timestamp = now();
-    new_queue += [op_type, context, label, min_acl, script, timestamp];
+    new_queue += [op_type, context, label, script, min_acl, timestamp];
     RegistrationQueue = new_queue;
 
-    logd("Queued " + op_type + ": " + context + " (" + label + ")");
+    logd("Queued " + op_type + ": " + context + " (" + label + ") min_acl=" + (string)min_acl);
 
     // Schedule batch processing if not already scheduled
     // This creates a small batching window for startup bursts
@@ -193,12 +213,12 @@ integer process_queue() {
         string op_type = llList2String(RegistrationQueue, i + QUEUE_OP_TYPE);
         string context = llList2String(RegistrationQueue, i + QUEUE_CONTEXT);
         string label = llList2String(RegistrationQueue, i + QUEUE_LABEL);
-        integer min_acl = llList2Integer(RegistrationQueue, i + QUEUE_MIN_ACL);
         string script = llList2String(RegistrationQueue, i + QUEUE_SCRIPT);
+        integer min_acl = llList2Integer(RegistrationQueue, i + QUEUE_MIN_ACL);
 
         if (op_type == "REG") {
             // Returns TRUE if new plugin OR if existing plugin data changed
-            integer reg_delta = registry_upsert(context, label, min_acl, script);
+            integer reg_delta = registry_upsert(context, label, script, min_acl);
             if (reg_delta) changes_made = TRUE;
         }
         else if (op_type == "UNREG") {
@@ -236,10 +256,22 @@ integer registry_find(string context) {
     return -1;
 }
 
+integer registry_find_by_script(string script_name) {
+    integer i = 0;
+    integer len = llGetListLength(PluginRegistry);
+    while (i < len) {
+        if (llList2String(PluginRegistry, i + REG_SCRIPT) == script_name) {
+            return i;
+        }
+        i += REG_STRIDE;
+    }
+    return -1;
+}
+
 // Add or update plugin in registry
 // Returns TRUE if new plugin added OR script UUID changed (recompiled/updated)
 // Returns FALSE only if re-registering with identical UUID
-integer registry_upsert(string context, string label, integer min_acl, string script) {
+integer registry_upsert(string context, string label, string script, integer min_acl) {
     integer idx = registry_find(context);
     integer now_unix = now();
 
@@ -253,8 +285,8 @@ integer registry_upsert(string context, string label, integer min_acl, string sc
 
     if (idx == -1) {
         // New plugin - add to registry
-        PluginRegistry += [context, label, min_acl, script, script_uuid, now_unix];
-        logd("Registered: " + context + " (" + label + ") UUID=" + (string)script_uuid);
+        PluginRegistry += [context, label, script, script_uuid, now_unix, min_acl];
+        logd("Registered: " + context + " (" + label + ") min_acl=" + (string)min_acl + " UUID=" + (string)script_uuid);
         return TRUE;
     }
     else {
@@ -263,19 +295,19 @@ integer registry_upsert(string context, string label, integer min_acl, string sc
 
         integer uuid_changed = (old_uuid != script_uuid);
 
-        // Update registry (timestamp always updates)
+        // Update registry (timestamp and min_acl always update)
         PluginRegistry = llListReplaceList(PluginRegistry, [label], idx + REG_LABEL, idx + REG_LABEL);
-        PluginRegistry = llListReplaceList(PluginRegistry, [min_acl], idx + REG_MIN_ACL, idx + REG_MIN_ACL);
         PluginRegistry = llListReplaceList(PluginRegistry, [script], idx + REG_SCRIPT, idx + REG_SCRIPT);
         PluginRegistry = llListReplaceList(PluginRegistry, [script_uuid], idx + REG_SCRIPT_UUID, idx + REG_SCRIPT_UUID);
         PluginRegistry = llListReplaceList(PluginRegistry, [now_unix], idx + REG_LAST_SEEN, idx + REG_LAST_SEEN);
+        PluginRegistry = llListReplaceList(PluginRegistry, [min_acl], idx + REG_MIN_ACL, idx + REG_MIN_ACL);
 
         if (uuid_changed) {
-            logd("Updated (UUID changed): " + context + " (" + label + ") " +
+            logd("Updated (UUID changed): " + context + " (" + label + ") min_acl=" + (string)min_acl + " " +
                  (string)old_uuid + " -> " + (string)script_uuid);
         }
         else {
-            logd("Updated (no change): " + context);
+            logd("Updated (no change): " + context + " min_acl=" + (string)min_acl);
         }
 
         return uuid_changed;
@@ -369,6 +401,52 @@ integer prune_missing_scripts() {
 }
 
 /* ═══════════════════════════════════════════════════════════
+   PLUGIN DISCOVERY (Active pull-based detection)
+   ═══════════════════════════════════════════════════════════ */
+
+// Actively discover new or changed plugin scripts
+// Enumerates inventory, detects new/recompiled plugins, triggers registration
+integer discover_plugins() {
+    integer inv_count = llGetInventoryNumber(INVENTORY_SCRIPT);
+    integer i;
+    integer discoveries = 0;
+
+    for (i = 0; i < inv_count; i = i + 1) {
+        string script_name = llGetInventoryName(INVENTORY_SCRIPT, i);
+
+        // Only check plugin scripts (not kernel modules)
+        if (!is_plugin_script(script_name)) jump next_script;
+
+        key script_uuid = llGetInventoryKey(script_name);
+        integer idx = registry_find_by_script(script_name);
+
+        // New script - not in registry
+        if (idx == -1) {
+            discoveries = discoveries + 1;
+            logd("Discovered new plugin: " + script_name);
+            jump next_script;
+        }
+
+        // Check if UUID changed (recompiled/replaced)
+        key registered_uuid = llList2Key(PluginRegistry, idx + REG_SCRIPT_UUID);
+        if (registered_uuid != script_uuid) {
+            discoveries = discoveries + 1;
+            logd("Detected UUID change: " + script_name);
+        }
+
+        @next_script;
+    }
+
+    // If we found new/changed scripts, broadcast register_now
+    if (discoveries > 0) {
+        logd("Active discovery: " + (string)discoveries + " new/changed plugins");
+        broadcast_register_now();
+    }
+
+    return discoveries;
+}
+
+/* ═══════════════════════════════════════════════════════════
    BROADCASTING
    ═══════════════════════════════════════════════════════════ */
 
@@ -401,13 +479,11 @@ broadcast_plugin_list() {
     while (i < len) {
         string context = llList2String(PluginRegistry, i + REG_CONTEXT);
         string label = llList2String(PluginRegistry, i + REG_LABEL);
-        integer min_acl = llList2Integer(PluginRegistry, i + REG_MIN_ACL);
 
         // Build individual plugin object with proper JSON encoding
         string plugin_obj = llList2Json(JSON_OBJECT, [
             "context", context,
-            "label", label,
-            "min_acl", min_acl
+            "label", label
         ]);
 
         plugins += [plugin_obj];
@@ -428,17 +504,6 @@ broadcast_plugin_list() {
 
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, msg, NULL_KEY);
     logd("Broadcast: plugin_list (" + (string)llGetListLength(plugins) + " plugins)");
-}
-
-
-// Soft reset request to all modules
-broadcast_soft_reset() {
-    string msg = llList2Json(JSON_OBJECT, [
-        "type", "soft_reset",
-        "from", "kernel"
-    ]);
-    llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, msg, NULL_KEY);
-    logd("Broadcast: soft_reset");
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -475,8 +540,16 @@ handle_register(string msg) {
     integer min_acl = (integer)llJsonGetValue(msg, ["min_acl"]);
     string script = llJsonGetValue(msg, ["script"]);
 
-    // Add to queue - will be processed in next batch
-    queue_add("REG", context, label, min_acl, script);
+    // Add to lifecycle queue (kernel stores min_acl for auth recovery, not enforcement)
+    queue_add("REG", context, label, script, min_acl);
+
+    // Forward ACL requirement to auth module (auth's concern for enforcement)
+    string auth_msg = llList2Json(JSON_OBJECT, [
+        "type", "register_acl",
+        "context", context,
+        "min_acl", min_acl
+    ]);
+    llMessageLinked(LINK_SET, AUTH_BUS, auth_msg, NULL_KEY);
 }
 
 handle_pong(string msg) {
@@ -488,11 +561,20 @@ handle_pong(string msg) {
 }
 
 handle_plugin_list_request() {
-    // Process any pending queue operations first
-    integer changes = process_queue();
+    // RACE CONDITION FIX: If batch timer is active, defer broadcast
+    // until registration window completes
+    if (PendingBatchTimer) {
+        PendingPluginListRequest = TRUE;
+        logd("Plugin list request deferred - waiting for registration batch to complete");
+        return;
+    }
 
-    // Always broadcast current list (with version)
+    // Process any pending queue operations first
+    process_queue();
+
+    // Broadcast current list
     broadcast_plugin_list();
+    logd("Plugin list broadcast (immediate response)");
 }
 
 handle_soft_reset(string msg) {
@@ -516,10 +598,38 @@ handle_soft_reset(string msg) {
     PluginRegistry = [];
     RegistrationQueue = [];
     PendingBatchTimer = FALSE;
+    PendingPluginListRequest = FALSE;
     LastPingUnix = now();
     LastInvSweepUnix = now();
+    LastDiscoveryUnix = now();
     llSetTimerEvent(PING_INTERVAL_SEC);
     broadcast_register_now();
+}
+
+handle_acl_registry_request() {
+    // Auth module requesting ACL repopulation (recovery from reset)
+    // Send all ACL data from kernel's registry
+    logd("ACL registry request received from auth module");
+
+    integer i = 0;
+    integer len = llGetListLength(PluginRegistry);
+
+    while (i < len) {
+        string context = llList2String(PluginRegistry, i + REG_CONTEXT);
+        integer min_acl = llList2Integer(PluginRegistry, i + REG_MIN_ACL);
+
+        // Send register_acl message for each plugin
+        string auth_msg = llList2Json(JSON_OBJECT, [
+            "type", "register_acl",
+            "context", context,
+            "min_acl", min_acl
+        ]);
+        llMessageLinked(LINK_SET, AUTH_BUS, auth_msg, NULL_KEY);
+
+        i += REG_STRIDE;
+    }
+
+    logd("ACL registry sent: " + (string)(len / REG_STRIDE) + " entries");
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -533,11 +643,13 @@ default
         PluginRegistry = [];
         RegistrationQueue = [];
         PendingBatchTimer = FALSE;
+        PendingPluginListRequest = FALSE;
         LastPingUnix = now();
         LastInvSweepUnix = now();
+        LastDiscoveryUnix = now();
         LastScriptCount = count_scripts();
 
-        logd("Kernel started (UUID-based change detection)");
+        logd("Kernel started (UUID-based change detection, active plugin discovery)");
 
         // Immediately broadcast register_now (plugins add to queue)
         broadcast_register_now();
@@ -563,8 +675,14 @@ default
         if (PendingBatchTimer) {
             // Batch mode: Process queue and broadcast
             integer changes = process_queue();
-            if (changes) {
+
+            // RACE CONDITION FIX: Broadcast if changes OR if plugin_list_request pending
+            if (changes || PendingPluginListRequest) {
                 broadcast_plugin_list();
+                if (PendingPluginListRequest) {
+                    logd("Plugin list broadcast (deferred response to request)");
+                }
+                PendingPluginListRequest = FALSE;
             }
             // process_queue() automatically switches back to heartbeat mode
         }
@@ -600,26 +718,42 @@ default
 
                 LastInvSweepUnix = now_unix;
             }
+
+            // Periodic active plugin discovery
+            integer discovery_elapsed = now_unix - LastDiscoveryUnix;
+            if (discovery_elapsed < 0) discovery_elapsed = 0; // Overflow protection
+
+            if (discovery_elapsed >= DISCOVERY_INTERVAL_SEC) {
+                // Discover new/changed plugins (triggers register_now if found)
+                discover_plugins();
+                LastDiscoveryUnix = now_unix;
+            }
         }
     }
     
     link_message(integer sender, integer num, string msg, key id) {
-        if (num != KERNEL_LIFECYCLE) return;
         if (!json_has(msg, ["type"])) return;
-        
+
         string msg_type = llJsonGetValue(msg, ["type"]);
-        
-        if (msg_type == "register") {
-            handle_register(msg);
+
+        if (num == KERNEL_LIFECYCLE) {
+            if (msg_type == "register") {
+                handle_register(msg);
+            }
+            else if (msg_type == "pong") {
+                handle_pong(msg);
+            }
+            else if (msg_type == "plugin_list_request") {
+                handle_plugin_list_request();
+            }
+            else if (msg_type == "soft_reset" || msg_type == "soft_reset_all") {
+                handle_soft_reset(msg);
+            }
         }
-        else if (msg_type == "pong") {
-            handle_pong(msg);
-        }
-        else if (msg_type == "plugin_list_request") {
-            handle_plugin_list_request();
-        }
-        else if (msg_type == "soft_reset" || msg_type == "soft_reset_all") {
-            handle_soft_reset(msg);
+        else if (num == AUTH_BUS) {
+            if (msg_type == "acl_registry_request") {
+                handle_acl_registry_request();
+            }
         }
     }
     
@@ -640,6 +774,7 @@ default
                 PluginRegistry = [];
                 RegistrationQueue = [];
                 PendingBatchTimer = FALSE;
+                PendingPluginListRequest = FALSE;
                 llSetTimerEvent(PING_INTERVAL_SEC);
                 broadcast_register_now();
             }

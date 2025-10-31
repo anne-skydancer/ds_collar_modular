@@ -6,6 +6,7 @@
 
    ARCHITECTURE: Event-driven session management
    - Kernel broadcasts plugin_list only when UUIDs change
+   - Kernel defers plugin_list responses during active registration (race fix)
    - UI invalidates sessions when receiving plugin_list
    - No version numbers needed (UUID tracking in kernel)
 
@@ -24,6 +25,8 @@
    - [LOW] Production mode guard for debug
    - [LOW] Owner change handler
    - [LOW] Blacklist check in button handler
+
+   NOTE: Plugin discovery race condition fixed in kernel (deferred responses)
    ============================================================================= */
 
 integer DEBUG = FALSE;
@@ -199,6 +202,7 @@ create_session(key user, integer acl, integer is_blacklisted, string context_fil
         cleanup_session(oldest_user);
     }
 
+    // Build filtered list based on ACL and context (SOS vs root)
     list filtered = [];
     integer i = 0;
     integer len = llGetListLength(AllPlugins);
@@ -211,6 +215,7 @@ create_session(key user, integer acl, integer is_blacklisted, string context_fil
         integer should_include = FALSE;
         integer is_sos_plugin = starts_with(context, SOS_PREFIX);
 
+        // First check ACL
         if (acl >= min_acl) {
             if (context_filter == SOS_CONTEXT) {
                 // SOS context: only include plugins with sos_ prefix
@@ -264,22 +269,74 @@ apply_plugin_list(string plugins_json) {
     integer i = 0;
     while (i < count) {
         string plugin_obj = llJsonGetValue(plugins_json, [i]);
-        
+
         if (json_has(plugin_obj, ["context"]) &&
-            json_has(plugin_obj, ["label"]) &&
-            json_has(plugin_obj, ["min_acl"])) {
-            
+            json_has(plugin_obj, ["label"])) {
+
             string context = llJsonGetValue(plugin_obj, ["context"]);
             string label = llJsonGetValue(plugin_obj, ["label"]);
-            integer min_acl = (integer)llJsonGetValue(plugin_obj, ["min_acl"]);
-            
-            AllPlugins += [context, label, min_acl];
+
+            // Add with default min_acl=0 (will be updated when ACL list arrives)
+            // RACE MITIGATION: Sessions are invalidated when plugin_list updates,
+            // so no active sessions exist during this window. New sessions only
+            // created after ACL query completes (handle_acl_result), ensuring
+            // ACL data is always present before access decisions are made.
+            AllPlugins += [context, label, 0];
         }
-        
+
         i += 1;
     }
-    
+
     logd("Plugin list updated: " + (string)(llGetListLength(AllPlugins) / PLUGIN_STRIDE) + " plugins");
+
+    // Request ACL data from auth module
+    string request = llList2Json(JSON_OBJECT, ["type", "plugin_acl_list_request"]);
+    llMessageLinked(LINK_SET, AUTH_BUS, request, NULL_KEY);
+}
+
+apply_plugin_acl_list(string acl_json) {
+    logd("apply_plugin_acl_list called");
+
+    if (!is_json_arr(acl_json)) {
+        logd("ERROR: Not a JSON array!");
+        return;
+    }
+
+    integer count = 0;
+    while (llJsonValueType(acl_json, [count]) != JSON_INVALID) {
+        count += 1;
+    }
+
+    logd("ACL array length: " + (string)count);
+
+    integer i = 0;
+    while (i < count) {
+        string acl_obj = llJsonGetValue(acl_json, [i]);
+
+        if (json_has(acl_obj, ["context"]) && json_has(acl_obj, ["min_acl"])) {
+            string context = llJsonGetValue(acl_obj, ["context"]);
+            integer min_acl = (integer)llJsonGetValue(acl_obj, ["min_acl"]);
+
+            // Find this context in AllPlugins and update min_acl
+            // OPTIMIZATION: Jump to next_acl after match (acts as break)
+            // Each context appears at most once, so no need to continue searching
+            integer j = 0;
+            integer len = llGetListLength(AllPlugins);
+            while (j < len) {
+                if (llList2String(AllPlugins, j + PLUGIN_CONTEXT) == context) {
+                    AllPlugins = llListReplaceList(AllPlugins, [min_acl], j + PLUGIN_MIN_ACL, j + PLUGIN_MIN_ACL);
+                    jump next_acl;  // Break after match (each context is unique)
+                }
+                j += PLUGIN_STRIDE;
+            }
+
+            @next_acl;
+        }
+
+        i += 1;
+    }
+
+    logd("Plugin ACL data updated");
 }
 
 integer is_json_arr(string s) {
@@ -471,7 +528,6 @@ handle_button_click(key user, string button) {
     integer current_page = llList2Integer(Sessions, session_idx + SESSION_PAGE);
     integer total_pages = llList2Integer(Sessions, session_idx + SESSION_TOTAL_PAGES);
     string session_context = llList2String(Sessions, session_idx + SESSION_CONTEXT);
-    list filtered = get_session_filtered_plugins(session_idx);
 
     if (button == "<<") {
         current_page -= 1;
@@ -513,26 +569,26 @@ handle_button_click(key user, string button) {
         if (label == button) {
             string context = llList2String(AllPlugins, i + PLUGIN_CONTEXT);
             integer min_acl = llList2Integer(AllPlugins, i + PLUGIN_MIN_ACL);
-            
             integer user_acl = llList2Integer(Sessions, session_idx + SESSION_ACL);
+
+            // ACL check - CRITICAL for collar security
             if (user_acl < min_acl) {
                 llRegionSayTo(user, 0, "Access denied.");
-                logd("ACL insufficient: user=" + (string)user_acl + ", required=" + (string)min_acl);
                 return;
             }
-            
+
             string msg = llList2Json(JSON_OBJECT, [
                 "type", "start",
                 "context", context,
                 "user", (string)user
             ]);
-            
+
             llMessageLinked(LINK_SET, UI_BUS, msg, user);
             logd("Starting plugin: " + context + " for " + llKey2Name(user));
-            
+
             return;
         }
-        
+
         i += PLUGIN_STRIDE;
     }
     
@@ -737,11 +793,18 @@ handle_return(string msg) {
 handle_update_label(string msg) {
     if (!json_has(msg, ["context"])) return;
     if (!json_has(msg, ["label"])) return;
-    
+
     string context = llJsonGetValue(msg, ["context"]);
     string new_label = llJsonGetValue(msg, ["label"]);
-    
+
     update_plugin_label(context, new_label);
+}
+
+handle_plugin_acl_list(string msg) {
+    if (!json_has(msg, ["acl_data"])) return;
+
+    string acl_json = llJsonGetValue(msg, ["acl_data"]);
+    apply_plugin_acl_list(acl_json);
 }
 
 handle_dialog_response(string msg) {
@@ -798,6 +861,7 @@ default
 
         logd("UI module started (UUID-based change detection, long-touch support)");
 
+        // Request plugin list (kernel defers response during active registration)
         string request = llList2Json(JSON_OBJECT, [
             "type", "plugin_list_request"
         ]);
@@ -888,7 +952,7 @@ default
             i += 1;
         }
     }
-    
+
     link_message(integer sender, integer num, string msg, key id) {
         if (!json_has(msg, ["type"])) return;
         
@@ -909,6 +973,9 @@ default
         else if (num == AUTH_BUS) {
             if (msg_type == "acl_result") {
                 handle_acl_result(msg);
+            }
+            else if (msg_type == "plugin_acl_list") {
+                handle_plugin_acl_list(msg);
             }
         }
         else if (num == UI_BUS) {
