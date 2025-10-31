@@ -201,7 +201,8 @@ broadcast_plugin_acl_list() {
         i += PLUGIN_ACL_STRIDE;
     }
 
-    // Build array
+    // Build array - manual construction required because acl_data contains
+    // pre-serialized JSON objects; llList2Json would quote them incorrectly
     string acl_array = "[";
     integer j;
     for (j = 0; j < llGetListLength(acl_data); j = j + 1) {
@@ -210,6 +211,7 @@ broadcast_plugin_acl_list() {
     }
     acl_array += "]";
 
+    // Manual outer object construction for same reason
     string msg = "{\"type\":\"plugin_acl_list\",\"acl_data\":" + acl_array + "}";
     llMessageLinked(LINK_SET, AUTH_BUS, msg, NULL_KEY);
     logd("Broadcast plugin ACL list: " + (string)llGetListLength(acl_data) + " entries");

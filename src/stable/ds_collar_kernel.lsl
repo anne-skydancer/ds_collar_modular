@@ -72,12 +72,13 @@ integer REG_SCRIPT_UUID = 3;
 integer REG_LAST_SEEN = 4;
 
 /* Plugin operation queue stride: [op_type, context, label, script, timestamp] */
-integer QUEUE_STRIDE = 5;
+integer QUEUE_STRIDE = 6;
 integer QUEUE_OP_TYPE = 0;    // "REG" or "UNREG"
 integer QUEUE_CONTEXT = 1;
 integer QUEUE_LABEL = 2;
 integer QUEUE_SCRIPT = 3;
-// QUEUE_TIMESTAMP at index 4 (stored but not accessed via constant)
+integer QUEUE_MIN_ACL = 4;    // Stored for auth module recovery (not used for decisions)
+integer QUEUE_TIMESTAMP = 5;  // Registration timestamp
 
 /* Authorized senders for privileged operations */
 list AUTHORIZED_RESET_SENDERS = ["bootstrap", "maintenance"];
