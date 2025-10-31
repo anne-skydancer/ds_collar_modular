@@ -77,6 +77,12 @@ list PendingQueries = [];  // [avatar_key, correlation_id, avatar_key, correlati
 integer PENDING_STRIDE = 2;
 integer MAX_PENDING_QUERIES = 50;  // Prevent unbounded growth
 
+/* Plugin ACL registry: [context, min_acl, context, min_acl, ...] */
+list PluginAclRegistry = [];
+integer PLUGIN_ACL_STRIDE = 2;
+integer PLUGIN_ACL_CONTEXT = 0;
+integer PLUGIN_ACL_MIN_ACL = 1;
+
 /* ═══════════════════════════════════════════════════════════
    HELPERS
    ═══════════════════════════════════════════════════════════ */
@@ -149,6 +155,80 @@ integer compute_acl_level(key av) {
     // SECURITY FIX: Default is NOACCESS (not BLACKLIST)
     // BLACKLIST is explicit denial, NOACCESS is simply no privileges
     return ACL_NOACCESS;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   PLUGIN ACL MANAGEMENT
+   ═══════════════════════════════════════════════════════════ */
+
+// Register or update plugin ACL requirement
+register_plugin_acl(string context, integer min_acl) {
+    // Find existing entry
+    integer i = 0;
+    integer len = llGetListLength(PluginAclRegistry);
+    while (i < len) {
+        if (llList2String(PluginAclRegistry, i + PLUGIN_ACL_CONTEXT) == context) {
+            // Update existing
+            PluginAclRegistry = llListReplaceList(PluginAclRegistry, [min_acl],
+                i + PLUGIN_ACL_MIN_ACL, i + PLUGIN_ACL_MIN_ACL);
+            logd("Updated plugin ACL: " + context + " requires " + (string)min_acl);
+            return;
+        }
+        i += PLUGIN_ACL_STRIDE;
+    }
+
+    // Add new entry
+    PluginAclRegistry += [context, min_acl];
+    logd("Registered plugin ACL: " + context + " requires " + (string)min_acl);
+}
+
+// Check if user can access a specific plugin
+integer can_access_plugin(key user, string context) {
+    // Find plugin's ACL requirement
+    integer i = 0;
+    integer len = llGetListLength(PluginAclRegistry);
+    while (i < len) {
+        if (llList2String(PluginAclRegistry, i + PLUGIN_ACL_CONTEXT) == context) {
+            integer required_acl = llList2Integer(PluginAclRegistry, i + PLUGIN_ACL_MIN_ACL);
+            integer user_acl = compute_acl_level(user);
+            return (user_acl >= required_acl);
+        }
+        i += PLUGIN_ACL_STRIDE;
+    }
+
+    // Plugin not registered - deny by default
+    return FALSE;
+}
+
+// Filter plugin list for user - returns list of accessible contexts
+list filter_plugins_for_user(key user, list plugin_contexts) {
+    list accessible = [];
+    integer user_acl = compute_acl_level(user);
+
+    integer i = 0;
+    integer len = llGetListLength(plugin_contexts);
+    while (i < len) {
+        string context = llList2String(plugin_contexts, i);
+
+        // Find plugin's ACL requirement
+        integer j = 0;
+        integer reg_len = llGetListLength(PluginAclRegistry);
+        while (j < reg_len) {
+            if (llList2String(PluginAclRegistry, j + PLUGIN_ACL_CONTEXT) == context) {
+                integer required_acl = llList2Integer(PluginAclRegistry, j + PLUGIN_ACL_MIN_ACL);
+                if (user_acl >= required_acl) {
+                    accessible += [context];
+                }
+                jump next_plugin;
+            }
+            j += PLUGIN_ACL_STRIDE;
+        }
+
+        @next_plugin;
+        i++;
+    }
+
+    return accessible;
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -454,29 +534,64 @@ apply_settings_delta(string msg) {
 
 handle_acl_query(string msg) {
     if (!json_has(msg, ["avatar"])) return;
-    
+
     key av = (key)llJsonGetValue(msg, ["avatar"]);
     if (av == NULL_KEY) return;
-    
+
     string correlation_id = "";
     if (json_has(msg, ["id"])) {
         correlation_id = llJsonGetValue(msg, ["id"]);
     }
-    
+
     if (!SettingsReady) {
         // SECURITY FIX: Limit pending query queue size
         if (llGetListLength(PendingQueries) / PENDING_STRIDE >= MAX_PENDING_QUERIES) {
             logd("WARNING: Pending query limit reached, discarding oldest");
             PendingQueries = llDeleteSubList(PendingQueries, 0, PENDING_STRIDE - 1);
         }
-        
+
         // Queue this query
         PendingQueries += [av, correlation_id];
         logd("Queued ACL query for " + llKey2Name(av));
         return;
     }
-    
+
     send_acl_result(av, correlation_id);
+}
+
+handle_register_acl(string msg) {
+    if (!json_has(msg, ["context"])) return;
+    if (!json_has(msg, ["min_acl"])) return;
+
+    string context = llJsonGetValue(msg, ["context"]);
+    integer min_acl = (integer)llJsonGetValue(msg, ["min_acl"]);
+
+    register_plugin_acl(context, min_acl);
+}
+
+handle_filter_plugins(string msg) {
+    if (!json_has(msg, ["user"])) return;
+    if (!json_has(msg, ["contexts"])) return;
+
+    key user = (key)llJsonGetValue(msg, ["user"]);
+    string contexts_json = llJsonGetValue(msg, ["contexts"]);
+
+    // Parse contexts array
+    list contexts = llJson2List(contexts_json);
+
+    // Filter based on user's ACL
+    list accessible = filter_plugins_for_user(user, contexts);
+
+    // Build response
+    string accessible_json = llList2Json(JSON_ARRAY, accessible);
+    string response = llList2Json(JSON_OBJECT, [
+        "type", "filtered_plugins",
+        "user", (string)user,
+        "contexts", accessible_json
+    ]);
+
+    llMessageLinked(LINK_SET, AUTH_BUS, response, NULL_KEY);
+    logd("Filtered plugins for " + llKey2Name(user) + ": " + (string)llGetListLength(accessible) + "/" + (string)llGetListLength(contexts));
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -488,8 +603,9 @@ default
     state_entry() {
         SettingsReady = FALSE;
         PendingQueries = [];
-        
-        logd("Auth module started");
+        PluginAclRegistry = [];
+
+        logd("Auth module started (with plugin ACL registry)");
         
         // Request settings
         string request = llList2Json(JSON_OBJECT, [
@@ -514,6 +630,12 @@ default
         else if (num == AUTH_BUS) {
             if (msg_type == "acl_query") {
                 handle_acl_query(msg);
+            }
+            else if (msg_type == "register_acl") {
+                handle_register_acl(msg);
+            }
+            else if (msg_type == "filter_plugins") {
+                handle_filter_plugins(msg);
             }
         }
         

@@ -52,6 +52,7 @@ integer PRODUCTION = TRUE;  // Set FALSE for development builds
    CONSOLIDATED ABI
    ═══════════════════════════════════════════════════════════ */
 integer KERNEL_LIFECYCLE = 500;
+integer AUTH_BUS = 700;
 
 /* ═══════════════════════════════════════════════════════════
    CONSTANTS
@@ -62,23 +63,21 @@ float   INV_SWEEP_INTERVAL    = 3.0;
 float   BATCH_WINDOW_SEC      = 0.1;  // Small batch window during startup burst
 float   DISCOVERY_INTERVAL_SEC = 5.0;  // Active plugin discovery interval
 
-/* Registry stride: [context, label, min_acl, script, script_uuid, last_seen_unix] */
-integer REG_STRIDE = 6;
+/* Registry stride: [context, label, script, script_uuid, last_seen_unix] */
+integer REG_STRIDE = 5;
 integer REG_CONTEXT = 0;
 integer REG_LABEL = 1;
-integer REG_MIN_ACL = 2;
-integer REG_SCRIPT = 3;
-integer REG_SCRIPT_UUID = 4;
-integer REG_LAST_SEEN = 5;
+integer REG_SCRIPT = 2;
+integer REG_SCRIPT_UUID = 3;
+integer REG_LAST_SEEN = 4;
 
-/* Plugin operation queue stride: [op_type, context, label, min_acl, script, timestamp] */
-integer QUEUE_STRIDE = 6;
+/* Plugin operation queue stride: [op_type, context, label, script, timestamp] */
+integer QUEUE_STRIDE = 5;
 integer QUEUE_OP_TYPE = 0;    // "REG" or "UNREG"
 integer QUEUE_CONTEXT = 1;
 integer QUEUE_LABEL = 2;
-integer QUEUE_MIN_ACL = 3;
-integer QUEUE_SCRIPT = 4;
-// QUEUE_TIMESTAMP at index 5 (stored but not accessed via constant)
+integer QUEUE_SCRIPT = 3;
+// QUEUE_TIMESTAMP at index 4 (stored but not accessed via constant)
 
 /* Authorized senders for privileged operations */
 list AUTHORIZED_RESET_SENDERS = ["bootstrap", "maintenance"];
@@ -157,7 +156,7 @@ integer is_plugin_script(string script_name) {
 // - Deduplicating at insertion prevents duplicate operations in batch
 // - Guarantees queue contains at most one operation per context
 // - Alternative (defer to batch) would process duplicates and cause multiple broadcasts
-integer queue_add(string op_type, string context, string label, integer min_acl, string script) {
+integer queue_add(string op_type, string context, string label, string script) {
     // Remove any existing queue entry for this context (newest operation wins)
     list new_queue = [];
     integer i = 0;
@@ -172,7 +171,7 @@ integer queue_add(string op_type, string context, string label, integer min_acl,
 
     // Add new operation to queue
     integer timestamp = now();
-    new_queue += [op_type, context, label, min_acl, script, timestamp];
+    new_queue += [op_type, context, label, script, timestamp];
     RegistrationQueue = new_queue;
 
     logd("Queued " + op_type + ": " + context + " (" + label + ")");
@@ -212,12 +211,11 @@ integer process_queue() {
         string op_type = llList2String(RegistrationQueue, i + QUEUE_OP_TYPE);
         string context = llList2String(RegistrationQueue, i + QUEUE_CONTEXT);
         string label = llList2String(RegistrationQueue, i + QUEUE_LABEL);
-        integer min_acl = llList2Integer(RegistrationQueue, i + QUEUE_MIN_ACL);
         string script = llList2String(RegistrationQueue, i + QUEUE_SCRIPT);
 
         if (op_type == "REG") {
             // Returns TRUE if new plugin OR if existing plugin data changed
-            integer reg_delta = registry_upsert(context, label, min_acl, script);
+            integer reg_delta = registry_upsert(context, label, script);
             if (reg_delta) changes_made = TRUE;
         }
         else if (op_type == "UNREG") {
@@ -270,7 +268,7 @@ integer registry_find_by_script(string script_name) {
 // Add or update plugin in registry
 // Returns TRUE if new plugin added OR script UUID changed (recompiled/updated)
 // Returns FALSE only if re-registering with identical UUID
-integer registry_upsert(string context, string label, integer min_acl, string script) {
+integer registry_upsert(string context, string label, string script) {
     integer idx = registry_find(context);
     integer now_unix = now();
 
@@ -284,7 +282,7 @@ integer registry_upsert(string context, string label, integer min_acl, string sc
 
     if (idx == -1) {
         // New plugin - add to registry
-        PluginRegistry += [context, label, min_acl, script, script_uuid, now_unix];
+        PluginRegistry += [context, label, script, script_uuid, now_unix];
         logd("Registered: " + context + " (" + label + ") UUID=" + (string)script_uuid);
         return TRUE;
     }
@@ -296,7 +294,6 @@ integer registry_upsert(string context, string label, integer min_acl, string sc
 
         // Update registry (timestamp always updates)
         PluginRegistry = llListReplaceList(PluginRegistry, [label], idx + REG_LABEL, idx + REG_LABEL);
-        PluginRegistry = llListReplaceList(PluginRegistry, [min_acl], idx + REG_MIN_ACL, idx + REG_MIN_ACL);
         PluginRegistry = llListReplaceList(PluginRegistry, [script], idx + REG_SCRIPT, idx + REG_SCRIPT);
         PluginRegistry = llListReplaceList(PluginRegistry, [script_uuid], idx + REG_SCRIPT_UUID, idx + REG_SCRIPT_UUID);
         PluginRegistry = llListReplaceList(PluginRegistry, [now_unix], idx + REG_LAST_SEEN, idx + REG_LAST_SEEN);
@@ -478,13 +475,11 @@ broadcast_plugin_list() {
     while (i < len) {
         string context = llList2String(PluginRegistry, i + REG_CONTEXT);
         string label = llList2String(PluginRegistry, i + REG_LABEL);
-        integer min_acl = llList2Integer(PluginRegistry, i + REG_MIN_ACL);
 
         // Build individual plugin object with proper JSON encoding
         string plugin_obj = llList2Json(JSON_OBJECT, [
             "context", context,
-            "label", label,
-            "min_acl", min_acl
+            "label", label
         ]);
 
         plugins += [plugin_obj];
@@ -541,8 +536,16 @@ handle_register(string msg) {
     integer min_acl = (integer)llJsonGetValue(msg, ["min_acl"]);
     string script = llJsonGetValue(msg, ["script"]);
 
-    // Add to queue - will be processed in next batch
-    queue_add("REG", context, label, min_acl, script);
+    // Add to lifecycle queue (kernel's concern)
+    queue_add("REG", context, label, script);
+
+    // Forward ACL requirement to auth module (auth's concern)
+    string auth_msg = llList2Json(JSON_OBJECT, [
+        "type", "register_acl",
+        "context", context,
+        "min_acl", min_acl
+    ]);
+    llMessageLinked(LINK_SET, AUTH_BUS, auth_msg, NULL_KEY);
 }
 
 handle_pong(string msg) {

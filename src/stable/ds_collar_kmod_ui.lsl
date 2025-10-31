@@ -55,10 +55,9 @@ string BTN_NAV_GAP = " ";
 string BTN_NAV_RIGHT = ">>";
 
 /* Plugin list stride */
-integer PLUGIN_STRIDE = 3;
+integer PLUGIN_STRIDE = 2;
 integer PLUGIN_CONTEXT = 0;
 integer PLUGIN_LABEL = 1;
-integer PLUGIN_MIN_ACL = 2;
 
 /* Session list stride - SECURITY FIX: Added SESSION_CREATED_TIME */
 integer SESSION_STRIDE = 9;
@@ -202,6 +201,8 @@ create_session(key user, integer acl, integer is_blacklisted, string context_fil
         cleanup_session(oldest_user);
     }
 
+    // Build filtered list based on context (SOS vs root)
+    // NOTE: ACL filtering removed - plugins handle their own access control
     list filtered = [];
     integer i = 0;
     integer len = llGetListLength(AllPlugins);
@@ -209,23 +210,20 @@ create_session(key user, integer acl, integer is_blacklisted, string context_fil
     while (i < len) {
         string context = llList2String(AllPlugins, i + PLUGIN_CONTEXT);
         string label = llList2String(AllPlugins, i + PLUGIN_LABEL);
-        integer min_acl = llList2Integer(AllPlugins, i + PLUGIN_MIN_ACL);
 
         integer should_include = FALSE;
         integer is_sos_plugin = starts_with(context, SOS_PREFIX);
 
-        if (acl >= min_acl) {
-            if (context_filter == SOS_CONTEXT) {
-                // SOS context: only include plugins with sos_ prefix
-                should_include = is_sos_plugin;
-            } else {
-                // Root context: include all non-SOS plugins (no sos_ prefix)
-                should_include = !is_sos_plugin;
-            }
+        if (context_filter == SOS_CONTEXT) {
+            // SOS context: only include plugins with sos_ prefix
+            should_include = is_sos_plugin;
+        } else {
+            // Root context: include all non-SOS plugins (no sos_ prefix)
+            should_include = !is_sos_plugin;
         }
 
         if (should_include) {
-            filtered += [context, label, min_acl];
+            filtered += [context, label];
         }
 
         i += PLUGIN_STRIDE;
@@ -267,18 +265,16 @@ apply_plugin_list(string plugins_json) {
     integer i = 0;
     while (i < count) {
         string plugin_obj = llJsonGetValue(plugins_json, [i]);
-        
+
         if (json_has(plugin_obj, ["context"]) &&
-            json_has(plugin_obj, ["label"]) &&
-            json_has(plugin_obj, ["min_acl"])) {
-            
+            json_has(plugin_obj, ["label"])) {
+
             string context = llJsonGetValue(plugin_obj, ["context"]);
             string label = llJsonGetValue(plugin_obj, ["label"]);
-            integer min_acl = (integer)llJsonGetValue(plugin_obj, ["min_acl"]);
-            
-            AllPlugins += [context, label, min_acl];
+
+            AllPlugins += [context, label];
         }
-        
+
         i += 1;
     }
     
@@ -474,7 +470,6 @@ handle_button_click(key user, string button) {
     integer current_page = llList2Integer(Sessions, session_idx + SESSION_PAGE);
     integer total_pages = llList2Integer(Sessions, session_idx + SESSION_TOTAL_PAGES);
     string session_context = llList2String(Sessions, session_idx + SESSION_CONTEXT);
-    list filtered = get_session_filtered_plugins(session_idx);
 
     if (button == "<<") {
         current_page -= 1;
@@ -515,27 +510,20 @@ handle_button_click(key user, string button) {
         string label = llList2String(AllPlugins, i + PLUGIN_LABEL);
         if (label == button) {
             string context = llList2String(AllPlugins, i + PLUGIN_CONTEXT);
-            integer min_acl = llList2Integer(AllPlugins, i + PLUGIN_MIN_ACL);
-            
-            integer user_acl = llList2Integer(Sessions, session_idx + SESSION_ACL);
-            if (user_acl < min_acl) {
-                llRegionSayTo(user, 0, "Access denied.");
-                logd("ACL insufficient: user=" + (string)user_acl + ", required=" + (string)min_acl);
-                return;
-            }
-            
+
+            // NOTE: ACL check removed - plugin handles its own access control
             string msg = llList2Json(JSON_OBJECT, [
                 "type", "start",
                 "context", context,
                 "user", (string)user
             ]);
-            
+
             llMessageLinked(LINK_SET, UI_BUS, msg, user);
             logd("Starting plugin: " + context + " for " + llKey2Name(user));
-            
+
             return;
         }
-        
+
         i += PLUGIN_STRIDE;
     }
     
