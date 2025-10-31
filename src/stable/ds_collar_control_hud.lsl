@@ -57,6 +57,7 @@ integer DialogListenHandle = 0;
 
 integer ScanningForCollars = FALSE;
 integer AclPending = FALSE;
+integer DisplayNamePending = FALSE;
 integer AclLevel = ACL_NOACCESS;
 
 key TargetCollarKey = NULL_KEY;
@@ -103,6 +104,7 @@ cleanup_session() {
 
     ScanningForCollars = FALSE;
     AclPending = FALSE;
+    DisplayNamePending = FALSE;
     AclLevel = ACL_NOACCESS;
     TargetCollarKey = NULL_KEY;
     TargetAvatarKey = NULL_KEY;
@@ -259,6 +261,8 @@ trigger_collar_menu() {
 
     // Request display name via dataserver
     DisplayNameQueryId = llRequestAgentData(TargetAvatarKey, DATA_NAME);
+    DisplayNamePending = TRUE;
+    llSetTimerEvent(QUERY_TIMEOUT_SEC);
 
     // The actual menu triggering and success message will be handled in dataserver()
 }
@@ -268,9 +272,15 @@ trigger_collar_menu() {
    ═══════════════════════════════════════════════════════════ */
 
 process_acl_result(integer level) {
-    // ACL levels are ordered: any level >= ACL_PUBLIC (1) grants access
-    // ACL_BLACKLIST(-1) and ACL_NOACCESS(0) deny access by default
-    integer has_access = (level >= ACL_PUBLIC);
+    // Explicitly whitelist known ACL levels that grant access
+    // Reject unknown/malformed levels for security
+    integer has_access = (
+        level == ACL_PRIMARY_OWNER ||
+        level == ACL_TRUSTEE ||
+        level == ACL_OWNED ||
+        level == ACL_UNOWNED ||
+        level == ACL_PUBLIC
+    );
 
     // EMERGENCY ACCESS: Allow wearer to access SOS menu even with ACL 0
     // This handles TPE mode where wearer has no normal access to their collar
@@ -454,6 +464,14 @@ default {
     dataserver(key query_id, string data) {
         if (query_id == DisplayNameQueryId) {
             DisplayNameQueryId = NULL_KEY;
+            DisplayNamePending = FALSE;
+            llSetTimerEvent(0.0);
+
+            // Validate that session state is still valid
+            if (TargetCollarKey == NULL_KEY) {
+                logd("Session cleared before dataserver response");
+                return;
+            }
 
             // Show simple connection message
             llOwnerSay("Connected to " + data + "'s collar.");
@@ -484,9 +502,16 @@ default {
                 cleanup_session();
             }
             else {
-                logd("Dialog timeout");
-                llOwnerSay("Selection dialog timed out.");
-                cleanup_session();
+                if (DisplayNamePending) {
+                    logd("Display name query timeout");
+                    llOwnerSay("Connection failed: Unable to retrieve name.");
+                    cleanup_session();
+                }
+                else {
+                    logd("Dialog timeout");
+                    llOwnerSay("Selection dialog timed out.");
+                    cleanup_session();
+                }
             }
         }
     }
