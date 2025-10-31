@@ -182,6 +182,39 @@ register_plugin_acl(string context, integer min_acl) {
     logd("Registered plugin ACL: " + context + " requires " + (string)min_acl);
 }
 
+// Broadcast plugin ACL list to UI
+broadcast_plugin_acl_list() {
+    list acl_data = [];
+    integer i = 0;
+    integer len = llGetListLength(PluginAclRegistry);
+
+    while (i < len) {
+        string context = llList2String(PluginAclRegistry, i + PLUGIN_ACL_CONTEXT);
+        integer min_acl = llList2Integer(PluginAclRegistry, i + PLUGIN_ACL_MIN_ACL);
+
+        string acl_obj = llList2Json(JSON_OBJECT, [
+            "context", context,
+            "min_acl", min_acl
+        ]);
+
+        acl_data += [acl_obj];
+        i += PLUGIN_ACL_STRIDE;
+    }
+
+    // Build array
+    string acl_array = "[";
+    integer j;
+    for (j = 0; j < llGetListLength(acl_data); j = j + 1) {
+        if (j > 0) acl_array += ",";
+        acl_array += llList2String(acl_data, j);
+    }
+    acl_array += "]";
+
+    string msg = "{\"type\":\"plugin_acl_list\",\"acl_data\":" + acl_array + "}";
+    llMessageLinked(LINK_SET, AUTH_BUS, msg, NULL_KEY);
+    logd("Broadcast plugin ACL list: " + (string)llGetListLength(acl_data) + " entries");
+}
+
 // Check if user can access a specific plugin
 integer can_access_plugin(key user, string context) {
     // Find plugin's ACL requirement
@@ -594,6 +627,10 @@ handle_filter_plugins(string msg) {
     logd("Filtered plugins for " + llKey2Name(user) + ": " + (string)llGetListLength(accessible) + "/" + (string)llGetListLength(contexts));
 }
 
+handle_plugin_acl_list_request() {
+    broadcast_plugin_acl_list();
+}
+
 /* ═══════════════════════════════════════════════════════════
    EVENTS
    ═══════════════════════════════════════════════════════════ */
@@ -636,6 +673,9 @@ default
             }
             else if (msg_type == "filter_plugins") {
                 handle_filter_plugins(msg);
+            }
+            else if (msg_type == "plugin_acl_list_request") {
+                handle_plugin_acl_list_request();
             }
         }
         

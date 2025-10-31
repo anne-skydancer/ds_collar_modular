@@ -55,9 +55,10 @@ string BTN_NAV_GAP = " ";
 string BTN_NAV_RIGHT = ">>";
 
 /* Plugin list stride */
-integer PLUGIN_STRIDE = 2;
+integer PLUGIN_STRIDE = 3;
 integer PLUGIN_CONTEXT = 0;
 integer PLUGIN_LABEL = 1;
+integer PLUGIN_MIN_ACL = 2;
 
 /* Session list stride - SECURITY FIX: Added SESSION_CREATED_TIME */
 integer SESSION_STRIDE = 9;
@@ -201,8 +202,7 @@ create_session(key user, integer acl, integer is_blacklisted, string context_fil
         cleanup_session(oldest_user);
     }
 
-    // Build filtered list based on context (SOS vs root)
-    // NOTE: ACL filtering removed - plugins handle their own access control
+    // Build filtered list based on ACL and context (SOS vs root)
     list filtered = [];
     integer i = 0;
     integer len = llGetListLength(AllPlugins);
@@ -210,20 +210,24 @@ create_session(key user, integer acl, integer is_blacklisted, string context_fil
     while (i < len) {
         string context = llList2String(AllPlugins, i + PLUGIN_CONTEXT);
         string label = llList2String(AllPlugins, i + PLUGIN_LABEL);
+        integer min_acl = llList2Integer(AllPlugins, i + PLUGIN_MIN_ACL);
 
         integer should_include = FALSE;
         integer is_sos_plugin = starts_with(context, SOS_PREFIX);
 
-        if (context_filter == SOS_CONTEXT) {
-            // SOS context: only include plugins with sos_ prefix
-            should_include = is_sos_plugin;
-        } else {
-            // Root context: include all non-SOS plugins (no sos_ prefix)
-            should_include = !is_sos_plugin;
+        // First check ACL
+        if (acl >= min_acl) {
+            if (context_filter == SOS_CONTEXT) {
+                // SOS context: only include plugins with sos_ prefix
+                should_include = is_sos_plugin;
+            } else {
+                // Root context: include all non-SOS plugins (no sos_ prefix)
+                should_include = !is_sos_plugin;
+            }
         }
 
         if (should_include) {
-            filtered += [context, label];
+            filtered += [context, label, min_acl];
         }
 
         i += PLUGIN_STRIDE;
@@ -272,13 +276,61 @@ apply_plugin_list(string plugins_json) {
             string context = llJsonGetValue(plugin_obj, ["context"]);
             string label = llJsonGetValue(plugin_obj, ["label"]);
 
-            AllPlugins += [context, label];
+            // Add with default min_acl=0 (will be updated when ACL list arrives)
+            AllPlugins += [context, label, 0];
         }
 
         i += 1;
     }
-    
+
     logd("Plugin list updated: " + (string)(llGetListLength(AllPlugins) / PLUGIN_STRIDE) + " plugins");
+
+    // Request ACL data from auth module
+    string request = llList2Json(JSON_OBJECT, ["type", "plugin_acl_list_request"]);
+    llMessageLinked(LINK_SET, AUTH_BUS, request, NULL_KEY);
+}
+
+apply_plugin_acl_list(string acl_json) {
+    logd("apply_plugin_acl_list called");
+
+    if (!is_json_arr(acl_json)) {
+        logd("ERROR: Not a JSON array!");
+        return;
+    }
+
+    integer count = 0;
+    while (llJsonValueType(acl_json, [count]) != JSON_INVALID) {
+        count += 1;
+    }
+
+    logd("ACL array length: " + (string)count);
+
+    integer i = 0;
+    while (i < count) {
+        string acl_obj = llJsonGetValue(acl_json, [i]);
+
+        if (json_has(acl_obj, ["context"]) && json_has(acl_obj, ["min_acl"])) {
+            string context = llJsonGetValue(acl_obj, ["context"]);
+            integer min_acl = (integer)llJsonGetValue(acl_obj, ["min_acl"]);
+
+            // Find this context in AllPlugins and update min_acl
+            integer j = 0;
+            integer len = llGetListLength(AllPlugins);
+            while (j < len) {
+                if (llList2String(AllPlugins, j + PLUGIN_CONTEXT) == context) {
+                    AllPlugins = llListReplaceList(AllPlugins, [min_acl], j + PLUGIN_MIN_ACL, j + PLUGIN_MIN_ACL);
+                    jump next_acl;
+                }
+                j += PLUGIN_STRIDE;
+            }
+
+            @next_acl;
+        }
+
+        i += 1;
+    }
+
+    logd("Plugin ACL data updated");
 }
 
 integer is_json_arr(string s) {
@@ -510,8 +562,15 @@ handle_button_click(key user, string button) {
         string label = llList2String(AllPlugins, i + PLUGIN_LABEL);
         if (label == button) {
             string context = llList2String(AllPlugins, i + PLUGIN_CONTEXT);
+            integer min_acl = llList2Integer(AllPlugins, i + PLUGIN_MIN_ACL);
+            integer user_acl = llList2Integer(Sessions, session_idx + SESSION_ACL);
 
-            // NOTE: ACL check removed - plugin handles its own access control
+            // ACL check - CRITICAL for collar security
+            if (user_acl < min_acl) {
+                llRegionSayTo(user, 0, "Access denied.");
+                return;
+            }
+
             string msg = llList2Json(JSON_OBJECT, [
                 "type", "start",
                 "context", context,
@@ -728,11 +787,18 @@ handle_return(string msg) {
 handle_update_label(string msg) {
     if (!json_has(msg, ["context"])) return;
     if (!json_has(msg, ["label"])) return;
-    
+
     string context = llJsonGetValue(msg, ["context"]);
     string new_label = llJsonGetValue(msg, ["label"]);
-    
+
     update_plugin_label(context, new_label);
+}
+
+handle_plugin_acl_list(string msg) {
+    if (!json_has(msg, ["acl_data"])) return;
+
+    string acl_json = llJsonGetValue(msg, ["acl_data"]);
+    apply_plugin_acl_list(acl_json);
 }
 
 handle_dialog_response(string msg) {
@@ -901,6 +967,9 @@ default
         else if (num == AUTH_BUS) {
             if (msg_type == "acl_result") {
                 handle_acl_result(msg);
+            }
+            else if (msg_type == "plugin_acl_list") {
+                handle_plugin_acl_list(msg);
             }
         }
         else if (num == UI_BUS) {
