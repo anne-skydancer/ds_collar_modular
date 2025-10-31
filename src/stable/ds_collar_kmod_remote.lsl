@@ -29,8 +29,8 @@
    3. HUD sends menu request Ã¢â€ â€™ Collar triggers UI for HUD wearer
    ============================================================================= */
 
-integer DEBUG = FALSE;
-integer PRODUCTION = TRUE;  // Set FALSE for development
+integer DEBUG = TRUE;
+integer PRODUCTION = FALSE;  // Set FALSE for development
 
 /* ═══════════════════════════════════════════════════════════
    CONSOLIDATED ABI
@@ -362,6 +362,8 @@ handle_menu_request_external(string message) {
         context = llJsonGetValue(message, ["context"]);
     }
 
+    logd("Received menu request - context='" + context + "' (length=" + (string)llStringLength(context) + "), SOS_CONTEXT='" + SOS_CONTEXT + "', match=" + (string)(context == SOS_CONTEXT));
+
     // SECURITY: Rate limit check
     if (!check_rate_limit(hud_wearer)) return;
 
@@ -527,6 +529,10 @@ default {
             @found_menu_request;
             // This is a menu request ACL check
 
+            logd("Menu request ACL check: avatar_key=" + (string)avatar_key + ", requested_context=" + requested_context + ", ACL level=" + (string)level);
+            logd("Collar owner: " + (string)llGetOwner() + " (" + llKey2Name(llGetOwner()) + ")");
+            logd("Requester: " + (string)avatar_key + " (" + llKey2Name(avatar_key) + ")");
+
             // Only trigger menu if ACL >= 1 (public or higher)
             if (level >= 1) {
                 // SECURITY: Only allow SOS context for collar wearer
@@ -536,6 +542,9 @@ default {
                     final_context = ROOT_CONTEXT;
                     logd("SOS context request from non-wearer " + llKey2Name(avatar_key) + " downgraded to root");
                     llRegionSayTo(avatar_key, 0, "Only the collar wearer can access the SOS menu. Showing main menu instead.");
+                }
+                else if (requested_context == SOS_CONTEXT) {
+                    logd("SOS context request from WEARER " + llKey2Name(avatar_key) + " - keeping SOS context");
                 }
 
                 trigger_menu_for_external_user(avatar_key, final_context);

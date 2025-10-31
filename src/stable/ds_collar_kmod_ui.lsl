@@ -29,8 +29,8 @@
    NOTE: Plugin discovery race condition fixed in kernel (deferred responses)
    ============================================================================= */
 
-integer DEBUG = FALSE;
-integer PRODUCTION = TRUE;  // Set FALSE for development builds
+integer DEBUG = TRUE;
+integer PRODUCTION = FALSE;  // Set FALSE for development builds
 
 /* ═══════════════════════════════════════════════════════════
    CONSOLIDATED ABI

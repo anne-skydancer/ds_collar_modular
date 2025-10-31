@@ -14,7 +14,7 @@
    - RLV relay-style workflow
    ============================================================================= */
 
-integer DEBUG = FALSE;
+integer DEBUG = TRUE;
 
 /* ═══════════════════════════════════════════════════════════
    EXTERNAL PROTOCOL CHANNELS
@@ -258,12 +258,15 @@ trigger_collar_menu() {
         return;
     }
 
+    logd("Triggering collar menu with context: '" + RequestedContext + "' (SOS_CONTEXT='" + SOS_CONTEXT + "', match=" + (string)(RequestedContext == SOS_CONTEXT) + ")");
+
     string json_msg = llList2Json(JSON_OBJECT, [
         "type", "menu_request_external",
         "avatar", (string)HudWearer,
         "context", RequestedContext
     ]);
 
+    logd("Sending menu request: " + json_msg);
     llRegionSayTo(TargetCollarKey, COLLAR_MENU_CHAN, json_msg);
 
     if (TargetAvatarKey == HudWearer) {
