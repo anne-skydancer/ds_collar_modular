@@ -286,6 +286,7 @@ showCoffleMenu() {
     SensorMode = "coffle";
     MenuContext = "coffle";
     SensorPage = 0;
+    SensorCandidates = [];  // Clear previous results
     // Scan for objects (potential collars) within range
     llSensor("", NULL_KEY, SCRIPTED, 96.0, PI);
 }
@@ -294,8 +295,56 @@ showPostMenu() {
     SensorMode = "post";
     MenuContext = "post";
     SensorPage = 0;
+    SensorCandidates = [];  // Clear previous results
     // Scan for all objects (posts) within range
     llSensor("", NULL_KEY, PASSIVE | ACTIVE | SCRIPTED, 96.0, PI);
+}
+
+// Display paginated object menu from existing SensorCandidates
+// Used for pagination navigation without re-scanning
+displayObjectMenu() {
+    if (llGetListLength(SensorCandidates) == 0) return;
+
+    // Calculate pagination (9 items per page)
+    integer total_items = llGetListLength(SensorCandidates) / 2;
+    integer total_pages = (total_items + 8) / 9;  // Ceiling division
+    integer start_index = SensorPage * 9;
+    integer end_index = start_index + 9;
+    if (end_index > total_items) end_index = total_items;
+
+    // Build numbered list body text
+    string body = "";
+    integer i = start_index;
+    integer display_num = 1;
+    while (i < end_index) {
+        string obj_name = llList2String(SensorCandidates, i * 2);
+        body += (string)display_num + ". " + obj_name + "\n";
+        display_num++;
+        i++;
+    }
+
+    // Build numbered buttons (only for items on this page)
+    list menu_buttons = ["<<", ">>", "Back"];
+    i = 1;
+    while (i <= (end_index - start_index)) {
+        menu_buttons += [(string)i];
+        i++;
+    }
+
+    // Add pagination info to body
+    if (total_pages > 1) {
+        body += "\nPage " + (string)(SensorPage + 1) + "/" + (string)total_pages;
+    }
+
+    string title = "";
+    if (SensorMode == "coffle") {
+        title = "Coffle";
+    }
+    else if (SensorMode == "post") {
+        title = "Post";
+    }
+
+    showMenu(SensorMode, title, body, menu_buttons);
 }
 
 // ===== OFFER DIALOG (NEW v1.0) =====
@@ -526,7 +575,7 @@ handleButtonClick(string button) {
             if (SensorPage > 0) {
                 SensorPage--;
             }
-            showCoffleMenu();
+            displayObjectMenu();
         }
         else if (button == ">>") {
             // Next page
@@ -535,7 +584,7 @@ handleButtonClick(string button) {
             if (SensorPage < (total_pages - 1)) {
                 SensorPage++;
             }
-            showCoffleMenu();
+            displayObjectMenu();
         }
         else {
             // Numbered selection - convert to actual index
@@ -569,7 +618,7 @@ handleButtonClick(string button) {
             if (SensorPage > 0) {
                 SensorPage--;
             }
-            showPostMenu();
+            displayObjectMenu();
         }
         else if (button == ">>") {
             // Next page
@@ -578,7 +627,7 @@ handleButtonClick(string button) {
             if (SensorPage < (total_pages - 1)) {
                 SensorPage++;
             }
-            showPostMenu();
+            displayObjectMenu();
         }
         else {
             // Numbered selection - convert to actual index
@@ -849,46 +898,8 @@ default
             return;
         }
 
-        // Calculate pagination (9 items per page)
-        integer total_items = llGetListLength(SensorCandidates) / 2;
-        integer total_pages = (total_items + 8) / 9;  // Ceiling division
-        integer start_index = SensorPage * 9;
-        integer end_index = start_index + 9;
-        if (end_index > total_items) end_index = total_items;
-
-        // Build numbered list body text
-        string body = "";
-        i = start_index;
-        integer display_num = 1;
-        while (i < end_index) {
-            string obj_name = llList2String(SensorCandidates, i * 2);
-            body += (string)display_num + ". " + obj_name + "\n";
-            display_num++;
-            i++;
-        }
-
-        // Build numbered buttons (only for items on this page)
-        list menu_buttons = ["<<", ">>", "Back"];
-        i = 1;
-        while (i <= (end_index - start_index)) {
-            menu_buttons += [(string)i];
-            i++;
-        }
-
-        // Add pagination info to body
-        if (total_pages > 1) {
-            body += "\nPage " + (string)(SensorPage + 1) + "/" + (string)total_pages;
-        }
-
-        string title = "";
-        if (SensorMode == "coffle") {
-            title = "Coffle";
-        }
-        else if (SensorMode == "post") {
-            title = "Post";
-        }
-
-        showMenu(SensorMode, title, body, menu_buttons);
+        // Display the menu (starts at page 0)
+        displayObjectMenu();
     }
     
     no_sensor() {
