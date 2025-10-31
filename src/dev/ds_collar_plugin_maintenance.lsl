@@ -408,7 +408,7 @@ doClearLeash() {
 }
 
 doReloadCollar() {
-    // Broadcast soft reset to all plugins
+    // Broadcast soft reset to all plugins (no context = all plugins)
     string msg = llList2Json(JSON_OBJECT, [
         "type", "soft_reset",
         "from", "maintenance"
@@ -603,18 +603,18 @@ default {
         if (num == KERNEL_LIFECYCLE) {
             if (!jsonHas(msg, ["type"])) return;
             string msg_type = llJsonGetValue(msg, ["type"]);
-            
+
             if (msg_type == "register_now") {
                 registerSelf();
                 return;
             }
-            
+
             if (msg_type == "ping") {
                 sendPong();
                 return;
             }
 
-            if (msg_type == "soft_reset" || msg_type == "soft_reset_all") {
+            if (msg_type == "soft_reset") {
                 // Check if this is a targeted reset
                 if (jsonHas(msg, ["context"])) {
                     string target_context = llJsonGetValue(msg, ["context"]);
