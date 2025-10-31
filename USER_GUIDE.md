@@ -28,7 +28,7 @@ Welcome to the DS Collar Modular system! This guide will help you understand and
 
 - Owner and trustee management
 - Multi-mode leashing system
-- RLV (Restrained Lovemaking) integration
+- RLV (Restrained Love) integration
 - Animation controls
 - Bell system with customizable sounds
 - Total Power Exchange (TPE) mode
