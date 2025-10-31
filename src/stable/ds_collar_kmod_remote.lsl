@@ -74,10 +74,12 @@ list QueryTimestamps = [];
 integer MAX_PENDING_QUERIES = 20;
 float QUERY_TIMEOUT = 30.0;  // 30 seconds
 
-/* Rate limiting: [avatar_key, timestamp, ...] */
-list RequestTimestamps = [];
-integer REQUEST_STRIDE = 2;
-float REQUEST_COOLDOWN = 2.0;  // 2 seconds between requests per user
+/* Per-request-type rate limiting: [avatar_key, timestamp, ...] */
+list ScanTimestamps = [];
+list AclQueryTimestamps = [];
+list MenuRequestTimestamps = [];
+integer RATE_LIMIT_STRIDE = 2;
+float REQUEST_COOLDOWN = 2.0;  // 2 seconds between requests per user per type
 
 /* ═══════════════════════════════════════════════════════════
    HELPERS
@@ -96,36 +98,67 @@ integer now() {
 }
 
 /* ══════════════════════════════════════════════════════════════════════════════
-   RATE LIMITING
+   RATE LIMITING (per-request-type)
    ══════════════════════════════════════════════════════════════════════════════ */
 
-integer check_rate_limit(key requester) {
+integer check_scan_rate_limit(key requester) {
     integer now_time = now();
-    
-    // Find this requester's last request
-    integer idx = llListFindList(RequestTimestamps, [requester]);
-    
+    integer idx = llListFindList(ScanTimestamps, [requester]);
+
     if (idx != -1) {
-        integer last_request = llList2Integer(RequestTimestamps, idx + 1);
-        
+        integer last_request = llList2Integer(ScanTimestamps, idx + 1);
         if ((now_time - last_request) < REQUEST_COOLDOWN) {
-            logd("Rate limit: " + llKey2Name(requester) + " requested too soon");
-            return FALSE;  // Rate limited
+            logd("Rate limit (scan): " + llKey2Name(requester) + " requested too soon");
+            return FALSE;
         }
-        
-        // Update timestamp
-        RequestTimestamps = llListReplaceList(RequestTimestamps, [now_time], idx + 1, idx + 1);
+        ScanTimestamps = llListReplaceList(ScanTimestamps, [now_time], idx + 1, idx + 1);
     } else {
-        // First request from this user
-        RequestTimestamps += [requester, now_time];
-        
-        // Prune old entries if list gets large
-        if (llGetListLength(RequestTimestamps) > 40) {
-            RequestTimestamps = llList2List(RequestTimestamps, -40, -1);
+        ScanTimestamps += [requester, now_time];
+        if (llGetListLength(ScanTimestamps) > 40) {
+            ScanTimestamps = llList2List(ScanTimestamps, -40, -1);
         }
     }
-    
-    return TRUE;  // Allowed
+    return TRUE;
+}
+
+integer check_acl_query_rate_limit(key requester) {
+    integer now_time = now();
+    integer idx = llListFindList(AclQueryTimestamps, [requester]);
+
+    if (idx != -1) {
+        integer last_request = llList2Integer(AclQueryTimestamps, idx + 1);
+        if ((now_time - last_request) < REQUEST_COOLDOWN) {
+            logd("Rate limit (ACL query): " + llKey2Name(requester) + " requested too soon");
+            return FALSE;
+        }
+        AclQueryTimestamps = llListReplaceList(AclQueryTimestamps, [now_time], idx + 1, idx + 1);
+    } else {
+        AclQueryTimestamps += [requester, now_time];
+        if (llGetListLength(AclQueryTimestamps) > 40) {
+            AclQueryTimestamps = llList2List(AclQueryTimestamps, -40, -1);
+        }
+    }
+    return TRUE;
+}
+
+integer check_menu_request_rate_limit(key requester) {
+    integer now_time = now();
+    integer idx = llListFindList(MenuRequestTimestamps, [requester]);
+
+    if (idx != -1) {
+        integer last_request = llList2Integer(MenuRequestTimestamps, idx + 1);
+        if ((now_time - last_request) < REQUEST_COOLDOWN) {
+            logd("Rate limit (menu): " + llKey2Name(requester) + " requested too soon");
+            return FALSE;
+        }
+        MenuRequestTimestamps = llListReplaceList(MenuRequestTimestamps, [now_time], idx + 1, idx + 1);
+    } else {
+        MenuRequestTimestamps += [requester, now_time];
+        if (llGetListLength(MenuRequestTimestamps) > 40) {
+            MenuRequestTimestamps = llList2List(MenuRequestTimestamps, -40, -1);
+        }
+    }
+    return TRUE;
 }
 
 /* ══════════════════════════════════════════════════════════════════════════════
@@ -283,12 +316,12 @@ handle_collar_scan(string message) {
         logd("collar_scan missing hud_wearer field");
         return;
     }
-    
+
     key hud_wearer = (key)llJsonGetValue(message, ["hud_wearer"]);
     if (hud_wearer == NULL_KEY) return;
-    
-    // SECURITY: Rate limit check
-    if (!check_rate_limit(hud_wearer)) return;
+
+    // SECURITY: Rate limit check (per scan type)
+    if (!check_scan_rate_limit(hud_wearer)) return;
     
     // Check distance to HUD wearer
     list agent_data = llGetObjectDetails(hud_wearer, [OBJECT_POS]);
@@ -322,17 +355,17 @@ handle_acl_query_external(string message) {
     if (!json_has(message, ["avatar"])) return;
     if (!json_has(message, ["hud"])) return;
     if (!json_has(message, ["target_avatar"])) return;
-    
+
     key hud_wearer = (key)llJsonGetValue(message, ["avatar"]);
     key hud_object = (key)llJsonGetValue(message, ["hud"]);
     key target_avatar = (key)llJsonGetValue(message, ["target_avatar"]);
-    
+
     if (hud_wearer == NULL_KEY) return;
     if (hud_object == NULL_KEY) return;
     if (target_avatar == NULL_KEY) return;
-    
-    // SECURITY: Rate limit check
-    if (!check_rate_limit(hud_wearer)) return;
+
+    // SECURITY: Rate limit check (per ACL query type)
+    if (!check_acl_query_rate_limit(hud_wearer)) return;
     
     // Check if this query is for OUR collar (target matches our owner)
     if (target_avatar != CollarOwner) {
@@ -364,7 +397,10 @@ handle_menu_request_external(string message) {
 
     logd("Received menu request - context='" + context + "' (length=" + (string)llStringLength(context) + "), SOS_CONTEXT='" + SOS_CONTEXT + "', match=" + (string)(context == SOS_CONTEXT));
 
-    // SECURITY: Check range first
+    // SECURITY: Rate limit check (per menu request type)
+    if (!check_menu_request_rate_limit(hud_wearer)) return;
+
+    // SECURITY: Check range
     list agent_data = llGetObjectDetails(hud_wearer, [OBJECT_POS]);
     if (llGetListLength(agent_data) == 0) {
         logd("Cannot verify HUD wearer position for menu request");
@@ -412,12 +448,14 @@ default {
         if (MenuRequestListenHandle != 0) {
             llListenRemove(MenuRequestListenHandle);
         }
-        
+
         // Initialize state
         PendingQueries = [];
         PendingMenuRequests = [];
         QueryTimestamps = [];
-        RequestTimestamps = [];
+        ScanTimestamps = [];
+        AclQueryTimestamps = [];
+        MenuRequestTimestamps = [];
         CollarOwner = llGetOwner();
         
         // Listen for external ACL queries and menu requests
