@@ -66,21 +66,43 @@ The collar uses a modular architecture with a central kernel and plugins, making
 
 ---
 
-## Understanding Access Levels
+## Understanding Access & Permissions
 
-The collar uses 7 access levels ranging from -1 to 5 in its Access Control List (ACL) system to determine who can do what:
+The collar controls who can do what based on roles and relationships:
 
-| Level | Name | Who Has It | What They Can Do |
-|-------|------|-----------|------------------|
-| **-1** | Blacklisted | Users explicitly blocked | Nothing - complete denial of access |
-| **0** | No Access | Unknown users, wearer in TPE mode | No collar access except SOS menu |
-| **1** | Public | Anyone (when public mode enabled) | Limited features like status view |
-| **2** | Owned | Collar wearer (when owned) | Personal animations, bell, limited settings |
-| **3** | Trustee | Trusted users set by owner | Leashing, some RLV, but not ownership changes |
-| **4** | Unowned | Collar wearer (when not owned) | Full self-control, can set owners |
-| **5** | Primary Owner | The owner(s) | Complete control over all features |
+### Roles
 
-**Important:** Blacklist (ACL -1) always takes precedence. If someone is blacklisted, they cannot interact with the collar regardless of other permissions.
+**Owner**
+- Complete control over all collar features
+- Can set restrictions, manage leash, configure settings
+- Can add/remove trustees
+- Can release or transfer ownership
+
+**Trustee**
+- Trusted users with elevated permissions
+- Can leash, apply RLV restrictions, use animations
+- Cannot change ownership or add/remove other trustees
+- Set by owner
+
+**Collar Wearer (When Owned)**
+- Can use personal features like animations and bell
+- Limited access to settings
+- Can view status
+- Can use emergency SOS menu (always available)
+
+**Collar Wearer (When Unowned)**
+- Full self-control
+- Can set an owner
+- Can manage all features until ownership is claimed
+
+**Public Users (When Public Mode Enabled)**
+- Limited features like viewing status
+- Can leash (if allowed by settings)
+- Cannot change ownership or settings
+
+**Blacklisted Users**
+- Complete denial of access - cannot interact with collar at all
+- Blacklist always takes precedence over other permissions
 
 ---
 
@@ -126,7 +148,7 @@ Main Menu
 
 ### Setting Ownership
 
-**For Unowned Wearers (ACL 4):**
+**For Unowned Wearers:**
 
 1. Touch collar → **Owner**
 2. Select **Set Owner**
@@ -134,7 +156,7 @@ Main Menu
 4. Owner clicks **Accept** to claim ownership
 5. Ownership is established
 
-**Important:** Once owned, the wearer becomes ACL 2 (Owned) and cannot change ownership without owner permission.
+**Important:** Once owned, the wearer loses the ability to change ownership without owner permission.
 
 ### Releasing Ownership
 
@@ -142,11 +164,14 @@ Main Menu
 1. Touch collar → **Owner** → **Release**
 2. Both owner and wearer receive confirmation dialogs
 3. Both must accept to complete the release
-4. Wearer returns to ACL 4 (Unowned)
+4. Wearer returns to unowned status (full self-control)
 
 **Wearer Self-Release (Runaway):**
-- Available only if enabled by owner
-- Touch collar → **Owner** → **Runaway** (if available)
+- Allows wearer to release themselves without owner permission
+- Owner can enable/disable this feature: Touch collar → **Owner** (as owner) → **Runaway: On/Off**
+- Disabling runaway requires wearer consent (wearer receives confirmation dialog)
+- Enabling runaway requires no consent (owner decision only)
+- When available: Touch collar → **Owner** → **Runaway** (if button shown)
 - Immediate self-release without owner confirmation
 - Use responsibly - this is for emergency situations
 
@@ -160,7 +185,7 @@ Main Menu
 
 ### Managing Trustees
 
-Trustees (ACL 3) have elevated permissions but cannot change ownership.
+Trustees have elevated permissions but cannot change ownership.
 
 **Adding a Trustee:**
 1. Owner: Touch collar → **Owner** → **Trustee+**
@@ -179,14 +204,15 @@ Trustees (ACL 3) have elevated permissions but cannot change ownership.
 
 ### Multi-Owner Mode
 
-The collar supports multiple owners sharing ACL 5 access.
+The collar supports multiple owners sharing equal owner access.
 
 **Enabling Multi-Owner Mode:**
-1. Add "multi_owner_mode=1" to settings notecard, OR
-2. Use maintenance tools to modify settings
+- Multi-owner mode can **only** be enabled via the settings notecard
+- Add `multi_owner_mode=1` to your settings notecard
+- Cannot be changed through collar menus - this is intentional for stability
 
 **Adding Additional Owners:**
-- Same process as adding trustees, but they receive ACL 5
+- Use the Owner menu to add owners (they receive full owner access)
 - All owners have equal control
 - Any owner can add/remove other owners
 
@@ -239,7 +265,7 @@ Leash the wearer to follow another avatar.
 Leash one collar to another collar (collar-to-collar).
 
 **Requirements:**
-- ACL 3 or higher (Trustee or Owner only)
+- Trustee or Owner only
 - Both avatars wearing DS Collar Modular
 
 **To Create Coffle:**
@@ -289,9 +315,9 @@ The collar supports multiple leashing protocols for compatibility:
 
 ### Who Can Leash?
 
-- **Avatar Mode:** ACL 1+ (Public if enabled, Trustee, Owner)
-- **Coffle Mode:** ACL 3+ (Trustee, Owner only)
-- **Post Mode:** ACL 1, 3, 5 (Public if enabled, Trustee, Owner)
+- **Avatar Mode:** Public users (if public mode enabled), Trustees, or Owners
+- **Coffle Mode:** Trustees or Owners only
+- **Post Mode:** Public users (if public mode enabled), Trustees, or Owners
 
 ---
 
@@ -301,13 +327,13 @@ RLV (Restrained Love Viewer) provides advanced control over the wearer's viewer 
 
 ### RLV Relay
 
-The RLV Relay allows scripted objects (furniture, traps, cages) to control the collar wearer.
+The RLV Relay allows scripted objects (furniture, traps, cages) to send RLV commands that control the collar wearer. The relay is the mechanism that receives and processes these commands.
 
 **Relay Modes:**
 
-1. **OFF** - Relay disabled, no external control
-2. **ON** - Relay enabled with normal restrictions
-3. **HARDCORE** - Relay enabled with maximum restrictions
+1. **OFF** - Relay disabled, furniture cannot control you
+2. **ON** - Relay enabled, furniture can send RLV commands. Wearer can use safeword to escape
+3. **HARDCORE** - Relay enabled, but wearer cannot use safeword. Only owners/trustees can release
 
 **Setting Relay Mode:**
 1. Touch collar → **RLV Relay**
@@ -315,10 +341,10 @@ The RLV Relay allows scripted objects (furniture, traps, cages) to control the c
 3. Mode persists across sessions
 
 **How It Works:**
-- Compatible devices send relay requests to collar
-- Collar validates and applies restrictions
+- When enabled, furniture sends relay commands on special channel
+- Collar receives commands and applies them to your viewer
+- The relay doesn't create restrictions itself - it relays commands from furniture
 - Works with ORG relay specification
-- Includes safeword support
 
 ### RLV Restrictions
 
@@ -409,8 +435,8 @@ The collar includes a paginated animation system that automatically detects anim
 4. No script modification required
 
 **Animation Access:**
-- Wearer (ACL 2, 4) can play animations on themselves
-- Owner/Trustees (ACL 3, 5) can animate the wearer
+- Wearer can play animations on themselves
+- Owners and Trustees can animate the wearer
 
 ### Bell System
 
@@ -446,7 +472,7 @@ All bell preferences are saved and restored after logout/login.
 
 **Accessing SOS Menu:**
 1. **Long-touch** the collar (hold for 1.5+ seconds)
-2. SOS menu appears **even if you have ACL 0 (no access)**
+2. SOS menu appears **even if you have no normal collar access**
 3. Available at all times, cannot be disabled
 
 **SOS Menu Options:**
@@ -489,8 +515,8 @@ The lock prevents unauthorized removal of the collar.
 3. Wearer can now detach collar
 
 **Who Can Lock/Unlock?**
-- ACL 4 (Unowned wearer) - Can lock/unlock own collar
-- ACL 5 (Owner) - Can lock/unlock collar
+- Unowned wearer - Can lock/unlock own collar
+- Owner - Can lock/unlock collar
 
 **Visual Feedback:**
 - Locked state shown in Status display
@@ -498,7 +524,7 @@ The lock prevents unauthorized removal of the collar.
 
 ### Public Access Toggle
 
-Controls whether strangers (ACL 1) can interact with collar.
+Controls whether strangers can interact with collar.
 
 **Enabling Public Access:**
 1. Touch collar → **Public** → **Enable**
@@ -511,7 +537,7 @@ Controls whether strangers (ACL 1) can interact with collar.
 3. Status shows "Public: OFF"
 
 **Who Can Toggle Public?**
-- ACL 3+ (Trustee or Owner)
+- Trustees or Owners
 
 **What Can Public Users Do?**
 - View status
@@ -527,16 +553,18 @@ TPE mode gives complete control to the owner by removing wearer's collar access.
 1. Touch collar → **TPE** → **Enable**
 2. Wearer receives confirmation dialog: "Accept TPE mode? You will have no collar access."
 3. Wearer must click **Accept**
-4. Wearer becomes ACL 0 (No Access)
+4. Wearer loses all normal collar access
+5. Wearer receives notification: "TPE mode enabled. You have relinquished collar control."
 
 **Disabling TPE (Owner):**
 1. Touch collar → **TPE** → **Disable**
-2. No confirmation required
-3. Wearer returns to ACL 2 (Owned)
+2. No wearer confirmation required - owner decision only
+3. Wearer returns to normal owned status
+4. Wearer receives notification: "Your collar access has been restored."
 
 **Important Notes:**
 - **Wearer always retains SOS menu access** (long-touch)
-- Only Primary Owner (ACL 5) can enable/disable TPE
+- Only the Owner can enable/disable TPE
 - TPE state persists across logins
 - Use responsibly with trusted partners
 
@@ -745,7 +773,7 @@ default {
 **Symptoms:** Wearer can't open menus.
 
 **Solutions:**
-1. Check if TPE mode is enabled (you'll have ACL 0)
+1. Check if TPE mode is enabled (removes collar access)
 2. Use SOS menu (long-touch) to check status
 3. If TPE enabled, contact owner to disable
 4. Check you're not blacklisted (unlikely but possible)
@@ -849,16 +877,16 @@ A: Check the LICENSE (MIT) and object permissions. Generally yes, but respect cr
 ### Ownership Questions
 
 **Q: Can I have multiple owners?**
-A: Yes. Enable `multi_owner_mode=1` in settings. All owners have equal ACL 5 access.
+A: Yes. Enable `multi_owner_mode=1` in settings notecard. All owners have equal owner access.
 
 **Q: What happens if my owner disappears/quits SL?**
 A: If unowned access is available, you can use the Runaway feature (if enabled). Otherwise, you'll need to reset the collar (which clears ownership) or contact the creator for assistance.
 
 **Q: Can trustees change ownership?**
-A: No. Only owners (ACL 5) can modify ownership. Trustees (ACL 3) have elevated control but cannot add/remove owners.
+A: No. Only owners can modify ownership. Trustees have elevated control but cannot add/remove owners.
 
 **Q: Can I be my own owner?**
-A: Yes. As unowned wearer (ACL 4), set yourself as owner. This gives you full ACL 5 control over your own collar.
+A: If you have no owner set, you already have full owner-level access to your collar. When you set a primary owner, you lose that access level - you cannot add yourself to the owner list or make yourself a trustee. The collar is designed so that only other avatars can be added as owners or trustees.
 
 ### RLV Questions
 
@@ -883,7 +911,7 @@ A:
 - **Post Mode:** Anchor to fixed object or point
 
 **Q: Can I be leashed if public mode is off?**
-A: Only by users with ACL 3+ (trustees and owners). Public mode must be ON for strangers to leash.
+A: Only by trustees and owners. Public mode must be ON for strangers to leash.
 
 **Q: Does leashing require RLV?**
 A: No. Basic leashing works without RLV using movement scripts. RLV enhances the experience but isn't required.
@@ -900,7 +928,7 @@ A: No. The SOS menu (long-touch) is always accessible and provides emergency rel
 A: TPE requires wearer confirmation. If enabled, contact your owner to disable it. The SOS menu remains accessible for emergencies.
 
 **Q: Can the blacklist be used to trap me?**
-A: No. The blacklist prevents others from accessing the collar. As the wearer, you always retain your own access level (ACL 2 or 4) and SOS menu access.
+A: No. The blacklist prevents others from accessing the collar. As the wearer, you always retain your own collar access (owned or unowned status) and SOS menu access.
 
 **Q: Is my privacy protected?**
 A: The collar operates locally on your avatar. No data is transmitted to external servers. All control is in-world only. Settings are stored in the collar object, not in external databases.

@@ -251,9 +251,13 @@ handle_tpe_click(key user, integer acl_level) {
         // This allows owner to release TPE without wearer consent
         TpeModeEnabled = FALSE;
         persist_tpe_mode(FALSE);
-        
+
         llRegionSayTo(user, 0, "TPE mode disabled. Wearer regains collar access.");
-        
+        // Notify wearer their access has been restored
+        if (user != WearerKey) {
+            llRegionSayTo(WearerKey, 0, "Your collar access has been restored.");
+        }
+
         // Update UI label
         string new_label = PLUGIN_LABEL_OFF;
         string msg = llList2Json(JSON_OBJECT, [
