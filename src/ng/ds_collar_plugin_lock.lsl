@@ -353,15 +353,15 @@ request_acl_and_toggle(key user) {
     );
 }
 
-handle_acl_result(string msg, key expected_user) {
-    if (!json_has(msg, ["avatar"])) return;
-    if (!json_has(msg, ["level"])) return;
-    
-    key avatar = (key)llJsonGetValue(msg, ["avatar"]);
+handle_acl_result(string payload, key expected_user) {
+    if (!json_has(payload, ["avatar"])) return;
+    if (!json_has(payload, ["level"])) return;
+
+    key avatar = (key)llJsonGetValue(payload, ["avatar"]);
     if (avatar != expected_user) return;
-    
-    integer level = (integer)llJsonGetValue(msg, ["level"]);
-    
+
+    integer level = (integer)llJsonGetValue(payload, ["level"]);
+
     // Toggle immediately with this ACL level
     toggle_lock(avatar, level);
 }

@@ -847,10 +847,10 @@ default
             string op = llJsonGetValue(payload, ["op"]);
             if (op == "list_remove") {
                 handle_list_remove(payload);
-            } else {
-                // Default to list_add for backwards compatibility
+            } else if (op == "list_add") {
                 handle_list_add(payload);
             }
+            // else: ignore unknown op for strict Kanban compliance
         }
     }
 }

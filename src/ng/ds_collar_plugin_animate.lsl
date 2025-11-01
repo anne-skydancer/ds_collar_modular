@@ -309,20 +309,20 @@ show_animation_menu(integer page) {
     list final_buttons = ["<<", ">>", "Back", "[Stop]"] + reversed_anims;
     
     string buttons_json = llList2Json(JSON_ARRAY, final_buttons);
-    
-    // Build message
-    string message = "Select an animation to play.\n";
-    message += "Page " + (string)(page + 1) + " of " + (string)(max_page + 1);
+
+    // Build body text
+    string body = "Select an animation to play.\n";
+    body += "Page " + (string)(page + 1) + " of " + (string)(max_page + 1);
     if (LastPlayedAnim != "") {
-        message += "\nPlaying: " + LastPlayedAnim;
+        body += "\nPlaying: " + LastPlayedAnim;
     }
-    
+
     kSend(CONTEXT, "dialogs", DIALOG_BUS,
         kPayload([
             "session_id", SessionId,
             "user", (string)CurrentUser,
             "title", PLUGIN_LABEL,
-            "body", message,
+            "body", body,
             "buttons", buttons_json,
             "timeout", 60
         ]),
