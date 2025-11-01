@@ -29,6 +29,64 @@
 
 integer DEBUG = FALSE;
 
+string CONTEXT = "core_relay";
+
+/* ═══════════════════════════════════════════════════════════
+   KANBAN UNIVERSAL HELPER (~500-800 bytes)
+   ═══════════════════════════════════════════════════════════ */
+
+string kFrom = "";  // Sender context (populated by kRecv)
+string kTo = "";    // Recipient context (populated by kRecv)
+
+kSend(string from, string to, integer channel, string payload, key k) {
+    llMessageLinked(LINK_SET, channel,
+        llList2Json(JSON_OBJECT, [
+            "from", from,
+            "payload", payload,
+            "to", to
+        ]),
+        k
+    );
+}
+
+string kRecv(string msg, string my_context) {
+    // Quick validation: must be JSON object
+    if (llGetSubString(msg, 0, 0) != "{") return "";
+
+    // Extract from
+    string from = llJsonGetValue(msg, ["from"]);
+    if (from == JSON_INVALID) return "";
+
+    // Extract to
+    string to = llJsonGetValue(msg, ["to"]);
+    if (to == JSON_INVALID) return "";
+
+    // Check if for me (broadcast "" or direct to my_context)
+    if (to != "" && to != my_context) return "";
+
+    // Extract payload
+    string payload = llJsonGetValue(msg, ["payload"]);
+    if (payload == JSON_INVALID) return "";
+
+    // Set globals for routing
+    kFrom = from;
+    kTo = to;
+
+    return payload;
+}
+
+string kPayload(list kvp) {
+    return llList2Json(JSON_OBJECT, kvp);
+}
+
+string kDeltaSet(string setting_key, string val) {
+    return llList2Json(JSON_OBJECT, [
+        "op", "set",
+        "key", setting_key,
+        "value", val
+    ]);
+}
+
 /* ═══════════════════════════════════════════════════════════
    CONSOLIDATED ABI
    ═══════════════════════════════════════════════════════════ */
@@ -44,7 +102,6 @@ integer DIALOG_BUS = 950;
 string PLUGIN_CONTEXT = "core_relay";
 string PLUGIN_LABEL = "RLV Relay";
 integer PLUGIN_MIN_ACL = 2;  // Wearer and above
-string ROOT_CONTEXT = "core_root";
 
 /* ACL levels for reference:
    -1 = Blacklisted
@@ -65,7 +122,6 @@ integer MAX_RELAYS = 5;
 
 integer MODE_OFF = 0;
 integer MODE_ON = 1;
-integer MODE_HARDCORE = 2;
 
 // ORG relay spec wildcard UUID (accepts commands from any avatar)
 key WILDCARD_UUID = "ffffffff-ffff-ffff-ffff-ffffffffffff";
@@ -128,23 +184,23 @@ string truncate_name(string name, integer max_len) {
    ═══════════════════════════════════════════════════════════ */
 
 register_self() {
-    string msg = llList2Json(JSON_OBJECT, [
-        "type", "register",
-        "context", PLUGIN_CONTEXT,
-        "label", PLUGIN_LABEL,
-        "min_acl", PLUGIN_MIN_ACL,
-        "script", llGetScriptName()
-    ]);
-    llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, msg, NULL_KEY);
+    kSend(CONTEXT, "kernel", KERNEL_LIFECYCLE,
+        kPayload([
+            "context", PLUGIN_CONTEXT,
+            "label", PLUGIN_LABEL,
+            "min_acl", PLUGIN_MIN_ACL,
+            "script", llGetScriptName()
+        ]),
+        NULL_KEY
+    );
     logd("Registered with kernel");
 }
 
 send_pong() {
-    string msg = llList2Json(JSON_OBJECT, [
-        "type", "pong",
-        "context", PLUGIN_CONTEXT
-    ]);
-    llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, msg, NULL_KEY);
+    kSend(CONTEXT, "kernel", KERNEL_LIFECYCLE,
+        kPayload([]),
+        NULL_KEY
+    );
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -306,21 +362,17 @@ apply_settings_delta(string msg) {
    ═══════════════════════════════════════════════════════════ */
 
 persist_mode(integer new_mode) {
-    string msg = llList2Json(JSON_OBJECT, [
-        "type", "set",
-        "key", KEY_RELAY_MODE,
-        "value", (string)new_mode
-    ]);
-    llMessageLinked(LINK_SET, SETTINGS_BUS, msg, NULL_KEY);
+    kSend(CONTEXT, "", SETTINGS_BUS,
+        kDeltaSet(KEY_RELAY_MODE, (string)new_mode),
+        NULL_KEY
+    );
 }
 
 persist_hardcore(integer new_hardcore) {
-    string msg = llList2Json(JSON_OBJECT, [
-        "type", "set",
-        "key", KEY_RELAY_HARDCORE,
-        "value", (string)new_hardcore
-    ]);
-    llMessageLinked(LINK_SET, SETTINGS_BUS, msg, NULL_KEY);
+    kSend(CONTEXT, "", SETTINGS_BUS,
+        kDeltaSet(KEY_RELAY_HARDCORE, (string)new_hardcore),
+        NULL_KEY
+    );
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -329,13 +381,13 @@ persist_hardcore(integer new_hardcore) {
 
 request_acl(key user) {
     AclPending = TRUE;
-    
-    string msg = llList2Json(JSON_OBJECT, [
-        "type", "acl_query",
-        "avatar", (string)user,
-        "id", PLUGIN_CONTEXT + "_acl"
-    ]);
-    llMessageLinked(LINK_SET, AUTH_BUS, msg, NULL_KEY);
+
+    kSend(CONTEXT, "auth", AUTH_BUS,
+        kPayload([
+            "avatar", (string)user
+        ]),
+        user
+    );
 }
 
 handle_acl_result(string msg) {
@@ -395,18 +447,18 @@ show_main_menu() {
     }
     
     string buttons_json = llList2Json(JSON_ARRAY, buttons);
-    
-    string msg = llList2Json(JSON_OBJECT, [
-        "type", "dialog_open",
-        "session_id", SessionId,
-        "user", (string)CurrentUser,
-        "title", PLUGIN_LABEL + " Menu",
-        "message", message,
-        "buttons", buttons_json,
-        "timeout", 60
-    ]);
-    
-    llMessageLinked(LINK_SET, DIALOG_BUS, msg, NULL_KEY);
+
+    kSend(CONTEXT, "dialogs", DIALOG_BUS,
+        kPayload([
+            "session_id", SessionId,
+            "user", (string)CurrentUser,
+            "title", PLUGIN_LABEL + " Menu",
+            "message", message,
+            "buttons", buttons_json,
+            "timeout", 60
+        ]),
+        NULL_KEY
+    );
     logd("Showing main menu to " + llKey2Name(CurrentUser));
 }
 
@@ -438,18 +490,18 @@ show_mode_menu() {
     }
     
     string buttons_json = llList2Json(JSON_ARRAY, buttons);
-    
-    string msg = llList2Json(JSON_OBJECT, [
-        "type", "dialog_open",
-        "session_id", SessionId,
-        "user", (string)CurrentUser,
-        "title", "Relay Mode",
-        "message", message,
-        "buttons", buttons_json,
-        "timeout", 60
-    ]);
-    
-    llMessageLinked(LINK_SET, DIALOG_BUS, msg, NULL_KEY);
+
+    kSend(CONTEXT, "dialogs", DIALOG_BUS,
+        kPayload([
+            "session_id", SessionId,
+            "user", (string)CurrentUser,
+            "title", "Relay Mode",
+            "message", message,
+            "buttons", buttons_json,
+            "timeout", 60
+        ]),
+        NULL_KEY
+    );
 }
 
 show_object_list() {
@@ -474,18 +526,18 @@ show_object_list() {
     
     list buttons = ["Back"];
     string buttons_json = llList2Json(JSON_ARRAY, buttons);
-    
-    string msg = llList2Json(JSON_OBJECT, [
-        "type", "dialog_open",
-        "session_id", SessionId,
-        "user", (string)CurrentUser,
-        "title", "Active Relays",
-        "message", message,
-        "buttons", buttons_json,
-        "timeout", 60
-    ]);
-    
-    llMessageLinked(LINK_SET, DIALOG_BUS, msg, NULL_KEY);
+
+    kSend(CONTEXT, "dialogs", DIALOG_BUS,
+        kPayload([
+            "session_id", SessionId,
+            "user", (string)CurrentUser,
+            "title", "Active Relays",
+            "message", message,
+            "buttons", buttons_json,
+            "timeout", 60
+        ]),
+        NULL_KEY
+    );
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -565,25 +617,26 @@ handle_button_click(string button) {
    ═══════════════════════════════════════════════════════════ */
 
 return_to_root() {
-    string msg = llList2Json(JSON_OBJECT, [
-        "type", "return",
-        "context", PLUGIN_CONTEXT,
-        "user", (string)CurrentUser
-    ]);
-    llMessageLinked(LINK_SET, UI_BUS, msg, CurrentUser);
-    
+    kSend(CONTEXT, "ui", UI_BUS,
+        kPayload([
+            "context", PLUGIN_CONTEXT,
+            "user", (string)CurrentUser
+        ]),
+        CurrentUser
+    );
+
     cleanup_session();
     logd("Returning to root menu");
 }
 
 close_silent() {
-    string msg = llList2Json(JSON_OBJECT, [
-        "type", "close",
-        "context", PLUGIN_CONTEXT,
-        "user", (string)CurrentUser
-    ]);
-    llMessageLinked(LINK_SET, UI_BUS, msg, CurrentUser);
-    
+    kSend(CONTEXT, "ui", UI_BUS,
+        kPayload([
+            "user", (string)CurrentUser
+        ]),
+        CurrentUser
+    );
+
     cleanup_session();
     logd("Closing session silently");
 }
@@ -770,10 +823,10 @@ default
         logd("Plugin started (Attached=" + (string)IsAttached + ")");
 
         // Request settings
-        string request = llList2Json(JSON_OBJECT, [
-            "type", "settings_get"
-        ]);
-        llMessageLinked(LINK_SET, SETTINGS_BUS, request, NULL_KEY);
+        kSend(CONTEXT, "settings", SETTINGS_BUS,
+            kPayload([]),
+            NULL_KEY
+        );
     }
     
     on_rez(integer start_param) {
@@ -796,65 +849,63 @@ default
     }
     
     link_message(integer sender, integer num, string msg, key id) {
-        if (!json_has(msg, ["type"])) return;
-        
-        string msg_type = llJsonGetValue(msg, ["type"]);
-        
-        /* ===== LIFECYCLE ===== */
-        if (num == KERNEL_LIFECYCLE) {
-            if (msg_type == "register_now") {
-                register_self();
-            }
-            else if (msg_type == "ping") {
-                send_pong();
-            }
-            else if (msg_type == "soft_reset" || msg_type == "soft_reset_all") {
+        string payload = kRecv(msg, CONTEXT);
+        if (payload == "") return;  // Not for me or invalid
+
+        // Route by channel + kFrom (global set by kRecv)
+        if (num == KERNEL_LIFECYCLE && kFrom == "kernel") {
+            if (json_has(payload, ["context"])) {
+                // This is soft_reset (has context field)
                 llResetScript();
             }
-        }
-        
-        /* ===== SETTINGS ===== */
-        else if (num == SETTINGS_BUS) {
-            if (msg_type == "settings_sync") {
-                apply_settings_sync(msg);
+            else if (json_has(payload, ["ping_count"])) {
+                // This is a ping (has ping_count field)
+                send_pong();
             }
-            else if (msg_type == "settings_delta") {
-                apply_settings_delta(msg);
+            else {
+                // This is register_now (empty payload or other fields)
+                register_self();
             }
         }
-        
-        /* ===== AUTH ===== */
-        else if (num == AUTH_BUS) {
-            if (msg_type == "acl_result") {
-                handle_acl_result(msg);
+        else if (num == SETTINGS_BUS && kFrom == "settings") {
+            string op = llJsonGetValue(payload, ["op"]);
+            if (op == "set" || op == "list_add" || op == "list_remove") {
+                // Delta update
+                apply_settings_delta(payload);
+            }
+            else if (json_has(payload, ["kv"])) {
+                // Full sync (has kv field)
+                apply_settings_sync(payload);
             }
         }
-        
-        /* ===== UI ===== */
-        else if (num == UI_BUS) {
-            if (msg_type == "start") {
-                handle_start(msg);
-            }
-            else if (msg_type == "emergency_relay_clear") {
-                // Emergency SOS clear - only allow if sender is the collar wearer
-                // The id parameter contains the requesting user's key
-                // NOTE: User feedback is sent by SOS plugin, not here (avoid duplicate messages)
-                if (id == llGetOwner()) {
-                    safeword_clear_all();
-                    logd("Emergency relay clear executed");
-                } else {
-                    logd("Emergency relay clear denied: sender " + llKey2Name(id) + " is not wearer.");
-                }
+        else if (num == AUTH_BUS && kFrom == "auth") {
+            handle_acl_result(payload);
+        }
+        else if (num == UI_BUS && kFrom == "ui") {
+            if (json_has(payload, ["context"])) {
+                // This is "start" message
+                handle_start(payload);
             }
         }
-
-        /* ===== DIALOG ===== */
-        else if (num == DIALOG_BUS) {
-            if (msg_type == "dialog_response") {
-                handle_dialog_response(msg);
+        else if (num == UI_BUS && kFrom == "sos") {
+            // Emergency SOS clear - only allow if sender is the collar wearer
+            // The id parameter contains the requesting user's key
+            // NOTE: User feedback is sent by SOS plugin, not here (avoid duplicate messages)
+            if (id == llGetOwner()) {
+                safeword_clear_all();
+                logd("Emergency relay clear executed");
+            } else {
+                logd("Emergency relay clear denied: sender " + llKey2Name(id) + " is not wearer.");
             }
-            else if (msg_type == "dialog_timeout") {
-                handle_dialog_timeout(msg);
+        }
+        else if (num == DIALOG_BUS && kFrom == "dialogs") {
+            if (json_has(payload, ["button"])) {
+                // Dialog response (has button field)
+                handle_dialog_response(payload);
+            }
+            else {
+                // Dialog timeout (no button field)
+                handle_dialog_timeout(payload);
             }
         }
     }

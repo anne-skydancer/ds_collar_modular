@@ -1,6 +1,7 @@
 /* =============================================================================
-   MODULE: ds_collar_kernel.lsl (v3.4 - Active Plugin Discovery)
+   MODULE: ds_collar_kernel.lsl (v4.0 - Kanban Messaging Migration)
    SECURITY AUDIT: ALL ISSUES FIXED
+   MESSAGING: Kanban universal helper (v1.0)
 
    ROLE: Plugin registry, lifecycle management, heartbeat monitoring
 
@@ -43,7 +44,87 @@
    - [MEDIUM] JSON construction uses proper encoding (no string injection)
    - [MEDIUM] Integer overflow protection for timestamps
    - [LOW] Production mode guards debug logging
+
+   KANBAN MIGRATION (v4.0):
+   - Uses universal kanban helper (~500-800 bytes)
+   - All messages use standardized {from, payload, to} structure
+   - Routing by channel + kFrom instead of "type" field
+   - Auto-detection of sender context
    ============================================================================= */
+
+string CONTEXT = "kernel";
+
+/* ═══════════════════════════════════════════════════════════
+   KANBAN UNIVERSAL HELPER (~500-800 bytes)
+   ═══════════════════════════════════════════════════════════ */
+
+string kFrom = "";  // Sender context (populated by kRecv)
+string kTo = "";    // Recipient context (populated by kRecv)
+
+kSend(string from, string to, integer channel, string payload, key k) {
+    llMessageLinked(LINK_SET, channel,
+        llList2Json(JSON_OBJECT, [
+            "from", from,
+            "payload", payload,
+            "to", to
+        ]),
+        k
+    );
+}
+
+string kRecv(string msg, string my_context) {
+    // Quick validation: must be JSON object
+    if (llGetSubString(msg, 0, 0) != "{") return "";
+
+    // Extract from
+    string from = llJsonGetValue(msg, ["from"]);
+    if (from == JSON_INVALID) return "";
+
+    // Extract to
+    string to = llJsonGetValue(msg, ["to"]);
+    if (to == JSON_INVALID) return "";
+
+    // Check if for me (broadcast "" or direct to my_context)
+    if (to != "" && to != my_context) return "";
+
+    // Extract payload
+    string payload = llJsonGetValue(msg, ["payload"]);
+    if (payload == JSON_INVALID) return "";
+
+    // Set globals for routing
+    kFrom = from;
+    kTo = to;
+
+    return payload;
+}
+
+string kPayload(list kvp) {
+    return llList2Json(JSON_OBJECT, kvp);
+}
+
+string kDeltaSet(string setting_key, string val) {
+    return llList2Json(JSON_OBJECT, [
+        "op", "set",
+        "key", setting_key,
+        "value", val
+    ]);
+}
+
+string kDeltaAdd(string setting_key, string elem) {
+    return llList2Json(JSON_OBJECT, [
+        "op", "list_add",
+        "key", setting_key,
+        "elem", elem
+    ]);
+}
+
+string kDeltaDel(string setting_key, string elem) {
+    return llList2Json(JSON_OBJECT, [
+        "op", "list_remove",
+        "key", setting_key,
+        "elem", elem
+    ]);
+}
 
 integer DEBUG = FALSE;
 integer PRODUCTION = TRUE;  // Set FALSE for development builds
@@ -452,20 +533,13 @@ integer discover_plugins() {
 
 // Request all plugins to register (no time window - event-driven)
 broadcast_register_now() {
-    string msg = llList2Json(JSON_OBJECT, [
-        "type", "register_now"
-    ]);
-    llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, msg, NULL_KEY);
-
+    kSend(CONTEXT, "", KERNEL_LIFECYCLE, kPayload([]), NULL_KEY);
     logd("Broadcast: register_now (queue-based processing)");
 }
 
 // Heartbeat ping to all plugins
 broadcast_ping() {
-    string msg = llList2Json(JSON_OBJECT, [
-        "type", "ping"
-    ]);
-    llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, msg, NULL_KEY);
+    kSend(CONTEXT, "", KERNEL_LIFECYCLE, kPayload([]), NULL_KEY);
     // Ping logging disabled - too noisy
 }
 
@@ -499,10 +573,10 @@ broadcast_plugin_list() {
     }
     plugins_array += "]";
 
-    // Build final message (no version - UUID tracking handles change detection)
-    string msg = "{\"type\":\"plugin_list\",\"plugins\":" + plugins_array + "}";
+    // Build payload with plugins array
+    string payload = "{\"plugins\":" + plugins_array + "}";
 
-    llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, msg, NULL_KEY);
+    kSend(CONTEXT, "", KERNEL_LIFECYCLE, payload, NULL_KEY);
     logd("Broadcast: plugin_list (" + (string)llGetListLength(plugins) + " plugins)");
 }
 
@@ -529,34 +603,30 @@ integer check_owner_changed() {
    MESSAGE HANDLERS
    ═══════════════════════════════════════════════════════════ */
 
-handle_register(string msg) {
-    if (!json_has(msg, ["context"])) return;
-    if (!json_has(msg, ["label"])) return;
-    if (!json_has(msg, ["min_acl"])) return;
-    if (!json_has(msg, ["script"])) return;
+handle_register(string payload) {
+    if (!json_has(payload, ["label"])) return;
+    if (!json_has(payload, ["min_acl"])) return;
+    if (!json_has(payload, ["script"])) return;
 
-    string context = llJsonGetValue(msg, ["context"]);
-    string label = llJsonGetValue(msg, ["label"]);
-    integer min_acl = (integer)llJsonGetValue(msg, ["min_acl"]);
-    string script = llJsonGetValue(msg, ["script"]);
+    // kFrom contains the context (sender)
+    string context = kFrom;
+    string label = llJsonGetValue(payload, ["label"]);
+    integer min_acl = (integer)llJsonGetValue(payload, ["min_acl"]);
+    string script = llJsonGetValue(payload, ["script"]);
 
     // Add to lifecycle queue (kernel stores min_acl for auth recovery, not enforcement)
     queue_add("REG", context, label, script, min_acl);
 
     // Forward ACL requirement to auth module (auth's concern for enforcement)
-    string auth_msg = llList2Json(JSON_OBJECT, [
-        "type", "register_acl",
-        "context", context,
-        "min_acl", min_acl
-    ]);
-    llMessageLinked(LINK_SET, AUTH_BUS, auth_msg, NULL_KEY);
+    kSend(CONTEXT, "auth", AUTH_BUS,
+        kPayload(["context", context, "min_acl", min_acl]),
+        NULL_KEY
+    );
 }
 
-handle_pong(string msg) {
-    if (!json_has(msg, ["context"])) return;
-    
-    string context = llJsonGetValue(msg, ["context"]);
-    update_last_seen(context);
+handle_pong(string payload) {
+    // kFrom contains the context (sender)
+    update_last_seen(kFrom);
     // Pong logging disabled - too noisy
 }
 
@@ -577,12 +647,13 @@ handle_plugin_list_request() {
     logd("Plugin list broadcast (immediate response)");
 }
 
-handle_soft_reset(string msg) {
+handle_soft_reset(string payload) {
     // SECURITY FIX: Verify sender is authorized to request reset
-    string from = llJsonGetValue(msg, ["from"]);
+    // kFrom contains the sender context
+    string from = kFrom;
 
-    if (from == JSON_INVALID || from == "") {
-        logd("Rejected soft_reset: missing 'from' field");
+    if (from == "") {
+        logd("Rejected soft_reset: missing sender");
         llOwnerSay("[KERNEL] ERROR: Soft reset rejected - sender not identified");
         return;
     }
@@ -619,12 +690,10 @@ handle_acl_registry_request() {
         integer min_acl = llList2Integer(PluginRegistry, i + REG_MIN_ACL);
 
         // Send register_acl message for each plugin
-        string auth_msg = llList2Json(JSON_OBJECT, [
-            "type", "register_acl",
-            "context", context,
-            "min_acl", min_acl
-        ]);
-        llMessageLinked(LINK_SET, AUTH_BUS, auth_msg, NULL_KEY);
+        kSend(CONTEXT, "auth", AUTH_BUS,
+            kPayload(["context", context, "min_acl", min_acl]),
+            NULL_KEY
+        );
 
         i += REG_STRIDE;
     }
@@ -732,26 +801,37 @@ default
     }
     
     link_message(integer sender, integer num, string msg, key id) {
-        if (!json_has(msg, ["type"])) return;
+        // Parse kanban message - kRecv validates and sets kFrom, kTo
+        string payload = kRecv(msg, CONTEXT);
+        if (payload == "") return;  // Not for us or invalid
 
-        string msg_type = llJsonGetValue(msg, ["type"]);
-
+        // Route by channel + sender (kFrom) + payload structure
         if (num == KERNEL_LIFECYCLE) {
-            if (msg_type == "register") {
-                handle_register(msg);
+            // Kanban routing: Distinguish messages by payload structure
+            // rather than explicit "type" field
+
+            // Register: has "label", "min_acl", "script" fields
+            if (json_has(payload, ["label"]) &&
+                json_has(payload, ["min_acl"]) &&
+                json_has(payload, ["script"])) {
+                handle_register(payload);
             }
-            else if (msg_type == "pong") {
-                handle_pong(msg);
-            }
-            else if (msg_type == "plugin_list_request") {
+            // Plugin list request: has "request_list" marker
+            else if (json_has(payload, ["request_list"])) {
                 handle_plugin_list_request();
             }
-            else if (msg_type == "soft_reset" || msg_type == "soft_reset_all") {
-                handle_soft_reset(msg);
+            // Soft reset: has "reset" marker and authorized sender
+            else if (json_has(payload, ["reset"]) && is_authorized_sender(kFrom)) {
+                handle_soft_reset(payload);
+            }
+            // Pong: any other message (heartbeat response)
+            else {
+                handle_pong(payload);
             }
         }
         else if (num == AUTH_BUS) {
-            if (msg_type == "acl_registry_request") {
+            // ACL registry request from auth module
+            if (kFrom == "auth" && json_has(payload, ["request_registry"])) {
                 handle_acl_registry_request();
             }
         }

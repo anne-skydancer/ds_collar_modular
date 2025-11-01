@@ -26,7 +26,62 @@
    - Added 'from' field validation for soft_reset messages
    - Only authorized senders (kernel, maintenance, bootstrap) can trigger reset
    - Aligns with kernel's security model from v2.0+
+
+   KANBAN MIGRATION (v3.0):
+   - Uses universal kanban helper (~500-800 bytes)
+   - All messages use standardized {from, payload, to} structure
+   - Routing by channel + kFrom instead of "type" field
    ============================================================================= */
+
+string CONTEXT = "bootstrap";
+
+/* ═══════════════════════════════════════════════════════════
+   KANBAN UNIVERSAL HELPER (~500-800 bytes)
+   ═══════════════════════════════════════════════════════════ */
+
+string kFrom = "";  // Sender context (populated by kRecv)
+string kTo = "";    // Recipient context (populated by kRecv)
+
+kSend(string from, string to, integer channel, string payload, key k) {
+    llMessageLinked(LINK_SET, channel,
+        llList2Json(JSON_OBJECT, [
+            "from", from,
+            "payload", payload,
+            "to", to
+        ]),
+        k
+    );
+}
+
+string kRecv(string msg, string my_context) {
+    // Quick validation: must be JSON object
+    if (llGetSubString(msg, 0, 0) != "{") return "";
+
+    // Extract from
+    string from = llJsonGetValue(msg, ["from"]);
+    if (from == JSON_INVALID) return "";
+
+    // Extract to
+    string to = llJsonGetValue(msg, ["to"]);
+    if (to == JSON_INVALID) return "";
+
+    // Check if for me (broadcast "" or direct to my_context)
+    if (to != "" && to != my_context) return "";
+
+    // Extract payload
+    string payload = llJsonGetValue(msg, ["payload"]);
+    if (payload == JSON_INVALID) return "";
+
+    // Set globals for routing
+    kFrom = from;
+    kTo = to;
+
+    return payload;
+}
+
+string kPayload(list kvp) {
+    return llList2Json(JSON_OBJECT, kvp);
+}
 
 integer DEBUG = FALSE;
 integer PRODUCTION = TRUE;  // Set FALSE for development builds
@@ -233,17 +288,15 @@ stop_rlv_probe() {
    ═══════════════════════════════════════════════════════════ */
 
 request_settings() {
-    string msg = llList2Json(JSON_OBJECT, [
-        "type", "settings_get"
-    ]);
-    llMessageLinked(LINK_SET, SETTINGS_BUS, msg, NULL_KEY);
+    // Kanban: Send settings_get request (empty payload with request marker)
+    kSend(CONTEXT, "settings", SETTINGS_BUS, kPayload(["request", "get"]), NULL_KEY);
     logd("Requested settings");
 }
 
-apply_settings_sync(string msg) {
-    if (!json_has(msg, ["kv"])) return;
-    
-    string kv_json = llJsonGetValue(msg, ["kv"]);
+apply_settings_sync(string payload) {
+    if (!json_has(payload, ["kv"])) return;
+
+    string kv_json = llJsonGetValue(payload, ["kv"]);
     
     // Reset
     MultiOwnerMode = FALSE;
@@ -548,35 +601,33 @@ default
     }
     
     link_message(integer sender, integer num, string msg, key id) {
-        if (!json_has(msg, ["type"])) return;
-        
-        string msg_type = llJsonGetValue(msg, ["type"]);
-        
+        // Parse kanban message - kRecv validates and sets kFrom, kTo
+        string payload = kRecv(msg, CONTEXT);
+        if (payload == "") return;  // Not for us or invalid
+
+        // Route by channel + sender (kFrom) + payload structure
+
         /* ===== SETTINGS BUS ===== */
         if (num == SETTINGS_BUS) {
-            if (msg_type == "settings_sync") {
-                apply_settings_sync(msg);
+            // Settings sync: has "kv" field
+            if (kFrom == "settings" && json_has(payload, ["kv"])) {
+                apply_settings_sync(payload);
             }
         }
-        
+
         /* ===== KERNEL LIFECYCLE ===== */
         else if (num == KERNEL_LIFECYCLE) {
-            if (msg_type == "soft_reset" || msg_type == "soft_reset_all") {
+            // Soft reset: has "reset" marker
+            if (json_has(payload, ["reset"])) {
                 // SECURITY FIX (v2.3 - MEDIUM-023): Validate sender authorization
-                if (!json_has(msg, ["from"])) {
-                    logd("SECURITY: Rejected soft_reset without 'from' field");
+                // kFrom is automatically set by kRecv() to the sender's context
+                if (!is_authorized_reset_sender(kFrom)) {
+                    logd("SECURITY: Rejected soft_reset from unauthorized sender: " + kFrom);
                     return;
                 }
-                
-                string from = llJsonGetValue(msg, ["from"]);
-                
-                if (!is_authorized_reset_sender(from)) {
-                    logd("SECURITY: Rejected soft_reset from unauthorized sender: " + from);
-                    return;
-                }
-                
+
                 // Authorized - proceed with reset
-                logd("Accepting soft_reset from: " + from);
+                logd("Accepting soft_reset from: " + kFrom);
                 llResetScript();
             }
         }

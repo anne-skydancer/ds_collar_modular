@@ -1,6 +1,7 @@
 /* =============================================================================
-   MODULE: ds_collar_kmod_settings.lsl (v2.3 - Broadcast Fix)
+   MODULE: ds_collar_kmod_settings.lsl (v3.0 - Kanban Messaging Migration)
    SECURITY AUDIT: CRITICAL ISSUES FIXED
+   MESSAGING: Kanban universal helper (v1.0)
 
    ROLE: Persistent key-value store with notecard loading and delta updates
 
@@ -30,7 +31,62 @@
    mutations they perform. This ensures downstream modules (auth, etc.)
    receive removal deltas when users are promoted/demoted between roles,
    preventing stale ACL entries that could deny access to promoted users.
+
+   KANBAN MIGRATION (v3.0):
+   - Uses universal kanban helper (~500-800 bytes)
+   - All messages use standardized {from, payload, to} structure
+   - Routing by channel + kFrom instead of "type" field
    ============================================================================= */
+
+string CONTEXT = "settings";
+
+/* ═══════════════════════════════════════════════════════════
+   KANBAN UNIVERSAL HELPER (~500-800 bytes)
+   ═══════════════════════════════════════════════════════════ */
+
+string kFrom = "";  // Sender context (populated by kRecv)
+string kTo = "";    // Recipient context (populated by kRecv)
+
+kSend(string from, string to, integer channel, string payload, key k) {
+    llMessageLinked(LINK_SET, channel,
+        llList2Json(JSON_OBJECT, [
+            "from", from,
+            "payload", payload,
+            "to", to
+        ]),
+        k
+    );
+}
+
+string kRecv(string msg, string my_context) {
+    // Quick validation: must be JSON object
+    if (llGetSubString(msg, 0, 0) != "{") return "";
+
+    // Extract from
+    string from = llJsonGetValue(msg, ["from"]);
+    if (from == JSON_INVALID) return "";
+
+    // Extract to
+    string to = llJsonGetValue(msg, ["to"]);
+    if (to == JSON_INVALID) return "";
+
+    // Check if for me (broadcast "" or direct to my_context)
+    if (to != "" && to != my_context) return "";
+
+    // Extract payload
+    string payload = llJsonGetValue(msg, ["payload"]);
+    if (payload == JSON_INVALID) return "";
+
+    // Set globals for routing
+    kFrom = from;
+    kTo = to;
+
+    return payload;
+}
+
+string kPayload(list kvp) {
+    return llList2Json(JSON_OBJECT, kvp);
+}
 
 integer DEBUG = FALSE;
 integer PRODUCTION = TRUE;  // Set FALSE for development builds
@@ -355,11 +411,8 @@ integer apply_blacklist_add_guard(string who) {
    ═══════════════════════════════════════════════════════════ */
 
 broadcast_full_sync() {
-    string msg = llList2Json(JSON_OBJECT, [
-        "type", "settings_sync",
-        "kv", KvJson
-    ]);
-    llMessageLinked(LINK_SET, SETTINGS_BUS, msg, NULL_KEY);
+    string payload = kPayload(["kv", KvJson]);
+    kSend(CONTEXT, "", SETTINGS_BUS, payload, NULL_KEY);
     logd("Broadcast: full sync");
 }
 
@@ -367,38 +420,35 @@ broadcast_delta_scalar(string key_name, string new_value) {
     string changes = llList2Json(JSON_OBJECT, [
         key_name, new_value
     ]);
-    
-    string msg = llList2Json(JSON_OBJECT, [
-        "type", "settings_delta",
+
+    string payload = kPayload([
         "op", "set",
         "changes", changes
     ]);
-    
-    llMessageLinked(LINK_SET, SETTINGS_BUS, msg, NULL_KEY);
+
+    kSend(CONTEXT, "", SETTINGS_BUS, payload, NULL_KEY);
     logd("Broadcast: delta set " + key_name);
 }
 
 broadcast_delta_list_add(string key_name, string elem) {
-    string msg = llList2Json(JSON_OBJECT, [
-        "type", "settings_delta",
+    string payload = kPayload([
         "op", "list_add",
         "key", key_name,
         "elem", elem
     ]);
-    
-    llMessageLinked(LINK_SET, SETTINGS_BUS, msg, NULL_KEY);
+
+    kSend(CONTEXT, "", SETTINGS_BUS, payload, NULL_KEY);
     logd("Broadcast: delta list_add " + key_name);
 }
 
 broadcast_delta_list_remove(string key_name, string elem) {
-    string msg = llList2Json(JSON_OBJECT, [
-        "type", "settings_delta",
+    string payload = kPayload([
         "op", "list_remove",
         "key", key_name,
         "elem", elem
     ]);
-    
-    llMessageLinked(LINK_SET, SETTINGS_BUS, msg, NULL_KEY);
+
+    kSend(CONTEXT, "", SETTINGS_BUS, payload, NULL_KEY);
     logd("Broadcast: delta list_remove " + key_name);
 }
 
@@ -553,21 +603,21 @@ handle_settings_get() {
     broadcast_full_sync();
 }
 
-handle_set(string msg) {
-    if (!json_has(msg, ["key"])) return;
-    
-    string key_name = llJsonGetValue(msg, ["key"]);
+handle_set(string payload) {
+    if (!json_has(payload, ["key"])) return;
+
+    string key_name = llJsonGetValue(payload, ["key"]);
     if (!is_allowed_key(key_name)) return;
     if (is_notecard_only_key(key_name)) {
         logd("Blocked: " + key_name + " is notecard-only");
         return;
     }
-    
+
     integer did_change = FALSE;
-    
+
     // Bulk list set
-    if (json_has(msg, ["values"])) {
-        string values_arr = llJsonGetValue(msg, ["values"]);
+    if (json_has(payload, ["values"])) {
+        string values_arr = llJsonGetValue(payload, ["values"]);
         if (is_json_arr(values_arr)) {
             list new_list = llJson2List(values_arr);
             new_list = list_unique(new_list);
@@ -610,8 +660,8 @@ handle_set(string msg) {
     }
     
     // Scalar set
-    if (json_has(msg, ["value"])) {
-        string value = llJsonGetValue(msg, ["value"]);
+    if (json_has(payload, ["value"])) {
+        string value = llJsonGetValue(payload, ["value"]);
         
         if (key_name == KEY_PUBLIC_ACCESS) value = normalize_bool(value);
         if (key_name == KEY_LOCKED) value = normalize_bool(value);
@@ -643,12 +693,12 @@ handle_set(string msg) {
     }
 }
 
-handle_list_add(string msg) {
-    if (!json_has(msg, ["key"])) return;
-    if (!json_has(msg, ["elem"])) return;
-    
-    string key_name = llJsonGetValue(msg, ["key"]);
-    string elem = llJsonGetValue(msg, ["elem"]);
+handle_list_add(string payload) {
+    if (!json_has(payload, ["key"])) return;
+    if (!json_has(payload, ["elem"])) return;
+
+    string key_name = llJsonGetValue(payload, ["key"]);
+    string elem = llJsonGetValue(payload, ["elem"]);
     
     if (!is_allowed_key(key_name)) return;
     if (is_notecard_only_key(key_name)) {
@@ -681,12 +731,12 @@ handle_list_add(string msg) {
     }
 }
 
-handle_list_remove(string msg) {
-    if (!json_has(msg, ["key"])) return;
-    if (!json_has(msg, ["elem"])) return;
-    
-    string key_name = llJsonGetValue(msg, ["key"]);
-    string elem = llJsonGetValue(msg, ["elem"]);
+handle_list_remove(string payload) {
+    if (!json_has(payload, ["key"])) return;
+    if (!json_has(payload, ["elem"])) return;
+
+    string key_name = llJsonGetValue(payload, ["key"]);
+    string elem = llJsonGetValue(payload, ["elem"]);
     
     if (!is_allowed_key(key_name)) return;
     
@@ -778,21 +828,29 @@ default
     
     link_message(integer sender, integer num, string msg, key id) {
         if (num != SETTINGS_BUS) return;
-        if (!json_has(msg, ["type"])) return;
-        
-        string msg_type = llJsonGetValue(msg, ["type"]);
-        
-        if (msg_type == "settings_get") {
+
+        // Parse kanban message - kRecv validates and sets kFrom, kTo
+        string payload = kRecv(msg, CONTEXT);
+        if (payload == "") return;  // Not for us or invalid
+
+        // Settings get: typically empty payload or minimal
+        if (payload == "{}" || payload == "") {
             handle_settings_get();
         }
-        else if (msg_type == "set") {
-            handle_set(msg);
+        // Set: has "key" and ("value" or "values")
+        else if (json_has(payload, ["key"]) &&
+                 (json_has(payload, ["value"]) || json_has(payload, ["values"]))) {
+            handle_set(payload);
         }
-        else if (msg_type == "list_add") {
-            handle_list_add(msg);
-        }
-        else if (msg_type == "list_remove") {
-            handle_list_remove(msg);
+        // List add: has "key" and "elem"
+        else if (json_has(payload, ["key"]) && json_has(payload, ["elem"])) {
+            // Distinguish between list_add and list_remove by checking for "add" marker
+            // Or by convention: if no "remove" marker, assume add
+            if (json_has(payload, ["remove"])) {
+                handle_list_remove(payload);
+            } else {
+                handle_list_add(payload);
+            }
         }
     }
 }

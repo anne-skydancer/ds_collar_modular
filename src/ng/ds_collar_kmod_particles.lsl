@@ -38,8 +38,62 @@
    - Added explicit release command handling
    - Fixed target validation in particles_update
    - Improved timer cleanup logic
-   
+
+   KANBAN MIGRATION (v3.0):
+   - Uses universal kanban helper (~500-800 bytes)
+   - All messages use standardized {from, payload, to} structure
+   - Routing by channel + kFrom instead of "type" field
    ============================================================================= */
+
+string CONTEXT = "particles";
+
+/* ═══════════════════════════════════════════════════════════
+   KANBAN UNIVERSAL HELPER (~500-800 bytes)
+   ═══════════════════════════════════════════════════════════ */
+
+string kFrom = "";  // Sender context (populated by kRecv)
+string kTo = "";    // Recipient context (populated by kRecv)
+
+kSend(string from, string to, integer channel, string payload, key k) {
+    llMessageLinked(LINK_SET, channel,
+        llList2Json(JSON_OBJECT, [
+            "from", from,
+            "payload", payload,
+            "to", to
+        ]),
+        k
+    );
+}
+
+string kRecv(string msg, string my_context) {
+    // Quick validation: must be JSON object
+    if (llGetSubString(msg, 0, 0) != "{") return "";
+
+    // Extract from
+    string from = llJsonGetValue(msg, ["from"]);
+    if (from == JSON_INVALID) return "";
+
+    // Extract to
+    string to = llJsonGetValue(msg, ["to"]);
+    if (to == JSON_INVALID) return "";
+
+    // Check if for me (broadcast "" or direct to my_context)
+    if (to != "" && to != my_context) return "";
+
+    // Extract payload
+    string payload = llJsonGetValue(msg, ["payload"]);
+    if (payload == JSON_INVALID) return "";
+
+    // Set globals for routing
+    kFrom = from;
+    kTo = to;
+
+    return payload;
+}
+
+string kPayload(list kvp) {
+    return llList2Json(JSON_OBJECT, kvp);
+}
 
 integer DEBUG = FALSE;
 integer PRODUCTION = TRUE;  // Set FALSE for development
@@ -169,11 +223,9 @@ handle_lm_message(key id, string msg) {
             
             // Clear particles
             render_chain_particles(NULL_KEY);
-            
+
             // Notify leash plugin
-            llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
-                "type", "lm_released"
-            ]), NULL_KEY);
+            kSend(CONTEXT, "", UI_BUS, kPayload([]), NULL_KEY);
             
             // Stop timer if no other source active
             if (SourcePlugin == "lockmeister" || SourcePlugin == "") {
@@ -236,14 +288,15 @@ handle_lm_message(key id, string msg) {
         SourcePlugin = "lockmeister";
         
         render_chain_particles(id);
-        
+
         // Notify leash plugin
-        string notify_msg = llList2Json(JSON_OBJECT, [
-            "type", "lm_grabbed",
-            "controller", (string)owner_key,
-            "prim", (string)id
-        ]);
-        llMessageLinked(LINK_SET, UI_BUS, notify_msg, NULL_KEY);
+        kSend(CONTEXT, "", UI_BUS,
+            kPayload([
+                "controller", (string)owner_key,
+                "prim", (string)id
+            ]),
+            NULL_KEY
+        );
     }
 }
 
@@ -319,14 +372,14 @@ render_chain_particles(key target) {
    MESSAGE HANDLERS
    â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
 
-handle_particles_start(string msg) {
-    if (!json_has(msg, ["source"]) || !json_has(msg, ["target"])) {
+handle_particles_start(string payload) {
+    if (!json_has(payload, ["source"]) || !json_has(payload, ["target"])) {
         logd("ERROR: particles_start missing source or target");
         return;
     }
-    
-    string source = llJsonGetValue(msg, ["source"]);
-    key target = (key)llJsonGetValue(msg, ["target"]);
+
+    string source = llJsonGetValue(payload, ["source"]);
+    key target = (key)llJsonGetValue(payload, ["target"]);
     
     // Validate target exists in-world
     list details = llGetObjectDetails(target, [OBJECT_POS]);
@@ -353,9 +406,9 @@ handle_particles_start(string msg) {
     
     SourcePlugin = source;
     TargetKey = target;
-    
-    if (json_has(msg, ["style"])) {
-        ParticleStyle = llJsonGetValue(msg, ["style"]);
+
+    if (json_has(payload, ["style"])) {
+        ParticleStyle = llJsonGetValue(payload, ["style"]);
     }
     else {
         ParticleStyle = "chain";
@@ -367,13 +420,13 @@ handle_particles_start(string msg) {
     llSetTimerEvent(PARTICLE_UPDATE_RATE);
 }
 
-handle_particles_stop(string msg) {
-    if (!json_has(msg, ["source"])) {
+handle_particles_stop(string payload) {
+    if (!json_has(payload, ["source"])) {
         logd("ERROR: particles_stop missing source");
         return;
     }
-    
-    string source = llJsonGetValue(msg, ["source"]);
+
+    string source = llJsonGetValue(payload, ["source"]);
     
     // Only stop if request is from the same plugin that started it
     if (source != SourcePlugin) {
@@ -396,13 +449,13 @@ handle_particles_stop(string msg) {
     }
 }
 
-handle_particles_update(string msg) {
-    if (!json_has(msg, ["target"])) {
+handle_particles_update(string payload) {
+    if (!json_has(payload, ["target"])) {
         logd("ERROR: particles_update missing target");
         return;
     }
-    
-    key new_target = (key)llJsonGetValue(msg, ["target"]);
+
+    key new_target = (key)llJsonGetValue(payload, ["target"]);
     
     // SECURITY: Validate target exists in-world
     list details = llGetObjectDetails(new_target, [OBJECT_POS]);
@@ -418,14 +471,14 @@ handle_particles_update(string msg) {
     }
 }
 
-handle_lm_enable(string msg) {
+handle_lm_enable(string payload) {
     // Enable Lockmeister listening
-    if (!json_has(msg, ["controller"])) {
+    if (!json_has(payload, ["controller"])) {
         logd("ERROR: lm_enable missing controller");
         return;
     }
-    
-    LmController = (key)llJsonGetValue(msg, ["controller"]);
+
+    LmController = (key)llJsonGetValue(payload, ["controller"]);
     LmAuthorized = TRUE;  // Mark as authorized
     open_lm_listen();
     
@@ -510,13 +563,16 @@ default
     }
     
     link_message(integer sender, integer num, string msg, key id) {
-        if (!json_has(msg, ["type"])) return;
+        // Parse kanban message - kRecv validates and sets kFrom, kTo
+        string payload = kRecv(msg, CONTEXT);
+        if (payload == "") return;  // Not for us or invalid
 
-        string msg_type = llJsonGetValue(msg, ["type"]);
+        // Route by channel + payload structure
 
         /* ===== KERNEL LIFECYCLE ===== */
         if (num == KERNEL_LIFECYCLE) {
-            if (msg_type == "soft_reset" || msg_type == "soft_reset_all") {
+            // Soft reset: has "reset" marker
+            if (json_has(payload, ["reset"])) {
                 llResetScript();
             }
             return;
@@ -525,19 +581,25 @@ default
         // Only listen on UI_BUS
         if (num != UI_BUS) return;
 
-        if (msg_type == "particles_start") {
-            handle_particles_start(msg);
+        // Route by payload structure (check for specific fields)
+        if (json_has(payload, ["source"]) && json_has(payload, ["target"])) {
+            // particles_start: has "source" and "target" fields
+            handle_particles_start(payload);
         }
-        else if (msg_type == "particles_stop") {
-            handle_particles_stop(msg);
+        else if (json_has(payload, ["source"]) && !json_has(payload, ["target"])) {
+            // particles_stop: has "source" but no "target"
+            handle_particles_stop(payload);
         }
-        else if (msg_type == "particles_update") {
-            handle_particles_update(msg);
+        else if (json_has(payload, ["target"]) && !json_has(payload, ["source"])) {
+            // particles_update: has "target" but no "source"
+            handle_particles_update(payload);
         }
-        else if (msg_type == "lm_enable") {
-            handle_lm_enable(msg);
+        else if (json_has(payload, ["controller"])) {
+            // lm_enable: has "controller" field
+            handle_lm_enable(payload);
         }
-        else if (msg_type == "lm_disable") {
+        else if (payload == "{}") {
+            // lm_disable: empty payload
             handle_lm_disable();
         }
     }
@@ -569,11 +631,9 @@ default
                     LmTargetPrim = NULL_KEY;
                     LmAuthorized = FALSE;
                     close_lm_listen();
-                    
+
                     // Notify leash plugin
-                    llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
-                        "type", "lm_released"
-                    ]), NULL_KEY);
+                    kSend(CONTEXT, "", UI_BUS, kPayload([]), NULL_KEY);
                 }
                 
                 // Always cleanup when target is lost

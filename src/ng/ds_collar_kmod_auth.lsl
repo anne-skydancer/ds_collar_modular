@@ -1,13 +1,14 @@
 /* =============================================================================
-   MODULE: ds_collar_kmod_auth.lsl (v2.1 - Security Hardened)
+   MODULE: ds_collar_kmod_auth.lsl (v3.0 - Kanban Messaging Migration)
    SECURITY AUDIT: ACTUAL ISSUES FIXED
-   
+   MESSAGING: Kanban universal helper (v1.0)
+
    ROLE: Authoritative ACL and policy engine
-   
+
    CHANNELS:
    - 700 (AUTH_BUS): ACL queries and results
    - 800 (SETTINGS_BUS): Settings sync/delta consumption
-   
+
    ACL LEVELS:
    -1 = Blacklisted
     0 = No Access
@@ -16,7 +17,7 @@
     3 = Trustee
     4 = Unowned (wearer when no owner)
     5 = Primary Owner
-    
+
    SECURITY FIXES APPLIED:
    - [CRITICAL] Added owner change detection with script reset
    - [CRITICAL] Fixed ACL default return (NOACCESS not BLACKLIST)
@@ -24,10 +25,65 @@
    - [MEDIUM] Added role exclusivity validation
    - [MEDIUM] Added pending query limit
    - [LOW] Production mode guards debug logging
-   
+
+   KANBAN MIGRATION (v3.0):
+   - Uses universal kanban helper (~500-800 bytes)
+   - All messages use standardized {from, payload, to} structure
+   - Routing by channel + kFrom instead of "type" field
+
    NOTE: TPE "self-ownership bypass" was a false positive.
    Wearer can NEVER be in owner list by system design.
    ============================================================================= */
+
+string CONTEXT = "auth";
+
+/* ═══════════════════════════════════════════════════════════
+   KANBAN UNIVERSAL HELPER (~500-800 bytes)
+   ═══════════════════════════════════════════════════════════ */
+
+string kFrom = "";  // Sender context (populated by kRecv)
+string kTo = "";    // Recipient context (populated by kRecv)
+
+kSend(string from, string to, integer channel, string payload, key k) {
+    llMessageLinked(LINK_SET, channel,
+        llList2Json(JSON_OBJECT, [
+            "from", from,
+            "payload", payload,
+            "to", to
+        ]),
+        k
+    );
+}
+
+string kRecv(string msg, string my_context) {
+    // Quick validation: must be JSON object
+    if (llGetSubString(msg, 0, 0) != "{") return "";
+
+    // Extract from
+    string from = llJsonGetValue(msg, ["from"]);
+    if (from == JSON_INVALID) return "";
+
+    // Extract to
+    string to = llJsonGetValue(msg, ["to"]);
+    if (to == JSON_INVALID) return "";
+
+    // Check if for me (broadcast "" or direct to my_context)
+    if (to != "" && to != my_context) return "";
+
+    // Extract payload
+    string payload = llJsonGetValue(msg, ["payload"]);
+    if (payload == JSON_INVALID) return "";
+
+    // Set globals for routing
+    kFrom = from;
+    kTo = to;
+
+    return payload;
+}
+
+string kPayload(list kvp) {
+    return llList2Json(JSON_OBJECT, kvp);
+}
 
 integer DEBUG = FALSE;
 integer PRODUCTION = TRUE;  // Set FALSE for development builds
@@ -212,9 +268,10 @@ broadcast_plugin_acl_list() {
     }
     acl_array += "]";
 
-    // Manual outer object construction for same reason
-    string msg = "{\"type\":\"plugin_acl_list\",\"acl_data\":" + acl_array + "}";
-    llMessageLinked(LINK_SET, AUTH_BUS, msg, NULL_KEY);
+    // Build payload with acl_data array
+    string payload = "{\"acl_data\":" + acl_array + "}";
+
+    kSend(CONTEXT, "", AUTH_BUS, payload, NULL_KEY);
     logd("Broadcast plugin ACL list: " + (string)llGetListLength(acl_data) + " entries");
 }
 
@@ -277,7 +334,7 @@ send_acl_result(key av, string correlation_id) {
     integer owner_set = has_owner();
     integer level = compute_acl_level(av);
     integer is_blacklisted = list_has_key(Blacklist, av);
-    
+
     // Policy flags
     integer policy_tpe = 0;
     integer policy_public_only = 0;
@@ -285,7 +342,7 @@ send_acl_result(key av, string correlation_id) {
     integer policy_trustee_access = 0;
     integer policy_wearer_unowned = 0;
     integer policy_primary_owner = 0;
-    
+
     if (is_wearer) {
         if (TpeMode) {
             policy_tpe = 1;
@@ -298,7 +355,7 @@ send_acl_result(key av, string correlation_id) {
                 policy_wearer_unowned = 1;
             }
         }
-        
+
         if (!owner_set) {
             policy_trustee_access = 1;
         }
@@ -314,10 +371,9 @@ send_acl_result(key av, string correlation_id) {
             policy_primary_owner = 1;
         }
     }
-    
-    // Build response
-    string msg = llList2Json(JSON_OBJECT, [
-        "type", "acl_result",
+
+    // Build payload
+    list payload_kvp = [
         "avatar", (string)av,
         "level", level,
         "is_wearer", is_wearer,
@@ -329,14 +385,16 @@ send_acl_result(key av, string correlation_id) {
         "policy_trustee_access", policy_trustee_access,
         "policy_wearer_unowned", policy_wearer_unowned,
         "policy_primary_owner", policy_primary_owner
-    ]);
-    
+    ];
+
     // Add correlation ID if provided
     if (correlation_id != "") {
-        msg = llJsonSetValue(msg, ["id"], correlation_id);
+        payload_kvp += ["id", correlation_id];
     }
-    
-    llMessageLinked(LINK_SET, AUTH_BUS, msg, NULL_KEY);
+
+    string payload = kPayload(payload_kvp);
+
+    kSend(CONTEXT, "", AUTH_BUS, payload, (key)av);
     logd("ACL result: " + llKey2Name(av) + " = " + (string)level);
 }
 
@@ -568,15 +626,15 @@ apply_settings_delta(string msg) {
    MESSAGE HANDLERS
    ═══════════════════════════════════════════════════════════ */
 
-handle_acl_query(string msg) {
-    if (!json_has(msg, ["avatar"])) return;
+handle_acl_query(string payload) {
+    if (!json_has(payload, ["avatar"])) return;
 
-    key av = (key)llJsonGetValue(msg, ["avatar"]);
+    key av = (key)llJsonGetValue(payload, ["avatar"]);
     if (av == NULL_KEY) return;
 
     string correlation_id = "";
-    if (json_has(msg, ["id"])) {
-        correlation_id = llJsonGetValue(msg, ["id"]);
+    if (json_has(payload, ["id"])) {
+        correlation_id = llJsonGetValue(payload, ["id"]);
     }
 
     if (!SettingsReady) {
@@ -595,22 +653,22 @@ handle_acl_query(string msg) {
     send_acl_result(av, correlation_id);
 }
 
-handle_register_acl(string msg) {
-    if (!json_has(msg, ["context"])) return;
-    if (!json_has(msg, ["min_acl"])) return;
+handle_register_acl(string payload) {
+    if (!json_has(payload, ["context"])) return;
+    if (!json_has(payload, ["min_acl"])) return;
 
-    string context = llJsonGetValue(msg, ["context"]);
-    integer min_acl = (integer)llJsonGetValue(msg, ["min_acl"]);
+    string context = llJsonGetValue(payload, ["context"]);
+    integer min_acl = (integer)llJsonGetValue(payload, ["min_acl"]);
 
     register_plugin_acl(context, min_acl);
 }
 
-handle_filter_plugins(string msg) {
-    if (!json_has(msg, ["user"])) return;
-    if (!json_has(msg, ["contexts"])) return;
+handle_filter_plugins(string payload) {
+    if (!json_has(payload, ["user"])) return;
+    if (!json_has(payload, ["contexts"])) return;
 
-    key user = (key)llJsonGetValue(msg, ["user"]);
-    string contexts_json = llJsonGetValue(msg, ["contexts"]);
+    key user = (key)llJsonGetValue(payload, ["user"]);
+    string contexts_json = llJsonGetValue(payload, ["contexts"]);
 
     // Parse contexts array
     list contexts = llJson2List(contexts_json);
@@ -620,13 +678,12 @@ handle_filter_plugins(string msg) {
 
     // Build response
     string accessible_json = llList2Json(JSON_ARRAY, accessible);
-    string response = llList2Json(JSON_OBJECT, [
-        "type", "filtered_plugins",
+    string response_payload = kPayload([
         "user", (string)user,
         "contexts", accessible_json
     ]);
 
-    llMessageLinked(LINK_SET, AUTH_BUS, response, NULL_KEY);
+    kSend(CONTEXT, kFrom, AUTH_BUS, response_payload, NULL_KEY);
     logd("Filtered plugins for " + llKey2Name(user) + ": " + (string)llGetListLength(accessible) + "/" + (string)llGetListLength(contexts));
 }
 
@@ -648,53 +705,60 @@ default
         logd("Auth module started (with plugin ACL registry)");
 
         // Request ACL registry repopulation from kernel (P1 security fix)
-        string acl_request = llList2Json(JSON_OBJECT, [
-            "type", "acl_registry_request"
-        ]);
-        llMessageLinked(LINK_SET, AUTH_BUS, acl_request, NULL_KEY);
+        kSend(CONTEXT, "kernel", AUTH_BUS,
+            kPayload(["request_registry", 1]),
+            NULL_KEY
+        );
 
         // Request settings
-        string request = llList2Json(JSON_OBJECT, [
-            "type", "settings_get"
-        ]);
-        llMessageLinked(LINK_SET, SETTINGS_BUS, request, NULL_KEY);
+        kSend(CONTEXT, "settings", SETTINGS_BUS,
+            kPayload([]),
+            NULL_KEY
+        );
     }
     
     link_message(integer sender, integer num, string msg, key id) {
-        if (!json_has(msg, ["type"])) return;
-
-        string msg_type = llJsonGetValue(msg, ["type"]);
+        // Parse kanban message - kRecv validates and sets kFrom, kTo
+        string payload = kRecv(msg, CONTEXT);
+        if (payload == "") return;  // Not for us or invalid
 
         /* ===== KERNEL LIFECYCLE ===== */
         if (num == KERNEL_LIFECYCLE) {
-            if (msg_type == "soft_reset" || msg_type == "soft_reset_all") {
+            // Soft reset from authorized senders (kernel or bootstrap)
+            if (json_has(payload, ["reset"])) {
                 llResetScript();
             }
         }
 
         /* ===== AUTH BUS ===== */
         else if (num == AUTH_BUS) {
-            if (msg_type == "acl_query") {
-                handle_acl_query(msg);
+            // ACL query: has "avatar" field
+            if (json_has(payload, ["avatar"])) {
+                handle_acl_query(payload);
             }
-            else if (msg_type == "register_acl") {
-                handle_register_acl(msg);
+            // Register ACL: has "context" and "min_acl"
+            else if (json_has(payload, ["context"]) && json_has(payload, ["min_acl"])) {
+                handle_register_acl(payload);
             }
-            else if (msg_type == "filter_plugins") {
-                handle_filter_plugins(msg);
+            // Filter plugins: has "user" and "contexts"
+            else if (json_has(payload, ["user"]) && json_has(payload, ["contexts"])) {
+                handle_filter_plugins(payload);
             }
-            else if (msg_type == "plugin_acl_list_request") {
+            // Plugin ACL list request: has "request_list" marker
+            else if (json_has(payload, ["request_list"])) {
                 handle_plugin_acl_list_request();
             }
         }
-        
+
         /* ===== SETTINGS BUS ===== */
         else if (num == SETTINGS_BUS) {
-            if (msg_type == "settings_sync") {
-                apply_settings_sync(msg);
+            // Settings sync: has "kv" field (full sync)
+            if (json_has(payload, ["kv"])) {
+                apply_settings_sync(payload);
             }
-            else if (msg_type == "settings_delta") {
-                apply_settings_delta(msg);
+            // Settings delta: has "op" field
+            else if (json_has(payload, ["op"])) {
+                apply_settings_delta(payload);
             }
         }
     }
