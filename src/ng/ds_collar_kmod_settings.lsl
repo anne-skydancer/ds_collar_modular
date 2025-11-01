@@ -310,7 +310,7 @@ integer apply_trustee_add_guard(string who) {
 }
 
 // BROADCAST FIX: Emits deltas for all guard-side mutations to keep ACL consumers in sync
-apply_blacklist_add_guard(string who) {
+integer apply_blacklist_add_guard(string who) {
     // Remove from trustees and broadcast the change
     string trustees_arr = kv_get(KEY_TRUSTEES);
     if (is_json_arr(trustees_arr)) {
@@ -346,6 +346,8 @@ apply_blacklist_add_guard(string who) {
             }
         }
     }
+
+    return TRUE;
 }
 
 /* ═══════════════════════════════════════════════════════════
