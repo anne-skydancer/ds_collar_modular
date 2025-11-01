@@ -237,7 +237,7 @@ register_self() {
 
 send_pong() {
     kSend(CONTEXT, "kernel", KERNEL_LIFECYCLE,
-        kPayload([]),
+        kPayload(["pong", 1]),
         NULL_KEY
     );
 }
@@ -925,10 +925,13 @@ default {
             else if (json_has(payload, ["reset"])) {
                 llResetScript();
             }
-            // Empty payload: register_now or ping
-            // Always re-register - kernel handles upserts correctly
-            else if (payload == "{}" || payload == "") {
+            // Register now: has "register_now" marker
+            else if (json_has(payload, ["register_now"])) {
                 register_self();
+            }
+            // Ping: has "ping" marker
+            else if (json_has(payload, ["ping"])) {
+                send_pong();
             }
         }
         else if (num == SETTINGS_BUS && kFrom == "settings") {

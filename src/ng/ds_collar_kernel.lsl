@@ -533,13 +533,13 @@ integer discover_plugins() {
 
 // Request all plugins to register (no time window - event-driven)
 broadcast_register_now() {
-    kSend(CONTEXT, "", KERNEL_LIFECYCLE, kPayload([]), NULL_KEY);
+    kSend(CONTEXT, "", KERNEL_LIFECYCLE, kPayload(["register_now", 1]), NULL_KEY);
     logd("Broadcast: register_now (queue-based processing)");
 }
 
 // Heartbeat ping to all plugins
 broadcast_ping() {
-    kSend(CONTEXT, "", KERNEL_LIFECYCLE, kPayload([]), NULL_KEY);
+    kSend(CONTEXT, "", KERNEL_LIFECYCLE, kPayload(["ping", 1]), NULL_KEY);
     // Ping logging disabled - too noisy
 }
 
@@ -808,7 +808,6 @@ default
         // Route by channel + sender (kFrom) + payload structure
         if (num == KERNEL_LIFECYCLE) {
             // Kanban routing: Distinguish messages by payload structure
-            // rather than explicit "type" field
 
             // Register: has "label", "min_acl", "script" fields
             if (json_has(payload, ["label"]) &&
@@ -824,8 +823,8 @@ default
             else if (json_has(payload, ["reset"]) && is_authorized_sender(kFrom)) {
                 handle_soft_reset(payload);
             }
-            // Pong: any other message (heartbeat response)
-            else {
+            // Pong: has "pong" marker (heartbeat response)
+            else if (json_has(payload, ["pong"])) {
                 handle_pong(payload);
             }
         }

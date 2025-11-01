@@ -1178,9 +1178,8 @@ default
                 return;
             }
 
-            // Lockmeister released: empty payload from particles module
-            // (particles sends empty payload to signal lockmeister release)
-            if (kFrom == "particles" && (payload == "{}" || payload == "")) {
+            // Lockmeister released: has "lm_released" marker from particles module
+            if (json_has(payload, ["lm_released"])) {
                 if (Leashed) {
                     key old_leasher = Leasher;
                     Leashed = FALSE;

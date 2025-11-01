@@ -833,8 +833,8 @@ default
         string payload = kRecv(msg, CONTEXT);
         if (payload == "") return;  // Not for us or invalid
 
-        // Settings get: typically empty payload or minimal
-        if (payload == "{}" || payload == "") {
+        // Settings get: has "get" marker
+        if (json_has(payload, ["get"])) {
             handle_settings_get();
         }
         // Set: has "key" and ("value" or "values")
