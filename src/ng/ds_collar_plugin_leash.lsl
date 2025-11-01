@@ -39,6 +39,8 @@
    - 950: Dialog system
    =============================================================== */
 
+integer DEBUG = FALSE;
+
 string CONTEXT = "core_leash";
 
 /* ═══════════════════════════════════════════════════════════
@@ -89,7 +91,6 @@ string kPayload(list kvp) {
     return llList2Json(JSON_OBJECT, kvp);
 }
 
-integer DEBUG = FALSE;
 integer KERNEL_LIFECYCLE = 500;
 integer AUTH_BUS = 700;
 integer UI_BUS = 900;

@@ -27,6 +27,8 @@
    NAMING: PascalCase globals, ALL_CAPS constants, snake_case locals
    ============================================================================= */
 
+integer DEBUG = FALSE;
+
 string CONTEXT = "core_relay";
 
 /* ═══════════════════════════════════════════════════════════
@@ -77,15 +79,13 @@ string kPayload(list kvp) {
     return llList2Json(JSON_OBJECT, kvp);
 }
 
-string kDeltaSet(string key, string val) {
+string kDeltaSet(string setting_key, string val) {
     return llList2Json(JSON_OBJECT, [
         "op", "set",
-        "key", key,
+        "key", setting_key,
         "value", val
     ]);
 }
-
-integer DEBUG = FALSE;
 
 /* ═══════════════════════════════════════════════════════════
    CONSOLIDATED ABI
