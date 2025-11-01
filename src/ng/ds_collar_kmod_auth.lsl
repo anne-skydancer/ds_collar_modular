@@ -85,26 +85,26 @@ string kPayload(list kvp) {
     return llList2Json(JSON_OBJECT, kvp);
 }
 
-string kDeltaSet(string key, string val) {
+string kDeltaSet(string setting_key, string val) {
     return llList2Json(JSON_OBJECT, [
         "op", "set",
-        "key", key,
+        "key", setting_key,
         "value", val
     ]);
 }
 
-string kDeltaAdd(string key, string elem) {
+string kDeltaAdd(string setting_key, string elem) {
     return llList2Json(JSON_OBJECT, [
         "op", "list_add",
-        "key", key,
+        "key", setting_key,
         "elem", elem
     ]);
 }
 
-string kDeltaDel(string key, string elem) {
+string kDeltaDel(string setting_key, string elem) {
     return llList2Json(JSON_OBJECT, [
         "op", "list_remove",
-        "key", key,
+        "key", setting_key,
         "elem", elem
     ]);
 }

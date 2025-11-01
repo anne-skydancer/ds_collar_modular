@@ -81,6 +81,9 @@
    - -8888: OpenCollar holder protocol
    =============================================================== */
 
+integer DEBUG = FALSE;
+integer PRODUCTION = TRUE;  // Set FALSE for development
+
 string CONTEXT = "leash";
 
 /* ═══════════════════════════════════════════════════════════
@@ -131,32 +134,34 @@ string kPayload(list kvp) {
     return llList2Json(JSON_OBJECT, kvp);
 }
 
-string kDeltaSet(string key, string val) {
+string kDeltaSet(string setting_key, string val) {
     return llList2Json(JSON_OBJECT, [
         "op", "set",
-        "key", key,
+        "key", setting_key,
         "value", val
     ]);
 }
 
-string kDeltaAdd(string key, string elem) {
+string kDeltaAdd(string setting_key, string elem) {
     return llList2Json(JSON_OBJECT, [
         "op", "list_add",
-        "key", key,
+        "key", setting_key,
         "elem", elem
     ]);
 }
 
-string kDeltaDel(string key, string elem) {
+string kDeltaDel(string setting_key, string elem) {
     return llList2Json(JSON_OBJECT, [
         "op", "list_remove",
-        "key", key,
+        "key", setting_key,
         "elem", elem
     ]);
 }
 
-integer DEBUG = FALSE;
-integer PRODUCTION = TRUE;  // Set FALSE for development
+integer json_has(string j, list path) {
+    return (llJsonGetValue(j, path) != JSON_INVALID);
+}
+
 integer AUTH_BUS = 700;
 integer SETTINGS_BUS = 800;
 integer UI_BUS = 900;
@@ -463,7 +468,7 @@ handleAclResult(string payload) {
     else if (PendingAction == "pass_target_check") {
         // This is the target verification for pass/offer action
         // Target must be level 1+ (public or higher) to receive leash
-        key target = (key)llJsonGetValue(msg, ["avatar"]);
+        key target = (key)llJsonGetValue(payload, ["avatar"]);
 
         logd("Target ACL check: " + llKey2Name(target) + " has ACL " + (string)acl_level + ", IsOfferMode=" + (string)PendingIsOffer);
 
