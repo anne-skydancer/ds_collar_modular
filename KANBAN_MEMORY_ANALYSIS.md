@@ -446,24 +446,111 @@ To measure actual impact, compile before/after:
 
 ---
 
-## Conclusion
+## 11. REVISED: Universal Helper Approach (MUCH BETTER!)
 
-**Kanban messaging has acceptable memory costs:**
+### The Key Insight
 
-1. **Message overhead**: 10-15% larger (temporary, not cumulative)
-2. **Helper overhead**: ~6KB (one-time cost)
-3. **Breakeven point**: ~10-15 message operations
-4. **Large scripts**: SAVES memory by reducing boilerplate
-5. **Optimization**: Tiered helper libraries for different needs
+**You only need TWO functions:**
+- `kSend()` - Send ANY message (registration, ACL, settings, dialogs, EVERYTHING)
+- `kRecv()` - Receive and parse ANY message
 
-**Trade-off is worth it for:**
-- Consistency across codebase
-- Easier debugging and maintenance
-- Reduced code complexity
-- Better message routing
+The Kanban packet structure itself carries the meaning. No specialized functions needed!
+
+### Universal Helper Size: ~500-800 bytes (0.5-0.8KB!)
+
+**Core functions (~300 bytes):**
+```lsl
+kSend(from, to, channel, payload, key)  // Universal send
+kRecv(msg, my_context) → payload       // Universal receive
+kFrom, kTo (globals for routing)
+```
+
+**Optional shortcuts (~200-300 bytes):**
+```lsl
+kPayload(list)           // Build simple payload
+kDeltaSet(key, val)      // Delta SET
+kDeltaAdd(key, elem)     // Delta LIST_ADD
+kDeltaDel(key, elem)     // Delta LIST_REMOVE
+```
+
+**Total: ~0.5-0.8KB vs 6KB for specialized helpers!**
+
+### Revised Memory Comparison
+
+| Approach | Helper Size | Call Sites | Total | Savings |
+|----------|-------------|------------|-------|---------|
+| Current (boilerplate) | 0KB | 6-9KB | 6-9KB | Baseline |
+| Specialized helpers | 6KB | 0.5-1KB | 6.5-7KB | ~0-2KB |
+| **Universal helper** | **0.5-0.8KB** | **0.5-1KB** | **1-1.8KB** | **4-7KB!** 🎉 |
+
+### Every Message Uses Same Function
+
+```lsl
+// Registration
+kSend("bell", "kernel", 500, kPayload(["label", "Bell"]), NULL_KEY);
+
+// ACL query
+kSend("bell", "auth", 700, kPayload(["avatar", (string)user]), user);
+
+// Settings delta
+kSend("bell", "", 800, kDeltaSet("bell_visible", "1"), NULL_KEY);
+
+// Dialog
+kSend("bell", "dialogs", 950, kPayload([...dialog data...]), NULL_KEY);
+```
+
+**Same function, different payloads. That's TRUE Kanban!**
+
+### Receiving Is Equally Simple
+
+```lsl
+link_message(integer sender, integer num, string msg, key id) {
+    string payload = kRecv(msg, "bell");
+    if (payload == "") return;
+
+    // Route by: channel + kFrom (global)
+    if (num == 700 && kFrom == "auth") { handleAcl(payload); }
+    else if (num == 800 && kFrom == "settings") { handleSettings(payload); }
+}
+```
+
+### Handles Both Full and Delta Transparently
+
+```lsl
+handleSettings(string payload) {
+    string op = llJsonGetValue(payload, ["op"]);
+
+    if (op == "set") {
+        // Delta
+        string key = llJsonGetValue(payload, ["key"]);
+        applyChange(key, ...);
+    } else {
+        // Full sync
+        applyFullSettings(payload);
+    }
+}
+```
+
+---
+
+## Conclusion (REVISED)
+
+**Universal Kanban helper is EXTREMELY memory efficient:**
+
+1. **Message overhead**: 10-15% larger (temporary, not cumulative) - UNCHANGED
+2. **Helper overhead**: ~0.5-0.8KB (vs 6KB specialized) - **MUCH BETTER!**
+3. **Net savings**: **4-7KB per script** vs current approach
+4. **One function for everything**: `kSend()` handles all cases
+5. **Handles full and delta**: Transparently in same code path
+
+**Trade-off is a no-brainer:**
+- ✅ Saves 4-7KB per script
+- ✅ Consistency across codebase
+- ✅ Easier debugging and maintenance
+- ✅ Reduced code complexity
+- ✅ ONE function to learn: `kSend()`
 
 **Recommended approach:**
-- Full Kanban for core modules (saves memory!)
-- Standard Kanban for medium/large plugins
-- Minimal Kanban for small plugins
-- Current approach for ultra-simple scripts
+- **Universal helper for ALL scripts** (only ~0.5-0.8KB overhead!)
+- Tiny plugins (<5 messages) can stay with current if desired
+- But even they benefit from consistency
