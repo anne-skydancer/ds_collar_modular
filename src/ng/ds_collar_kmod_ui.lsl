@@ -27,7 +27,86 @@
    - [LOW] Blacklist check in button handler
 
    NOTE: Plugin discovery race condition fixed in kernel (deferred responses)
+
+   KANBAN MIGRATION (v4.0):
+   - Uses universal kanban helper (~500-800 bytes)
+   - All messages use standardized {from, payload, to} structure
+   - Routing by channel + kFrom instead of "type" field
    ============================================================================= */
+
+string CONTEXT = "ui";
+
+/* ═══════════════════════════════════════════════════════════
+   KANBAN UNIVERSAL HELPER (~500-800 bytes)
+   ═══════════════════════════════════════════════════════════ */
+
+string kFrom = "";  // Sender context (populated by kRecv)
+string kTo = "";    // Recipient context (populated by kRecv)
+
+kSend(string from, string to, integer channel, string payload, key k) {
+    llMessageLinked(LINK_SET, channel,
+        llList2Json(JSON_OBJECT, [
+            "from", from,
+            "payload", payload,
+            "to", to
+        ]),
+        k
+    );
+}
+
+string kRecv(string msg, string my_context) {
+    // Quick validation: must be JSON object
+    if (llGetSubString(msg, 0, 0) != "{") return "";
+
+    // Extract from
+    string from = llJsonGetValue(msg, ["from"]);
+    if (from == JSON_INVALID) return "";
+
+    // Extract to
+    string to = llJsonGetValue(msg, ["to"]);
+    if (to == JSON_INVALID) return "";
+
+    // Check if for me (broadcast "" or direct to my_context)
+    if (to != "" && to != my_context) return "";
+
+    // Extract payload
+    string payload = llJsonGetValue(msg, ["payload"]);
+    if (payload == JSON_INVALID) return "";
+
+    // Set globals for routing
+    kFrom = from;
+    kTo = to;
+
+    return payload;
+}
+
+string kPayload(list kvp) {
+    return llList2Json(JSON_OBJECT, kvp);
+}
+
+string kDeltaSet(string key, string val) {
+    return llList2Json(JSON_OBJECT, [
+        "op", "set",
+        "key", key,
+        "value", val
+    ]);
+}
+
+string kDeltaAdd(string key, string elem) {
+    return llList2Json(JSON_OBJECT, [
+        "op", "list_add",
+        "key", key,
+        "elem", elem
+    ]);
+}
+
+string kDeltaDel(string key, string elem) {
+    return llList2Json(JSON_OBJECT, [
+        "op", "list_remove",
+        "key", key,
+        "elem", elem
+    ]);
+}
 
 integer DEBUG = TRUE;
 integer PRODUCTION = FALSE;  // Set FALSE for development builds
@@ -290,8 +369,7 @@ apply_plugin_list(string plugins_json) {
     logd("Plugin list updated: " + (string)(llGetListLength(AllPlugins) / PLUGIN_STRIDE) + " plugins");
 
     // Request ACL data from auth module
-    string request = llList2Json(JSON_OBJECT, ["type", "plugin_acl_list_request"]);
-    llMessageLinked(LINK_SET, AUTH_BUS, request, NULL_KEY);
+    kSend(CONTEXT, "auth", AUTH_BUS, kPayload(["request", "plugin_acl_list"]), NULL_KEY);
 }
 
 apply_plugin_acl_list(string acl_json) {
@@ -420,18 +498,18 @@ show_root_menu(key user) {
     }
     
     string session_id = llList2String(Sessions, session_idx + SESSION_ID);
-    
-    string msg = llList2Json(JSON_OBJECT, [
-        "type", "dialog_open",
-        "session_id", session_id,
-        "user", (string)user,
-        "title", title,
-        "body", "Select an option:",
-        "buttons", buttons_json,
-        "timeout", 60
-    ]);
-    
-    llMessageLinked(LINK_SET, DIALOG_BUS, msg, NULL_KEY);
+
+    kSend(CONTEXT, "dialogs", DIALOG_BUS,
+        kPayload([
+            "session_id", session_id,
+            "user", (string)user,
+            "title", title,
+            "body", "Select an option:",
+            "buttons", buttons_json,
+            "timeout", 60
+        ]),
+        NULL_KEY
+    );
     logd("Showing root menu to " + llKey2Name(user) + " (page " + (string)(current_page + 1) + "/" + (string)total_pages + ")");
 }
 
@@ -492,17 +570,17 @@ show_sos_menu(key user) {
 
     string session_id = llList2String(Sessions, session_idx + SESSION_ID);
 
-    string msg = llList2Json(JSON_OBJECT, [
-        "type", "dialog_open",
-        "session_id", session_id,
-        "user", (string)user,
-        "title", title,
-        "body", "Emergency options:",
-        "buttons", buttons_json,
-        "timeout", 60
-    ]);
-
-    llMessageLinked(LINK_SET, DIALOG_BUS, msg, NULL_KEY);
+    kSend(CONTEXT, "dialogs", DIALOG_BUS,
+        kPayload([
+            "session_id", session_id,
+            "user", (string)user,
+            "title", title,
+            "body", "Emergency options:",
+            "buttons", buttons_json,
+            "timeout", 60
+        ]),
+        NULL_KEY
+    );
     logd("Showing SOS menu to " + llKey2Name(user) + " (page " + (string)(current_page + 1) + "/" + (string)total_pages + ")");
 }
 
@@ -577,13 +655,10 @@ handle_button_click(key user, string button) {
                 return;
             }
 
-            string msg = llList2Json(JSON_OBJECT, [
-                "type", "start",
-                "context", context,
-                "user", (string)user
-            ]);
-
-            llMessageLinked(LINK_SET, UI_BUS, msg, user);
+            kSend(CONTEXT, context, UI_BUS,
+                kPayload(["context", context, "user", (string)user]),
+                user
+            );
             logd("Starting plugin: " + context + " for " + llKey2Name(user));
 
             return;
@@ -630,15 +705,15 @@ update_plugin_label(string context, string new_label) {
    MESSAGE HANDLERS
    ═══════════════════════════════════════════════════════════ */
 
-handle_plugin_list(string msg) {
+handle_plugin_list(string payload) {
     logd("handle_plugin_list called");
 
-    if (!json_has(msg, ["plugins"])) {
+    if (!json_has(payload, ["plugins"])) {
         logd("ERROR: No 'plugins' field in message!");
         return;
     }
 
-    string plugins_json = llJsonGetValue(msg, ["plugins"]);
+    string plugins_json = llJsonGetValue(payload, ["plugins"]);
     apply_plugin_list(plugins_json);
 
     // Invalidate all sessions when plugin list changes
@@ -651,14 +726,14 @@ handle_plugin_list(string msg) {
     }
 }
 
-handle_acl_result(string msg) {
-    if (!json_has(msg, ["avatar"])) return;
-    if (!json_has(msg, ["level"])) return;
-    if (!json_has(msg, ["is_blacklisted"])) return;
+handle_acl_result(string payload) {
+    if (!json_has(payload, ["avatar"])) return;
+    if (!json_has(payload, ["level"])) return;
+    if (!json_has(payload, ["is_blacklisted"])) return;
 
-    key avatar = (key)llJsonGetValue(msg, ["avatar"]);
-    integer level = (integer)llJsonGetValue(msg, ["level"]);
-    integer is_blacklisted = (integer)llJsonGetValue(msg, ["is_blacklisted"]);
+    key avatar = (key)llJsonGetValue(payload, ["avatar"]);
+    integer level = (integer)llJsonGetValue(payload, ["level"]);
+    integer is_blacklisted = (integer)llJsonGetValue(payload, ["is_blacklisted"]);
 
     integer i = 0;
     integer len = llGetListLength(PendingAcl);
@@ -688,13 +763,13 @@ handle_acl_result(string msg) {
     }
 }
 
-handle_start(string msg, key user_key) {
-    if (!json_has(msg, ["context"])) {
+handle_start(string payload, key user_key) {
+    if (!json_has(payload, ["context"])) {
         start_root_session(user_key);
         return;
     }
 
-    string context = llJsonGetValue(msg, ["context"]);
+    string context = llJsonGetValue(payload, ["context"]);
 
     if (context == ROOT_CONTEXT) {
         start_root_session(user_key);
@@ -721,11 +796,10 @@ start_root_session(key user_key) {
 
     PendingAcl += [user_key, ROOT_CONTEXT];
 
-    string acl_query = llList2Json(JSON_OBJECT, [
-        "type", "acl_query",
-        "avatar", (string)user_key
-    ]);
-    llMessageLinked(LINK_SET, AUTH_BUS, acl_query, NULL_KEY);
+    kSend(CONTEXT, "auth", AUTH_BUS,
+        kPayload(["avatar", (string)user_key]),
+        NULL_KEY
+    );
 }
 
 start_sos_session(key user_key) {
@@ -742,17 +816,16 @@ start_sos_session(key user_key) {
 
     PendingAcl += [user_key, SOS_CONTEXT];
 
-    string acl_query = llList2Json(JSON_OBJECT, [
-        "type", "acl_query",
-        "avatar", (string)user_key
-    ]);
-    llMessageLinked(LINK_SET, AUTH_BUS, acl_query, NULL_KEY);
+    kSend(CONTEXT, "auth", AUTH_BUS,
+        kPayload(["avatar", (string)user_key]),
+        NULL_KEY
+    );
 }
 
-handle_return(string msg) {
-    if (!json_has(msg, ["user"])) return;
+handle_return(string payload) {
+    if (!json_has(payload, ["user"])) return;
 
-    key user_key = (key)llJsonGetValue(msg, ["user"]);
+    key user_key = (key)llJsonGetValue(payload, ["user"]);
 
     logd("Return requested for " + llKey2Name(user_key));
 
@@ -790,31 +863,31 @@ handle_return(string msg) {
     }
 }
 
-handle_update_label(string msg) {
-    if (!json_has(msg, ["context"])) return;
-    if (!json_has(msg, ["label"])) return;
+handle_update_label(string payload) {
+    if (!json_has(payload, ["context"])) return;
+    if (!json_has(payload, ["label"])) return;
 
-    string context = llJsonGetValue(msg, ["context"]);
-    string new_label = llJsonGetValue(msg, ["label"]);
+    string context = llJsonGetValue(payload, ["context"]);
+    string new_label = llJsonGetValue(payload, ["label"]);
 
     update_plugin_label(context, new_label);
 }
 
-handle_plugin_acl_list(string msg) {
-    if (!json_has(msg, ["acl_data"])) return;
+handle_plugin_acl_list(string payload) {
+    if (!json_has(payload, ["acl_data"])) return;
 
-    string acl_json = llJsonGetValue(msg, ["acl_data"]);
+    string acl_json = llJsonGetValue(payload, ["acl_data"]);
     apply_plugin_acl_list(acl_json);
 }
 
-handle_dialog_response(string msg) {
-    if (!json_has(msg, ["session_id"])) return;
-    if (!json_has(msg, ["button"])) return;
-    if (!json_has(msg, ["user"])) return;
-    
-    string session_id = llJsonGetValue(msg, ["session_id"]);
-    string button = llJsonGetValue(msg, ["button"]);
-    key user = (key)llJsonGetValue(msg, ["user"]);
+handle_dialog_response(string payload) {
+    if (!json_has(payload, ["session_id"])) return;
+    if (!json_has(payload, ["button"])) return;
+    if (!json_has(payload, ["user"])) return;
+
+    string session_id = llJsonGetValue(payload, ["session_id"]);
+    string button = llJsonGetValue(payload, ["button"]);
+    key user = (key)llJsonGetValue(payload, ["user"]);
     
     integer i = 0;
     while (i < llGetListLength(Sessions)) {
@@ -828,12 +901,12 @@ handle_dialog_response(string msg) {
     logd("ERROR: Session not found for response: " + session_id);
 }
 
-handle_dialog_timeout(string msg) {
-    if (!json_has(msg, ["session_id"])) return;
-    if (!json_has(msg, ["user"])) return;
-    
-    string session_id = llJsonGetValue(msg, ["session_id"]);
-    key user = (key)llJsonGetValue(msg, ["user"]);
+handle_dialog_timeout(string payload) {
+    if (!json_has(payload, ["session_id"])) return;
+    if (!json_has(payload, ["user"])) return;
+
+    string session_id = llJsonGetValue(payload, ["session_id"]);
+    key user = (key)llJsonGetValue(payload, ["user"]);
     
     integer i = 0;
     while (i < llGetListLength(Sessions)) {
@@ -862,10 +935,7 @@ default
         logd("UI module started (UUID-based change detection, long-touch support)");
 
         // Request plugin list (kernel defers response during active registration)
-        string request = llList2Json(JSON_OBJECT, [
-            "type", "plugin_list_request"
-        ]);
-        llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, request, NULL_KEY);
+        kSend(CONTEXT, "kernel", KERNEL_LIFECYCLE, kPayload(["request_list", 1]), NULL_KEY);
     }
     
     touch_start(integer num_detected) {
@@ -954,47 +1024,58 @@ default
     }
 
     link_message(integer sender, integer num, string msg, key id) {
-        if (!json_has(msg, ["type"])) return;
-        
-        string msg_type = llJsonGetValue(msg, ["type"]);
-        
-        if (msg_type != "ping" && msg_type != "pong" && msg_type != "register" && msg_type != "register_now") {
-            logd("Received message: channel=" + (string)num + " type=" + msg_type);
-        }
-        
+        // Parse kanban message - kRecv validates and sets kFrom, kTo
+        string payload = kRecv(msg, CONTEXT);
+        if (payload == "") return;  // Not for us or invalid
+
+        // Route by channel + sender (kFrom) + payload structure
+
         if (num == KERNEL_LIFECYCLE) {
-            if (msg_type == "plugin_list") {
-                handle_plugin_list(msg);
-            }
-            else if (msg_type == "soft_reset" || msg_type == "soft_reset_all") {
+            // Soft reset: has "reset" marker
+            if (json_has(payload, ["reset"])) {
                 llResetScript();
+            }
+            // Plugin list: has "plugins" field from kernel
+            else if (kFrom == "kernel" && json_has(payload, ["plugins"])) {
+                handle_plugin_list(payload);
             }
         }
         else if (num == AUTH_BUS) {
-            if (msg_type == "acl_result") {
-                handle_acl_result(msg);
-            }
-            else if (msg_type == "plugin_acl_list") {
-                handle_plugin_acl_list(msg);
+            if (kFrom == "auth") {
+                // ACL result: has "avatar" + "level" + "is_blacklisted"
+                if (json_has(payload, ["avatar"]) && json_has(payload, ["level"]) && json_has(payload, ["is_blacklisted"])) {
+                    handle_acl_result(payload);
+                }
+                // Plugin ACL list: has "acl_data"
+                else if (json_has(payload, ["acl_data"])) {
+                    handle_plugin_acl_list(payload);
+                }
             }
         }
         else if (num == UI_BUS) {
-            if (msg_type == "start") {
-                handle_start(msg, id);
+            // Start: has "context" or is broadcast to start root session
+            if (json_has(payload, ["context"]) || payload == "{}") {
+                handle_start(payload, id);
             }
-            else if (msg_type == "return") {
-                handle_return(msg);
+            // Return: has "user"
+            else if (json_has(payload, ["user"])) {
+                handle_return(payload);
             }
-            else if (msg_type == "update_label") {
-                handle_update_label(msg);
+            // Update label: has "context" + "label"
+            else if (json_has(payload, ["context"]) && json_has(payload, ["label"])) {
+                handle_update_label(payload);
             }
         }
         else if (num == DIALOG_BUS) {
-            if (msg_type == "dialog_response") {
-                handle_dialog_response(msg);
-            }
-            else if (msg_type == "dialog_timeout") {
-                handle_dialog_timeout(msg);
+            if (kFrom == "dialogs") {
+                // Dialog response: has "session_id" + "button" + "user"
+                if (json_has(payload, ["session_id"]) && json_has(payload, ["button"])) {
+                    handle_dialog_response(payload);
+                }
+                // Dialog timeout: has "session_id" + "user" (no "button")
+                else if (json_has(payload, ["session_id"]) && !json_has(payload, ["button"])) {
+                    handle_dialog_timeout(payload);
+                }
             }
         }
     }
