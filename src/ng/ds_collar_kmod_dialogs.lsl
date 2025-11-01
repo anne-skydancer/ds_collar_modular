@@ -1,20 +1,31 @@
 /* =============================================================================
-   MODULE: ds_collar_kmod_dialogs.lsl (v2.1 - Security Hardened)
+   MODULE: ds_collar_kmod_dialogs.lsl (v3.0 - Kanban Messaging Migration)
    SECURITY AUDIT: MINOR ENHANCEMENTS APPLIED
-   
+   MESSAGING: Kanban universal helper (v1.0)
+
    ROLE: Centralized dialog management - eliminates per-plugin listen handles
-   
+
    CHANNELS:
    - 950 (DIALOG_BUS): All dialog operations
-   
+
    BENEFIT: Plugins don't need to manage their own listen handles or channels
-   
+
    SECURITY ENHANCEMENTS:
    - [MEDIUM] Channel collision detection
    - [LOW] Production mode guard for debug
    - [LOW] Owner change handler
    - [LOW] Truncation warning for numbered lists
+
+   KANBAN MIGRATION (v3.0):
+   - Uses universal kanban helper (~500-800 bytes)
+   - All messages use standardized {from, payload, to} structure
+   - Routing by channel + kFrom instead of "type" field
    ============================================================================= */
+
+// Include universal Kanban helper
+#include "ds_collar_kanban_universal.lsl"
+
+string CONTEXT = "dialogs";
 
 integer DEBUG = FALSE;
 integer PRODUCTION = TRUE;  // Set FALSE for development builds
@@ -102,24 +113,24 @@ close_session(string session_id) {
 prune_expired_sessions() {
     integer now_unix = now();
     integer i = 0;
-    
+
     while (i < llGetListLength(Sessions)) {
         integer timeout = llList2Integer(Sessions, i + SESSION_TIMEOUT);
-        
+
         if (timeout > 0 && now_unix >= timeout) {
             // Session expired, send timeout message
             string session_id = llList2String(Sessions, i + SESSION_ID);
             key user = llList2Key(Sessions, i + SESSION_USER);
-            
-            string timeout_msg = llList2Json(JSON_OBJECT, [
-                "type", "dialog_timeout",
+
+            string payload = kPayload([
                 "session_id", session_id,
-                "user", (string)user
+                "user", (string)user,
+                "timeout", 1
             ]);
-            llMessageLinked(LINK_SET, DIALOG_BUS, timeout_msg, NULL_KEY);
-            
+            kSend(CONTEXT, "", DIALOG_BUS, payload, NULL_KEY);
+
             logd("Session timeout: " + session_id);
-            
+
             close_session_at_idx(i);
             // Don't increment i, list shifted
         }
@@ -167,46 +178,46 @@ integer get_next_channel() {
    DIALOG DISPLAY
    ═══════════════════════════════════════════════════════════ */
 
-handle_dialog_open(string msg) {
-    if (!json_has(msg, ["session_id"])) {
+handle_dialog_open(string payload) {
+    if (!json_has(payload, ["session_id"])) {
         logd("ERROR: dialog_open missing session_id");
         return;
     }
-    if (!json_has(msg, ["user"])) {
+    if (!json_has(payload, ["user"])) {
         logd("ERROR: dialog_open missing user");
         return;
     }
-    
-    string session_id = llJsonGetValue(msg, ["session_id"]);
-    key user = (key)llJsonGetValue(msg, ["user"]);
-    
+
+    string session_id = llJsonGetValue(payload, ["session_id"]);
+    key user = (key)llJsonGetValue(payload, ["user"]);
+
     // Check for numbered list type
-    if (json_has(msg, ["dialog_type"]) && llJsonGetValue(msg, ["dialog_type"]) == "numbered_list") {
-        handle_numbered_list_dialog(msg, session_id, user);
+    if (json_has(payload, ["dialog_type"]) && llJsonGetValue(payload, ["dialog_type"]) == "numbered_list") {
+        handle_numbered_list_dialog(payload, session_id, user);
         return;
     }
-    
+
     // Standard dialog
-    if (!json_has(msg, ["buttons"])) {
+    if (!json_has(payload, ["buttons"])) {
         logd("ERROR: dialog_open missing buttons");
         return;
     }
-    
+
     string title = "Menu";
     string message = "Select an option:";
     integer timeout = 60;
-    
-    if (json_has(msg, ["title"])) {
-        title = llJsonGetValue(msg, ["title"]);
+
+    if (json_has(payload, ["title"])) {
+        title = llJsonGetValue(payload, ["title"]);
     }
-    if (json_has(msg, ["body"])) {
-        message = llJsonGetValue(msg, ["body"]);
+    if (json_has(payload, ["body"])) {
+        message = llJsonGetValue(payload, ["body"]);
     }
-    else if (json_has(msg, ["message"])) {
-        message = llJsonGetValue(msg, ["message"]);
+    else if (json_has(payload, ["message"])) {
+        message = llJsonGetValue(payload, ["message"]);
     }
-    if (json_has(msg, ["timeout"])) {
-        timeout = (integer)llJsonGetValue(msg, ["timeout"]);
+    if (json_has(payload, ["timeout"])) {
+        timeout = (integer)llJsonGetValue(payload, ["timeout"]);
     }
     
     // Close existing session with same ID
@@ -236,7 +247,7 @@ handle_dialog_open(string msg) {
     Sessions += [session_id, user, channel, listen_handle, timeout_unix];
     
     // Parse buttons
-    string buttons_json = llJsonGetValue(msg, ["buttons"]);
+    string buttons_json = llJsonGetValue(payload, ["buttons"]);
     list buttons = llJson2List(buttons_json);
     
     // Show dialog
@@ -245,28 +256,28 @@ handle_dialog_open(string msg) {
     logd("Opened dialog: " + session_id + " for " + llKey2Name(user) + " on channel " + (string)channel);
 }
 
-handle_numbered_list_dialog(string msg, string session_id, key user) {
-    if (!json_has(msg, ["items"])) {
+handle_numbered_list_dialog(string payload, string session_id, key user) {
+    if (!json_has(payload, ["items"])) {
         logd("ERROR: numbered_list missing items");
         return;
     }
-    
+
     string title = "Select Item";
     string prompt = "Choose:";
     integer timeout = 60;
-    
-    if (json_has(msg, ["title"])) {
-        title = llJsonGetValue(msg, ["title"]);
+
+    if (json_has(payload, ["title"])) {
+        title = llJsonGetValue(payload, ["title"]);
     }
-    if (json_has(msg, ["prompt"])) {
-        prompt = llJsonGetValue(msg, ["prompt"]);
+    if (json_has(payload, ["prompt"])) {
+        prompt = llJsonGetValue(payload, ["prompt"]);
     }
-    if (json_has(msg, ["timeout"])) {
-        timeout = (integer)llJsonGetValue(msg, ["timeout"]);
+    if (json_has(payload, ["timeout"])) {
+        timeout = (integer)llJsonGetValue(payload, ["timeout"]);
     }
-    
+
     // Parse items
-    string items_json = llJsonGetValue(msg, ["items"]);
+    string items_json = llJsonGetValue(payload, ["items"]);
     list items = llJson2List(items_json);
     integer item_count = llGetListLength(items);
     integer original_count = item_count;
@@ -327,10 +338,10 @@ handle_numbered_list_dialog(string msg, string session_id, key user) {
     logd("Opened numbered list: " + session_id + " (" + (string)item_count + " items)");
 }
 
-handle_dialog_close(string msg) {
-    if (!json_has(msg, ["session_id"])) return;
-    
-    string session_id = llJsonGetValue(msg, ["session_id"]);
+handle_dialog_close(string payload) {
+    if (!json_has(payload, ["session_id"])) return;
+
+    string session_id = llJsonGetValue(payload, ["session_id"]);
     close_session(session_id);
 }
 
@@ -358,50 +369,50 @@ default
         // Find session for this channel
         integer i = 0;
         integer len = llGetListLength(Sessions);
-        
+
         while (i < len) {
             integer session_channel = llList2Integer(Sessions, i + SESSION_CHANNEL);
-            
+
             if (session_channel == channel) {
                 key session_user = llList2Key(Sessions, i + SESSION_USER);
-                
+
                 // Verify speaker matches session user
                 if (id != session_user) {
                     i += SESSION_STRIDE;
                     jump next_session;
                 }
-                
+
                 string session_id = llList2String(Sessions, i + SESSION_ID);
-                
+
                 // Send response message
-                string response = llList2Json(JSON_OBJECT, [
-                    "type", "dialog_response",
+                string payload = kPayload([
                     "session_id", session_id,
                     "user", (string)id,
                     "button", message
                 ]);
-                llMessageLinked(LINK_SET, DIALOG_BUS, response, NULL_KEY);
-                
+                kSend(CONTEXT, "", DIALOG_BUS, payload, NULL_KEY);
+
                 logd("Button click: " + message + " from " + llKey2Name(id));
-                
+
                 // Close session after response
                 close_session_at_idx(i);
                 return;
             }
-            
+
             @next_session;
             i += SESSION_STRIDE;
         }
     }
     
     link_message(integer sender, integer num, string msg, key id) {
-        if (!json_has(msg, ["type"])) return;
-
-        string msg_type = llJsonGetValue(msg, ["type"]);
+        // Parse kanban message - kRecv validates and sets kFrom, kTo
+        string payload = kRecv(msg, CONTEXT);
+        if (payload == "") return;  // Not for us or invalid
 
         /* ===== KERNEL LIFECYCLE ===== */
         if (num == KERNEL_LIFECYCLE) {
-            if (msg_type == "soft_reset" || msg_type == "soft_reset_all") {
+            // Soft reset: has "reset" marker
+            if (json_has(payload, ["reset"])) {
                 llResetScript();
             }
             return;
@@ -410,11 +421,13 @@ default
         /* ===== DIALOG BUS ===== */
         if (num != DIALOG_BUS) return;
 
-        if (msg_type == "dialog_open") {
-            handle_dialog_open(msg);
-        }
-        else if (msg_type == "dialog_close") {
-            handle_dialog_close(msg);
+        // Dialog open: has "session_id" and "user" and "buttons" or "items"
+        if (json_has(payload, ["session_id"]) && json_has(payload, ["user"])) {
+            if (json_has(payload, ["close"])) {
+                handle_dialog_close(payload);
+            } else {
+                handle_dialog_open(payload);
+            }
         }
     }
     
