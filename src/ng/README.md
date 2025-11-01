@@ -33,10 +33,11 @@ llMessageLinked(LINK_SET, 500, llList2Json(JSON_OBJECT, [
 ]), NULL_KEY);
 ```
 
-### Kanban Message Format (ng)
+### Kanban Message Format (ng) v4.00
 ```lsl
-kSend("bell", "kernel", 500,
-    kPayload(["label", "Bell", "min_acl", 1, "script", llGetScriptName()]),
+// "from" auto-detected from llGetScriptName()!
+kSend("kernel", 500,
+    kPayload(["label", "Bell", "min_acl", 1]),
     NULL_KEY
 );
 ```
@@ -59,8 +60,8 @@ kSend("bell", "kernel", 500,
 **Two functions handle ALL messaging:**
 
 ```lsl
-kSend(from, to, channel, payload, key)  // Send any message
-kRecv(msg, my_context)                   // Receive and parse any message
+kSend(to, channel, payload, key)  // Send any message ("from" auto-detected!)
+kRecv(msg)                         // Receive and parse any message
 ```
 
 **Optional payload builders:**
@@ -147,20 +148,27 @@ Add this block near the top of every script (after constants):
 string kFrom = "";
 string kTo = "";
 
-kSend(string from, string to, integer channel, string payload, key k) {
+// Send - "from" auto-detected via llGetScriptName()
+kSend(string to, integer channel, string payload, key k) {
     llMessageLinked(LINK_SET, channel,
-        llList2Json(JSON_OBJECT, ["from", from, "payload", payload, "to", to]),
+        llList2Json(JSON_OBJECT, [
+            "from", llGetScriptName(),
+            "payload", payload,
+            "to", to
+        ]),
         k
     );
 }
 
-string kRecv(string msg, string my_context) {
+// Receive - checks if message is for this script
+string kRecv(string msg) {
     if (llGetSubString(msg, 0, 0) != "{") return "";
     string from = llJsonGetValue(msg, ["from"]);
     if (from == JSON_INVALID) return "";
     string to = llJsonGetValue(msg, ["to"]);
     if (to == JSON_INVALID) return "";
-    if (to != "" && to != my_context) return "";
+    string my_name = llGetScriptName();
+    if (to != "" && to != my_name) return "";
     string payload = llJsonGetValue(msg, ["payload"]);
     if (payload == JSON_INVALID) return "";
     kFrom = from;
@@ -187,24 +195,24 @@ string kDeltaDel(string key, string elem) {
 /* ===== END KANBAN HELPERS ===== */
 ```
 
-### 2. Define Your Context and Version
+### 2. Define Version (CONTEXT not needed!)
 
 ```lsl
-string CONTEXT = "bell";           // Your plugin/module context name
 string VERSION = "4.00";           // Version number
+// Note: CONTEXT auto-detected from llGetScriptName()
 ```
 
 ### 3. Send Messages
 
 ```lsl
-// Registration
-kSend(CONTEXT, "kernel", 500,
+// Registration - "from" automatic!
+kSend("kernel", 500,
     kPayload(["label", "Bell", "min_acl", 1]),
     NULL_KEY
 );
 
 // Settings delta
-kSend(CONTEXT, "", 800,
+kSend("", 800,
     kDeltaSet("bell_visible", "1"),
     NULL_KEY
 );
@@ -214,7 +222,7 @@ kSend(CONTEXT, "", 800,
 
 ```lsl
 link_message(integer sender, integer num, string msg, key id) {
-    string payload = kRecv(msg, CONTEXT);
+    string payload = kRecv(msg);  // Auto-checks script name!
     if (payload == "") return;
 
     // Route by channel + kFrom
@@ -269,13 +277,14 @@ When migrating a script:
 1. **Start from stable baseline** (already copied to ng/)
 2. **Update header** - Set version to "4.00", add Kanban note
 3. **Embed Kanban helpers** - Copy the helper block (~500-800 bytes) after constants
-4. **Define CONTEXT** - Add `string CONTEXT = "scriptname";` constant
-5. **Define VERSION** - Add `string VERSION = "4.00";` constant
-6. **Convert all outbound messages** to use `kSend()`
-7. **Convert all inbound parsing** to use `kRecv()`
-8. **Test thoroughly** - all existing functionality must work
-9. **Update migration status** in this README
-10. **Commit with clear message** - "migrate [script] to Kanban v4.00"
+4. **Define VERSION** - Add `string VERSION = "4.00";` constant
+5. **Convert all outbound messages** to use `kSend()` (4 parameters, "from" automatic!)
+6. **Convert all inbound parsing** to use `kRecv()` (1 parameter, script name automatic!)
+7. **Test thoroughly** - all existing functionality must work
+8. **Update migration status** in this README
+9. **Commit with clear message** - "migrate [script] to Kanban v4.00"
+
+**Note**: No CONTEXT constant needed - llGetScriptName() handles it automatically!
 
 ---
 
