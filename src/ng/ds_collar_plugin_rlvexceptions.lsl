@@ -1,8 +1,8 @@
 /* =============================================================================
-   PLUGIN: ds_collar_plugin_rlvexceptions.lsl (v2.0 - Memory Optimized)
-   
+   PLUGIN: ds_collar_plugin_rlvexceptions.lsl (v3.0 - Kanban Messaging Migration)
+
    PURPOSE: RLV exception management for owners and trustees
-   
+
    FEATURES:
    - Owner TP exceptions (@accepttp, @tplure)
    - Owner IM exceptions (@sendim, @recvim)
@@ -10,11 +10,74 @@
    - Trustee IM exceptions
    - Multi-owner mode support
    - Real-time RLV command application
-   
+
    BUG FIX: Properly clears exceptions when owners/trustees are removed
-   
+
    TIER: 2 (Medium - RLV command management)
+
+   KANBAN MIGRATION (v3.0):
+   - Uses universal kanban helper (~500-800 bytes)
+   - All messages use standardized {from, payload, to} structure
+   - Routing by channel + kFrom instead of "type" field
    ============================================================================= */
+
+string CONTEXT = "core_rlv_exceptions";
+
+/* ═══════════════════════════════════════════════════════════
+   KANBAN UNIVERSAL HELPER (~500-800 bytes)
+   ═══════════════════════════════════════════════════════════ */
+
+string kFrom = "";  // Sender context (populated by kRecv)
+string kTo = "";    // Recipient context (populated by kRecv)
+
+kSend(string from, string to, integer channel, string payload, key k) {
+    llMessageLinked(LINK_SET, channel,
+        llList2Json(JSON_OBJECT, [
+            "from", from,
+            "payload", payload,
+            "to", to
+        ]),
+        k
+    );
+}
+
+string kRecv(string msg, string my_context) {
+    // Quick validation: must be JSON object
+    if (llGetSubString(msg, 0, 0) != "{") return "";
+
+    // Extract from
+    string from = llJsonGetValue(msg, ["from"]);
+    if (from == JSON_INVALID) return "";
+
+    // Extract to
+    string to = llJsonGetValue(msg, ["to"]);
+    if (to == JSON_INVALID) return "";
+
+    // Check if for me (broadcast "" or direct to my_context)
+    if (to != "" && to != my_context) return "";
+
+    // Extract payload
+    string payload = llJsonGetValue(msg, ["payload"]);
+    if (payload == JSON_INVALID) return "";
+
+    // Set globals for routing
+    kFrom = from;
+    kTo = to;
+
+    return payload;
+}
+
+string kPayload(list kvp) {
+    return llList2Json(JSON_OBJECT, kvp);
+}
+
+string kDeltaSet(string setting_key, string val) {
+    return llList2Json(JSON_OBJECT, [
+        "op", "set",
+        "key", setting_key,
+        "value", val
+    ]);
+}
 
 integer DEBUG = FALSE;
 
@@ -30,7 +93,6 @@ integer DIALOG_BUS = 950;
 /* ═══════════════════════════════════════════════════════════
    IDENTITY
    ═══════════════════════════════════════════════════════════ */
-string PLUGIN_CONTEXT = "core_rlv_exceptions";
 string PLUGIN_LABEL = "Exceptions";
 integer PLUGIN_MIN_ACL = 3;
 
@@ -77,7 +139,7 @@ integer json_has(string j, list path) {
 }
 
 string gen_session() {
-    return PLUGIN_CONTEXT + "_" + (string)llGetUnixTime();
+    return CONTEXT + "_" + (string)llGetUnixTime();
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -86,7 +148,7 @@ string gen_session() {
 
 apply_tp_exception(key k, integer allow) {
     if (k == NULL_KEY) return;
-    
+
     if (allow) {
         llOwnerSay("@accepttp:" + (string)k + "=add");
         llOwnerSay("@tplure:" + (string)k + "=add");
@@ -99,7 +161,7 @@ apply_tp_exception(key k, integer allow) {
 
 apply_im_exception(key k, integer allow) {
     if (k == NULL_KEY) return;
-    
+
     if (allow) {
         llOwnerSay("@sendim:" + (string)k + "=add");
         llOwnerSay("@recvim:" + (string)k + "=add");
@@ -112,7 +174,7 @@ apply_im_exception(key k, integer allow) {
 
 reconcile_all() {
     logd("Reconciling RLV exceptions");
-    
+
     // Owner exceptions
     if (MultiOwnerMode) {
         integer i;
@@ -128,7 +190,7 @@ reconcile_all() {
         apply_tp_exception(OwnerKey, ExOwnerTp);
         apply_im_exception(OwnerKey, ExOwnerIm);
     }
-    
+
     // Trustee exceptions
     integer i;
     integer len = llGetListLength(TrusteeKeys);
@@ -145,30 +207,28 @@ reconcile_all() {
    ═══════════════════════════════════════════════════════════ */
 
 register_self() {
-    llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
-        "type", "register",
-        "context", PLUGIN_CONTEXT,
+    string payload = kPayload([
+        "register", 1,
         "label", PLUGIN_LABEL,
         "min_acl", PLUGIN_MIN_ACL,
         "script", llGetScriptName()
-    ]), NULL_KEY);
+    ]);
+    kSend(CONTEXT, "", KERNEL_LIFECYCLE, payload, NULL_KEY);
 }
 
 send_pong() {
-    llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
-        "type", "pong",
-        "context", PLUGIN_CONTEXT
-    ]), NULL_KEY);
+    string payload = kPayload(["pong", 1]);
+    kSend(CONTEXT, "", KERNEL_LIFECYCLE, payload, NULL_KEY);
 }
 
 /* ═══════════════════════════════════════════════════════════
    SETTINGS
    ═══════════════════════════════════════════════════════════ */
 
-apply_settings_sync(string msg) {
-    if (!json_has(msg, ["kv"])) return;
-    string kv = llJsonGetValue(msg, ["kv"]);
-    
+apply_settings_sync(string payload) {
+    if (!json_has(payload, ["kv"])) return;
+    string kv = llJsonGetValue(payload, ["kv"]);
+
     // Reset defaults
     ExOwnerTp = TRUE;
     ExOwnerIm = TRUE;
@@ -178,7 +238,7 @@ apply_settings_sync(string msg) {
     OwnerKeys = [];
     TrusteeKeys = [];
     MultiOwnerMode = FALSE;
-    
+
     // Load exception settings
     if (json_has(kv, [KEY_EX_OWNER_TP])) {
         ExOwnerTp = (integer)llJsonGetValue(kv, [KEY_EX_OWNER_TP]);
@@ -192,12 +252,12 @@ apply_settings_sync(string msg) {
     if (json_has(kv, [KEY_EX_TRUSTEE_IM])) {
         ExTrusteeIm = (integer)llJsonGetValue(kv, [KEY_EX_TRUSTEE_IM]);
     }
-    
+
     // Load owner/trustee lists
     if (json_has(kv, [KEY_MULTI_OWNER_MODE])) {
         MultiOwnerMode = (integer)llJsonGetValue(kv, [KEY_MULTI_OWNER_MODE]);
     }
-    
+
     if (MultiOwnerMode) {
         if (json_has(kv, [KEY_OWNER_KEYS])) {
             string arr = llJsonGetValue(kv, [KEY_OWNER_KEYS]);
@@ -209,71 +269,75 @@ apply_settings_sync(string msg) {
             OwnerKey = (key)llJsonGetValue(kv, [KEY_OWNER_KEY]);
         }
     }
-    
+
     if (json_has(kv, [KEY_TRUSTEES])) {
         string arr = llJsonGetValue(kv, [KEY_TRUSTEES]);
         if (llGetSubString(arr, 0, 0) == "[") TrusteeKeys = llJson2List(arr);
     }
-    
+
     // Apply RLV commands
     reconcile_all();
-    
+
     logd("Settings applied");
 }
 
-apply_settings_delta(string msg) {
-    if (!json_has(msg, ["op"])) return;
-    string op = llJsonGetValue(msg, ["op"]);
-    
+apply_settings_delta(string payload) {
+    if (!json_has(payload, ["op"])) return;
+    string op = llJsonGetValue(payload, ["op"]);
+
     if (op == "set") {
-        if (!json_has(msg, ["changes"])) return;
-        string changes = llJsonGetValue(msg, ["changes"]);
-        
-        if (json_has(changes, [KEY_EX_OWNER_TP])) {
-            ExOwnerTp = (integer)llJsonGetValue(changes, [KEY_EX_OWNER_TP]);
+        if (!json_has(payload, ["key"])) return;
+        string setting_key = llJsonGetValue(payload, ["key"]);
+
+        if (setting_key == KEY_EX_OWNER_TP) {
+            if (!json_has(payload, ["value"])) return;
+            ExOwnerTp = (integer)llJsonGetValue(payload, ["value"]);
             reconcile_all();
         }
-        if (json_has(changes, [KEY_EX_OWNER_IM])) {
-            ExOwnerIm = (integer)llJsonGetValue(changes, [KEY_EX_OWNER_IM]);
+        else if (setting_key == KEY_EX_OWNER_IM) {
+            if (!json_has(payload, ["value"])) return;
+            ExOwnerIm = (integer)llJsonGetValue(payload, ["value"]);
             reconcile_all();
         }
-        if (json_has(changes, [KEY_EX_TRUSTEE_TP])) {
-            ExTrusteeTp = (integer)llJsonGetValue(changes, [KEY_EX_TRUSTEE_TP]);
+        else if (setting_key == KEY_EX_TRUSTEE_TP) {
+            if (!json_has(payload, ["value"])) return;
+            ExTrusteeTp = (integer)llJsonGetValue(payload, ["value"]);
             reconcile_all();
         }
-        if (json_has(changes, [KEY_EX_TRUSTEE_IM])) {
-            ExTrusteeIm = (integer)llJsonGetValue(changes, [KEY_EX_TRUSTEE_IM]);
+        else if (setting_key == KEY_EX_TRUSTEE_IM) {
+            if (!json_has(payload, ["value"])) return;
+            ExTrusteeIm = (integer)llJsonGetValue(payload, ["value"]);
             reconcile_all();
         }
-        
-        // Handle owner_key changes (single owner mode)
-        if (json_has(changes, [KEY_OWNER_KEY])) {
+        else if (setting_key == KEY_OWNER_KEY) {
+            // Handle owner_key changes (single owner mode)
+            if (!json_has(payload, ["value"])) return;
             key old_owner = OwnerKey;
-            OwnerKey = (key)llJsonGetValue(changes, [KEY_OWNER_KEY]);
-            
+            OwnerKey = (key)llJsonGetValue(payload, ["value"]);
+
             // Clear exceptions from old owner if it changed
             if (old_owner != NULL_KEY && old_owner != OwnerKey) {
                 apply_tp_exception(old_owner, FALSE);
                 apply_im_exception(old_owner, FALSE);
                 logd("Cleared exceptions for removed owner: " + (string)old_owner);
             }
-            
+
             // Apply to new owner
             reconcile_all();
         }
     }
     else if (op == "list_add") {
-        if (!json_has(msg, ["key"])) return;
-        if (!json_has(msg, ["elem"])) return;
-        
-        string key_name = llJsonGetValue(msg, ["key"]);
-        string elem = llJsonGetValue(msg, ["elem"]);
-        
+        if (!json_has(payload, ["key"])) return;
+        if (!json_has(payload, ["elem"])) return;
+
+        string key_name = llJsonGetValue(payload, ["key"]);
+        string elem = llJsonGetValue(payload, ["elem"]);
+
         if (key_name == KEY_OWNER_KEYS) {
             if (llListFindList(OwnerKeys, [elem]) == -1) {
                 OwnerKeys += [elem];
                 logd("Added owner: " + elem);
-                
+
                 // Apply exceptions to new owner
                 key k = (key)elem;
                 apply_tp_exception(k, ExOwnerTp);
@@ -284,7 +348,7 @@ apply_settings_delta(string msg) {
             if (llListFindList(TrusteeKeys, [elem]) == -1) {
                 TrusteeKeys += [elem];
                 logd("Added trustee: " + elem);
-                
+
                 // Apply exceptions to new trustee
                 key k = (key)elem;
                 apply_tp_exception(k, ExTrusteeTp);
@@ -293,12 +357,12 @@ apply_settings_delta(string msg) {
         }
     }
     else if (op == "list_remove") {
-        if (!json_has(msg, ["key"])) return;
-        if (!json_has(msg, ["elem"])) return;
-        
-        string key_name = llJsonGetValue(msg, ["key"]);
-        string elem = llJsonGetValue(msg, ["elem"]);
-        
+        if (!json_has(payload, ["key"])) return;
+        if (!json_has(payload, ["elem"])) return;
+
+        string key_name = llJsonGetValue(payload, ["key"]);
+        string elem = llJsonGetValue(payload, ["elem"]);
+
         if (key_name == KEY_OWNER_KEYS) {
             integer idx = llListFindList(OwnerKeys, [elem]);
             if (idx != -1) {
@@ -307,7 +371,7 @@ apply_settings_delta(string msg) {
                 apply_tp_exception(k, FALSE);
                 apply_im_exception(k, FALSE);
                 logd("Cleared exceptions for removed owner: " + elem);
-                
+
                 // Remove from list
                 OwnerKeys = llDeleteSubList(OwnerKeys, idx, idx);
             }
@@ -320,7 +384,7 @@ apply_settings_delta(string msg) {
                 apply_tp_exception(k, FALSE);
                 apply_im_exception(k, FALSE);
                 logd("Cleared exceptions for removed trustee: " + elem);
-                
+
                 // Remove from list
                 TrusteeKeys = llDeleteSubList(TrusteeKeys, idx, idx);
             }
@@ -329,11 +393,8 @@ apply_settings_delta(string msg) {
 }
 
 persist_setting(string setting_key, integer value) {
-    llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
-        "type", "set",
-        "key", setting_key,
-        "value", (string)value
-    ]), NULL_KEY);
+    string payload = kDeltaSet(setting_key, (string)value);
+    kSend(CONTEXT, "settings", SETTINGS_BUS, payload, NULL_KEY);
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -341,27 +402,28 @@ persist_setting(string setting_key, integer value) {
    ═══════════════════════════════════════════════════════════ */
 
 request_acl(key user) {
-    llMessageLinked(LINK_SET, AUTH_BUS, llList2Json(JSON_OBJECT, [
-        "type", "acl_query",
+    string payload = kPayload([
+        "acl_query", 1,
         "avatar", (string)user,
-        "id", PLUGIN_CONTEXT + "_acl"
-    ]), NULL_KEY);
+        "id", CONTEXT + "_acl"
+    ]);
+    kSend(CONTEXT, "auth", AUTH_BUS, payload, NULL_KEY);
 }
 
-handle_acl_result(string msg) {
-    if (!json_has(msg, ["avatar"]) || !json_has(msg, ["level"])) return;
-    
-    key avatar = (key)llJsonGetValue(msg, ["avatar"]);
+handle_acl_result(string payload) {
+    if (!json_has(payload, ["avatar"]) || !json_has(payload, ["level"])) return;
+
+    key avatar = (key)llJsonGetValue(payload, ["avatar"]);
     if (avatar != CurrentUser) return;
-    
-    UserAcl = (integer)llJsonGetValue(msg, ["level"]);
-    
+
+    UserAcl = (integer)llJsonGetValue(payload, ["level"]);
+
     if (UserAcl < PLUGIN_MIN_ACL) {
         llRegionSayTo(CurrentUser, 0, "Access denied.");
         cleanup();
         return;
     }
-    
+
     show_main();
 }
 
@@ -372,89 +434,89 @@ handle_acl_result(string msg) {
 show_main() {
     SessionId = gen_session();
     MenuContext = "main";
-    
+
     string body = "RLV Exceptions\n\nManage which restrictions can be bypassed by owners and trustees.";
-    
+
     list buttons = ["Back", "Owner", "Trustee"];
-    
-    llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
-        "type", "dialog_open",
+
+    string payload = kPayload([
         "session_id", SessionId,
         "user", (string)CurrentUser,
         "title", PLUGIN_LABEL,
         "body", body,
         "buttons", llList2Json(JSON_ARRAY, buttons),
         "timeout", 60
-    ]), NULL_KEY);
+    ]);
+    kSend(CONTEXT, "dialogs", DIALOG_BUS, payload, NULL_KEY);
 }
 
 show_owner_menu() {
     SessionId = gen_session();
     MenuContext = "owner";
-    
+
     string body = "Owner Exceptions\n\nCurrent settings:\n";
     if (ExOwnerTp) body += "TP: Allowed\n";
     else body += "TP: Denied\n";
     if (ExOwnerIm) body += "IM: Allowed";
     else body += "IM: Denied";
-    
+
     list buttons = ["Back", "TP", "IM"];
-    
-    llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
-        "type", "dialog_open",
+
+    string payload = kPayload([
         "session_id", SessionId,
         "user", (string)CurrentUser,
         "title", "Owner Exceptions",
         "body", body,
         "buttons", llList2Json(JSON_ARRAY, buttons),
         "timeout", 60
-    ]), NULL_KEY);
+    ]);
+    kSend(CONTEXT, "dialogs", DIALOG_BUS, payload, NULL_KEY);
 }
 
 show_trustee_menu() {
     SessionId = gen_session();
     MenuContext = "trustee";
-    
+
     string body = "Trustee Exceptions\n\nCurrent settings:\n";
     if (ExTrusteeTp) body += "TP: Allowed\n";
     else body += "TP: Denied\n";
     if (ExTrusteeIm) body += "IM: Allowed";
     else body += "IM: Denied";
-    
+
     list buttons = ["Back", "TP", "IM"];
-    
-    llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
-        "type", "dialog_open",
+
+    string payload = kPayload([
         "session_id", SessionId,
         "user", (string)CurrentUser,
         "title", "Trustee Exceptions",
         "body", body,
         "buttons", llList2Json(JSON_ARRAY, buttons),
         "timeout", 60
-    ]), NULL_KEY);
+    ]);
+    kSend(CONTEXT, "dialogs", DIALOG_BUS, payload, NULL_KEY);
 }
 
 show_toggle(string role, string exception_type, string setting_key, integer current) {
     SessionId = gen_session();
     MenuContext = role + "_" + exception_type;
-    
+
     string body = role + " " + exception_type + " Exception\n\n";
     if (current) body += "Current: Allowed\n\n";
     else body += "Current: Denied\n\n";
     body += "Allow = Owner/trustee can bypass restrictions\n";
     body += "Deny = Normal restrictions apply";
-    
+
     list buttons = ["Back", "Allow", "Deny"];
-    
-    llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
-        "type", "dialog_open",
+
+    string payload = kPayload([
         "session_id", SessionId,
         "user", (string)CurrentUser,
         "title", role + " " + exception_type,
         "body", body,
         "buttons", llList2Json(JSON_ARRAY, buttons),
         "timeout", 60
-    ]), NULL_KEY);
+    ]);
+    kSend(CONTEXT, "dialogs", DIALOG_BUS, payload, NULL_KEY);
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -464,9 +526,11 @@ show_toggle(string role, string exception_type, string setting_key, integer curr
 handle_button(string btn) {
     if (btn == "Back") {
         if (MenuContext == "main") {
-            llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
-                "type", "return", "user", (string)CurrentUser
-            ]), NULL_KEY);
+            string payload = kPayload([
+                "return", 1,
+                "user", (string)CurrentUser
+            ]);
+            kSend(CONTEXT, "ui", UI_BUS, payload, NULL_KEY);
             cleanup();
         }
         else if (MenuContext == "owner" || MenuContext == "trustee") {
@@ -479,7 +543,7 @@ handle_button(string btn) {
         }
         return;
     }
-    
+
     if (MenuContext == "main") {
         if (btn == "Owner") show_owner_menu();
         else if (btn == "Trustee") show_trustee_menu();
@@ -557,66 +621,102 @@ default {
     state_entry() {
         cleanup();
         register_self();
-        llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
-            "type", "settings_get"
-        ]), NULL_KEY);
+        string payload = kPayload(["settings_get", 1]);
+        kSend(CONTEXT, "settings", SETTINGS_BUS, payload, NULL_KEY);
     }
-    
+
     on_rez(integer p) {
         llResetScript();
     }
-    
+
     changed(integer c) {
         if (c & CHANGED_OWNER) llResetScript();
     }
-    
+
     link_message(integer sender, integer num, string msg, key id) {
-        if (!json_has(msg, ["type"])) return;
-        string type = llJsonGetValue(msg, ["type"]);
-        
+        // Parse kanban message - kRecv validates and sets kFrom, kTo
+        string payload = kRecv(msg, CONTEXT);
+        if (payload == "") return;  // Not for us or invalid
+
+        /* ===== KERNEL LIFECYCLE ===== */
         if (num == KERNEL_LIFECYCLE) {
-            if (type == "register_now") register_self();
-            else if (type == "ping") send_pong();
-            else if (type == "soft_reset" || type == "soft_reset_all") {
-                // Check if this is a targeted reset
-                if (json_has(msg, ["context"])) {
-                    string target_context = llJsonGetValue(msg, ["context"]);
-                    if (target_context != "" && target_context != PLUGIN_CONTEXT) {
-                        return; // Not for us, ignore
-                    }
-                }
-                // Either no context (broadcast) or matches our context
+            // Register now: has "register_now" marker
+            if (json_has(payload, ["register_now"])) {
+                register_self();
+                return;
+            }
+
+            // Ping: has "ping" marker
+            if (json_has(payload, ["ping"])) {
+                send_pong();
+                return;
+            }
+
+            // Soft reset: has "reset" marker
+            if (json_has(payload, ["reset"])) {
                 llResetScript();
+                return;
             }
+            return;
         }
-        else if (num == SETTINGS_BUS) {
-            if (type == "settings_sync") apply_settings_sync(msg);
-            else if (type == "settings_delta") apply_settings_delta(msg);
-        }
-        else if (num == UI_BUS) {
-            if (type == "start" && json_has(msg, ["context"])) {
-                if (llJsonGetValue(msg, ["context"]) == PLUGIN_CONTEXT) {
-                    CurrentUser = id;
-                    request_acl(id);
-                }
+
+        /* ===== SETTINGS BUS ===== */
+        if (num == SETTINGS_BUS) {
+            // Settings sync: has "kv" field
+            if (json_has(payload, ["kv"])) {
+                apply_settings_sync(payload);
+                return;
             }
+
+            // Settings delta: has "op" field
+            if (json_has(payload, ["op"])) {
+                apply_settings_delta(payload);
+                return;
+            }
+            return;
         }
-        else if (num == AUTH_BUS) {
-            if (type == "acl_result") handle_acl_result(msg);
+
+        /* ===== UI BUS ===== */
+        if (num == UI_BUS) {
+            // UI start: has "start" marker
+            if (json_has(payload, ["start"])) {
+                CurrentUser = id;
+                request_acl(id);
+                return;
+            }
+            return;
         }
-        else if (num == DIALOG_BUS) {
-            if (type == "dialog_response") {
-                if (json_has(msg, ["session_id"]) && json_has(msg, ["button"])) {
-                    if (llJsonGetValue(msg, ["session_id"]) == SessionId) {
-                        handle_button(llJsonGetValue(msg, ["button"]));
+
+        /* ===== AUTH BUS ===== */
+        if (num == AUTH_BUS) {
+            // ACL result: has "level" field
+            if (json_has(payload, ["level"])) {
+                handle_acl_result(payload);
+                return;
+            }
+            return;
+        }
+
+        /* ===== DIALOG BUS ===== */
+        if (num == DIALOG_BUS) {
+            // Dialog button response: has "button" field
+            if (json_has(payload, ["button"])) {
+                if (json_has(payload, ["session_id"])) {
+                    if (llJsonGetValue(payload, ["session_id"]) == SessionId) {
+                        handle_button(llJsonGetValue(payload, ["button"]));
                     }
                 }
+                return;
             }
-            else if (type == "dialog_timeout") {
-                if (json_has(msg, ["session_id"])) {
-                    if (llJsonGetValue(msg, ["session_id"]) == SessionId) cleanup();
+
+            // Dialog timeout: has "timeout" field
+            if (json_has(payload, ["timeout"])) {
+                if (json_has(payload, ["session_id"])) {
+                    if (llJsonGetValue(payload, ["session_id"]) == SessionId) cleanup();
                 }
+                return;
             }
+            return;
         }
     }
 }

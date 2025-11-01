@@ -1,8 +1,8 @@
 /* =============================================================================
-   PLUGIN: ds_collar_plugin_maintenance.lsl (v2.0 - Enhanced)
-   
+   PLUGIN: ds_collar_plugin_maintenance.lsl (v3.0 - Kanban Messaging Migration)
+
    PURPOSE: Maintenance and utility functions
-   
+
    FEATURES:
    - View ALL settings (including unset ones)
    - Display access list with honorifics
@@ -10,13 +10,68 @@
    - Clear leash (unclip and clear particles)
    - Give HUD to users
    - Give user manual
-   
+
    ACL REQUIREMENTS:
    - View: Public+ (1,2,3,4,5)
    - Full: Owned+ (2,3,4,5)
-   
+
    TIER: 1 (Simple - informational with basic actions)
+
+   KANBAN MIGRATION (v3.0):
+   - Uses universal kanban helper (~500-800 bytes)
+   - All messages use standardized {from, payload, to} structure
+   - Routing by channel + kFrom instead of "type" field
    ============================================================================= */
+
+string CONTEXT = "core_maintenance";
+
+/* ═══════════════════════════════════════════════════════════
+   KANBAN UNIVERSAL HELPER (~500-800 bytes)
+   ═══════════════════════════════════════════════════════════ */
+
+string kFrom = "";  // Sender context (populated by kRecv)
+string kTo = "";    // Recipient context (populated by kRecv)
+
+kSend(string from, string to, integer channel, string payload, key k) {
+    llMessageLinked(LINK_SET, channel,
+        llList2Json(JSON_OBJECT, [
+            "from", from,
+            "payload", payload,
+            "to", to
+        ]),
+        k
+    );
+}
+
+string kRecv(string msg, string my_context) {
+    // Quick validation: must be JSON object
+    if (llGetSubString(msg, 0, 0) != "{") return "";
+
+    // Extract from
+    string from = llJsonGetValue(msg, ["from"]);
+    if (from == JSON_INVALID) return "";
+
+    // Extract to
+    string to = llJsonGetValue(msg, ["to"]);
+    if (to == JSON_INVALID) return "";
+
+    // Check if for me (broadcast "" or direct to my_context)
+    if (to != "" && to != my_context) return "";
+
+    // Extract payload
+    string payload = llJsonGetValue(msg, ["payload"]);
+    if (payload == JSON_INVALID) return "";
+
+    // Set globals for routing
+    kFrom = from;
+    kTo = to;
+
+    return payload;
+}
+
+string kPayload(list kvp) {
+    return llList2Json(JSON_OBJECT, kvp);
+}
 
 integer DEBUG = FALSE;
 
@@ -32,10 +87,8 @@ integer DIALOG_BUS = 950;
 /* ═══════════════════════════════════════════════════════════
    PLUGIN IDENTITY
    ═══════════════════════════════════════════════════════════ */
-string PLUGIN_CONTEXT = "core_maintenance";
 string PLUGIN_LABEL = "Maintenance";
 integer PLUGIN_MIN_ACL = 1;  // Public can view (limited options)
-string ROOT_CONTEXT = "core_root";
 
 /* ACL levels for reference:
    -1 = Blacklisted
@@ -115,46 +168,40 @@ string generate_session_id() {
    ═══════════════════════════════════════════════════════════ */
 
 register_self() {
-    string msg = llList2Json(JSON_OBJECT, [
-        "type", "register",
-        "context", PLUGIN_CONTEXT,
+    string payload = kPayload([
+        "register", 1,
         "label", PLUGIN_LABEL,
         "min_acl", PLUGIN_MIN_ACL,
         "script", llGetScriptName()
     ]);
-    llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, msg, NULL_KEY);
+    kSend(CONTEXT, "", KERNEL_LIFECYCLE, payload, NULL_KEY);
     logd("Registered");
 }
 
 send_pong() {
-    string msg = llList2Json(JSON_OBJECT, [
-        "type", "pong",
-        "context", PLUGIN_CONTEXT
-    ]);
-    llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, msg, NULL_KEY);
+    string payload = kPayload(["pong", 1]);
+    kSend(CONTEXT, "", KERNEL_LIFECYCLE, payload, NULL_KEY);
 }
 
 /* ═══════════════════════════════════════════════════════════
    SETTINGS MANAGEMENT
    ═══════════════════════════════════════════════════════════ */
 
-apply_settings_sync(string msg) {
-    if (!json_has(msg, ["kv"])) return;
-    
-    string kv_json = llJsonGetValue(msg, ["kv"]);
+apply_settings_sync(string payload) {
+    if (!json_has(payload, ["kv"])) return;
+
+    string kv_json = llJsonGetValue(payload, ["kv"]);
     CachedSettings = kv_json;
     SettingsReady = TRUE;
-    
+
     logd("Settings sync applied");
 }
 
-apply_settings_delta(string msg) {
+apply_settings_delta(string payload) {
     // Request full sync to update our display cache
-    string request = llList2Json(JSON_OBJECT, [
-        "type", "settings_get"
-    ]);
-    llMessageLinked(LINK_SET, SETTINGS_BUS, request, NULL_KEY);
-    
+    string request_payload = kPayload(["settings_get", 1]);
+    kSend(CONTEXT, "settings", SETTINGS_BUS, request_payload, NULL_KEY);
+
     logd("Settings delta received, requesting full sync");
 }
 
@@ -163,30 +210,30 @@ apply_settings_delta(string msg) {
    ═══════════════════════════════════════════════════════════ */
 
 request_acl(key user_key) {
-    string msg = llList2Json(JSON_OBJECT, [
-        "type", "acl_query",
+    string payload = kPayload([
+        "acl_query", 1,
         "avatar", (string)user_key
     ]);
-    llMessageLinked(LINK_SET, AUTH_BUS, msg, NULL_KEY);
+    kSend(CONTEXT, "auth", AUTH_BUS, payload, NULL_KEY);
     logd("Requested ACL for " + llKey2Name(user_key));
 }
 
-handle_acl_result(string msg) {
-    if (!json_has(msg, ["avatar"])) return;
-    if (!json_has(msg, ["level"])) return;
-    
-    key avatar = (key)llJsonGetValue(msg, ["avatar"]);
+handle_acl_result(string payload) {
+    if (!json_has(payload, ["avatar"])) return;
+    if (!json_has(payload, ["level"])) return;
+
+    key avatar = (key)llJsonGetValue(payload, ["avatar"]);
     if (avatar != CurrentUser) return;
-    
-    integer level = (integer)llJsonGetValue(msg, ["level"]);
+
+    integer level = (integer)llJsonGetValue(payload, ["level"]);
     CurrentUserAcl = level;
-    
+
     if (llListFindList(ALLOWED_ACL_VIEW, [level]) == -1) {
         llRegionSayTo(CurrentUser, 0, "Access denied.");
         return_to_root();
         return;
     }
-    
+
     logd("ACL result: " + (string)level + " for " + llKey2Name(avatar));
     show_main_menu();
 }
@@ -197,9 +244,9 @@ handle_acl_result(string msg) {
 
 show_main_menu() {
     string body = "Maintenance:\n\n";
-    
+
     list buttons;
-    
+
     if (llListFindList(ALLOWED_ACL_FULL, [CurrentUserAcl]) != -1) {
         body += "System utilities and documentation.";
         buttons = [
@@ -217,11 +264,10 @@ show_main_menu() {
             "Get HUD", "User Manual"
         ];
     }
-    
+
     SessionId = generate_session_id();
-    
-    string msg = llList2Json(JSON_OBJECT, [
-        "type", "dialog_open",
+
+    string payload = kPayload([
         "session_id", SessionId,
         "user", (string)CurrentUser,
         "title", "Maintenance",
@@ -229,8 +275,8 @@ show_main_menu() {
         "buttons", llList2Json(JSON_ARRAY, buttons),
         "timeout", 60
     ]);
-    
-    llMessageLinked(LINK_SET, DIALOG_BUS, msg, NULL_KEY);
+
+    kSend(CONTEXT, "dialogs", DIALOG_BUS, payload, NULL_KEY);
     logd("Showing menu to " + llKey2Name(CurrentUser));
 }
 
@@ -243,26 +289,26 @@ do_view_settings() {
         llRegionSayTo(CurrentUser, 0, "Settings not loaded yet. Try again.");
         return;
     }
-    
+
     string output = "=== Collar Settings ===\n";
-    
+
     // Iterate through ALL known settings
     integer i = 0;
     integer len = llGetListLength(ALL_SETTINGS);
-    
+
     while (i < len) {
         string setting_key = llList2String(ALL_SETTINGS, i);
         string value = llJsonGetValue(CachedSettings, [setting_key]);
-        
+
         // Show (not set) for missing keys
         if (value == JSON_INVALID || value == "") {
             value = "(not set)";
         }
-        
+
         output += setting_key + " = " + value + "\n";
         i += 1;
     }
-    
+
     llRegionSayTo(CurrentUser, 0, output);
     logd("Displayed settings to " + llKey2Name(CurrentUser));
 }
@@ -272,28 +318,28 @@ do_display_access_list() {
         llRegionSayTo(CurrentUser, 0, "Settings not loaded yet. Try again.");
         return;
     }
-    
+
     string output = "=== Access Control List ===\n\n";
-    
+
     // Multi-owner mode check
     integer multi_mode = 0;
     if (json_has(CachedSettings, ["multi_owner_mode"])) {
         multi_mode = (integer)llJsonGetValue(CachedSettings, ["multi_owner_mode"]);
     }
-    
+
     // Owner(s)
     if (multi_mode) {
         output += "OWNERS:\n";
         string owners_json = llJsonGetValue(CachedSettings, ["owner_keys"]);
         string honors_json = llJsonGetValue(CachedSettings, ["owner_honorifics"]);
-        
+
         if (owners_json != JSON_INVALID && is_json_arr(owners_json)) {
             list owners = llJson2List(owners_json);
             list honors = [];
             if (honors_json != JSON_INVALID && is_json_arr(honors_json)) {
                 honors = llJson2List(honors_json);
             }
-            
+
             if (llGetListLength(owners) > 0) {
                 integer i = 0;
                 while (i < llGetListLength(owners)) {
@@ -318,7 +364,7 @@ do_display_access_list() {
         output += "OWNER:\n";
         string owner_key = llJsonGetValue(CachedSettings, ["owner_key"]);
         string honor = llJsonGetValue(CachedSettings, ["owner_hon"]);
-        
+
         if (owner_key != JSON_INVALID && owner_key != "" && (key)owner_key != NULL_KEY) {
             if (honor == JSON_INVALID || honor == "") honor = "Owner";
             output += "  " + honor + " - " + owner_key + "\n";
@@ -327,19 +373,19 @@ do_display_access_list() {
             output += "  (none)\n";
         }
     }
-    
+
     // Trustees
     output += "\nTRUSTEES:\n";
     string trustees_json = llJsonGetValue(CachedSettings, ["trustees"]);
     string t_honors_json = llJsonGetValue(CachedSettings, ["trustee_honorifics"]);
-    
+
     if (trustees_json != JSON_INVALID && is_json_arr(trustees_json)) {
         list trustees = llJson2List(trustees_json);
         list t_honors = [];
         if (t_honors_json != JSON_INVALID && is_json_arr(t_honors_json)) {
             t_honors = llJson2List(t_honors_json);
         }
-        
+
         if (llGetListLength(trustees) > 0) {
             integer i = 0;
             while (i < llGetListLength(trustees)) {
@@ -359,11 +405,11 @@ do_display_access_list() {
     else {
         output += "  (none)\n";
     }
-    
+
     // Blacklist
     output += "\nBLACKLISTED:\n";
     string blacklist_json = llJsonGetValue(CachedSettings, ["blacklist"]);
-    
+
     if (blacklist_json != JSON_INVALID && is_json_arr(blacklist_json)) {
         list blacklist = llJson2List(blacklist_json);
         if (llGetListLength(blacklist) > 0) {
@@ -380,28 +426,26 @@ do_display_access_list() {
     else {
         output += "  (none)\n";
     }
-    
+
     llRegionSayTo(CurrentUser, 0, output);
     logd("Displayed access list to " + llKey2Name(CurrentUser));
 }
 
 do_reload_settings() {
-    string msg = llList2Json(JSON_OBJECT, [
-        "type", "settings_get"
-    ]);
-    llMessageLinked(LINK_SET, SETTINGS_BUS, msg, NULL_KEY);
-    
+    string payload = kPayload(["settings_get", 1]);
+    kSend(CONTEXT, "settings", SETTINGS_BUS, payload, NULL_KEY);
+
     llRegionSayTo(CurrentUser, 0, "Settings reload requested.");
     logd("Settings reload requested by " + llKey2Name(CurrentUser));
 }
 
 do_clear_leash() {
-    string msg = llList2Json(JSON_OBJECT, [
-        "type", "leash_action",
+    string payload = kPayload([
+        "leash_action", 1,
         "action", "release",
         "acl_verified", "1"
     ]);
-    llMessageLinked(LINK_SET, UI_BUS, msg, CurrentUser);
+    kSend(CONTEXT, "leash", UI_BUS, payload, CurrentUser);
 
     llRegionSayTo(CurrentUser, 0, "Leash cleared.");
     logd("Leash cleared by " + llKey2Name(CurrentUser));
@@ -409,11 +453,11 @@ do_clear_leash() {
 
 do_reload_collar() {
     // Broadcast soft reset to all plugins
-    string msg = llList2Json(JSON_OBJECT, [
-        "type", "soft_reset",
+    string payload = kPayload([
+        "reset", 1,
         "from", "maintenance"
     ]);
-    llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, msg, NULL_KEY);
+    kSend(CONTEXT, "", KERNEL_LIFECYCLE, payload, NULL_KEY);
 
     llRegionSayTo(CurrentUser, 0, "Collar reload initiated.");
     logd("Collar reload requested by " + llKey2Name(CurrentUser));
@@ -448,20 +492,20 @@ do_give_manual() {
    ═══════════════════════════════════════════════════════════ */
 
 return_to_root() {
-    string msg = llList2Json(JSON_OBJECT, [
-        "type", "return",
+    string payload = kPayload([
+        "return", 1,
         "user", (string)CurrentUser
     ]);
-    llMessageLinked(LINK_SET, UI_BUS, msg, NULL_KEY);
+    kSend(CONTEXT, "ui", UI_BUS, payload, NULL_KEY);
     cleanup_session();
 }
 
 close_ui() {
-    string msg = llList2Json(JSON_OBJECT, [
-        "type", "close",
+    string payload = kPayload([
+        "close", 1,
         "user", (string)CurrentUser
     ]);
-    llMessageLinked(LINK_SET, UI_BUS, msg, NULL_KEY);
+    kSend(CONTEXT, "ui", UI_BUS, payload, NULL_KEY);
     cleanup_session();
 }
 
@@ -472,11 +516,11 @@ close_ui() {
 cleanup_session() {
     // Close the dialog session in the dialog manager
     if (SessionId != "") {
-        string msg = llList2Json(JSON_OBJECT, [
-            "type", "dialog_close",
+        string payload = kPayload([
+            "close", 1,
             "session_id", SessionId
         ]);
-        llMessageLinked(LINK_SET, DIALOG_BUS, msg, NULL_KEY);
+        kSend(CONTEXT, "dialogs", DIALOG_BUS, payload, NULL_KEY);
     }
 
     CurrentUser = NULL_KEY;
@@ -489,22 +533,22 @@ cleanup_session() {
    DIALOG HANDLERS
    ═══════════════════════════════════════════════════════════ */
 
-handle_dialog_response(string msg) {
-    if (!json_has(msg, ["session_id"])) return;
-    if (!json_has(msg, ["button"])) return;
-    
-    string session = llJsonGetValue(msg, ["session_id"]);
+handle_dialog_response(string payload) {
+    if (!json_has(payload, ["session_id"])) return;
+    if (!json_has(payload, ["button"])) return;
+
+    string session = llJsonGetValue(payload, ["session_id"]);
     if (session != SessionId) return;
-    
-    string button = llJsonGetValue(msg, ["button"]);
+
+    string button = llJsonGetValue(payload, ["button"]);
     logd("Button pressed: " + button);
-    
+
     // Navigation
     if (button == "Back") {
         return_to_root();
         return;
     }
-    
+
     // Admin actions (ACL check)
     if (button == "View Settings") {
         if (llListFindList(ALLOWED_ACL_FULL, [CurrentUserAcl]) != -1) {
@@ -513,7 +557,7 @@ handle_dialog_response(string msg) {
         }
         return;
     }
-    
+
     if (button == "Access List") {
         if (llListFindList(ALLOWED_ACL_FULL, [CurrentUserAcl]) != -1) {
             do_display_access_list();
@@ -521,7 +565,7 @@ handle_dialog_response(string msg) {
         }
         return;
     }
-    
+
     if (button == "Reload Settings") {
         if (llListFindList(ALLOWED_ACL_FULL, [CurrentUserAcl]) != -1) {
             do_reload_settings();
@@ -529,7 +573,7 @@ handle_dialog_response(string msg) {
         }
         return;
     }
-    
+
     if (button == "Clear Leash") {
         if (llListFindList(ALLOWED_ACL_FULL, [CurrentUserAcl]) != -1) {
             do_clear_leash();
@@ -537,7 +581,7 @@ handle_dialog_response(string msg) {
         }
         return;
     }
-    
+
     if (button == "Reload Collar") {
         if (llListFindList(ALLOWED_ACL_FULL, [CurrentUserAcl]) != -1) {
             do_reload_collar();
@@ -545,14 +589,14 @@ handle_dialog_response(string msg) {
         }
         return;
     }
-    
+
     // Public actions
     if (button == "Get HUD") {
         do_give_hud();
         show_main_menu();
         return;
     }
-    
+
     if (button == "User Manual") {
         do_give_manual();
         show_main_menu();
@@ -560,12 +604,12 @@ handle_dialog_response(string msg) {
     }
 }
 
-handle_dialog_timeout(string msg) {
-    if (!json_has(msg, ["session_id"])) return;
-    
-    string session = llJsonGetValue(msg, ["session_id"]);
+handle_dialog_timeout(string payload) {
+    if (!json_has(payload, ["session_id"])) return;
+
+    string session = llJsonGetValue(payload, ["session_id"]);
     if (session != SessionId) return;
-    
+
     cleanup_session();
     logd("Dialog timeout");
 }
@@ -578,127 +622,110 @@ default {
     state_entry() {
         cleanup_session();
         register_self();
-        
+
         // Request initial settings
-        string msg = llList2Json(JSON_OBJECT, [
-            "type", "settings_get"
-        ]);
-        llMessageLinked(LINK_SET, SETTINGS_BUS, msg, NULL_KEY);
-        
+        string payload = kPayload(["settings_get", 1]);
+        kSend(CONTEXT, "settings", SETTINGS_BUS, payload, NULL_KEY);
+
         logd("Ready");
     }
-    
+
     on_rez(integer start_param) {
         llResetScript();
     }
-    
+
     changed(integer change) {
         if (change & CHANGED_OWNER) {
             llResetScript();
         }
     }
-    
+
     link_message(integer sender, integer num, string msg, key id) {
-        // ===== KERNEL LIFECYCLE =====
+        // Parse kanban message - kRecv validates and sets kFrom, kTo
+        string payload = kRecv(msg, CONTEXT);
+        if (payload == "") return;  // Not for us or invalid
+
+        /* ===== KERNEL LIFECYCLE ===== */
         if (num == KERNEL_LIFECYCLE) {
-            if (!json_has(msg, ["type"])) return;
-            string msg_type = llJsonGetValue(msg, ["type"]);
-            
-            if (msg_type == "register_now") {
+            // Register now: has "register_now" marker
+            if (json_has(payload, ["register_now"])) {
                 register_self();
                 return;
             }
-            
-            if (msg_type == "ping") {
+
+            // Ping: has "ping" marker
+            if (json_has(payload, ["ping"])) {
                 send_pong();
                 return;
             }
 
-            if (msg_type == "soft_reset" || msg_type == "soft_reset_all") {
-                // Check if this is a targeted reset
-                if (json_has(msg, ["context"])) {
-                    string target_context = llJsonGetValue(msg, ["context"]);
-                    if (target_context != "" && target_context != PLUGIN_CONTEXT) {
-                        return; // Not for us, ignore
-                    }
-                }
-                // Either no context (broadcast) or matches our context
+            // Soft reset: has "reset" marker
+            if (json_has(payload, ["reset"])) {
                 llResetScript();
+                return;
+            }
+            return;
+        }
+
+        /* ===== SETTINGS BUS ===== */
+        if (num == SETTINGS_BUS) {
+            // Settings sync: has "kv" field
+            if (json_has(payload, ["kv"])) {
+                apply_settings_sync(payload);
+                return;
             }
 
-            return;
-        }
-        
-        // ===== SETTINGS SYNC/DELTA =====
-        if (num == SETTINGS_BUS) {
-            if (!json_has(msg, ["type"])) return;
-            string msg_type = llJsonGetValue(msg, ["type"]);
-            
-            if (msg_type == "settings_sync") {
-                apply_settings_sync(msg);
+            // Settings delta: has "op" field
+            if (json_has(payload, ["op"])) {
+                apply_settings_delta(payload);
                 return;
             }
-            
-            if (msg_type == "settings_delta") {
-                apply_settings_delta(msg);
-                return;
-            }
-            
             return;
         }
-        
-        // ===== ACL RESULTS =====
+
+        /* ===== AUTH BUS ===== */
         if (num == AUTH_BUS) {
-            if (!json_has(msg, ["type"])) return;
-            string msg_type = llJsonGetValue(msg, ["type"]);
-            
-            if (msg_type == "acl_result") {
-                handle_acl_result(msg);
+            // ACL result: has "level" field
+            if (json_has(payload, ["level"])) {
+                handle_acl_result(payload);
                 return;
             }
-            
             return;
         }
-        
-        // ===== UI START =====
+
+        /* ===== UI START ===== */
         if (num == UI_BUS) {
-            if (!json_has(msg, ["type"])) return;
-            string msg_type = llJsonGetValue(msg, ["type"]);
-            
-            if (msg_type == "start") {
-                if (!json_has(msg, ["context"])) return;
-                if (llJsonGetValue(msg, ["context"]) != PLUGIN_CONTEXT) return;
-                
+            // UI start: has "start" marker
+            if (json_has(payload, ["start"])) {
                 if (id == NULL_KEY) return;
-                
+
                 CurrentUser = id;
                 request_acl(id);
                 return;
             }
-            
             return;
         }
-        
-        // ===== DIALOG RESPONSE =====
+
+        /* ===== DIALOG RESPONSE ===== */
         if (num == DIALOG_BUS) {
-            if (!json_has(msg, ["type"])) return;
-            string msg_type = llJsonGetValue(msg, ["type"]);
-
-            if (msg_type == "dialog_response") {
-                handle_dialog_response(msg);
+            // Dialog button response: has "button" field
+            if (json_has(payload, ["button"])) {
+                handle_dialog_response(payload);
                 return;
             }
 
-            if (msg_type == "dialog_timeout") {
-                handle_dialog_timeout(msg);
+            // Dialog timeout: has "timeout" field
+            if (json_has(payload, ["timeout"])) {
+                handle_dialog_timeout(payload);
                 return;
             }
 
-            if (msg_type == "dialog_close") {
+            // Dialog close: has "close" field
+            if (json_has(payload, ["close"])) {
                 // Dialog was closed externally (e.g., replaced by another dialog)
                 // Clean up our session if it matches
-                if (json_has(msg, ["session_id"])) {
-                    string session = llJsonGetValue(msg, ["session_id"]);
+                if (json_has(payload, ["session_id"])) {
+                    string session = llJsonGetValue(payload, ["session_id"]);
                     if (session == SessionId) {
                         // Don't send another dialog_close since we're responding to one
                         CurrentUser = NULL_KEY;
@@ -709,7 +736,6 @@ default {
                 }
                 return;
             }
-
             return;
         }
     }
