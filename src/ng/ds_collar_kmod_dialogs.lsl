@@ -22,10 +22,79 @@
    - Routing by channel + kFrom instead of "type" field
    ============================================================================= */
 
-// Include universal Kanban helper
-#include "ds_collar_kanban_universal.lsl"
-
 string CONTEXT = "dialogs";
+
+/* ═══════════════════════════════════════════════════════════
+   KANBAN UNIVERSAL HELPER (~500-800 bytes)
+   ═══════════════════════════════════════════════════════════ */
+
+string kFrom = "";  // Sender context (populated by kRecv)
+string kTo = "";    // Recipient context (populated by kRecv)
+
+kSend(string from, string to, integer channel, string payload, key k) {
+    llMessageLinked(LINK_SET, channel,
+        llList2Json(JSON_OBJECT, [
+            "from", from,
+            "payload", payload,
+            "to", to
+        ]),
+        k
+    );
+}
+
+string kRecv(string msg, string my_context) {
+    // Quick validation: must be JSON object
+    if (llGetSubString(msg, 0, 0) != "{") return "";
+
+    // Extract from
+    string from = llJsonGetValue(msg, ["from"]);
+    if (from == JSON_INVALID) return "";
+
+    // Extract to
+    string to = llJsonGetValue(msg, ["to"]);
+    if (to == JSON_INVALID) return "";
+
+    // Check if for me (broadcast "" or direct to my_context)
+    if (to != "" && to != my_context) return "";
+
+    // Extract payload
+    string payload = llJsonGetValue(msg, ["payload"]);
+    if (payload == JSON_INVALID) return "";
+
+    // Set globals for routing
+    kFrom = from;
+    kTo = to;
+
+    return payload;
+}
+
+string kPayload(list kvp) {
+    return llList2Json(JSON_OBJECT, kvp);
+}
+
+string kDeltaSet(string key, string val) {
+    return llList2Json(JSON_OBJECT, [
+        "op", "set",
+        "key", key,
+        "value", val
+    ]);
+}
+
+string kDeltaAdd(string key, string elem) {
+    return llList2Json(JSON_OBJECT, [
+        "op", "list_add",
+        "key", key,
+        "elem", elem
+    ]);
+}
+
+string kDeltaDel(string key, string elem) {
+    return llList2Json(JSON_OBJECT, [
+        "op", "list_remove",
+        "key", key,
+        "elem", elem
+    ]);
+}
 
 integer DEBUG = FALSE;
 integer PRODUCTION = TRUE;  // Set FALSE for development builds
