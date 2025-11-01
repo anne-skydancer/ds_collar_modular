@@ -119,7 +119,7 @@
 6. kmod_leash sends leash_state update (900) to plugin
 ```
 
-### External User Controls Collar via HUD (9 step flow)
+### External User Controls Collar via HUD (10 step flow)
 ```
 1. HUD sends collar_scan on -8675309
 2. Collar responds on -8675310
