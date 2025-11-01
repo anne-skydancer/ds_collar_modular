@@ -11,7 +11,86 @@
    - Trustee management
    
    TIER: 2 (Medium)
+
+   KANBAN MIGRATION (v3.0):
+   - Uses universal kanban helper (~500-800 bytes)
+   - All messages use standardized {from, payload, to} structure
+   - Routing by channel + kFrom instead of "type" field
    ============================================================================= */
+
+string CONTEXT = "core_owner";  // Reuse PLUGIN_CONTEXT as CONTEXT
+
+/* ═══════════════════════════════════════════════════════════
+   KANBAN UNIVERSAL HELPER (~500-800 bytes)
+   ═══════════════════════════════════════════════════════════ */
+
+string kFrom = "";  // Sender context (populated by kRecv)
+string kTo = "";    // Recipient context (populated by kRecv)
+
+kSend(string from, string to, integer channel, string payload, key k) {
+    llMessageLinked(LINK_SET, channel,
+        llList2Json(JSON_OBJECT, [
+            "from", from,
+            "payload", payload,
+            "to", to
+        ]),
+        k
+    );
+}
+
+string kRecv(string msg, string my_context) {
+    // Quick validation: must be JSON object
+    if (llGetSubString(msg, 0, 0) != "{") return "";
+
+    // Extract from
+    string from = llJsonGetValue(msg, ["from"]);
+    if (from == JSON_INVALID) return "";
+
+    // Extract to
+    string to = llJsonGetValue(msg, ["to"]);
+    if (to == JSON_INVALID) return "";
+
+    // Check if for me (broadcast "" or direct to my_context)
+    if (to != "" && to != my_context) return "";
+
+    // Extract payload
+    string payload = llJsonGetValue(msg, ["payload"]);
+    if (payload == JSON_INVALID) return "";
+
+    // Set globals for routing
+    kFrom = from;
+    kTo = to;
+
+    return payload;
+}
+
+string kPayload(list kvp) {
+    return llList2Json(JSON_OBJECT, kvp);
+}
+
+string kDeltaSet(string key, string val) {
+    return llList2Json(JSON_OBJECT, [
+        "op", "set",
+        "key", key,
+        "value", val
+    ]);
+}
+
+string kDeltaAdd(string key, string elem) {
+    return llList2Json(JSON_OBJECT, [
+        "op", "list_add",
+        "key", key,
+        "elem", elem
+    ]);
+}
+
+string kDeltaDel(string key, string elem) {
+    return llList2Json(JSON_OBJECT, [
+        "op", "list_remove",
+        "key", key,
+        "elem", elem
+    ]);
+}
 
 integer DEBUG = FALSE;
 
@@ -145,20 +224,22 @@ string get_name(key k) {
    ═══════════════════════════════════════════════════════════ */
 
 register_self() {
-    llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
-        "type", "register",
-        "context", PLUGIN_CONTEXT,
-        "label", PLUGIN_LABEL,
-        "min_acl", PLUGIN_MIN_ACL,
-        "script", llGetScriptName()
-    ]), NULL_KEY);
+    kSend(CONTEXT, "kernel", KERNEL_LIFECYCLE,
+        kPayload([
+            "context", PLUGIN_CONTEXT,
+            "label", PLUGIN_LABEL,
+            "min_acl", PLUGIN_MIN_ACL,
+            "script", llGetScriptName()
+        ]),
+        NULL_KEY
+    );
 }
 
 send_pong() {
-    llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
-        "type", "pong",
-        "context", PLUGIN_CONTEXT
-    ]), NULL_KEY);
+    kSend(CONTEXT, "kernel", KERNEL_LIFECYCLE,
+        kPayload([]),
+        NULL_KEY
+    );
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -235,35 +316,41 @@ apply_settings_delta(string msg) {
 
 
 persist_owner(key owner, string hon) {
-    llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
-        "type", "set", "key", KEY_OWNER_KEY, "value", (string)owner
-    ]), NULL_KEY);
-    llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
-        "type", "set", "key", KEY_OWNER_HON, "value", hon
-    ]), NULL_KEY);
+    kSend(CONTEXT, "", SETTINGS_BUS,
+        kDeltaSet(KEY_OWNER_KEY, (string)owner),
+        NULL_KEY
+    );
+    kSend(CONTEXT, "", SETTINGS_BUS,
+        kDeltaSet(KEY_OWNER_HON, hon),
+        NULL_KEY
+    );
 }
 
 add_trustee(key trustee, string hon) {
-    llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
-        "type", "list_add", "key", KEY_TRUSTEES, "elem", (string)trustee
-    ]), NULL_KEY);
-    llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
-        "type", "list_add", "key", KEY_TRUSTEE_HONS, "elem", hon
-    ]), NULL_KEY);
+    kSend(CONTEXT, "", SETTINGS_BUS,
+        kDeltaAdd(KEY_TRUSTEES, (string)trustee),
+        NULL_KEY
+    );
+    kSend(CONTEXT, "", SETTINGS_BUS,
+        kDeltaAdd(KEY_TRUSTEE_HONS, hon),
+        NULL_KEY
+    );
 }
 
 remove_trustee(key trustee) {
     integer idx = llListFindList(TrusteeKeys, [(string)trustee]);
     if (idx == -1) return;
-    
-    llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
-        "type", "list_remove", "key", KEY_TRUSTEES, "elem", (string)trustee
-    ]), NULL_KEY);
-    
+
+    kSend(CONTEXT, "", SETTINGS_BUS,
+        kDeltaDel(KEY_TRUSTEES, (string)trustee),
+        NULL_KEY
+    );
+
     if (idx < llGetListLength(TrusteeHonorifics)) {
-        llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
-            "type", "list_remove", "key", KEY_TRUSTEE_HONS, "elem", llList2String(TrusteeHonorifics, idx)
-        ]), NULL_KEY);
+        kSend(CONTEXT, "", SETTINGS_BUS,
+            kDeltaDel(KEY_TRUSTEE_HONS, llList2String(TrusteeHonorifics, idx)),
+            NULL_KEY
+        );
     }
 }
 
@@ -276,11 +363,12 @@ clear_owner() {
    ═══════════════════════════════════════════════════════════ */
 
 request_acl(key user) {
-    llMessageLinked(LINK_SET, AUTH_BUS, llList2Json(JSON_OBJECT, [
-        "type", "acl_query",
-        "avatar", (string)user,
-        "id", PLUGIN_CONTEXT + "_acl"
-    ]), NULL_KEY);
+    kSend(CONTEXT, "auth", AUTH_BUS,
+        kPayload([
+            "avatar", (string)user
+        ]),
+        user
+    );
 }
 
 handle_acl_result(string msg) {
@@ -350,15 +438,17 @@ show_main() {
         buttons += ["Add Trustee", "Rem Trustee"];
     }
     
-    llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
-        "type", "dialog_open",
-        "session_id", SessionId,
-        "user", (string)CurrentUser,
-        "title", PLUGIN_LABEL,
-        "body", body,
-        "buttons", llList2Json(JSON_ARRAY, buttons),
-        "timeout", 60
-    ]), NULL_KEY);
+    kSend(CONTEXT, "dialogs", DIALOG_BUS,
+        kPayload([
+            "session_id", SessionId,
+            "user", (string)CurrentUser,
+            "title", PLUGIN_LABEL,
+            "body", body,
+            "buttons", llList2Json(JSON_ARRAY, buttons),
+            "timeout", 60
+        ]),
+        NULL_KEY
+    );
 }
 
 show_candidates(string context, string title, string prompt) {
@@ -378,49 +468,55 @@ show_candidates(string context, string title, string prompt) {
     
     SessionId = gen_session();
     MenuContext = context;
-    
-    llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
-        "type", "dialog_open",
-        "dialog_type", "numbered_list",
-        "session_id", SessionId,
-        "user", (string)CurrentUser,
-        "title", title,
-        "prompt", prompt,
-        "items", llList2Json(JSON_ARRAY, names),
-        "timeout", 60
-    ]), NULL_KEY);
+
+    kSend(CONTEXT, "dialogs", DIALOG_BUS,
+        kPayload([
+            "dialog_type", "numbered_list",
+            "session_id", SessionId,
+            "user", (string)CurrentUser,
+            "title", title,
+            "prompt", prompt,
+            "items", llList2Json(JSON_ARRAY, names),
+            "timeout", 60
+        ]),
+        NULL_KEY
+    );
 }
 
 show_honorific(key target, string context) {
     PendingCandidate = target;
     SessionId = gen_session();
     MenuContext = context;
-    
-    llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
-        "type", "dialog_open",
-        "dialog_type", "numbered_list",
-        "session_id", SessionId,
-        "user", (string)target,
-        "title", "Honorific",
-        "prompt", "What would you like to be called?",
-        "items", llList2Json(JSON_ARRAY, HONORIFICS),
-        "timeout", 60
-    ]), NULL_KEY);
+
+    kSend(CONTEXT, "dialogs", DIALOG_BUS,
+        kPayload([
+            "dialog_type", "numbered_list",
+            "session_id", SessionId,
+            "user", (string)target,
+            "title", "Honorific",
+            "prompt", "What would you like to be called?",
+            "items", llList2Json(JSON_ARRAY, HONORIFICS),
+            "timeout", 60
+        ]),
+        NULL_KEY
+    );
 }
 
 show_confirm(string title, string body, string context) {
     SessionId = gen_session();
     MenuContext = context;
-    
-    llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
-        "type", "dialog_open",
-        "session_id", SessionId,
-        "user", (string)CurrentUser,
-        "title", title,
-        "body", body,
-        "buttons", llList2Json(JSON_ARRAY, ["Yes", "No"]),
-        "timeout", 60
-    ]), NULL_KEY);
+
+    kSend(CONTEXT, "dialogs", DIALOG_BUS,
+        kPayload([
+            "session_id", SessionId,
+            "user", (string)CurrentUser,
+            "title", title,
+            "body", body,
+            "buttons", llList2Json(JSON_ARRAY, ["Yes", "No"]),
+            "timeout", 60
+        ]),
+        NULL_KEY
+    );
 }
 
 show_remove_trustee() {
@@ -444,17 +540,19 @@ show_remove_trustee() {
     
     SessionId = gen_session();
     MenuContext = "remove_trustee";
-    
-    llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
-        "type", "dialog_open",
-        "dialog_type", "numbered_list",
-        "session_id", SessionId,
-        "user", (string)CurrentUser,
-        "title", "Remove Trustee",
-        "prompt", "Select to remove:",
-        "items", llList2Json(JSON_ARRAY, names),
-        "timeout", 60
-    ]), NULL_KEY);
+
+    kSend(CONTEXT, "dialogs", DIALOG_BUS,
+        kPayload([
+            "dialog_type", "numbered_list",
+            "session_id", SessionId,
+            "user", (string)CurrentUser,
+            "title", "Remove Trustee",
+            "prompt", "Select to remove:",
+            "items", llList2Json(JSON_ARRAY, names),
+            "timeout", 60
+        ]),
+        NULL_KEY
+    );
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -464,9 +562,12 @@ show_remove_trustee() {
 handle_button(string btn) {
     if (btn == "Back") {
         if (MenuContext == "main") {
-            llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
-                "type", "return", "user", (string)CurrentUser
-            ]), NULL_KEY);
+            kSend(CONTEXT, "ui", UI_BUS,
+                kPayload([
+                    "user", (string)CurrentUser
+                ]),
+                NULL_KEY
+            );
             cleanup();
         }
         else show_main();
@@ -500,27 +601,28 @@ handle_button(string btn) {
                 
                 SessionId = gen_session();
                 MenuContext = "runaway_disable_confirm";
-                
-                llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
-                    "type", "dialog_open",
-                    "session_id", SessionId,
-                    "user", (string)llGetOwner(),  // Send to WEARER, not CurrentUser
-                    "title", "Disable Runaway",
-                    "body", msg_body,
-                    "buttons", llList2Json(JSON_ARRAY, ["Yes", "No"]),
-                    "timeout", 60
-                ]), NULL_KEY);
+
+                kSend(CONTEXT, "dialogs", DIALOG_BUS,
+                    kPayload([
+                        "session_id", SessionId,
+                        "user", (string)llGetOwner(),  // Send to WEARER, not CurrentUser
+                        "title", "Disable Runaway",
+                        "body", msg_body,
+                        "buttons", llList2Json(JSON_ARRAY, ["Yes", "No"]),
+                        "timeout", 60
+                    ]),
+                    NULL_KEY
+                );
             }
             else {
                 // Enabling is direct (no consent needed)
                 RunawayEnabled = TRUE;
-                
-                llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
-                    "type", "set",
-                    "key", KEY_RUNAWAY_ENABLED,
-                    "value", "1"
-                ]), NULL_KEY);
-                
+
+                kSend(CONTEXT, "", SETTINGS_BUS,
+                    kDeltaSet(KEY_RUNAWAY_ENABLED, "1"),
+                    NULL_KEY
+                );
+
                 llRegionSayTo(CurrentUser, 0, "Runaway enabled.");
                 show_main();
             }
@@ -544,16 +646,18 @@ handle_button(string btn) {
             PendingCandidate = (key)llList2String(CandidateKeys, idx);
             SessionId = gen_session();
             MenuContext = "set_accept";
-            
-            llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
-                "type", "dialog_open",
-                "session_id", SessionId,
-                "user", (string)PendingCandidate,
-                "title", "Accept Ownership",
-                "body", get_name(llGetOwner()) + " wishes to submit to you.\n\nAccept?",
-                "buttons", llList2Json(JSON_ARRAY, ["Yes", "No"]),
-                "timeout", 60
-            ]), NULL_KEY);
+
+            kSend(CONTEXT, "dialogs", DIALOG_BUS,
+                kPayload([
+                    "session_id", SessionId,
+                    "user", (string)PendingCandidate,
+                    "title", "Accept Ownership",
+                    "body", get_name(llGetOwner()) + " wishes to submit to you.\n\nAccept?",
+                    "buttons", llList2Json(JSON_ARRAY, ["Yes", "No"]),
+                    "timeout", 60
+                ]),
+                NULL_KEY
+            );
         }
     }
     else if (MenuContext == "set_accept") {
@@ -568,16 +672,18 @@ handle_button(string btn) {
             PendingHonorific = llList2String(HONORIFICS, idx);
             SessionId = gen_session();
             MenuContext = "set_confirm";
-            
-            llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
-                "type", "dialog_open",
-                "session_id", SessionId,
-                "user", (string)llGetOwner(),
-                "title", "Confirm",
-                "body", "Submit to " + get_name(PendingCandidate) + " as your " + PendingHonorific + "?",
-                "buttons", llList2Json(JSON_ARRAY, ["Yes", "No"]),
-                "timeout", 60
-            ]), NULL_KEY);
+
+            kSend(CONTEXT, "dialogs", DIALOG_BUS,
+                kPayload([
+                    "session_id", SessionId,
+                    "user", (string)llGetOwner(),
+                    "title", "Confirm",
+                    "body", "Submit to " + get_name(PendingCandidate) + " as your " + PendingHonorific + "?",
+                    "buttons", llList2Json(JSON_ARRAY, ["Yes", "No"]),
+                    "timeout", 60
+                ]),
+                NULL_KEY
+            );
         }
     }
     else if (MenuContext == "set_confirm") {
@@ -586,9 +692,12 @@ handle_button(string btn) {
             llRegionSayTo(PendingCandidate, 0, get_name(llGetOwner()) + " has submitted to you as their " + PendingHonorific + ".");
             llRegionSayTo(llGetOwner(), 0, "You are now property of " + PendingHonorific + " " + get_name(PendingCandidate) + ".");
             cleanup();
-            llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
-                "type", "return", "user", (string)CurrentUser
-            ]), NULL_KEY);
+            kSend(CONTEXT, "ui", UI_BUS,
+                kPayload([
+                    "user", (string)CurrentUser
+                ]),
+                NULL_KEY
+            );
         }
         else show_main();
     }
@@ -597,16 +706,18 @@ handle_button(string btn) {
             PendingCandidate = (key)llList2String(CandidateKeys, idx);
             SessionId = gen_session();
             MenuContext = "transfer_accept";
-            
-            llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
-                "type", "dialog_open",
-                "session_id", SessionId,
-                "user", (string)PendingCandidate,
-                "title", "Accept Transfer",
-                "body", "Accept ownership of " + get_name(llGetOwner()) + "?",
-                "buttons", llList2Json(JSON_ARRAY, ["Yes", "No"]),
-                "timeout", 60
-            ]), NULL_KEY);
+
+            kSend(CONTEXT, "dialogs", DIALOG_BUS,
+                kPayload([
+                    "session_id", SessionId,
+                    "user", (string)PendingCandidate,
+                    "title", "Accept Transfer",
+                    "body", "Accept ownership of " + get_name(llGetOwner()) + "?",
+                    "buttons", llList2Json(JSON_ARRAY, ["Yes", "No"]),
+                    "timeout", 60
+                ]),
+                NULL_KEY
+            );
         }
     }
     else if (MenuContext == "transfer_accept") {
@@ -631,16 +742,18 @@ handle_button(string btn) {
         if (btn == "Yes") {
             SessionId = gen_session();
             MenuContext = "release_wearer";
-            
-            llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
-                "type", "dialog_open",
-                "session_id", SessionId,
-                "user", (string)llGetOwner(),
-                "title", "Confirm Release",
-                "body", "Released by " + get_name(CurrentUser) + ".\n\nConfirm freedom?",
-                "buttons", llList2Json(JSON_ARRAY, ["Yes", "No"]),
-                "timeout", 60
-            ]), NULL_KEY);
+
+            kSend(CONTEXT, "dialogs", DIALOG_BUS,
+                kPayload([
+                    "session_id", SessionId,
+                    "user", (string)llGetOwner(),
+                    "title", "Confirm Release",
+                    "body", "Released by " + get_name(CurrentUser) + ".\n\nConfirm freedom?",
+                    "buttons", llList2Json(JSON_ARRAY, ["Yes", "No"]),
+                    "timeout", 60
+                ]),
+                NULL_KEY
+            );
         }
         else show_main();
     }
@@ -674,10 +787,11 @@ handle_button(string btn) {
             }
             
             // Trigger soft_reset to reinitialize all plugins
-            llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
-                "type", "soft_reset"
-            ]), NULL_KEY);
-            
+            kSend(CONTEXT, "kernel", KERNEL_LIFECYCLE,
+                kPayload([]),
+                NULL_KEY
+            );
+
             cleanup();
         }
         else show_main();
@@ -686,13 +800,12 @@ handle_button(string btn) {
         if (btn == "Yes") {
             // Wearer consented - disable runaway
             RunawayEnabled = FALSE;
-            
-            llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
-                "type", "set",
-                "key", KEY_RUNAWAY_ENABLED,
-                "value", "0"
-            ]), NULL_KEY);
-            
+
+            kSend(CONTEXT, "", SETTINGS_BUS,
+                kDeltaSet(KEY_RUNAWAY_ENABLED, "0"),
+                NULL_KEY
+            );
+
             llRegionSayTo(llGetOwner(), 0, "Runaway disabled.");
             llRegionSayTo(CurrentUser, 0, "Runaway disabled.");
             show_main();
@@ -716,16 +829,18 @@ handle_button(string btn) {
             
             SessionId = gen_session();
             MenuContext = "trustee_accept";
-            
-            llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
-                "type", "dialog_open",
-                "session_id", SessionId,
-                "user", (string)PendingCandidate,
-                "title", "Accept Trustee",
-                "body", get_name(llGetOwner()) + " wants you as trustee.\n\nAccept?",
-                "buttons", llList2Json(JSON_ARRAY, ["Yes", "No"]),
-                "timeout", 60
-            ]), NULL_KEY);
+
+            kSend(CONTEXT, "dialogs", DIALOG_BUS,
+                kPayload([
+                    "session_id", SessionId,
+                    "user", (string)PendingCandidate,
+                    "title", "Accept Trustee",
+                    "body", get_name(llGetOwner()) + " wants you as trustee.\n\nAccept?",
+                    "buttons", llList2Json(JSON_ARRAY, ["Yes", "No"]),
+                    "timeout", 60
+                ]),
+                NULL_KEY
+            );
         }
     }
     else if (MenuContext == "trustee_accept") {
@@ -778,9 +893,10 @@ default {
     state_entry() {
         cleanup();
         register_self();
-        llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
-            "type", "settings_get"
-        ]), NULL_KEY);
+        kSend(CONTEXT, "settings", SETTINGS_BUS,
+            kPayload([]),
+            NULL_KEY
+        );
     }
     
     on_rez(integer p) {
@@ -792,50 +908,65 @@ default {
     }
     
     link_message(integer sender, integer num, string msg, key id) {
-        if (!json_has(msg, ["type"])) return;
-        string type = llJsonGetValue(msg, ["type"]);
-        
-        if (num == KERNEL_LIFECYCLE) {
-            if (type == "register_now") register_self();
-            else if (type == "ping") send_pong();
-            else if (type == "soft_reset" || type == "soft_reset_all") {
-                // Check if this is a targeted reset
-                if (json_has(msg, ["context"])) {
-                    string target_context = llJsonGetValue(msg, ["context"]);
-                    if (target_context != "" && target_context != PLUGIN_CONTEXT) {
-                        return; // Not for us, ignore
-                    }
+        string payload = kRecv(msg, CONTEXT);
+        if (payload == "") return;  // Not for me or invalid
+
+        // Route by channel + kFrom (global set by kRecv)
+        if (num == KERNEL_LIFECYCLE && kFrom == "kernel") {
+            // Detect register_now by presence of specific field
+            if (json_has(payload, ["context"])) {
+                // This is a targeted soft_reset
+                string target_context = llJsonGetValue(payload, ["context"]);
+                if (target_context != "" && target_context != PLUGIN_CONTEXT) {
+                    return; // Not for us
                 }
-                // Either no context (broadcast) or matches our context
                 llResetScript();
             }
+            else if (json_has(payload, ["ping_count"])) {
+                // This is a ping (has ping_count field)
+                send_pong();
+            }
+            else {
+                // This is register_now (empty payload or other fields)
+                register_self();
+            }
         }
-        else if (num == SETTINGS_BUS) {
-            if (type == "settings_sync") apply_settings_sync(msg);
-            else if (type == "settings_delta") apply_settings_delta(msg);
+        else if (num == SETTINGS_BUS && kFrom == "settings") {
+            string op = llJsonGetValue(payload, ["op"]);
+            if (op == "set" || op == "list_add" || op == "list_remove") {
+                // Delta update
+                apply_settings_delta(payload);
+            }
+            else if (json_has(payload, ["kv"])) {
+                // Full sync (has kv field)
+                apply_settings_sync(payload);
+            }
         }
-        else if (num == UI_BUS) {
-            if (type == "start" && json_has(msg, ["context"])) {
-                if (llJsonGetValue(msg, ["context"]) == PLUGIN_CONTEXT) {
+        else if (num == UI_BUS && kFrom == "ui") {
+            if (json_has(payload, ["context"])) {
+                if (llJsonGetValue(payload, ["context"]) == PLUGIN_CONTEXT) {
                     CurrentUser = id;
                     request_acl(id);
                 }
             }
         }
-        else if (num == AUTH_BUS) {
-            if (type == "acl_result") handle_acl_result(msg);
-        }
-        else if (num == DIALOG_BUS) {
-            if (type == "dialog_response") {
-                if (json_has(msg, ["session_id"]) && json_has(msg, ["button"])) {
-                    if (llJsonGetValue(msg, ["session_id"]) == SessionId) {
-                        handle_button(llJsonGetValue(msg, ["button"]));
-                    }
-                }
+        else if (num == AUTH_BUS && kFrom == "auth") {
+            if (id == CurrentUser) {
+                handle_acl_result(payload);
             }
-            else if (type == "dialog_timeout") {
-                if (json_has(msg, ["session_id"])) {
-                    if (llJsonGetValue(msg, ["session_id"]) == SessionId) cleanup();
+        }
+        else if (num == DIALOG_BUS && kFrom == "dialogs") {
+            if (json_has(payload, ["session_id"])) {
+                string session = llJsonGetValue(payload, ["session_id"]);
+                if (session == SessionId) {
+                    if (json_has(payload, ["button"])) {
+                        // Dialog response
+                        handle_button(llJsonGetValue(payload, ["button"]));
+                    }
+                    else {
+                        // Dialog timeout (no button field)
+                        cleanup();
+                    }
                 }
             }
         }
