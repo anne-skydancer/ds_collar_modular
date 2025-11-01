@@ -7,7 +7,7 @@
    - View ALL settings (including unset ones)
    - Display access list with honorifics
    - Reload settings from notecard
-   - Clear leash (soft reset leash plugin)
+   - Clear leash (unclip and clear particles)
    - Give HUD to users
    - Give user manual
    
@@ -397,11 +397,10 @@ do_reload_settings() {
 
 do_clear_leash() {
     string msg = llList2Json(JSON_OBJECT, [
-        "type", "soft_reset",
-        "context", "core_leash",
-        "from", "maintenance"
+        "type", "leash_action",
+        "action", "release"
     ]);
-    llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, msg, NULL_KEY);
+    llMessageLinked(LINK_SET, UI_BUS, msg, CurrentUser);
 
     llRegionSayTo(CurrentUser, 0, "Leash cleared.");
     logd("Leash cleared by " + llKey2Name(CurrentUser));
