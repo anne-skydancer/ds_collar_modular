@@ -398,7 +398,8 @@ doReloadSettings() {
 doClearLeash() {
     string msg = llList2Json(JSON_OBJECT, [
         "type", "leash_action",
-        "action", "release"
+        "action", "release",
+        "acl_verified", "1"
     ]);
     llMessageLinked(LINK_SET, UI_BUS, msg, CurrentUser);
 
