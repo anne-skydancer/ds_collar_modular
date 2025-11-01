@@ -198,7 +198,10 @@ apply_settings_delta(string payload) {
                     new_label = PLUGIN_LABEL_LOCKED;
                 }
                 kSend(CONTEXT, "ui", UI_BUS,
-                    kPayload(["update_label", new_label]),
+                    kPayload([
+                        "update_label", 1,
+                        "label", new_label
+                    ]),
                     NULL_KEY
                 );
             }
@@ -289,7 +292,8 @@ update_ui_label_and_return(key user) {
 
     kSend(CONTEXT, "ui", UI_BUS,
         kPayload([
-            "update_label", new_label
+            "update_label", 1,
+            "label", new_label
         ]),
         NULL_KEY
     );

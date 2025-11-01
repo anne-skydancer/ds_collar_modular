@@ -189,7 +189,7 @@ apply_settings_delta(string payload) {
         if (setting_key == KEY_PUBLIC_MODE) {
             integer old_state = PublicModeEnabled;
             PublicModeEnabled = (integer)value;
-            logd("Delta: public_mode = " + value);
+            logd("Delta: public_mode = " + (string)PublicModeEnabled);
 
             // If state changed, update label
             if (old_state != PublicModeEnabled) {
