@@ -101,7 +101,6 @@ float STATE_QUERY_DELAY = 0.15;  // 150ms delay for non-blocking state queries
 string PLUGIN_CONTEXT = "core_leash";
 string PLUGIN_LABEL = "Leash";
 integer PLUGIN_MIN_ACL = 1;
-string ROOT_CONTEXT = "core_root";
 
 list ALLOWED_ACL_GRAB  = [1, 3, 4, 5];
 list ALLOWED_ACL_SETTINGS = [3, 4, 5];

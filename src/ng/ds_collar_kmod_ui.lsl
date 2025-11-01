@@ -84,30 +84,6 @@ string kPayload(list kvp) {
     return llList2Json(JSON_OBJECT, kvp);
 }
 
-string kDeltaSet(string setting_key, string val) {
-    return llList2Json(JSON_OBJECT, [
-        "op", "set",
-        "key", setting_key,
-        "value", val
-    ]);
-}
-
-string kDeltaAdd(string setting_key, string elem) {
-    return llList2Json(JSON_OBJECT, [
-        "op", "list_add",
-        "key", setting_key,
-        "elem", elem
-    ]);
-}
-
-string kDeltaDel(string setting_key, string elem) {
-    return llList2Json(JSON_OBJECT, [
-        "op", "list_remove",
-        "key", setting_key,
-        "elem", elem
-    ]);
-}
-
 integer DEBUG = TRUE;
 integer PRODUCTION = FALSE;  // Set FALSE for development builds
 
@@ -128,10 +104,6 @@ string SOS_PREFIX = "sos_";  // Prefix for SOS plugin contexts
 integer MAX_FUNC_BTNS = 9;
 float TOUCH_RANGE_M = 5.0;
 float LONG_TOUCH_THRESHOLD = 1.5;
-
-string BTN_NAV_LEFT = "<<";
-string BTN_NAV_GAP = " ";
-string BTN_NAV_RIGHT = ">>";
 
 /* Plugin list stride */
 integer PLUGIN_STRIDE = 3;

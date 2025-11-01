@@ -102,7 +102,6 @@ integer DIALOG_BUS = 950;
 string PLUGIN_CONTEXT = "core_relay";
 string PLUGIN_LABEL = "RLV Relay";
 integer PLUGIN_MIN_ACL = 2;  // Wearer and above
-string ROOT_CONTEXT = "core_root";
 
 /* ACL levels for reference:
    -1 = Blacklisted
@@ -123,7 +122,6 @@ integer MAX_RELAYS = 5;
 
 integer MODE_OFF = 0;
 integer MODE_ON = 1;
-integer MODE_HARDCORE = 2;
 
 // ORG relay spec wildcard UUID (accepts commands from any avatar)
 key WILDCARD_UUID = "ffffffff-ffff-ffff-ffff-ffffffffffff";
