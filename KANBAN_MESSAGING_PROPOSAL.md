@@ -481,6 +481,60 @@ link_message(integer sender, integer num, string msg, key id) {
 
 ---
 
+## Memory Costs
+
+**See KANBAN_MEMORY_ANALYSIS.md for detailed analysis.**
+
+### Quick Summary
+
+**Message Overhead:**
+- ~15-20 bytes per message (+10-15% size increase)
+- Temporary memory - released immediately after processing
+- Not cumulative - negligible impact
+
+**Helper Library Overhead:**
+- Minimal: ~1-2KB (basic functions only)
+- Standard: ~3-4KB (includes delta helpers)
+- Full: ~6KB (all convenience functions)
+
+**Breakeven Analysis:**
+
+| Script Type | Messages | Recommendation | Net Impact |
+|-------------|----------|----------------|------------|
+| Tiny plugin | 1-5 | Skip Kanban | Save ~2KB |
+| Small plugin | 5-15 | Use minimal | +1KB |
+| Medium plugin | 15-25 | Use standard | +0.5KB |
+| Large plugin | 25+ | Use full | -1KB (saves!) |
+| Core module | 30+ | Use full | -3KB (saves!) |
+
+**Verdict:** Memory costs are acceptable. Large/complex scripts actually SAVE memory due to reduced boilerplate. Choose appropriate helper tier for your needs.
+
+---
+
+## Helper Library Tiers
+
+Three levels of helper libraries to match your memory constraints:
+
+### 1. Minimal (`ds_collar_kanban_minimal.lsl`) - ~1-2KB
+- Core packet creation and parsing only
+- For simple plugins or memory-constrained scripts
+- Manual payload construction
+
+### 2. Standard (`ds_collar_kanban_standard.lsl`) - ~3-4KB
+- All minimal functions
+- Delta helpers (deltaSet, deltaListAdd, etc.)
+- Routing helpers (isForMe, isFrom)
+- Payload access (payloadGet, payloadHas)
+- **Recommended for most plugins**
+
+### 3. Full (`ds_collar_kanban_helpers.lsl`) - ~6KB
+- All standard functions
+- Convenience functions (kanbanSendRegistration, kanbanQueryAcl, etc.)
+- For complex plugins and core modules
+- Maximum code reuse
+
+---
+
 ## Open Questions
 
 1. **Should "type" be retained in payload for some messages?**
