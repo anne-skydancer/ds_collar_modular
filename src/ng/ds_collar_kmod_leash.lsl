@@ -1154,8 +1154,8 @@ default
                 return;
             }
 
-            // Lockmeister grabbed: has "controller" and "grabbed" marker
-            if (json_has(payload, ["controller"]) && json_has(payload, ["grabbed"])) {
+            // Lockmeister grabbed: has "controller" and "prim" fields
+            if (json_has(payload, ["controller"]) && json_has(payload, ["prim"])) {
                 key controller = (key)llJsonGetValue(payload, ["controller"]);
                 if (controller == NULL_KEY) return;
 
@@ -1178,8 +1178,9 @@ default
                 return;
             }
 
-            // Lockmeister released: has "released" marker
-            if (json_has(payload, ["released"])) {
+            // Lockmeister released: empty payload from particles module
+            // (particles sends empty payload to signal lockmeister release)
+            if (kFrom == "particles" && (payload == "{}" || payload == "")) {
                 if (Leashed) {
                     key old_leasher = Leasher;
                     Leashed = FALSE;

@@ -842,13 +842,13 @@ default
                  (json_has(payload, ["value"]) || json_has(payload, ["values"]))) {
             handle_set(payload);
         }
-        // List add: has "key" and "elem"
+        // List operations: has "key" and "elem" (distinguish by "op" field)
         else if (json_has(payload, ["key"]) && json_has(payload, ["elem"])) {
-            // Distinguish between list_add and list_remove by checking for "add" marker
-            // Or by convention: if no "remove" marker, assume add
-            if (json_has(payload, ["remove"])) {
+            string op = llJsonGetValue(payload, ["op"]);
+            if (op == "list_remove") {
                 handle_list_remove(payload);
             } else {
+                // Default to list_add for backwards compatibility
                 handle_list_add(payload);
             }
         }

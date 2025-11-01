@@ -913,21 +913,21 @@ default {
 
         // Route by channel + kFrom (global set by kRecv)
         if (num == KERNEL_LIFECYCLE && kFrom == "kernel") {
-            // Detect register_now by presence of specific field
+            // Targeted soft_reset: has "context" field
             if (json_has(payload, ["context"])) {
-                // This is a targeted soft_reset
                 string target_context = llJsonGetValue(payload, ["context"]);
                 if (target_context != "" && target_context != PLUGIN_CONTEXT) {
                     return; // Not for us
                 }
                 llResetScript();
             }
-            else if (json_has(payload, ["ping_count"])) {
-                // This is a ping (has ping_count field)
-                send_pong();
+            // Soft reset with "reset" marker
+            else if (json_has(payload, ["reset"])) {
+                llResetScript();
             }
-            else {
-                // This is register_now (empty payload or other fields)
+            // Empty payload: register_now or ping
+            // Always re-register - kernel handles upserts correctly
+            else if (payload == "{}" || payload == "") {
                 register_self();
             }
         }
