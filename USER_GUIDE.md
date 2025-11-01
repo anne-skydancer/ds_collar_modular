@@ -886,7 +886,7 @@ A: If unowned access is available, you can use the Runaway feature (if enabled).
 A: No. Only owners can modify ownership. Trustees have elevated control but cannot add/remove owners.
 
 **Q: Can I be my own owner?**
-A: No. The collar prevents self-ownership by design. Only other avatars can be set as owners. This maintains the proper separation between wearer and owner roles.
+A: If you have no owner set, you already have full owner-level access to your collar. When you set a primary owner, you lose that access level - you cannot add yourself to the owner list or make yourself a trustee. The collar is designed so that only other avatars can be added as owners or trustees.
 
 ### RLV Questions
 
