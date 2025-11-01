@@ -1,8 +1,8 @@
 /* =============================================================================
-   PLUGIN: ds_collar_plugin_status.lsl (v2.0 - Consolidated ABI)
-   
+   DS Collar - Status Plugin (v2.0 - Kanban Messaging Migration)
+
    PURPOSE: Display collar status information (read-only)
-   
+
    FEATURES:
    - Shows owner(s) with honorifics
    - Shows trustees with honorifics
@@ -11,11 +11,73 @@
    - Shows TPE mode state
    - Resolves display names via dataserver
    - Supports multi-owner mode
-   
-   TIER: 1 (Simple - read-only display, single menu)
+
+   KANBAN MIGRATION (v2.0):
+   - Uses universal kanban helper (~500-800 bytes)
+   - All messages use standardized {from, payload, to} structure
+   - Routing by channel + kFrom instead of "type" field
    ============================================================================= */
 
+string CONTEXT = "status";
+
+/* ═══════════════════════════════════════════════════════════
+   KANBAN UNIVERSAL HELPER (~500-800 bytes)
+   ═══════════════════════════════════════════════════════════ */
+
+string kFrom = "";  // Sender context (populated by kRecv)
+string kTo = "";    // Recipient context (populated by kRecv)
+
+kSend(string from, string to, integer channel, string payload, key k) {
+    llMessageLinked(LINK_SET, channel,
+        llList2Json(JSON_OBJECT, [
+            "from", from,
+            "payload", payload,
+            "to", to
+        ]),
+        k
+    );
+}
+
+string kRecv(string msg, string my_context) {
+    // Quick validation: must be JSON object
+    if (llGetSubString(msg, 0, 0) != "{") return "";
+
+    // Extract from
+    string from = llJsonGetValue(msg, ["from"]);
+    if (from == JSON_INVALID) return "";
+
+    // Extract to
+    string to = llJsonGetValue(msg, ["to"]);
+    if (to == JSON_INVALID) return "";
+
+    // Check if for me (broadcast "" or direct to my_context)
+    if (to != "" && to != my_context) return "";
+
+    // Extract payload
+    string payload = llJsonGetValue(msg, ["payload"]);
+    if (payload == JSON_INVALID) return "";
+
+    // Set globals for routing
+    kFrom = from;
+    kTo = to;
+
+    return payload;
+}
+
+string kPayload(list kvp) {
+    return llList2Json(JSON_OBJECT, kvp);
+}
+
+string kDeltaSet(string setting_key, string val) {
+    return llList2Json(JSON_OBJECT, [
+        "op", "set",
+        "key", setting_key,
+        "value", val
+    ]);
+}
+
 integer DEBUG = FALSE;
+integer PRODUCTION = TRUE;  // Set FALSE for development builds
 
 /* ═══════════════════════════════════════════════════════════
    CONSOLIDATED ABI
@@ -26,13 +88,8 @@ integer SETTINGS_BUS = 800;
 integer UI_BUS = 900;
 integer DIALOG_BUS = 950;
 
-/* ═══════════════════════════════════════════════════════════
-   PLUGIN IDENTITY
-   ═══════════════════════════════════════════════════════════ */
-string PLUGIN_CONTEXT = "core_status";
 string PLUGIN_LABEL = "Status";
 integer PLUGIN_MIN_ACL = 1;  // Public can view
-string ROOT_CONTEXT = "core_root";
 
 /* ═══════════════════════════════════════════════════════════
    SETTINGS KEYS
@@ -78,11 +135,9 @@ list OwnerNameQueries = [];
 key CurrentUser = NULL_KEY;
 string SessionId = "";
 
-/* ═══════════════════════════════════════════════════════════
-   HELPERS
-   ═══════════════════════════════════════════════════════════ */
+// ===== HELPERS =====
 integer logd(string msg) {
-    if (DEBUG) llOwnerSay("[STATUS] " + msg);
+    if (DEBUG && !PRODUCTION) llOwnerSay("[STATUS] " + msg);
     return FALSE;
 }
 
@@ -95,31 +150,26 @@ integer is_json_arr(string s) {
 }
 
 string generate_session_id() {
-    return PLUGIN_CONTEXT + "_" + (string)llGetUnixTime();
+    return CONTEXT + "_" + (string)llGetUnixTime();
 }
 
-/* ═══════════════════════════════════════════════════════════
-   LIFECYCLE MANAGEMENT
-   ═══════════════════════════════════════════════════════════ */
-
+// ===== PLUGIN REGISTRATION =====
 register_self() {
-    string msg = llList2Json(JSON_OBJECT, [
-        "type", "register",
-        "context", PLUGIN_CONTEXT,
-        "label", PLUGIN_LABEL,
-        "min_acl", PLUGIN_MIN_ACL,
-        "script", llGetScriptName()
-    ]);
-    llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, msg, NULL_KEY);
-    logd("Registered with kernel");
+    kSend(CONTEXT, "kernel", KERNEL_LIFECYCLE,
+        kPayload([
+            "label", PLUGIN_LABEL,
+            "min_acl", PLUGIN_MIN_ACL,
+            "script", llGetScriptName()
+        ]),
+        NULL_KEY
+    );
 }
 
 send_pong() {
-    string msg = llList2Json(JSON_OBJECT, [
-        "type", "pong",
-        "context", PLUGIN_CONTEXT
-    ]);
-    llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, msg, NULL_KEY);
+    kSend(CONTEXT, "kernel", KERNEL_LIFECYCLE,
+        kPayload(["pong", 1]),
+        NULL_KEY
+    );
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -276,10 +326,10 @@ apply_settings_delta(string msg) {
     }
     else if (op == "list_add" || op == "list_remove") {
         if (!json_has(msg, ["key"])) return;
-        string list_key = llJsonGetValue(msg, ["key"]);
-        
-        if (list_key == KEY_OWNER_KEYS || list_key == KEY_TRUSTEES || 
-            list_key == KEY_OWNER_HONS || list_key == KEY_TRUSTEE_HONS) {
+        string setting_key = llJsonGetValue(msg, ["key"]);
+
+        if (setting_key == KEY_OWNER_KEYS || setting_key == KEY_TRUSTEES ||
+            setting_key == KEY_OWNER_HONS || setting_key == KEY_TRUSTEE_HONS) {
             // Request full sync to refresh lists
             logd("List changed, requesting full sync");
         }
@@ -448,30 +498,25 @@ string build_status_report() {
     return status_text;
 }
 
-/* ═══════════════════════════════════════════════════════════
-   UI / MENU SYSTEM
-   ═══════════════════════════════════════════════════════════ */
-
+// ===== UNIFIED MENU DISPLAY =====
 show_status_menu() {
     SessionId = generate_session_id();
-    
+
     string status_report = build_status_report();
-    
+
     list buttons = ["Back"];
-    string buttons_json = llList2Json(JSON_ARRAY, buttons);
-    
-    string msg = llList2Json(JSON_OBJECT, [
-        "type", "dialog_open",
-        "session_id", SessionId,
-        "user", (string)CurrentUser,
-        "title", PLUGIN_LABEL,
-        "message", status_report,
-        "buttons", buttons_json,
-        "timeout", 60
-    ]);
-    
-    llMessageLinked(LINK_SET, DIALOG_BUS, msg, NULL_KEY);
-    logd("Status menu shown");
+
+    kSend(CONTEXT, "dialogs", DIALOG_BUS,
+        kPayload([
+            "session_id", SessionId,
+            "user", (string)CurrentUser,
+            "title", PLUGIN_LABEL,
+            "body", status_report,
+            "buttons", llList2Json(JSON_ARRAY, buttons),
+            "timeout", 60
+        ]),
+        NULL_KEY
+    );
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -489,21 +534,13 @@ handle_button_click(string button) {
     logd("Unhandled button: " + button);
 }
 
-/* ═══════════════════════════════════════════════════════════
-   UI NAVIGATION
-   ═══════════════════════════════════════════════════════════ */
-
+// ===== NAVIGATION =====
 ui_return_root() {
-    string msg = llList2Json(JSON_OBJECT, [
-        "type", "return",
-        "user", (string)CurrentUser
-    ]);
-    llMessageLinked(LINK_SET, UI_BUS, msg, NULL_KEY);
+    kSend(CONTEXT, "ui", UI_BUS,
+        kPayload(["user", (string)CurrentUser]),
+        NULL_KEY
+    );
 }
-
-/* ═══════════════════════════════════════════════════════════
-   SESSION CLEANUP
-   ═══════════════════════════════════════════════════════════ */
 
 cleanup_session() {
     CurrentUser = NULL_KEY;
@@ -515,20 +552,27 @@ cleanup_session() {
    EVENTS
    ═══════════════════════════════════════════════════════════ */
 
+// ===== EVENT HANDLERS =====
 default {
     state_entry() {
         cleanup_session();
-        
+
         // Reset display name cache
         OwnerDisplay = "";
         OwnerDisplayQuery = NULL_KEY;
         OwnerLegacyQuery = NULL_KEY;
         OwnerDisplayNames = [];
         OwnerNameQueries = [];
-        
+
         register_self();
-        
-        logd("Ready");
+
+        // Request settings from settings module
+        kSend(CONTEXT, "settings", SETTINGS_BUS,
+            kPayload(["get", 1]),
+            NULL_KEY
+        );
+
+        logd("Status plugin initialized - requested settings");
     }
     
     on_rez(integer start_param) {
@@ -542,104 +586,75 @@ default {
     }
     
     link_message(integer sender, integer num, string msg, key id) {
-        // ===== KERNEL LIFECYCLE =====
-        if (num == KERNEL_LIFECYCLE) {
-            if (!json_has(msg, ["type"])) return;
-            string msg_type = llJsonGetValue(msg, ["type"]);
-            
-            if (msg_type == "register_now") {
-                register_self();
-                return;
-            }
-            
-            if (msg_type == "ping") {
-                send_pong();
-                return;
-            }
+        // Parse kanban message - kRecv validates and sets kFrom, kTo
+        string payload = kRecv(msg, CONTEXT);
+        if (payload == "") return;  // Not for us or invalid
 
-            if (msg_type == "soft_reset" || msg_type == "soft_reset_all") {
-                // Check if this is a targeted reset
-                if (json_has(msg, ["context"])) {
-                    string target_context = llJsonGetValue(msg, ["context"]);
-                    if (target_context != "" && target_context != PLUGIN_CONTEXT) {
-                        return; // Not for us, ignore
-                    }
+        // Route by channel + kFrom + payload structure
+
+        /* ===== KERNEL LIFECYCLE ===== */
+        if (num == KERNEL_LIFECYCLE && kFrom == "kernel") {
+            // Targeted soft_reset: has "context" field
+            if (json_has(payload, ["context"])) {
+                string target_context = llJsonGetValue(payload, ["context"]);
+                if (target_context != "" && target_context != CONTEXT) {
+                    return; // Not for us
                 }
-                // Either no context (broadcast) or matches our context
                 llResetScript();
             }
+            // Soft reset with "reset" marker
+            else if (json_has(payload, ["reset"])) {
+                llResetScript();
+            }
+            // Register now: has "register_now" marker
+            else if (json_has(payload, ["register_now"])) {
+                register_self();
+            }
+            // Ping: has "ping" marker
+            else if (json_has(payload, ["ping"])) {
+                send_pong();
+            }
+        }
 
-            return;
-        }
-        
-        // ===== SETTINGS SYNC/DELTA =====
-        if (num == SETTINGS_BUS) {
-            if (!json_has(msg, ["type"])) return;
-            string msg_type = llJsonGetValue(msg, ["type"]);
-            
-            if (msg_type == "settings_sync") {
-                apply_settings_sync(msg);
-                return;
+        /* ===== SETTINGS BUS ===== */
+        else if (num == SETTINGS_BUS && kFrom == "settings") {
+            // Full sync: has "kv" field
+            if (json_has(payload, ["kv"])) {
+                apply_settings_sync(payload);
             }
-            
-            if (msg_type == "settings_delta") {
-                apply_settings_delta(msg);
-                return;
+            // Delta update: has "op" field
+            else if (json_has(payload, ["op"])) {
+                apply_settings_delta(payload);
             }
-            
-            return;
         }
-        
-        // ===== UI START =====
-        if (num == UI_BUS) {
-            if (!json_has(msg, ["type"])) return;
-            string msg_type = llJsonGetValue(msg, ["type"]);
-            
-            if (msg_type == "start") {
-                if (!json_has(msg, ["context"])) return;
-                if (llJsonGetValue(msg, ["context"]) != PLUGIN_CONTEXT) return;
-                
-                if (id == NULL_KEY) return;
-                
+
+        /* ===== UI START ===== */
+        else if (num == UI_BUS) {
+            // UI start: for our context
+            if (kTo == CONTEXT && json_has(payload, ["user"])) {
                 CurrentUser = id;
                 show_status_menu();
-                return;
             }
-            
-            return;
         }
-        
-        // ===== DIALOG RESPONSE =====
-        if (num == DIALOG_BUS) {
-            if (!json_has(msg, ["type"])) return;
-            string msg_type = llJsonGetValue(msg, ["type"]);
-            
-            if (msg_type == "dialog_response") {
-                if (!json_has(msg, ["session_id"])) return;
-                if (llJsonGetValue(msg, ["session_id"]) != SessionId) return;
-                
-                if (!json_has(msg, ["button"])) return;
-                string button = llJsonGetValue(msg, ["button"]);
-                
-                if (!json_has(msg, ["user"])) return;
-                key user = (key)llJsonGetValue(msg, ["user"]);
-                
-                if (user != CurrentUser) return;
-                
+
+        /* ===== DIALOG RESPONSE ===== */
+        else if (num == DIALOG_BUS && kFrom == "dialogs") {
+            // Dialog response: has "session_id" and "button" fields
+            if (json_has(payload, ["session_id"]) && json_has(payload, ["button"])) {
+                string response_session = llJsonGetValue(payload, ["session_id"]);
+                if (response_session != SessionId) return;
+
+                string button = llJsonGetValue(payload, ["button"]);
                 handle_button_click(button);
-                return;
             }
-            
-            if (msg_type == "dialog_timeout") {
-                if (!json_has(msg, ["session_id"])) return;
-                if (llJsonGetValue(msg, ["session_id"]) != SessionId) return;
-                
-                cleanup_session();
+            // Dialog timeout: has "session_id" but no "button"
+            else if (json_has(payload, ["session_id"]) && !json_has(payload, ["button"])) {
+                string timeout_session = llJsonGetValue(payload, ["session_id"]);
+                if (timeout_session != SessionId) return;
+
                 logd("Dialog timeout");
-                return;
+                cleanup_session();
             }
-            
-            return;
         }
     }
     

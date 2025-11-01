@@ -1,27 +1,91 @@
-// =============================================================
-// PLUGIN: ds_collar_plugin_rlvrestrict.lsl (v2)
-// PURPOSE: RLV Restriction Management Plugin
-// ARCHITECTURE: v2 Consolidated ABI (5 channels)
-// =============================================================
+/* =============================================================================
+   DS Collar - RLV Restrict Plugin (v2.0 - Kanban Messaging Migration)
+
+   FEATURES:
+   - RLV restriction management with category organization
+   - Persistent restriction state across relogs
+   - Emergency clear via SOS integration
+   - Paged category menus for large restriction sets
+
+   ACL: Trustee (3) and above
+
+   KANBAN MIGRATION (v2.0):
+   - Uses universal kanban helper (~500-800 bytes)
+   - All messages use standardized {from, payload, to} structure
+   - Routing by channel + kFrom instead of "type" field
+   ============================================================================= */
+
+string CONTEXT = "rlvrestrict";
+
+/* ═══════════════════════════════════════════════════════════
+   KANBAN UNIVERSAL HELPER (~500-800 bytes)
+   ═══════════════════════════════════════════════════════════ */
+
+string kFrom = "";  // Sender context (populated by kRecv)
+string kTo = "";    // Recipient context (populated by kRecv)
+
+kSend(string from, string to, integer channel, string payload, key k) {
+    llMessageLinked(LINK_SET, channel,
+        llList2Json(JSON_OBJECT, [
+            "from", from,
+            "payload", payload,
+            "to", to
+        ]),
+        k
+    );
+}
+
+string kRecv(string msg, string my_context) {
+    // Quick validation: must be JSON object
+    if (llGetSubString(msg, 0, 0) != "{") return "";
+
+    // Extract from
+    string from = llJsonGetValue(msg, ["from"]);
+    if (from == JSON_INVALID) return "";
+
+    // Extract to
+    string to = llJsonGetValue(msg, ["to"]);
+    if (to == JSON_INVALID) return "";
+
+    // Check if for me (broadcast "" or direct to my_context)
+    if (to != "" && to != my_context) return "";
+
+    // Extract payload
+    string payload = llJsonGetValue(msg, ["payload"]);
+    if (payload == JSON_INVALID) return "";
+
+    // Set globals for routing
+    kFrom = from;
+    kTo = to;
+
+    return payload;
+}
+
+string kPayload(list kvp) {
+    return llList2Json(JSON_OBJECT, kvp);
+}
+
+string kDeltaSet(string setting_key, string val) {
+    return llList2Json(JSON_OBJECT, [
+        "op", "set",
+        "key", setting_key,
+        "value", val
+    ]);
+}
 
 integer DEBUG = FALSE;
+integer PRODUCTION = TRUE;  // Set FALSE for development builds
 
 /* ═══════════════════════════════════════════════════════════
-   CHANNELS (v2 Consolidated Architecture)
+   CONSOLIDATED ABI
    ═══════════════════════════════════════════════════════════ */
+integer KERNEL_LIFECYCLE = 500;
+integer AUTH_BUS = 700;
+integer SETTINGS_BUS = 800;
+integer UI_BUS = 900;
+integer DIALOG_BUS = 950;
 
-integer KERNEL_LIFECYCLE = 500;  // register, ping/pong, soft_reset
-integer AUTH_BUS         = 700;  // ACL queries and results
-integer SETTINGS_BUS     = 800;  // Settings sync and delta
-integer UI_BUS           = 900;  // UI navigation (start, return, close)
-integer DIALOG_BUS       = 950;  // Centralized dialog management
-
-/* ═══════════════════════════════════════════════════════════
-   PLUGIN IDENTITY
-   ═══════════════════════════════════════════════════════════ */
-
-string  PLUGIN_CONTEXT = "core_rlvrestrict";
-string  PLUGIN_LABEL   = "Restrict";
+string PLUGIN_LABEL = "Restrict";
 integer PLUGIN_MIN_ACL = 3;  // Trustee+
 
 /* ═══════════════════════════════════════════════════════════
@@ -60,10 +124,11 @@ list LABEL_OTHER  = ["Edit:", "Rez:", "Touch:", "Touch Wld:", "OK TP:", "Names:"
    UI SESSION STATE
    ═══════════════════════════════════════════════════════════ */
 
-string SessionId = "";
+// Session state
 key CurrentUser = NULL_KEY;
-integer UserAcl = 0;
-
+integer UserAcl = -999;
+integer AclPending = FALSE;
+string SessionId = "";
 string MenuContext = "";      // "main", "category"
 string CurrentCategory = "";
 integer CurrentPage = 0;
@@ -78,14 +143,13 @@ integer json_has(string json_str, list path) {
     return (llJsonGetValue(json_str, path) != JSON_INVALID);
 }
 
-logd(string msg) {
-    if (DEBUG) {
-        llOwnerSay("[RLVRESTRICT] " + msg);
-    }
+integer logd(string msg) {
+    if (DEBUG && !PRODUCTION) llOwnerSay("[RLVRESTRICT] " + msg);
+    return FALSE;
 }
 
 string generate_session_id() {
-    return llGetScriptName() + "_" + (string)llGetKey() + "_" + (string)llGetUnixTime();
+    return CONTEXT + "_" + (string)llGetUnixTime();
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -93,38 +157,32 @@ string generate_session_id() {
    ═══════════════════════════════════════════════════════════ */
 
 register_self() {
-    llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
-        "type", "register",
-        "context", PLUGIN_CONTEXT,
-        "label", PLUGIN_LABEL,
-        "min_acl", PLUGIN_MIN_ACL,
-        "script", llGetScriptName()
-    ]), NULL_KEY);
-    
-    logd("Registered with kernel");
+    kSend(CONTEXT, "kernel", KERNEL_LIFECYCLE,
+        kPayload([
+            "label", PLUGIN_LABEL,
+            "min_acl", PLUGIN_MIN_ACL,
+            "script", llGetScriptName()
+        ]),
+        NULL_KEY
+    );
 }
 
 send_pong() {
-    llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
-        "type", "pong",
-        "context", PLUGIN_CONTEXT
-    ]), NULL_KEY);
+    kSend(CONTEXT, "kernel", KERNEL_LIFECYCLE,
+        kPayload(["pong", 1]),
+        NULL_KEY
+    );
 }
 
 cleanup_session() {
-    if (SessionId != "") {
-        llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
-            "type", "dialog_close",
-            "session_id", SessionId
-        ]), NULL_KEY);
-    }
-    
-    SessionId = "";
     CurrentUser = NULL_KEY;
-    UserAcl = 0;
+    UserAcl = -999;
+    AclPending = FALSE;
+    SessionId = "";
     MenuContext = "";
     CurrentCategory = "";
     CurrentPage = 0;
+    logd("Session cleaned up");
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -133,28 +191,24 @@ cleanup_session() {
 
 persist_restrictions() {
     string csv = llDumpList2String(Restrictions, ",");
-    
-    llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
-        "type", "set",
-        "key", KEY_RESTRICTIONS,
-        "value", csv
-    ]), NULL_KEY);
-    
-    logd("Persisted restrictions: " + csv);
+
+    kSend(CONTEXT, "settings", SETTINGS_BUS,
+        kDeltaSet(KEY_RESTRICTIONS, csv),
+        NULL_KEY
+    );
 }
 
-apply_settings_sync(string msg) {
-    if (!json_has(msg, ["kv"])) return;
-    
-    string kv = llJsonGetValue(msg, ["kv"]);
-    
-    if (json_has(kv, [KEY_RESTRICTIONS])) {
-        string csv = llJsonGetValue(kv, [KEY_RESTRICTIONS]);
-        
+apply_settings_sync(string payload) {
+    if (!json_has(payload, ["kv"])) return;
+    string kv_json = llJsonGetValue(payload, ["kv"]);
+
+    if (json_has(kv_json, [KEY_RESTRICTIONS])) {
+        string csv = llJsonGetValue(kv_json, [KEY_RESTRICTIONS]);
+
         if (csv != "") {
             Restrictions = llParseString2List(csv, [","], []);
             logd("Loaded " + (string)llGetListLength(Restrictions) + " restrictions from settings");
-            
+
             // Reapply all restrictions
             integer i = 0;
             integer count = llGetListLength(Restrictions);
@@ -169,20 +223,18 @@ apply_settings_sync(string msg) {
             logd("No restrictions loaded");
         }
     }
+
+    logd("Settings sync applied");
 }
 
-apply_settings_delta(string msg) {
-    if (!json_has(msg, ["op"])) return;
-    
-    string op = llJsonGetValue(msg, ["op"]);
-    
+apply_settings_delta(string payload) {
+    string op = llJsonGetValue(payload, ["op"]);
+
     if (op == "set") {
-        if (!json_has(msg, ["changes"])) return;
-        string changes = llJsonGetValue(msg, ["changes"]);
-        
-        if (json_has(changes, [KEY_RESTRICTIONS])) {
-            string csv = llJsonGetValue(changes, [KEY_RESTRICTIONS]);
-            
+        string setting_key = llJsonGetValue(payload, ["key"]);
+        string value = llJsonGetValue(payload, ["value"]);
+
+        if (setting_key == KEY_RESTRICTIONS) {
             // Clear all current restrictions
             integer i = 0;
             integer count = llGetListLength(Restrictions);
@@ -191,15 +243,15 @@ apply_settings_delta(string msg) {
                 llOwnerSay("@clear=" + llGetSubString(restr_cmd, 1, -1));
                 i = i + 1;
             }
-            
+
             // Load new list
-            if (csv != "") {
-                Restrictions = llParseString2List(csv, [","], []);
+            if (value != "") {
+                Restrictions = llParseString2List(value, [","], []);
             }
             else {
                 Restrictions = [];
             }
-            
+
             // Apply new restrictions
             i = 0;
             count = llGetListLength(Restrictions);
@@ -208,7 +260,7 @@ apply_settings_delta(string msg) {
                 llOwnerSay(restr_cmd + "=y");
                 i = i + 1;
             }
-            
+
             logd("Delta: restrictions updated");
         }
     }
@@ -219,28 +271,33 @@ apply_settings_delta(string msg) {
    ═══════════════════════════════════════════════════════════ */
 
 request_acl(key user) {
-    llMessageLinked(LINK_SET, AUTH_BUS, llList2Json(JSON_OBJECT, [
-        "type", "acl_query",
-        "avatar", (string)user,
-        "id", PLUGIN_CONTEXT + "_acl"
-    ]), NULL_KEY);
+    AclPending = TRUE;
+    kSend(CONTEXT, "auth", AUTH_BUS,
+        kPayload(["avatar", (string)user]),
+        user
+    );
+    logd("ACL query sent for " + llKey2Name(user));
 }
 
-handle_acl_result(string msg) {
-    if (!json_has(msg, ["avatar"]) || !json_has(msg, ["level"])) return;
-    
-    key avatar = (key)llJsonGetValue(msg, ["avatar"]);
+handle_acl_result(string payload) {
+    if (!AclPending) return;
+
+    if (!json_has(payload, ["avatar"]) || !json_has(payload, ["level"])) return;
+
+    key avatar = (key)llJsonGetValue(payload, ["avatar"]);
     if (avatar != CurrentUser) return;
-    
-    UserAcl = (integer)llJsonGetValue(msg, ["level"]);
-    
+
+    UserAcl = (integer)llJsonGetValue(payload, ["level"]);
+    AclPending = FALSE;
+
     if (UserAcl < PLUGIN_MIN_ACL) {
         llRegionSayTo(CurrentUser, 0, "Access denied.");
         cleanup_session();
         return;
     }
-    
+
     show_main();
+    logd("ACL received: " + (string)UserAcl);
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -328,12 +385,10 @@ string label_to_command(string btn_label, list cat_cmds, list cat_labels) {
    ═══════════════════════════════════════════════════════════ */
 
 return_to_root() {
-    llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
-        "type", "return",
-        "context", PLUGIN_CONTEXT,
-        "user", (string)CurrentUser
-    ]), NULL_KEY);
-    
+    kSend(CONTEXT, "ui", UI_BUS,
+        kPayload(["user", (string)CurrentUser]),
+        NULL_KEY
+    );
     cleanup_session();
 }
 
@@ -344,9 +399,9 @@ return_to_root() {
 show_main() {
     SessionId = generate_session_id();
     MenuContext = "main";
-    
+
     string body = "RLV Restrictions\n\nActive: " + (string)llGetListLength(Restrictions) + "/" + (string)MAX_RESTRICTIONS;
-    
+
     list buttons = [
         "Back",
         CAT_NAME_INVENTORY,
@@ -355,16 +410,18 @@ show_main() {
         CAT_NAME_OTHER,
         "Clear all"
     ];
-    
-    llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
-        "type", "dialog_open",
-        "session_id", SessionId,
-        "user", (string)CurrentUser,
-        "title", PLUGIN_LABEL,
-        "body", body,
-        "buttons", llList2Json(JSON_ARRAY, buttons),
-        "timeout", 60
-    ]), NULL_KEY);
+
+    kSend(CONTEXT, "dialogs", DIALOG_BUS,
+        kPayload([
+            "session_id", SessionId,
+            "user", (string)CurrentUser,
+            "title", PLUGIN_LABEL,
+            "body", body,
+            "buttons", llList2Json(JSON_ARRAY, buttons),
+            "timeout", 60
+        ]),
+        NULL_KEY
+    );
 }
 
 show_category_menu(string cat_name, integer page_num) {
@@ -430,32 +487,31 @@ show_category_menu(string cat_name, integer page_num) {
     reversed = ["Back", "<<", ">>"] + reversed;
     
     string body = cat_name + " (" + (string)(page_num + 1) + "/" + (string)(max_page + 1) + ")\n\nActive: " + (string)llGetListLength(Restrictions);
-    
-    llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
-        "type", "dialog_open",
-        "session_id", SessionId,
-        "user", (string)CurrentUser,
-        "title", cat_name,
-        "body", body,
-        "buttons", llList2Json(JSON_ARRAY, reversed),
-        "timeout", 60
-    ]), NULL_KEY);
+
+    kSend(CONTEXT, "dialogs", DIALOG_BUS,
+        kPayload([
+            "session_id", SessionId,
+            "user", (string)CurrentUser,
+            "title", cat_name,
+            "body", body,
+            "buttons", llList2Json(JSON_ARRAY, reversed),
+            "timeout", 60
+        ]),
+        NULL_KEY
+    );
 }
 
 /* ═══════════════════════════════════════════════════════════
    DIALOG HANDLERS
    ═══════════════════════════════════════════════════════════ */
 
-handle_dialog_response(string msg) {
-    if (!json_has(msg, ["session_id"]) || !json_has(msg, ["button"]) || !json_has(msg, ["user"])) return;
-    
-    string recv_session = llJsonGetValue(msg, ["session_id"]);
+handle_dialog_response(string payload) {
+    if (!json_has(payload, ["session_id"]) || !json_has(payload, ["button"])) return;
+
+    string recv_session = llJsonGetValue(payload, ["session_id"]);
     if (recv_session != SessionId) return;
-    
-    key user = (key)llJsonGetValue(msg, ["user"]);
-    if (user != CurrentUser) return;
-    
-    string button = llJsonGetValue(msg, ["button"]);
+
+    string button = llJsonGetValue(payload, ["button"]);
     
     // Main menu
     if (MenuContext == "main") {
@@ -518,12 +574,13 @@ handle_dialog_response(string msg) {
     }
 }
 
-handle_dialog_timeout(string msg) {
-    if (!json_has(msg, ["session_id"])) return;
-    
-    string recv_session = llJsonGetValue(msg, ["session_id"]);
+handle_dialog_timeout(string payload) {
+    if (!json_has(payload, ["session_id"])) return;
+
+    string recv_session = llJsonGetValue(payload, ["session_id"]);
     if (recv_session != SessionId) return;
-    
+
+    logd("Dialog timeout");
     cleanup_session();
 }
 
@@ -536,17 +593,20 @@ default
     state_entry() {
         cleanup_session();
         register_self();
-        
-        // Request settings
-        llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
-            "type", "settings_get"
-        ]), NULL_KEY);
-        
-        logd("Plugin initialized");
+
+        // Request settings from settings module
+        kSend(CONTEXT, "settings", SETTINGS_BUS,
+            kPayload(["get", 1]),
+            NULL_KEY
+        );
+
+        logd("RLV Restrict plugin initialized - requested settings");
     }
-    
-    on_rez(integer param) {
-        llResetScript();
+
+    on_rez(integer start_param) {
+        // Don't reset script on attach/detach
+        // This preserves state, but settings sync will restore saved state anyway
+        logd("Attached - state preserved");
     }
     
     changed(integer change) {
@@ -556,59 +616,58 @@ default
     }
     
     link_message(integer sender, integer num, string msg, key id) {
-        if (!json_has(msg, ["type"])) return;
-        
-        string type = llJsonGetValue(msg, ["type"]);
-        
-        // Kernel lifecycle
-        if (num == KERNEL_LIFECYCLE) {
-            if (type == "register_now") {
-                register_self();
-            }
-            else if (type == "ping") {
-                send_pong();
-            }
-            else if (type == "soft_reset" || type == "soft_reset_all") {
-                // Check if this is a targeted reset
-                if (json_has(msg, ["context"])) {
-                    string target_context = llJsonGetValue(msg, ["context"]);
-                    if (target_context != "" && target_context != PLUGIN_CONTEXT) {
-                        return; // Not for us, ignore
-                    }
+        // Parse kanban message - kRecv validates and sets kFrom, kTo
+        string payload = kRecv(msg, CONTEXT);
+        if (payload == "") return;  // Not for us or invalid
+
+        // Route by channel + kFrom + payload structure
+
+        /* ===== KERNEL LIFECYCLE ===== */
+        if (num == KERNEL_LIFECYCLE && kFrom == "kernel") {
+            // Targeted soft_reset: has "context" field
+            if (json_has(payload, ["context"])) {
+                string target_context = llJsonGetValue(payload, ["context"]);
+                if (target_context != "" && target_context != CONTEXT) {
+                    return; // Not for us
                 }
-                // Either no context (broadcast) or matches our context
                 llResetScript();
             }
-        }
-        // Settings
-        else if (num == SETTINGS_BUS) {
-            if (type == "settings_sync") {
-                apply_settings_sync(msg);
+            // Soft reset with "reset" marker
+            else if (json_has(payload, ["reset"])) {
+                llResetScript();
             }
-            else if (type == "settings_delta") {
-                apply_settings_delta(msg);
+            // Register now: has "register_now" marker
+            else if (json_has(payload, ["register_now"])) {
+                register_self();
             }
-        }
-        // ACL
-        else if (num == AUTH_BUS) {
-            if (type == "acl_result") {
-                handle_acl_result(msg);
+            // Ping: has "ping" marker
+            else if (json_has(payload, ["ping"])) {
+                send_pong();
             }
         }
-        // UI
-        else if (num == UI_BUS) {
-            if (type == "start") {
-                if (!json_has(msg, ["context"])) return;
-                string context = llJsonGetValue(msg, ["context"]);
 
-                if (context == PLUGIN_CONTEXT) {
-                    CurrentUser = id;
-                    request_acl(CurrentUser);
-                }
+        /* ===== SETTINGS BUS ===== */
+        else if (num == SETTINGS_BUS && kFrom == "settings") {
+            // Full sync: has "kv" field
+            if (json_has(payload, ["kv"])) {
+                apply_settings_sync(payload);
             }
-            else if (type == "emergency_restrict_clear") {
-                // Emergency SOS clear - only allow if sender is the collar wearer
-                // The id parameter contains the requesting user's key
+            // Delta update: has "op" field
+            else if (json_has(payload, ["op"])) {
+                apply_settings_delta(payload);
+            }
+        }
+
+        /* ===== UI START ===== */
+        else if (num == UI_BUS) {
+            // UI start: for our context
+            if (kTo == CONTEXT && json_has(payload, ["user"])) {
+                CurrentUser = id;
+                request_acl(id);
+            }
+            // Emergency SOS clear: has "emergency_restrict_clear" marker
+            else if (json_has(payload, ["emergency_restrict_clear"])) {
+                // Only allow if sender is the collar wearer
                 // NOTE: User feedback is sent by SOS plugin, not here (avoid duplicate messages)
                 if (id == llGetOwner()) {
                     remove_all_restrictions();
@@ -618,13 +677,24 @@ default
                 }
             }
         }
-        // Dialogs
-        else if (num == DIALOG_BUS) {
-            if (type == "dialog_response") {
-                handle_dialog_response(msg);
+
+        /* ===== AUTH RESULT ===== */
+        else if (num == AUTH_BUS && kFrom == "auth") {
+            // ACL result: has "avatar" and "level" fields
+            if (json_has(payload, ["avatar"]) && json_has(payload, ["level"])) {
+                handle_acl_result(payload);
             }
-            else if (type == "dialog_timeout") {
-                handle_dialog_timeout(msg);
+        }
+
+        /* ===== DIALOG RESPONSE ===== */
+        else if (num == DIALOG_BUS && kFrom == "dialogs") {
+            // Dialog response: has "session_id" and "button" fields
+            if (json_has(payload, ["session_id"]) && json_has(payload, ["button"])) {
+                handle_dialog_response(payload);
+            }
+            // Dialog timeout: has "session_id" but no "button"
+            else if (json_has(payload, ["session_id"]) && !json_has(payload, ["button"])) {
+                handle_dialog_timeout(payload);
             }
         }
     }

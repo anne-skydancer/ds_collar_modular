@@ -1,14 +1,78 @@
 /* =============================================================================
-   PLUGIN: ds_collar_plugin_lock_v2.lsl (Simplified - Direct Toggle)
-   
+   DS Collar - Lock Plugin (v2.0 - Kanban Messaging Migration)
+
    PURPOSE: Toggle collar lock/unlock with RLV detach control
-   
+
    SIMPLIFIED: No menu - just toggles state immediately when clicked
-   
+
    ACL: Unowned (4) and Primary Owner (5) only
+
+   KANBAN MIGRATION (v2.0):
+   - Uses universal kanban helper (~500-800 bytes)
+   - All messages use standardized {from, payload, to} structure
+   - Routing by channel + kFrom instead of "type" field
    ============================================================================= */
 
+string CONTEXT = "lock";
+
+/* ═══════════════════════════════════════════════════════════
+   KANBAN UNIVERSAL HELPER (~500-800 bytes)
+   ═══════════════════════════════════════════════════════════ */
+
+string kFrom = "";  // Sender context (populated by kRecv)
+string kTo = "";    // Recipient context (populated by kRecv)
+
+kSend(string from, string to, integer channel, string payload, key k) {
+    llMessageLinked(LINK_SET, channel,
+        llList2Json(JSON_OBJECT, [
+            "from", from,
+            "payload", payload,
+            "to", to
+        ]),
+        k
+    );
+}
+
+string kRecv(string msg, string my_context) {
+    // Quick validation: must be JSON object
+    if (llGetSubString(msg, 0, 0) != "{") return "";
+
+    // Extract from
+    string from = llJsonGetValue(msg, ["from"]);
+    if (from == JSON_INVALID) return "";
+
+    // Extract to
+    string to = llJsonGetValue(msg, ["to"]);
+    if (to == JSON_INVALID) return "";
+
+    // Check if for me (broadcast "" or direct to my_context)
+    if (to != "" && to != my_context) return "";
+
+    // Extract payload
+    string payload = llJsonGetValue(msg, ["payload"]);
+    if (payload == JSON_INVALID) return "";
+
+    // Set globals for routing
+    kFrom = from;
+    kTo = to;
+
+    return payload;
+}
+
+string kPayload(list kvp) {
+    return llList2Json(JSON_OBJECT, kvp);
+}
+
+string kDeltaSet(string setting_key, string val) {
+    return llList2Json(JSON_OBJECT, [
+        "op", "set",
+        "key", setting_key,
+        "value", val
+    ]);
+}
+
 integer DEBUG = FALSE;
+integer PRODUCTION = TRUE;  // Set FALSE for development builds
 
 /* ═══════════════════════════════════════════════════════════
    CONSOLIDATED ABI
@@ -21,11 +85,9 @@ integer UI_BUS = 900;
 /* ═══════════════════════════════════════════════════════════
    PLUGIN IDENTITY
    ═══════════════════════════════════════════════════════════ */
-string PLUGIN_CONTEXT = "core_lock";
 string PLUGIN_LABEL_LOCKED = "Locked: Y";    // Label when locked
 string PLUGIN_LABEL_UNLOCKED = "Locked: N";    // Label when unlocked
 integer PLUGIN_MIN_ACL = 4;  // Unowned wearer or owner
-string ROOT_CONTEXT = "core_root";
 
 /* ═══════════════════════════════════════════════════════════
    SETTINGS KEYS
@@ -53,7 +115,7 @@ integer Locked = FALSE;
    HELPERS
    ═══════════════════════════════════════════════════════════ */
 integer logd(string msg) {
-    if (DEBUG) llOwnerSay("[LOCK] " + msg);
+    if (DEBUG && !PRODUCTION) llOwnerSay("[LOCK] " + msg);
     return FALSE;
 }
 
@@ -75,24 +137,23 @@ register_self() {
     if (Locked) {
         current_label = PLUGIN_LABEL_LOCKED;
     }
-    
-    string msg = llList2Json(JSON_OBJECT, [
-        "type", "register",
-        "context", PLUGIN_CONTEXT,
-        "label", current_label,
-        "min_acl", PLUGIN_MIN_ACL,
-        "script", llGetScriptName()
-    ]);
-    llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, msg, NULL_KEY);
+
+    kSend(CONTEXT, "kernel", KERNEL_LIFECYCLE,
+        kPayload([
+            "label", current_label,
+            "min_acl", PLUGIN_MIN_ACL,
+            "script", llGetScriptName()
+        ]),
+        NULL_KEY
+    );
     logd("Registered as: " + current_label);
 }
 
 send_pong() {
-    string msg = llList2Json(JSON_OBJECT, [
-        "type", "pong",
-        "context", PLUGIN_CONTEXT
-    ]);
-    llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, msg, NULL_KEY);
+    kSend(CONTEXT, "kernel", KERNEL_LIFECYCLE,
+        kPayload(["pong", 1]),
+        NULL_KEY
+    );
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -118,19 +179,17 @@ apply_settings_sync(string msg) {
     logd("Settings sync: locked=" + (string)Locked);
 }
 
-apply_settings_delta(string msg) {
-    if (!json_has(msg, ["op"])) return;
-    
-    string op = llJsonGetValue(msg, ["op"]);
-    
+apply_settings_delta(string payload) {
+    string op = llJsonGetValue(payload, ["op"]);
+
     if (op == "set") {
-        if (!json_has(msg, ["changes"])) return;
-        string changes = llJsonGetValue(msg, ["changes"]);
-        
-        if (json_has(changes, [KEY_LOCKED])) {
+        string setting_key = llJsonGetValue(payload, ["key"]);
+        string value = llJsonGetValue(payload, ["value"]);
+
+        if (setting_key == KEY_LOCKED) {
             integer old_locked = Locked;
-            Locked = (integer)llJsonGetValue(changes, [KEY_LOCKED]);
-            
+            Locked = (integer)value;
+
             if (old_locked != Locked) {
                 apply_lock_state();
                 // Only update label, don't return to menu (no active user in delta context)
@@ -138,15 +197,13 @@ apply_settings_delta(string msg) {
                 if (Locked) {
                     new_label = PLUGIN_LABEL_LOCKED;
                 }
-                string msg = llList2Json(JSON_OBJECT, [
-                    "type", "update_label",
-                    "context", PLUGIN_CONTEXT,
-                    "label", new_label
-                ]);
-                llMessageLinked(LINK_SET, UI_BUS, msg, NULL_KEY);
+                kSend(CONTEXT, "ui", UI_BUS,
+                    kPayload(["update_label", new_label]),
+                    NULL_KEY
+                );
             }
-            
-            logd("Delta: locked=" + (string)Locked);
+
+            logd("Delta: locked=" + value);
         }
     }
 }
@@ -156,12 +213,10 @@ apply_settings_delta(string msg) {
    ═══════════════════════════════════════════════════════════ */
 
 persist_locked(integer new_value) {
-    string msg = llList2Json(JSON_OBJECT, [
-        "type", "set",
-        "key", KEY_LOCKED,
-        "value", (string)new_value
-    ]);
-    llMessageLinked(LINK_SET, SETTINGS_BUS, msg, NULL_KEY);
+    kSend(CONTEXT, "settings", SETTINGS_BUS,
+        kDeltaSet(KEY_LOCKED, (string)new_value),
+        NULL_KEY
+    );
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -231,21 +286,20 @@ update_ui_label_and_return(key user) {
     if (Locked) {
         new_label = PLUGIN_LABEL_LOCKED;
     }
-    
-    string msg = llList2Json(JSON_OBJECT, [
-        "type", "update_label",
-        "context", PLUGIN_CONTEXT,
-        "label", new_label
-    ]);
-    llMessageLinked(LINK_SET, UI_BUS, msg, NULL_KEY);
-    
+
+    kSend(CONTEXT, "ui", UI_BUS,
+        kPayload([
+            "update_label", new_label
+        ]),
+        NULL_KEY
+    );
+
     // Return user to root menu to see the updated button
-    msg = llList2Json(JSON_OBJECT, [
-        "type", "return",
-        "user", (string)user
-    ]);
-    llMessageLinked(LINK_SET, UI_BUS, msg, NULL_KEY);
-    
+    kSend(CONTEXT, "ui", UI_BUS,
+        kPayload(["user", (string)user]),
+        NULL_KEY
+    );
+
     logd("Updated UI label to: " + new_label + " and returning to root");
 }
 
@@ -289,12 +343,10 @@ toggle_lock(key user, integer acl_level) {
    ═══════════════════════════════════════════════════════════ */
 
 request_acl_and_toggle(key user) {
-    string msg = llList2Json(JSON_OBJECT, [
-        "type", "acl_query",
-        "avatar", (string)user,
-        "id", PLUGIN_CONTEXT + "_toggle"
-    ]);
-    llMessageLinked(LINK_SET, AUTH_BUS, msg, NULL_KEY);
+    kSend(CONTEXT, "auth", AUTH_BUS,
+        kPayload(["avatar", (string)user]),
+        user
+    );
 }
 
 handle_acl_result(string msg, key expected_user) {
@@ -316,10 +368,20 @@ handle_acl_result(string msg, key expected_user) {
 
 default {
     state_entry() {
+        // Always start with safe defaults (unlocked)
+        // Settings sync will override these immediately if saved state exists
         Locked = FALSE;
-        register_self();
         apply_lock_state();
-        logd("Ready");
+
+        register_self();
+
+        // Request settings from settings module
+        kSend(CONTEXT, "settings", SETTINGS_BUS,
+            kPayload(["get", 1]),
+            NULL_KEY
+        );
+
+        logd("Lock plugin initialized - requested settings");
     }
     
     on_rez(integer start_param) {
@@ -333,92 +395,62 @@ default {
     }
     
     link_message(integer sender, integer num, string msg, key id) {
-        // ===== KERNEL LIFECYCLE =====
-        if (num == KERNEL_LIFECYCLE) {
-            if (!json_has(msg, ["type"])) return;
-            string msg_type = llJsonGetValue(msg, ["type"]);
-            
-            if (msg_type == "register_now") {
-                register_self();
-                return;
-            }
-            
-            if (msg_type == "ping") {
-                send_pong();
-                return;
-            }
+        // Parse kanban message - kRecv validates and sets kFrom, kTo
+        string payload = kRecv(msg, CONTEXT);
+        if (payload == "") return;  // Not for us or invalid
 
-            if (msg_type == "soft_reset" || msg_type == "soft_reset_all") {
-                // Check if this is a targeted reset
-                if (json_has(msg, ["context"])) {
-                    string target_context = llJsonGetValue(msg, ["context"]);
-                    if (target_context != "" && target_context != PLUGIN_CONTEXT) {
-                        return; // Not for us, ignore
-                    }
+        // Route by channel + kFrom + payload structure
+
+        /* ===== KERNEL LIFECYCLE ===== */
+        if (num == KERNEL_LIFECYCLE && kFrom == "kernel") {
+            // Targeted soft_reset: has "context" field
+            if (json_has(payload, ["context"])) {
+                string target_context = llJsonGetValue(payload, ["context"]);
+                if (target_context != "" && target_context != CONTEXT) {
+                    return; // Not for us
                 }
-                // Either no context (broadcast) or matches our context
                 llResetScript();
             }
+            // Soft reset with "reset" marker
+            else if (json_has(payload, ["reset"])) {
+                llResetScript();
+            }
+            // Register now: has "register_now" marker
+            else if (json_has(payload, ["register_now"])) {
+                register_self();
+            }
+            // Ping: has "ping" marker
+            else if (json_has(payload, ["ping"])) {
+                send_pong();
+            }
+        }
 
-            return;
-        }
-        
-        // ===== SETTINGS SYNC/DELTA =====
-        if (num == SETTINGS_BUS) {
-            if (!json_has(msg, ["type"])) return;
-            string msg_type = llJsonGetValue(msg, ["type"]);
-            
-            if (msg_type == "settings_sync") {
-                apply_settings_sync(msg);
-                return;
+        /* ===== SETTINGS BUS ===== */
+        else if (num == SETTINGS_BUS && kFrom == "settings") {
+            // Full sync: has "kv" field
+            if (json_has(payload, ["kv"])) {
+                apply_settings_sync(payload);
             }
-            
-            if (msg_type == "settings_delta") {
-                apply_settings_delta(msg);
-                return;
+            // Delta update: has "op" field
+            else if (json_has(payload, ["op"])) {
+                apply_settings_delta(payload);
             }
-            
-            return;
         }
-        
-        // ===== UI START (TOGGLE ACTION) =====
-        if (num == UI_BUS) {
-            if (!json_has(msg, ["type"])) return;
-            string msg_type = llJsonGetValue(msg, ["type"]);
-            
-            if (msg_type == "start") {
-                if (!json_has(msg, ["context"])) return;
-                if (llJsonGetValue(msg, ["context"]) != PLUGIN_CONTEXT) return;
-                
-                if (id == NULL_KEY) return;
-                
-                // Request ACL and toggle when we get it
+
+        /* ===== UI START (TOGGLE ACTION) ===== */
+        else if (num == UI_BUS) {
+            // UI start: for our context
+            if (kTo == CONTEXT && json_has(payload, ["user"])) {
                 request_acl_and_toggle(id);
-                return;
             }
-            
-            return;
         }
-        
-        // ===== AUTH RESULT =====
-        if (num == AUTH_BUS) {
-            if (!json_has(msg, ["type"])) return;
-            string msg_type = llJsonGetValue(msg, ["type"]);
-            
-            if (msg_type == "acl_result") {
-                // Check if this is our toggle request
-                if (json_has(msg, ["id"])) {
-                    string corr_id = llJsonGetValue(msg, ["id"]);
-                    if (corr_id == PLUGIN_CONTEXT + "_toggle") {
-                        if (!json_has(msg, ["avatar"])) return;
-                        key user = (key)llJsonGetValue(msg, ["avatar"]);
-                        handle_acl_result(msg, user);
-                    }
-                }
-                return;
+
+        /* ===== AUTH RESULT ===== */
+        else if (num == AUTH_BUS && kFrom == "auth") {
+            // ACL result: has "avatar" and "level" fields
+            if (json_has(payload, ["avatar"]) && json_has(payload, ["level"])) {
+                handle_acl_result(payload, id);
             }
-            
-            return;
         }
     }
 }
