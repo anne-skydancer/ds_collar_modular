@@ -1,14 +1,22 @@
 # DS Collar - Next Generation (NG) Branch
 
-## Purpose
+## Version 4.00 - Kanban Messaging System
 
 This directory contains the **next generation** implementation of the DS Collar modular system, featuring the **Kanban messaging architecture**.
+
+### Versioning Scheme
+
+- **v4.00** - Starting version (Kanban messaging system)
+- **Fixes** - No version change (bug fixes, corrections)
+- **Enhancements** - +0.01 increment (4.00 → 4.01)
+- **Major improvements** - +0.1 increment (4.00 → 4.10)
+- **Complete overhauls** - +1.0 increment (4.00 → 5.00)
 
 ## Status
 
 **🚧 Under Development - Not for Production Use**
 
-This is an active migration branch where we are converting from the legacy message format to the new Kanban packet format.
+This is an active migration branch where we are converting from the legacy message format (v3.x) to the new Kanban packet format (v4.00).
 
 ---
 
@@ -119,23 +127,71 @@ kDeltaDel(key, elem)     // Delta LIST_REMOVE operation
 - Feature modules: 5 (ui, remote, leash, particles, bootstrap)
 - Plugins: 15 (bell, owner, blacklist, animate, lock, etc.)
 - External: 2 (HUD, leash holder)
-- Helper: 1 (ds_collar_kanban_universal.lsl) ✅
+- Helper reference: 1 (ds_collar_kanban_universal.lsl) - Used as copy template ✅
+
+**Note**: LSL does not support includes, so the ~500-800 byte helper block is embedded directly in each script.
 
 ---
 
 ## Development Guidelines
 
-### 1. Include the Universal Helper
+### 1. Embed the Kanban Helper Functions
 
-At the top of every script:
+**IMPORTANT**: LSL does not support includes. The Kanban helper functions (~500-800 bytes) must be copied directly into each script.
+
+Add this block near the top of every script (after constants):
+
 ```lsl
-#include "ds_collar_kanban_universal.lsl"
+/* ===== KANBAN MESSAGING HELPERS (v4.00) ===== */
+
+string kFrom = "";
+string kTo = "";
+
+kSend(string from, string to, integer channel, string payload, key k) {
+    llMessageLinked(LINK_SET, channel,
+        llList2Json(JSON_OBJECT, ["from", from, "payload", payload, "to", to]),
+        k
+    );
+}
+
+string kRecv(string msg, string my_context) {
+    if (llGetSubString(msg, 0, 0) != "{") return "";
+    string from = llJsonGetValue(msg, ["from"]);
+    if (from == JSON_INVALID) return "";
+    string to = llJsonGetValue(msg, ["to"]);
+    if (to == JSON_INVALID) return "";
+    if (to != "" && to != my_context) return "";
+    string payload = llJsonGetValue(msg, ["payload"]);
+    if (payload == JSON_INVALID) return "";
+    kFrom = from;
+    kTo = to;
+    return payload;
+}
+
+string kPayload(list kvp) {
+    return llList2Json(JSON_OBJECT, kvp);
+}
+
+string kDeltaSet(string key, string val) {
+    return llList2Json(JSON_OBJECT, ["op", "set", "key", key, "value", val]);
+}
+
+string kDeltaAdd(string key, string elem) {
+    return llList2Json(JSON_OBJECT, ["op", "list_add", "key", key, "elem", elem]);
+}
+
+string kDeltaDel(string key, string elem) {
+    return llList2Json(JSON_OBJECT, ["op", "list_remove", "key", key, "elem", elem]);
+}
+
+/* ===== END KANBAN HELPERS ===== */
 ```
 
-### 2. Define Your Context
+### 2. Define Your Context and Version
 
 ```lsl
-string CONTEXT = "bell";  // Your plugin/module context name
+string CONTEXT = "bell";           // Your plugin/module context name
+string VERSION = "4.00";           // Version number
 ```
 
 ### 3. Send Messages
@@ -196,12 +252,13 @@ See root directory:
 
 | Category | Files | Migrated | % Complete |
 |----------|-------|----------|------------|
-| Helper Library | 1 | 1 | 100% ✅ |
 | Core Modules | 4 | 0 | 0% 🚧 |
 | Feature Modules | 5 | 0 | 0% 🚧 |
 | Plugins | 15 | 0 | 0% 🚧 |
 | External | 2 | 0 | 0% 🚧 |
-| **Total** | **27** | **1** | **4%** |
+| **Total Scripts** | **26** | **0** | **0%** |
+
+**Helper Template**: ds_collar_kanban_universal.lsl available as reference (functions embedded in each script)
 
 ---
 
@@ -209,13 +266,16 @@ See root directory:
 
 When migrating a script:
 
-1. **Copy from stable** (already done - all files present)
-2. **Add Kanban helper include** at top
-3. **Convert all outbound messages** to use `kSend()`
-4. **Convert all inbound parsing** to use `kRecv()`
-5. **Test thoroughly** - all existing functionality must work
-6. **Update migration status** in this README
-7. **Commit with clear message** explaining what was migrated
+1. **Start from stable baseline** (already copied to ng/)
+2. **Update header** - Set version to "4.00", add Kanban note
+3. **Embed Kanban helpers** - Copy the helper block (~500-800 bytes) after constants
+4. **Define CONTEXT** - Add `string CONTEXT = "scriptname";` constant
+5. **Define VERSION** - Add `string VERSION = "4.00";` constant
+6. **Convert all outbound messages** to use `kSend()`
+7. **Convert all inbound parsing** to use `kRecv()`
+8. **Test thoroughly** - all existing functionality must work
+9. **Update migration status** in this README
+10. **Commit with clear message** - "migrate [script] to Kanban v4.00"
 
 ---
 
