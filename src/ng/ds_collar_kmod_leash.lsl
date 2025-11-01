@@ -1078,7 +1078,7 @@ default
         AuthorizedLmController = NULL_KEY;
 
         kSend(CONTEXT, "settings", SETTINGS_BUS,
-            kPayload([]),
+            kPayload(["get", 1]),
             NULL_KEY);
         llSetTimerEvent(FOLLOW_TICK);
         llRequestPermissions(llGetOwner(), PERMISSION_TAKE_CONTROLS);

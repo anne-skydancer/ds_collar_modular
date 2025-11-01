@@ -788,7 +788,7 @@ handle_button(string btn) {
             
             // Trigger soft_reset to reinitialize all plugins
             kSend(CONTEXT, "kernel", KERNEL_LIFECYCLE,
-                kPayload([]),
+                kPayload(["reset", 1]),
                 NULL_KEY
             );
 
@@ -894,7 +894,7 @@ default {
         cleanup();
         register_self();
         kSend(CONTEXT, "settings", SETTINGS_BUS,
-            kPayload([]),
+            kPayload(["get", 1]),
             NULL_KEY
         );
     }

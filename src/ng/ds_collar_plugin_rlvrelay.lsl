@@ -198,7 +198,7 @@ register_self() {
 
 send_pong() {
     kSend(CONTEXT, "kernel", KERNEL_LIFECYCLE,
-        kPayload([]),
+        kPayload(["pong", 1]),
         NULL_KEY
     );
 }
@@ -824,7 +824,7 @@ default
 
         // Request settings
         kSend(CONTEXT, "settings", SETTINGS_BUS,
-            kPayload([]),
+            kPayload(["get", 1]),
             NULL_KEY
         );
     }
