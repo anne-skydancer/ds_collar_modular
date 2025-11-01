@@ -1,5 +1,5 @@
 /* =============================================================================
-   MODULE: ds_collar_kmod_settings.lsl (v2.2 - Security Hardened)
+   MODULE: ds_collar_kmod_settings.lsl (v2.3 - Broadcast Fix)
    SECURITY AUDIT: CRITICAL ISSUES FIXED
 
    ROLE: Persistent key-value store with notecard loading and delta updates
@@ -17,11 +17,19 @@
    - [CRITICAL] Wearer-owner separation enforcement
    - [CRITICAL] TPE-external-owner requirement validation (runtime API)
    - [CRITICAL] TPE-external-owner requirement validation (notecard parsing) v2.2
+   - [CRITICAL] Badge broadcast guard-side removals (v2.3) - Fixes ACL sync issue
    - [MEDIUM] Blacklist guards in notecard parsing
    - [MEDIUM] Multi-owner support in trustee guards
    - [MEDIUM] Multi-owner support in blacklist guards
    - [LOW] Production mode guard for debug
    - [LOW] MaxListLen enforcement in notecard parsing
+
+   v2.3 BROADCAST FIX:
+   Guard functions (apply_owner_set_guard, apply_trustee_add_guard,
+   apply_blacklist_add_guard) now broadcast delta updates for ALL role
+   mutations they perform. This ensures downstream modules (auth, etc.)
+   receive removal deltas when users are promoted/demoted between roles,
+   preventing stale ACL entries that could deny access to promoted users.
    ============================================================================= */
 
 integer DEBUG = FALSE;
@@ -234,72 +242,109 @@ integer is_owner(string who) {
    ═══════════════════════════════════════════════════════════ */
 
 // SECURITY FIX: Returns FALSE if owner add should be rejected
+// BROADCAST FIX: Emits deltas for all guard-side mutations to keep ACL consumers in sync
 integer apply_owner_set_guard(string who) {
     key wearer = llGetOwner();
-    
+
     // CRITICAL: Prevent self-ownership
     if ((key)who == wearer) {
         llOwnerSay("ERROR: Cannot add wearer as owner (role separation required)");
         logd("CRITICAL: Blocked attempt to add wearer as owner");
         return FALSE;
     }
-    
-    // Remove owner from trustees
+
+    // Remove owner from trustees and broadcast the change
     string trustees_arr = kv_get(KEY_TRUSTEES);
     if (is_json_arr(trustees_arr)) {
         list trustees = llJson2List(trustees_arr);
-        trustees = list_remove_all(trustees, who);
-        kv_set_list(KEY_TRUSTEES, trustees);
+        if (llListFindList(trustees, [who]) != -1) {
+            // Only process if actually present
+            trustees = list_remove_all(trustees, who);
+            if (kv_set_list(KEY_TRUSTEES, trustees)) {
+                broadcast_delta_list_remove(KEY_TRUSTEES, who);
+                logd("BROADCAST: Removed " + who + " from trustees (owner promotion)");
+            }
+        }
     }
-    
-    // Remove owner from blacklist
+
+    // Remove owner from blacklist and broadcast the change
     string blacklist_arr = kv_get(KEY_BLACKLIST);
     if (is_json_arr(blacklist_arr)) {
         list blacklist = llJson2List(blacklist_arr);
-        blacklist = list_remove_all(blacklist, who);
-        kv_set_list(KEY_BLACKLIST, blacklist);
+        if (llListFindList(blacklist, [who]) != -1) {
+            // Only process if actually present
+            blacklist = list_remove_all(blacklist, who);
+            if (kv_set_list(KEY_BLACKLIST, blacklist)) {
+                broadcast_delta_list_remove(KEY_BLACKLIST, who);
+                logd("BROADCAST: Removed " + who + " from blacklist (owner promotion)");
+            }
+        }
     }
-    
+
     return TRUE;
 }
 
+// BROADCAST FIX: Emits deltas for blacklist removals to keep ACL consumers in sync
 integer apply_trustee_add_guard(string who) {
     // SECURITY FIX: Can't add owner as trustee (check both modes)
     if (is_owner(who)) {
         logd("WARNING: Cannot add owner as trustee");
         return FALSE;
     }
-    
-    // Remove from blacklist
+
+    // Remove from blacklist and broadcast the change
     string blacklist_arr = kv_get(KEY_BLACKLIST);
     if (is_json_arr(blacklist_arr)) {
         list blacklist = llJson2List(blacklist_arr);
-        blacklist = list_remove_all(blacklist, who);
-        kv_set_list(KEY_BLACKLIST, blacklist);
+        if (llListFindList(blacklist, [who]) != -1) {
+            // Only process if actually present
+            blacklist = list_remove_all(blacklist, who);
+            if (kv_set_list(KEY_BLACKLIST, blacklist)) {
+                broadcast_delta_list_remove(KEY_BLACKLIST, who);
+                logd("BROADCAST: Removed " + who + " from blacklist (trustee promotion)");
+            }
+        }
     }
-    
+
     return TRUE;
 }
 
+// BROADCAST FIX: Emits deltas for all guard-side mutations to keep ACL consumers in sync
 apply_blacklist_add_guard(string who) {
-    // Remove from trustees
+    // Remove from trustees and broadcast the change
     string trustees_arr = kv_get(KEY_TRUSTEES);
     if (is_json_arr(trustees_arr)) {
         list trustees = llJson2List(trustees_arr);
-        trustees = list_remove_all(trustees, who);
-        kv_set_list(KEY_TRUSTEES, trustees);
+        if (llListFindList(trustees, [who]) != -1) {
+            // Only process if actually present
+            trustees = list_remove_all(trustees, who);
+            if (kv_set_list(KEY_TRUSTEES, trustees)) {
+                broadcast_delta_list_remove(KEY_TRUSTEES, who);
+                logd("BROADCAST: Removed " + who + " from trustees (blacklisted)");
+            }
+        }
     }
-    
-    // SECURITY FIX: Clear owner if blacklisted (both modes)
+
+    // SECURITY FIX: Clear single owner if blacklisted and broadcast the change
     string cur_owner = kv_get(KEY_OWNER_KEY);
     if (cur_owner != "" && cur_owner == who) {
-        kv_set_scalar(KEY_OWNER_KEY, (string)NULL_KEY);
-        logd("WARNING: Cleared owner (was blacklisted)");
+        if (kv_set_scalar(KEY_OWNER_KEY, (string)NULL_KEY)) {
+            broadcast_delta_scalar(KEY_OWNER_KEY, (string)NULL_KEY);
+            logd("BROADCAST: Cleared single owner (was blacklisted)");
+        }
     }
-    
-    // Remove from multi-owner list
-    if (kv_list_remove_all(KEY_OWNER_KEYS, who)) {
-        logd("WARNING: Removed owner from multi-owner list (was blacklisted)");
+
+    // Remove from multi-owner list and broadcast the change
+    string owner_keys_arr = kv_get(KEY_OWNER_KEYS);
+    if (is_json_arr(owner_keys_arr)) {
+        list owner_keys = llJson2List(owner_keys_arr);
+        if (llListFindList(owner_keys, [who]) != -1) {
+            // Only process if actually present
+            if (kv_list_remove_all(KEY_OWNER_KEYS, who)) {
+                broadcast_delta_list_remove(KEY_OWNER_KEYS, who);
+                logd("BROADCAST: Removed " + who + " from multi-owner list (blacklisted)");
+            }
+        }
     }
 }
 
