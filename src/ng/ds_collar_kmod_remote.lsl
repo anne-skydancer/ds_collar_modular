@@ -27,7 +27,85 @@
    1. HUD broadcasts collar scan Ã¢â€ â€™ Collar responds with owner UUID
    2. HUD sends ACL query Ã¢â€ â€™ Collar queries AUTH Ã¢â€ â€™ Collar responds with level
    3. HUD sends menu request Ã¢â€ â€™ Collar triggers UI for HUD wearer
+   KANBAN MIGRATION (v3.0):
+   - Uses universal kanban helper (~500-800 bytes)
+   - All messages use standardized {from, payload, to} structure
+   - Routing by channel + kFrom instead of "type" field
    ============================================================================= */
+
+string CONTEXT = "remote";
+
+/* ═══════════════════════════════════════════════════════════
+   KANBAN UNIVERSAL HELPER (~500-800 bytes)
+   ═══════════════════════════════════════════════════════════ */
+
+string kFrom = "";  // Sender context (populated by kRecv)
+string kTo = "";    // Recipient context (populated by kRecv)
+
+kSend(string from, string to, integer channel, string payload, key k) {
+    llMessageLinked(LINK_SET, channel,
+        llList2Json(JSON_OBJECT, [
+            "from", from,
+            "payload", payload,
+            "to", to
+        ]),
+        k
+    );
+}
+
+string kRecv(string msg, string my_context) {
+    // Quick validation: must be JSON object
+    if (llGetSubString(msg, 0, 0) != "{") return "";
+
+    // Extract from
+    string from = llJsonGetValue(msg, ["from"]);
+    if (from == JSON_INVALID) return "";
+
+    // Extract to
+    string to = llJsonGetValue(msg, ["to"]);
+    if (to == JSON_INVALID) return "";
+
+    // Check if for me (broadcast "" or direct to my_context)
+    if (to != "" && to != my_context) return "";
+
+    // Extract payload
+    string payload = llJsonGetValue(msg, ["payload"]);
+    if (payload == JSON_INVALID) return "";
+
+    // Set globals for routing
+    kFrom = from;
+    kTo = to;
+
+    return payload;
+}
+
+string kPayload(list kvp) {
+    return llList2Json(JSON_OBJECT, kvp);
+}
+
+string kDeltaSet(string key, string val) {
+    return llList2Json(JSON_OBJECT, [
+        "op", "set",
+        "key", key,
+        "value", val
+    ]);
+}
+
+string kDeltaAdd(string key, string elem) {
+    return llList2Json(JSON_OBJECT, [
+        "op", "list_add",
+        "key", key,
+        "elem", elem
+    ]);
+}
+
+string kDeltaDel(string key, string elem) {
+    return llList2Json(JSON_OBJECT, [
+        "op", "list_remove",
+        "key", key,
+        "elem", elem
+    ]);
+}
 
 integer DEBUG = TRUE;
 integer PRODUCTION = FALSE;  // Set FALSE for development
@@ -246,13 +324,14 @@ remove_pending_query(key hud_wearer) {
    ═══════════════════════════════════════════════════════════ */
 
 request_internal_acl(key avatar_key) {
-    string msg = llList2Json(JSON_OBJECT, [
-        "type", "acl_query",
-        "avatar", (string)avatar_key,
-        "id", "remote_" + (string)avatar_key
-    ]);
-    
-    llMessageLinked(LINK_SET, AUTH_BUS, msg, NULL_KEY);
+    // Kanban: Send ACL query to auth module
+    kSend(CONTEXT, "auth", AUTH_BUS,
+        kPayload([
+            "avatar", (string)avatar_key,
+            "id", "remote_" + (string)avatar_key
+        ]),
+        NULL_KEY
+    );
     logd("Requested internal ACL for " + llKey2Name(avatar_key));
 }
 
@@ -274,14 +353,12 @@ send_external_acl_response(key hud_wearer, integer level) {
    ═══════════════════════════════════════════════════════════ */
 
 trigger_menu_for_external_user(key user_key, string context) {
-    // Send start message to UI module with external user
-    string msg = llList2Json(JSON_OBJECT, [
-        "type", "start",
-        "context", context
-    ]);
-
+    // Kanban: Send start command to UI module
     // Pass the external user's key as the id parameter
-    llMessageLinked(LINK_SET, UI_BUS, msg, user_key);
+    kSend(CONTEXT, "ui", UI_BUS,
+        kPayload(["context", context]),
+        user_key
+    );
 
     logd("Triggered " + context + " menu for external user: " + llKey2Name(user_key));
 }
@@ -497,13 +574,16 @@ default {
     }
     
     link_message(integer sender_num, integer num, string str, key id) {
-        if (!json_has(str, ["type"])) return;
+        // Parse kanban message - kRecv validates and sets kFrom, kTo
+        string payload = kRecv(str, CONTEXT);
+        if (payload == "") return;  // Not for us or invalid
 
-        string msg_type = llJsonGetValue(str, ["type"]);
+        // Route by channel + sender (kFrom) + payload structure
 
         /* ===== KERNEL LIFECYCLE ===== */
         if (num == KERNEL_LIFECYCLE) {
-            if (msg_type == "soft_reset" || msg_type == "soft_reset_all") {
+            // Soft reset: has "reset" marker
+            if (json_has(payload, ["reset"])) {
                 llResetScript();
             }
             return;
@@ -511,17 +591,16 @@ default {
 
         // Handle ACL result from AUTH module
         if (num == AUTH_BUS) {
-            if (msg_type != "acl_result") return;
-            
-            // Extract ACL information
-            if (!json_has(str, ["avatar"])) return;
-            
-            key avatar_key = (key)llJsonGetValue(str, ["avatar"]);
-            
+            // ACL result: has "avatar" and "level" fields from auth module
+            if (kFrom != "auth") return;
+            if (!json_has(payload, ["avatar"])) return;
+
+            key avatar_key = (key)llJsonGetValue(payload, ["avatar"]);
+
             // Extract ACL level
             integer level = 0;
-            if (json_has(str, ["level"])) {
-                level = (integer)llJsonGetValue(str, ["level"]);
+            if (json_has(payload, ["level"])) {
+                level = (integer)llJsonGetValue(payload, ["level"]);
             }
             
             // Check if this is a menu request ACL verification
