@@ -39,6 +39,56 @@
    - 950: Dialog system
    =============================================================== */
 
+string CONTEXT = "core_leash";
+
+/* ═══════════════════════════════════════════════════════════
+   KANBAN UNIVERSAL HELPER (~500-800 bytes)
+   ═══════════════════════════════════════════════════════════ */
+
+string kFrom = "";  // Sender context (populated by kRecv)
+string kTo = "";    // Recipient context (populated by kRecv)
+
+kSend(string from, string to, integer channel, string payload, key k) {
+    llMessageLinked(LINK_SET, channel,
+        llList2Json(JSON_OBJECT, [
+            "from", from,
+            "payload", payload,
+            "to", to
+        ]),
+        k
+    );
+}
+
+string kRecv(string msg, string my_context) {
+    // Quick validation: must be JSON object
+    if (llGetSubString(msg, 0, 0) != "{") return "";
+
+    // Extract from
+    string from = llJsonGetValue(msg, ["from"]);
+    if (from == JSON_INVALID) return "";
+
+    // Extract to
+    string to = llJsonGetValue(msg, ["to"]);
+    if (to == JSON_INVALID) return "";
+
+    // Check if for me (broadcast "" or direct to my_context)
+    if (to != "" && to != my_context) return "";
+
+    // Extract payload
+    string payload = llJsonGetValue(msg, ["payload"]);
+    if (payload == JSON_INVALID) return "";
+
+    // Set globals for routing
+    kFrom = from;
+    kTo = to;
+
+    return payload;
+}
+
+string kPayload(list kvp) {
+    return llList2Json(JSON_OBJECT, kvp);
+}
+
 integer DEBUG = FALSE;
 integer KERNEL_LIFECYCLE = 500;
 integer AUTH_BUS = 700;
@@ -107,44 +157,50 @@ integer inAllowedList(integer level, list allowed) {
 showMenu(string context, string title, string body, list buttons) {
     SessionId = generateSessionId();
     MenuContext = context;
-    
-    llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
-        "type", "dialog_open",
-        "session_id", SessionId,
-        "user", (string)CurrentUser,
-        "title", title,
-        "body", body,
-        "buttons", llList2Json(JSON_ARRAY, buttons),
-        "timeout", 60
-    ]), NULL_KEY);
+
+    kSend(CONTEXT, "dialogs", DIALOG_BUS,
+        kPayload([
+            "session_id", SessionId,
+            "user", (string)CurrentUser,
+            "title", title,
+            "body", body,
+            "buttons", llList2Json(JSON_ARRAY, buttons),
+            "timeout", 60
+        ]),
+        NULL_KEY
+    );
 }
 
 // ===== ACL QUERIES =====
 requestAcl(key user) {
     AclPending = TRUE;
-    llMessageLinked(LINK_SET, AUTH_BUS, llList2Json(JSON_OBJECT, [
-        "type", "acl_query",
-        "avatar", (string)user
-    ]), user);
+    kSend(CONTEXT, "auth", AUTH_BUS,
+        kPayload([
+            "avatar", (string)user
+        ]),
+        user
+    );
     logd("ACL query sent for " + llKey2Name(user));
 }
 
 // ===== PLUGIN REGISTRATION =====
 registerSelf() {
-    llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
-        "type", "register",
-        "context", PLUGIN_CONTEXT,
-        "label", PLUGIN_LABEL,
-        "min_acl", PLUGIN_MIN_ACL,
-        "script", llGetScriptName()
-    ]), NULL_KEY);
+    kSend(CONTEXT, "kernel", KERNEL_LIFECYCLE,
+        kPayload([
+            "context", PLUGIN_CONTEXT,
+            "label", PLUGIN_LABEL,
+            "min_acl", PLUGIN_MIN_ACL,
+            "script", llGetScriptName()
+        ]),
+        NULL_KEY
+    );
 }
 
 sendPong() {
-    llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
-        "type", "pong",
-        "context", PLUGIN_CONTEXT
-    ]), NULL_KEY);
+    kSend(CONTEXT, "kernel", KERNEL_LIFECYCLE,
+        kPayload([]),
+        NULL_KEY
+    );
 }
 
 // ===== MENU SYSTEM =====
@@ -352,33 +408,37 @@ showOfferDialog(key target, key originator) {
     OfferDialogSession = generateSessionId();
     OfferTarget = target;
     OfferOriginator = originator;
-    
+
     string offerer_name = llKey2Name(originator);
     key wearer = llGetOwner();
     string wearer_name = llKey2Name(wearer);
-    
-    llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
-        "type", "dialog_open",
-        "session_id", OfferDialogSession,
-        "user", (string)target,
-        "title", "Leash Offer",
-        "body", offerer_name + " (" + wearer_name + ") is offering you their leash.",
-        "buttons", llList2Json(JSON_ARRAY, ["Accept", "Decline"]),
-        "timeout", 60
-    ]), NULL_KEY);
-    
+
+    kSend(CONTEXT, "dialogs", DIALOG_BUS,
+        kPayload([
+            "session_id", OfferDialogSession,
+            "user", (string)target,
+            "title", "Leash Offer",
+            "body", offerer_name + " (" + wearer_name + ") is offering you their leash.",
+            "buttons", llList2Json(JSON_ARRAY, ["Accept", "Decline"]),
+            "timeout", 60
+        ]),
+        NULL_KEY
+    );
+
     logd("Offer dialog shown to " + llKey2Name(target) + " from " + offerer_name);
 }
 
 handleOfferResponse(string button) {
     if (button == "Accept") {
         // Send grab action to kernel with target as leasher
-        llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
-            "type", "leash_action",
-            "action", "grab",
-            "acl_verified", "1"
-        ]), OfferTarget);
-        
+        kSend(CONTEXT, "leash", UI_BUS,
+            kPayload([
+                "action", "grab",
+                "acl_verified", "1"
+            ]),
+            OfferTarget
+        );
+
         llRegionSayTo(OfferOriginator, 0, llKey2Name(OfferTarget) + " accepted your leash offer.");
         logd("Offer accepted by " + llKey2Name(OfferTarget));
     }
@@ -427,29 +487,35 @@ giveHolderObject() {
 
 
 sendLeashAction(string action) {
-    llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
-        "type", "leash_action",
-        "action", action,
-        "acl_verified", "1"
-    ]), CurrentUser);
+    kSend(CONTEXT, "leash", UI_BUS,
+        kPayload([
+            "action", action,
+            "acl_verified", "1"
+        ]),
+        CurrentUser
+    );
 }
 
 sendLeashActionWithTarget(string action, key target) {
-    llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
-        "type", "leash_action",
-        "action", action,
-        "target", (string)target,
-        "acl_verified", "1"
-    ]), CurrentUser);
+    kSend(CONTEXT, "leash", UI_BUS,
+        kPayload([
+            "action", action,
+            "target", (string)target,
+            "acl_verified", "1"
+        ]),
+        CurrentUser
+    );
 }
 
 sendSetLength(integer length) {
-    llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
-        "type", "leash_action",
-        "action", "set_length",
-        "length", (string)length,
-        "acl_verified", "1"
-    ]), CurrentUser);
+    kSend(CONTEXT, "leash", UI_BUS,
+        kPayload([
+            "action", "set_length",
+            "length", (string)length,
+            "acl_verified", "1"
+        ]),
+        CurrentUser
+    );
 }
 
 // ===== BUTTON HANDLERS =====
@@ -656,10 +722,12 @@ handleButtonClick(string button) {
 
 // ===== NAVIGATION =====
 returnToRoot() {
-    llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
-        "type", "return",
-        "user", (string)CurrentUser
-    ]), NULL_KEY);
+    kSend(CONTEXT, "ui", UI_BUS,
+        kPayload([
+            "user", (string)CurrentUser
+        ]),
+        NULL_KEY
+    );
     cleanupSession();
 }
 
@@ -677,10 +745,12 @@ cleanupSession() {
 }
 
 queryState() {
-    llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
-        "type", "leash_action",
-        "action", "query_state"
-    ]), NULL_KEY);
+    kSend(CONTEXT, "leash", UI_BUS,
+        kPayload([
+            "action", "query_state"
+        ]),
+        NULL_KEY
+    );
 }
 
 // Schedule a state query after brief delay, then show specified menu
@@ -722,51 +792,48 @@ default
     }
 
     link_message(integer sender, integer num, string msg, key id) {
-        if (num == KERNEL_LIFECYCLE) {
-            if (!jsonHas(msg, ["type"])) return;
-            string msg_type = llJsonGetValue(msg, ["type"]);
-            
-            if (msg_type == "register_now") {
-                registerSelf();
-                return;
-            }
-            if (msg_type == "ping") {
+        string payload = kRecv(msg, CONTEXT);
+        if (payload == "") return;  // Not for me or invalid
+
+        // Route by channel + kFrom (global set by kRecv)
+        if (num == KERNEL_LIFECYCLE && kFrom == "kernel") {
+            if (jsonHas(payload, ["ping_count"])) {
+                // This is a ping (has ping_count field)
                 sendPong();
-                return;
             }
-            return;
+            else {
+                // This is register_now (empty payload or other fields)
+                registerSelf();
+            }
         }
-        
-        if (num == UI_BUS) {
-            if (!jsonHas(msg, ["type"])) return;
-            string msg_type = llJsonGetValue(msg, ["type"]);
-            
-            if (msg_type == "start") {
-                if (!jsonHas(msg, ["context"])) return;
-                if (llJsonGetValue(msg, ["context"]) != PLUGIN_CONTEXT) return;
-                CurrentUser = id;
-                requestAcl(id);
-                return;
+        else if (num == UI_BUS && kFrom == "ui") {
+            if (jsonHas(payload, ["context"])) {
+                // This is "start" message
+                if (llJsonGetValue(payload, ["context"]) == PLUGIN_CONTEXT) {
+                    CurrentUser = id;
+                    requestAcl(id);
+                }
             }
-            
-            if (msg_type == "leash_state") {
-                if (jsonHas(msg, ["leashed"])) {
-                    Leashed = (integer)llJsonGetValue(msg, ["leashed"]);
+        }
+        else if (num == UI_BUS && kFrom == "leash") {
+            // leash_state or offer_pending messages from leash kernel module
+            if (jsonHas(payload, ["leashed"])) {
+                // This is leash_state message
+                Leashed = (integer)llJsonGetValue(payload, ["leashed"]);
+                if (jsonHas(payload, ["leasher"])) {
+                    Leasher = (key)llJsonGetValue(payload, ["leasher"]);
                 }
-                if (jsonHas(msg, ["leasher"])) {
-                    Leasher = (key)llJsonGetValue(msg, ["leasher"]);
+                if (jsonHas(payload, ["length"])) {
+                    LeashLength = (integer)llJsonGetValue(payload, ["length"]);
                 }
-                if (jsonHas(msg, ["length"])) {
-                    LeashLength = (integer)llJsonGetValue(msg, ["length"]);
+                if (jsonHas(payload, ["turnto"])) {
+                    TurnToFace = (integer)llJsonGetValue(payload, ["turnto"]);
                 }
-                if (jsonHas(msg, ["turnto"])) {
-                    TurnToFace = (integer)llJsonGetValue(msg, ["turnto"]);
+                if (jsonHas(payload, ["mode"])) {
+                    LeashMode = (integer)llJsonGetValue(payload, ["mode"]);
                 }
-                if (jsonHas(msg, ["mode"])) {
-                    LeashMode = (integer)llJsonGetValue(msg, ["mode"]);
-                }
-                if (jsonHas(msg, ["target"])) {
-                    LeashTarget = (key)llJsonGetValue(msg, ["target"]);
+                if (jsonHas(payload, ["target"])) {
+                    LeashTarget = (key)llJsonGetValue(payload, ["target"]);
                 }
                 logd("State synced");
 
@@ -786,80 +853,56 @@ default
                     }
                     logd("Showed pending menu: " + menu_to_show);
                 }
-                return;
             }
-            
-            if (msg_type == "offer_pending") {
-                if (!jsonHas(msg, ["target"]) || !jsonHas(msg, ["originator"])) return;
-                key target = (key)llJsonGetValue(msg, ["target"]);
-                key originator = (key)llJsonGetValue(msg, ["originator"]);
+            else if (jsonHas(payload, ["target"]) && jsonHas(payload, ["originator"])) {
+                // This is offer_pending message
+                key target = (key)llJsonGetValue(payload, ["target"]);
+                key originator = (key)llJsonGetValue(payload, ["originator"]);
                 showOfferDialog(target, originator);
-                return;
             }
         }
-        
-        if (num == AUTH_BUS) {
-            if (!jsonHas(msg, ["type"])) return;
-            string msg_type = llJsonGetValue(msg, ["type"]);
-            
-            if (msg_type == "acl_result") {
-                if (!AclPending) return;
-                if (!jsonHas(msg, ["avatar"])) return;
-                
-                key avatar = (key)llJsonGetValue(msg, ["avatar"]);
-                if (avatar != CurrentUser) return;
-                
-                if (jsonHas(msg, ["level"])) {
-                    UserAcl = (integer)llJsonGetValue(msg, ["level"]);
-                    AclPending = FALSE;
-                    scheduleStateQuery("main");
-                    logd("ACL received: " + (string)UserAcl + " for " + llKey2Name(avatar));
-                }
-                return;
+        else if (num == AUTH_BUS && kFrom == "auth") {
+            if (!AclPending) return;
+            if (!jsonHas(payload, ["avatar"])) return;
+
+            key avatar = (key)llJsonGetValue(payload, ["avatar"]);
+            if (avatar != CurrentUser) return;
+
+            if (jsonHas(payload, ["level"])) {
+                UserAcl = (integer)llJsonGetValue(payload, ["level"]);
+                AclPending = FALSE;
+                scheduleStateQuery("main");
+                logd("ACL received: " + (string)UserAcl + " for " + llKey2Name(avatar));
             }
-            return;
         }
-        
-        if (num == DIALOG_BUS) {
-            if (!jsonHas(msg, ["type"])) return;
-            string msg_type = llJsonGetValue(msg, ["type"]);
-            
-            if (msg_type == "dialog_response") {
-                if (!jsonHas(msg, ["session_id"]) || !jsonHas(msg, ["button"])) return;
-                
-                string response_session = llJsonGetValue(msg, ["session_id"]);
-                string button = llJsonGetValue(msg, ["button"]);
-                
-                // Check if this is an offer dialog response
-                if (response_session == OfferDialogSession) {
-                    handleOfferResponse(button);
-                    return;
+        else if (num == DIALOG_BUS && kFrom == "dialogs") {
+            if (!jsonHas(payload, ["session_id"])) return;
+
+            string response_session = llJsonGetValue(payload, ["session_id"]);
+
+            // Check if this is an offer dialog
+            if (response_session == OfferDialogSession) {
+                if (jsonHas(payload, ["button"])) {
+                    // Offer dialog response
+                    handleOfferResponse(llJsonGetValue(payload, ["button"]));
                 }
-                
-                // Otherwise handle menu dialog response
-                if (response_session != SessionId) return;
-                handleButtonClick(button);
-                return;
-            }
-            
-            if (msg_type == "dialog_timeout") {
-                if (!jsonHas(msg, ["session_id"])) return;
-                
-                string timeout_session = llJsonGetValue(msg, ["session_id"]);
-                
-                // Check if this is an offer dialog timeout
-                if (timeout_session == OfferDialogSession) {
+                else {
+                    // Offer dialog timeout
                     cleanupOfferDialog();
-                    return;
                 }
-                
-                // Otherwise handle menu dialog timeout
-                if (timeout_session != SessionId) return;
-                logd("Dialog timeout");
-                cleanupSession();
-                return;
             }
-            return;
+            // Check if this is a menu dialog
+            else if (response_session == SessionId) {
+                if (jsonHas(payload, ["button"])) {
+                    // Menu dialog response
+                    handleButtonClick(llJsonGetValue(payload, ["button"]));
+                }
+                else {
+                    // Menu dialog timeout
+                    logd("Dialog timeout");
+                    cleanupSession();
+                }
+            }
         }
     }
     
