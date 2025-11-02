@@ -288,8 +288,8 @@ stop_rlv_probe() {
    ═══════════════════════════════════════════════════════════ */
 
 request_settings() {
-    // Kanban: Send settings_get request (empty payload with request marker)
-    kSend(CONTEXT, "settings", SETTINGS_BUS, kPayload(["request", "get"]), NULL_KEY);
+    // Kanban: Send settings_get request with explicit marker
+    kSend(CONTEXT, "settings", SETTINGS_BUS, kPayload(["get", 1]), NULL_KEY);
     logd("Requested settings");
 }
 

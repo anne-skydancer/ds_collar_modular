@@ -833,8 +833,8 @@ default
         string payload = kRecv(msg, CONTEXT);
         if (payload == "") return;  // Not for us or invalid
 
-        // Settings get: typically empty payload or minimal
-        if (payload == "{}" || payload == "") {
+        // Settings get: has "get" marker
+        if (json_has(payload, ["get"])) {
             handle_settings_get();
         }
         // Set: has "key" and ("value" or "values")
@@ -842,15 +842,15 @@ default
                  (json_has(payload, ["value"]) || json_has(payload, ["values"]))) {
             handle_set(payload);
         }
-        // List add: has "key" and "elem"
+        // List operations: has "key" and "elem" (distinguish by "op" field)
         else if (json_has(payload, ["key"]) && json_has(payload, ["elem"])) {
-            // Distinguish between list_add and list_remove by checking for "add" marker
-            // Or by convention: if no "remove" marker, assume add
-            if (json_has(payload, ["remove"])) {
+            string op = llJsonGetValue(payload, ["op"]);
+            if (op == "list_remove") {
                 handle_list_remove(payload);
-            } else {
+            } else if (op == "list_add") {
                 handle_list_add(payload);
             }
+            // else: ignore unknown op for strict Kanban compliance
         }
     }
 }

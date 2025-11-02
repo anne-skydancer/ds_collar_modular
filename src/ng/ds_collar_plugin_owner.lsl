@@ -237,7 +237,7 @@ register_self() {
 
 send_pong() {
     kSend(CONTEXT, "kernel", KERNEL_LIFECYCLE,
-        kPayload([]),
+        kPayload(["pong", 1]),
         NULL_KEY
     );
 }
@@ -788,7 +788,7 @@ handle_button(string btn) {
             
             // Trigger soft_reset to reinitialize all plugins
             kSend(CONTEXT, "kernel", KERNEL_LIFECYCLE,
-                kPayload([]),
+                kPayload(["reset", 1]),
                 NULL_KEY
             );
 
@@ -894,7 +894,7 @@ default {
         cleanup();
         register_self();
         kSend(CONTEXT, "settings", SETTINGS_BUS,
-            kPayload([]),
+            kPayload(["get", 1]),
             NULL_KEY
         );
     }
@@ -913,22 +913,25 @@ default {
 
         // Route by channel + kFrom (global set by kRecv)
         if (num == KERNEL_LIFECYCLE && kFrom == "kernel") {
-            // Detect register_now by presence of specific field
+            // Targeted soft_reset: has "context" field
             if (json_has(payload, ["context"])) {
-                // This is a targeted soft_reset
                 string target_context = llJsonGetValue(payload, ["context"]);
                 if (target_context != "" && target_context != PLUGIN_CONTEXT) {
                     return; // Not for us
                 }
                 llResetScript();
             }
-            else if (json_has(payload, ["ping_count"])) {
-                // This is a ping (has ping_count field)
-                send_pong();
+            // Soft reset with "reset" marker
+            else if (json_has(payload, ["reset"])) {
+                llResetScript();
             }
-            else {
-                // This is register_now (empty payload or other fields)
+            // Register now: has "register_now" marker
+            else if (json_has(payload, ["register_now"])) {
                 register_self();
+            }
+            // Ping: has "ping" marker
+            else if (json_has(payload, ["ping"])) {
+                send_pong();
             }
         }
         else if (num == SETTINGS_BUS && kFrom == "settings") {

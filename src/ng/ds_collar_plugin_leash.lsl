@@ -198,7 +198,7 @@ registerSelf() {
 
 sendPong() {
     kSend(CONTEXT, "kernel", KERNEL_LIFECYCLE,
-        kPayload([]),
+        kPayload(["pong", 1]),
         NULL_KEY
     );
 }

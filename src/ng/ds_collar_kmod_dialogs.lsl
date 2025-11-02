@@ -163,14 +163,13 @@ prune_expired_sessions() {
         integer timeout = llList2Integer(Sessions, i + SESSION_TIMEOUT);
 
         if (timeout > 0 && now_unix >= timeout) {
-            // Session expired, send timeout message
+            // Session expired, send timeout message (no "button" field = timeout)
             string session_id = llList2String(Sessions, i + SESSION_ID);
             key user = llList2Key(Sessions, i + SESSION_USER);
 
             string payload = kPayload([
                 "session_id", session_id,
-                "user", (string)user,
-                "timeout", 1
+                "user", (string)user
             ]);
             kSend(CONTEXT, "", DIALOG_BUS, payload, NULL_KEY);
 

@@ -1078,7 +1078,7 @@ default
         AuthorizedLmController = NULL_KEY;
 
         kSend(CONTEXT, "settings", SETTINGS_BUS,
-            kPayload([]),
+            kPayload(["get", 1]),
             NULL_KEY);
         llSetTimerEvent(FOLLOW_TICK);
         llRequestPermissions(llGetOwner(), PERMISSION_TAKE_CONTROLS);
@@ -1154,8 +1154,8 @@ default
                 return;
             }
 
-            // Lockmeister grabbed: has "controller" and "grabbed" marker
-            if (json_has(payload, ["controller"]) && json_has(payload, ["grabbed"])) {
+            // Lockmeister grabbed: has "controller" and "prim" fields
+            if (json_has(payload, ["controller"]) && json_has(payload, ["prim"])) {
                 key controller = (key)llJsonGetValue(payload, ["controller"]);
                 if (controller == NULL_KEY) return;
 
@@ -1178,8 +1178,8 @@ default
                 return;
             }
 
-            // Lockmeister released: has "released" marker
-            if (json_has(payload, ["released"])) {
+            // Lockmeister released: has "lm_released" marker from particles module
+            if (json_has(payload, ["lm_released"])) {
                 if (Leashed) {
                     key old_leasher = Leasher;
                     Leashed = FALSE;

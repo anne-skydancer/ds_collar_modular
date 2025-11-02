@@ -193,7 +193,7 @@ kSend("bell", "kernel", 500,
 
 // Heartbeat (pong)
 kSend("bell", "kernel", 500,
-    kPayload([]),  // Empty payload
+    kPayload(["pong", 1]),
     NULL_KEY
 );
 
@@ -205,7 +205,7 @@ kSend("bell", "auth", 700,
 
 // Settings request
 kSend("bell", "settings", 800,
-    kPayload([]),
+    kPayload(["get", 1]),
     NULL_KEY
 );
 

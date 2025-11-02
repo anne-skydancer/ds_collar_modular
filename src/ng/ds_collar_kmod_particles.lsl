@@ -224,8 +224,8 @@ handle_lm_message(key id, string msg) {
             // Clear particles
             render_chain_particles(NULL_KEY);
 
-            // Notify leash plugin
-            kSend(CONTEXT, "", UI_BUS, kPayload([]), NULL_KEY);
+            // Notify leash plugin of Lockmeister release
+            kSend(CONTEXT, "", UI_BUS, kPayload(["lm_released", 1]), NULL_KEY);
             
             // Stop timer if no other source active
             if (SourcePlugin == "lockmeister" || SourcePlugin == "") {
@@ -632,8 +632,8 @@ default
                     LmAuthorized = FALSE;
                     close_lm_listen();
 
-                    // Notify leash plugin
-                    kSend(CONTEXT, "", UI_BUS, kPayload([]), NULL_KEY);
+                    // Notify leash plugin of Lockmeister release
+                    kSend(CONTEXT, "", UI_BUS, kPayload(["lm_released", 1]), NULL_KEY);
                 }
                 
                 // Always cleanup when target is lost

@@ -712,7 +712,7 @@ default
 
         // Request settings
         kSend(CONTEXT, "settings", SETTINGS_BUS,
-            kPayload([]),
+            kPayload(["get", 1]),
             NULL_KEY
         );
     }
