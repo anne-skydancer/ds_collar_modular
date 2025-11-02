@@ -173,11 +173,15 @@ list ALLOWED_ACL_OFFER = [2];             // Owned wearer only (when not current
 list ALLOWED_ACL_COFFLE = [3, 5];         // Trustee, Owner only
 list ALLOWED_ACL_POST = [1, 3, 5];        // Public, Trustee, Owner
 
-// NOTE: Modes removed - using implicit state detection
-// State is determined by LeashTarget and CoffleTargetAvatar values:
+// NOTE: Mode constants removed - state is now implicitly determined by LeashTarget and CoffleTargetAvatar values:
 //   - LeashTarget == NULL_KEY: Avatar mode (following Leasher or HolderTarget)
 //   - LeashTarget != NULL_KEY && CoffleTargetAvatar != NULL_KEY: Coffle mode
 //   - LeashTarget != NULL_KEY && CoffleTargetAvatar == NULL_KEY: Post mode
+
+// Display mode constants (for UI broadcast only)
+integer DISPLAY_MODE_AVATAR = 0;
+integer DISPLAY_MODE_COFFLE = 1;
+integer DISPLAY_MODE_POST = 2;
 
 // Settings keys
 string KEY_LEASHED = "leashed";
@@ -785,12 +789,12 @@ applySettingsDelta(string payload) {
 // ===== STATE BROADCAST =====
 broadcastState() {
     // Calculate implicit mode for UI display
-    integer display_mode = 0;  // 0=avatar, 1=coffle, 2=post
+    integer display_mode = DISPLAY_MODE_AVATAR;
     if (LeashTarget != NULL_KEY) {
         if (CoffleTargetAvatar != NULL_KEY) {
-            display_mode = 1;  // Coffle
+            display_mode = DISPLAY_MODE_COFFLE;
         } else {
-            display_mode = 2;  // Post
+            display_mode = DISPLAY_MODE_POST;
         }
     }
 
@@ -1095,8 +1099,8 @@ default
         // Memory diagnostics
         integer used = llGetUsedMemory();
         integer free = llGetFreeMemory();
-        llOwnerSay("Leash kmod ready (v2.0) - Memory: " + (string)used + " used, " + (string)free + " free");
-        logd("Leash kmod ready (v2.0 MULTI-MODE)");
+        llOwnerSay("Leash kmod ready (v3.0 UNIFIED TETHER) - Memory: " + (string)used + " used, " + (string)free + " free");
+        logd("Leash kmod ready (v3.0 UNIFIED TETHER)");
     }
     
     on_rez(integer start_param) {
