@@ -163,8 +163,6 @@ integer UI_BUS = 900;
 integer LEASH_CHAN_LM = -8888;
 integer LEASH_CHAN_DS = -192837465;
 
-string PLUGIN_CONTEXT = "core_leash";
-
 // ACL definitions for leash operations
 list ALLOWED_ACL_GRAB = [1, 3, 4, 5];     // Public, Trustee, Unowned, Owner
 list ALLOWED_ACL_SETTINGS = [3, 4, 5];    // Trustee, Unowned, Owner
@@ -174,14 +172,9 @@ list ALLOWED_ACL_COFFLE = [3, 5];         // Trustee, Owner only
 list ALLOWED_ACL_POST = [1, 3, 5];        // Public, Trustee, Owner
 
 // NOTE: Mode constants removed - state is now implicitly determined by LeashTarget and CoffleTargetAvatar values:
-//   - LeashTarget == NULL_KEY: Avatar mode (following Leasher or HolderTarget)
-//   - LeashTarget != NULL_KEY && CoffleTargetAvatar != NULL_KEY: Coffle mode
-//   - LeashTarget != NULL_KEY && CoffleTargetAvatar == NULL_KEY: Post mode
-
-// Display mode constants (for UI broadcast only)
-integer DISPLAY_MODE_AVATAR = 0;
-integer DISPLAY_MODE_COFFLE = 1;
-integer DISPLAY_MODE_POST = 2;
+//   - LeashTarget == NULL_KEY: Avatar mode (0, following Leasher or HolderTarget)
+//   - LeashTarget != NULL_KEY && CoffleTargetAvatar != NULL_KEY: Coffle mode (1)
+//   - LeashTarget != NULL_KEY && CoffleTargetAvatar == NULL_KEY: Post mode (2)
 
 // Settings keys
 string KEY_LEASHED = "leashed";
@@ -281,14 +274,14 @@ setParticlesState(integer active, key target) {
         kSend(CONTEXT, "particles", UI_BUS,
             kPayload([
                 "start", 1,
-                "source", PLUGIN_CONTEXT,
+                "source", "core_leash",
                 "target", (string)target,
                 "style", "chain"
             ]),
             NULL_KEY);
     } else {
         kSend(CONTEXT, "particles", UI_BUS,
-            kPayload(["stop", 1, "source", PLUGIN_CONTEXT]),
+            kPayload(["stop", 1, "source", "core_leash"]),
             NULL_KEY);
     }
 }
@@ -739,13 +732,13 @@ deferBroadcastState() {
 }
 
 broadcastState() {
-    // Calculate implicit mode for UI display
-    integer display_mode = DISPLAY_MODE_AVATAR;
+    // Calculate implicit mode for UI display (0=avatar, 1=coffle, 2=post)
+    integer display_mode = 0;
     if (LeashTarget != NULL_KEY) {
         if (CoffleTargetAvatar != NULL_KEY) {
-            display_mode = DISPLAY_MODE_COFFLE;
+            display_mode = 1;
         } else {
-            display_mode = DISPLAY_MODE_POST;
+            display_mode = 2;
         }
     }
 
