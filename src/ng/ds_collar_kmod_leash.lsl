@@ -163,8 +163,6 @@ integer UI_BUS = 900;
 integer LEASH_CHAN_LM = -8888;
 integer LEASH_CHAN_DS = -192837465;
 
-string PLUGIN_CONTEXT = "core_leash";
-
 // ACL definitions for leash operations
 list ALLOWED_ACL_GRAB = [1, 3, 4, 5];     // Public, Trustee, Unowned, Owner
 list ALLOWED_ACL_SETTINGS = [3, 4, 5];    // Trustee, Unowned, Owner
@@ -174,14 +172,9 @@ list ALLOWED_ACL_COFFLE = [3, 5];         // Trustee, Owner only
 list ALLOWED_ACL_POST = [1, 3, 5];        // Public, Trustee, Owner
 
 // NOTE: Mode constants removed - state is now implicitly determined by LeashTarget and CoffleTargetAvatar values:
-//   - LeashTarget == NULL_KEY: Avatar mode (following Leasher or HolderTarget)
-//   - LeashTarget != NULL_KEY && CoffleTargetAvatar != NULL_KEY: Coffle mode
-//   - LeashTarget != NULL_KEY && CoffleTargetAvatar == NULL_KEY: Post mode
-
-// Display mode constants (for UI broadcast only)
-integer DISPLAY_MODE_AVATAR = 0;
-integer DISPLAY_MODE_COFFLE = 1;
-integer DISPLAY_MODE_POST = 2;
+//   - LeashTarget == NULL_KEY: Avatar mode (0, following Leasher or HolderTarget)
+//   - LeashTarget != NULL_KEY && CoffleTargetAvatar != NULL_KEY: Coffle mode (1)
+//   - LeashTarget != NULL_KEY && CoffleTargetAvatar == NULL_KEY: Post mode (2)
 
 // Settings keys
 string KEY_LEASHED = "leashed";
@@ -207,20 +200,12 @@ integer ControlsOk = FALSE;
 float LastTurnAngle = -999.0;
 float TURN_THRESHOLD = 0.1;  // ~5.7 degrees
 
-// Holder protocol state machine (IMPROVED)
-integer HOLDER_STATE_IDLE = 0;
-integer HOLDER_STATE_DS_PHASE = 1;
-integer HOLDER_STATE_OC_PHASE = 2;
-integer HOLDER_STATE_COMPLETE = 4;
-
-integer HolderState = 0;
-integer HolderPhaseStart = 0;
+// Holder protocol - tick based (0=idle, 1-4=DS phase, 5-8=OC phase, 9+=done, -1=success)
+integer HolderTick = 0;
 integer HolderListen = 0;
 integer HolderListenOC = 0;
 key HolderTarget = NULL_KEY;
 integer HolderSession = 0;
-float DS_PHASE_DURATION = 2.0;   // 2 seconds for DS native
-float OC_PHASE_DURATION = 2.0;   // 2 seconds for OC
 
 // Offsim detection & auto-reclip (IMPROVED)
 integer OffsimDetected = FALSE;
@@ -246,6 +231,9 @@ key AuthorizedLmController = NULL_KEY;
 integer LastYankTime = 0;
 float YANK_COOLDOWN = 5.0;  // 5 seconds between yanks
 
+// State broadcast optimization
+integer StateUpdatePending = FALSE;
+
 // Timers
 float FOLLOW_TICK = 0.5;
 
@@ -253,16 +241,6 @@ float FOLLOW_TICK = 0.5;
 integer logd(string msg) {
     if (DEBUG && !PRODUCTION) llOwnerSay("[LEASH-KMOD] " + msg);
     return FALSE;
-}
-integer jsonHas(string j, list path) {
-    return (llJsonGetValue(j, path) != JSON_INVALID);
-}
-string jsonGet(string j, string k, string default_val) {
-    if (jsonHas(j, [k])) return llJsonGetValue(j, [k]);
-    return default_val;
-}
-integer now() {
-    return llGetUnixTime();
 }
 integer inAllowedList(integer level, list allowed) {
     return (llListFindList(allowed, [level]) != -1);
@@ -296,14 +274,14 @@ setParticlesState(integer active, key target) {
         kSend(CONTEXT, "particles", UI_BUS,
             kPayload([
                 "start", 1,
-                "source", PLUGIN_CONTEXT,
+                "source", "core_leash",
                 "target", (string)target,
                 "style", "chain"
             ]),
             NULL_KEY);
     } else {
         kSend(CONTEXT, "particles", UI_BUS,
-            kPayload(["stop", 1, "source", PLUGIN_CONTEXT]),
+            kPayload(["stop", 1, "source", "core_leash"]),
             NULL_KEY);
     }
 }
@@ -329,7 +307,7 @@ sendOfferPending(key target, key originator) {
    STATE MANAGEMENT HELPERS
    =============================================================== */
 
-// Clamp leash length to valid range
+// Clamp leash length to valid range (1-20)
 integer clampLeashLength(integer len) {
     if (len < 1) return 1;
     if (len > 20) return 20;
@@ -355,9 +333,10 @@ clearLeashState(integer clear_reclip) {
     Leasher = NULL_KEY;
     LeashTarget = NULL_KEY;
     CoffleTargetAvatar = NULL_KEY;
-    persistLeashState(FALSE, NULL_KEY);
+    persistSetting(KEY_LEASHED, "0");
+    persistSetting(KEY_LEASHER, (string)NULL_KEY);
     HolderTarget = NULL_KEY;
-    HolderState = HOLDER_STATE_IDLE;
+    HolderTick = 0;
     AuthorizedLmController = NULL_KEY;
     closeAllHolderListens();
 
@@ -370,7 +349,7 @@ clearLeashState(integer clear_reclip) {
     setLockmeisterState(FALSE, NULL_KEY);
     setParticlesState(FALSE, NULL_KEY);
     stopFollow();
-    broadcastState();
+    deferBroadcastState();  // Defer to reduce stack depth
 }
 
 /* ===============================================================
@@ -380,22 +359,25 @@ clearLeashState(integer clear_reclip) {
 // Notify all parties about a leash action
 notifyLeashAction(key actor, string action_msg, string owner_details) {
     llRegionSayTo(actor, 0, action_msg);
-
     if (owner_details != "") {
         llOwnerSay(action_msg + " - " + owner_details);
     } else {
         llOwnerSay(action_msg);
     }
-
     logd(action_msg);
 }
 
 // For multi-party notifications (like pass)
 notifyLeashTransfer(key from_user, key to_user, string action) {
-    llRegionSayTo(from_user, 0, "Leash " + action + " to " + llKey2Name(to_user));
-    llRegionSayTo(to_user, 0, "Leash received from " + llKey2Name(from_user));
-    llOwnerSay("Leash " + action + " to " + llKey2Name(to_user) + " by " + llKey2Name(from_user));
-    logd(action + " to " + llKey2Name(to_user) + " by " + llKey2Name(from_user));
+    string to_name = llKey2Name(to_user);
+    string from_name = llKey2Name(from_user);
+    string msg1 = "Leash " + action + " to " + to_name;
+    string msg2 = "Leash received from " + from_name;
+    string msg3 = msg1 + " by " + from_name;
+    llRegionSayTo(from_user, 0, msg1);
+    llRegionSayTo(to_user, 0, msg2);
+    llOwnerSay(msg3);
+    logd(action + " to " + to_name + " by " + from_name);
 }
 
 // ===== ACL VERIFICATION SYSTEM (NEW) =====
@@ -552,120 +534,86 @@ requestAclForPassTarget(key target) {
     logd("ACL query for pass target " + llKey2Name(target));
 }
 
-// ===== DS HOLDER PROTOCOL (IMPROVED STATE MACHINE) =====
+// ===== DS HOLDER PROTOCOL (TICK-BASED) =====
 beginHolderHandshake(key user) {
-    // Improved randomness for session ID using multiple entropy sources
     integer key_entropy = (integer)("0x" + llGetSubString((string)llGetOwner(), 0, 7));
-    HolderSession = (integer)(llFrand(999999.0) +
-                              (now() % 1000000) +
-                              (key_entropy % 1000));
-    HolderState = HOLDER_STATE_DS_PHASE;
-    HolderPhaseStart = now();
+    HolderSession = (integer)(llFrand(999999.0) + (llGetUnixTime() % 1000000) + (key_entropy % 1000));
+    HolderTick = 1;  // Start DS phase
 
-    // Phase 1: DS native only
     if (HolderListen == 0) {
         HolderListen = llListen(LEASH_CHAN_DS, "", NULL_KEY, "");
-        logd("DS holder listen opened");
     }
-    
-    // Send DS native JSON format on DS channel
-    string msg = llList2Json(JSON_OBJECT, [
+
+    llRegionSay(LEASH_CHAN_DS, llList2Json(JSON_OBJECT, [
         "type", "leash_req",
         "wearer", (string)llGetOwner(),
         "collar", (string)llGetKey(),
         "controller", (string)user,
         "session", (string)HolderSession,
         "origin", "leashpoint"
-    ]);
-    llRegionSay(-192837465, msg);
-    
-    logd("Holder handshake Phase 1 (DS native, 2s)");
+    ]));
+
+    logd("Holder handshake started");
 }
 
 handleHolderResponseDs(string msg) {
-    if (HolderState != HOLDER_STATE_DS_PHASE && HolderState != HOLDER_STATE_OC_PHASE) return;
+    if (HolderTick < 1 || HolderTick > 8) return;  // Only during DS or OC phase
     if (llJsonGetValue(msg, ["type"]) != "leash_target") return;
     if (llJsonGetValue(msg, ["ok"]) != "1") return;
-    integer session = (integer)llJsonGetValue(msg, ["session"]);
-    if (session != HolderSession) return;
-    
+    if ((integer)llJsonGetValue(msg, ["session"]) != HolderSession) return;
+
     HolderTarget = (key)llJsonGetValue(msg, ["holder"]);
-    string holder_name = llJsonGetValue(msg, ["name"]);
-    
-    logd("DS holder response: target=" + (string)HolderTarget + " name=" + holder_name);
-
-    HolderState = HOLDER_STATE_COMPLETE;
+    HolderTick = -1;  // Success
     closeAllHolderListens();
-
     setParticlesState(TRUE, HolderTarget);
-
     logd("DS holder mode activated");
 }
 
 handleHolderResponseOc(key holder_prim, string msg) {
-    if (HolderState != HOLDER_STATE_OC_PHASE) return;
-    // CRITICAL: Must match the UUID we sent in the ping (Leasher, not wearer)
-    string expected = (string)Leasher + "handle ok";
-    if (msg != expected) return;
-    
+    if (HolderTick < 5 || HolderTick > 8) return;  // Only during OC phase
+    if (msg != (string)Leasher + "handle ok") return;
+
     HolderTarget = holder_prim;
-
-    logd("OC holder response: target=" + (string)HolderTarget);
-
-    HolderState = HOLDER_STATE_COMPLETE;
+    HolderTick = -1;  // Success
     closeAllHolderListens();
-
     setParticlesState(TRUE, HolderTarget);
-
     logd("OC holder mode activated");
 }
 
 advanceHolderStateMachine() {
-    if (HolderState == HOLDER_STATE_IDLE || HolderState == HOLDER_STATE_COMPLETE) return;
-    
-    float elapsed = (float)(now() - HolderPhaseStart);
-    
-    if (HolderState == HOLDER_STATE_DS_PHASE) {
-        if (elapsed >= DS_PHASE_DURATION) {
-            // Transition to OC phase
-            logd("Holder handshake Phase 2 (OC, 2s)");
-            HolderState = HOLDER_STATE_OC_PHASE;
-            HolderPhaseStart = now();
-            if (HolderListen != 0) {
-                llListenRemove(HolderListen);
-                HolderListen = 0;
-            }
-            if (HolderListenOC == 0) {
-                HolderListenOC = llListen(LEASH_CHAN_LM, "", NULL_KEY, "");
-                logd("OC holder listen opened");
-            }
-            
-            // CRITICAL FIX: Send controller UUID + "collar" AND "handle" per LM protocol (Code Review Fix #4)
-            // The holder script expects the controller's UUID, not the wearer's UUID
-            // Send BOTH messages as per the LM protocol specification
-            llRegionSayTo(Leasher, LEASH_CHAN_LM, (string)Leasher + "collar");
-            llRegionSayTo(Leasher, LEASH_CHAN_LM, (string)Leasher + "handle");
-        }
-    }
-    else if (HolderState == HOLDER_STATE_OC_PHASE) {
-        if (elapsed >= OC_PHASE_DURATION) {
-            // Fallback to avatar direct
-            logd("Holder timeout - using avatar direct mode");
-            HolderState = HOLDER_STATE_COMPLETE;
-            closeAllHolderListens();
+    if (HolderTick <= 0) return;  // 0=idle, -1=success
 
-            if (Leasher != NULL_KEY) {
-                setParticlesState(TRUE, Leasher);
-            }
+    ++HolderTick;  // Increment tick counter
+
+    if (HolderTick == 5) {
+        // Transition to OC phase
+        if (HolderListen != 0) {
+            llListenRemove(HolderListen);
+            HolderListen = 0;
         }
+        if (HolderListenOC == 0) {
+            HolderListenOC = llListen(LEASH_CHAN_LM, "", NULL_KEY, "");
+        }
+        llRegionSayTo(Leasher, LEASH_CHAN_LM, (string)Leasher + "collar");
+        llRegionSayTo(Leasher, LEASH_CHAN_LM, (string)Leasher + "handle");
+        logd("Holder handshake OC phase");
+    }
+    else if (HolderTick == 9) {
+        // Timeout - fallback to avatar direct
+        HolderTick = 0;
+        closeAllHolderListens();
+        if (Leasher != NULL_KEY) {
+            setParticlesState(TRUE, Leasher);
+        }
+        logd("Holder timeout - avatar direct");
     }
 }
 
 // ===== OFFSIM DETECTION & AUTO-RECLIP (IMPROVED) =====
 checkLeasherPresence() {
     if (!Leashed || Leasher == NULL_KEY) return;
-    
-    integer now_time = now();
+
+    integer now_time = llGetUnixTime();
     
     // Y2038 protection
     if (now_time < 0 || OffsimStartTime < 0) {
@@ -716,7 +664,7 @@ autoReleaseOffsim() {
 }
 
 checkAutoReclip() {
-    if (ReclipScheduled == 0 || now() < ReclipScheduled) return;
+    if (ReclipScheduled == 0 || llGetUnixTime() < ReclipScheduled) return;
     
     if (ReclipAttempts >= MAX_RECLIP_ATTEMPTS) {
         logd("Max reclip attempts reached, giving up");
@@ -731,9 +679,9 @@ checkAutoReclip() {
         
         // Request ACL verification before reclip
         requestAclForAction(LastLeasher, "grab", NULL_KEY);
-        
+
         ReclipAttempts = ReclipAttempts + 1;
-        ReclipScheduled = now() + 2;
+        ReclipScheduled = llGetUnixTime() + 2;
     }
 }
 
@@ -742,19 +690,6 @@ persistSetting(string setting_key, string value) {
     kSend(CONTEXT, "settings", SETTINGS_BUS,
         kPayload(["key", setting_key, "value", value]),
         NULL_KEY);
-}
-
-persistLeashState(integer leashed, key leasher) {
-    persistSetting(KEY_LEASHED, (string)leashed);
-    persistSetting(KEY_LEASHER, (string)leasher);
-}
-
-persistLength(integer length) {
-    persistSetting(KEY_LEASH_LENGTH, (string)length);
-}
-
-persistTurnto(integer turnto) {
-    persistSetting(KEY_LEASH_TURNTO, (string)turnto);
 }
 
 applySettingsSync(string payload) {
@@ -787,14 +722,18 @@ applySettingsDelta(string payload) {
 }
 
 // ===== STATE BROADCAST =====
+deferBroadcastState() {
+    StateUpdatePending = TRUE;
+}
+
 broadcastState() {
-    // Calculate implicit mode for UI display
-    integer display_mode = DISPLAY_MODE_AVATAR;
+    // Calculate implicit mode for UI display (0=avatar, 1=coffle, 2=post)
+    integer display_mode = 0;
     if (LeashTarget != NULL_KEY) {
         if (CoffleTargetAvatar != NULL_KEY) {
-            display_mode = DISPLAY_MODE_COFFLE;
+            display_mode = 1;
         } else {
-            display_mode = DISPLAY_MODE_POST;
+            display_mode = 2;
         }
     }
 
@@ -804,10 +743,11 @@ broadcastState() {
             "leasher", (string)Leasher,
             "length", (string)LeashLength,
             "turnto", (string)TurnToFace,
-            "mode", (string)display_mode,  // For UI display only
+            "mode", (string)display_mode,
             "target", (string)LeashTarget
         ]),
         NULL_KEY);
+    StateUpdatePending = FALSE;
 }
 
 // ===== UNIFIED LEASH ACTION (INTERNAL - CALLED AFTER ACL VERIFICATION) =====
@@ -894,9 +834,10 @@ tetherLeashInternal(key user, key target) {
     }
 
     // Common finalization for all modes
-    persistLeashState(TRUE, user);
+    persistSetting(KEY_LEASHED, "1");
+    persistSetting(KEY_LEASHER, (string)user);
     startFollow();
-    broadcastState();
+    deferBroadcastState();  // Defer to reduce stack depth
 }
 
 releaseLeashInternal(key user) {
@@ -920,7 +861,8 @@ passLeashInternal(key new_leasher) {
     LeashTarget = NULL_KEY;
     CoffleTargetAvatar = NULL_KEY;
 
-    persistLeashState(TRUE, new_leasher);
+    persistSetting(KEY_LEASHED, "1");
+    persistSetting(KEY_LEASHER, (string)new_leasher);
 
     // Start holder handshake for new leasher
     beginHolderHandshake(new_leasher);
@@ -930,7 +872,7 @@ passLeashInternal(key new_leasher) {
     setLockmeisterState(TRUE, new_leasher);
 
     notifyLeashTransfer(old_leasher, new_leasher, "passed");
-    broadcastState();
+    deferBroadcastState();  // Defer to reduce stack depth
 }
 
 yankToLeasher() {
@@ -950,11 +892,9 @@ yankToLeasher() {
 }
 
 setLengthInternal(integer length) {
-    if (length < 1) length = 1;
-    if (length > 20) length = 20;
-    LeashLength = length;
-    persistLength(LeashLength);
-    broadcastState();
+    LeashLength = clampLeashLength(length);
+    persistSetting(KEY_LEASH_LENGTH, (string)LeashLength);
+    deferBroadcastState();  // Defer to reduce stack depth
     logd("Length set to " + (string)length);
 }
 
@@ -964,8 +904,8 @@ toggleTurnInternal() {
         llOwnerSay("@setrot=clear");
         LastTurnAngle = -999.0;
     }
-    persistTurnto(TurnToFace);
-    broadcastState();
+    persistSetting(KEY_LEASH_TURNTO, (string)TurnToFace);
+    deferBroadcastState();  // Defer to reduce stack depth
     logd("Turn-to-face: " + (string)TurnToFace);
 }
 
@@ -1084,7 +1024,7 @@ default
     state_entry() {
         closeAllHolderListens();
         HolderTarget = NULL_KEY;
-        HolderState = HOLDER_STATE_IDLE;
+        HolderTick = 0;
         AclPending = FALSE;
         PendingActionUser = NULL_KEY;
         PendingAction = "";
@@ -1141,7 +1081,7 @@ default
                 // Yank only works for current leasher (with rate limiting)
                 if (action == "yank") {
                     if (user == Leasher) {
-                        integer now_time = now();
+                        integer now_time = llGetUnixTime();
                         if ((now_time - LastYankTime) < YANK_COOLDOWN) {
                             integer wait_time = (integer)(YANK_COOLDOWN - (now_time - LastYankTime));
                             llRegionSayTo(user, 0, "Yank on cooldown. Wait " + (string)wait_time + "s.");
@@ -1183,10 +1123,11 @@ default
                     Leashed = TRUE;
                     Leasher = controller;
                     LastLeasher = controller;
-                    persistLeashState(TRUE, controller);
+                    persistSetting(KEY_LEASHED, "1");
+                    persistSetting(KEY_LEASHER, (string)controller);
                     startFollow();
                     llOwnerSay("Leashed by " + llKey2Name(controller) + " (Lockmeister)");
-                    broadcastState();
+                    deferBroadcastState();  // Defer to reduce stack depth
                     logd("Lockmeister grab from " + llKey2Name(controller));
                 }
                 return;
@@ -1198,11 +1139,12 @@ default
                     key old_leasher = Leasher;
                     Leashed = FALSE;
                     Leasher = NULL_KEY;
-                    persistLeashState(FALSE, NULL_KEY);
+                    persistSetting(KEY_LEASHED, "0");
+                    persistSetting(KEY_LEASHER, (string)NULL_KEY);
                     AuthorizedLmController = NULL_KEY;
                     stopFollow();
                     llOwnerSay("Released by " + llKey2Name(old_leasher) + " (Lockmeister)");
-                    broadcastState();
+                    deferBroadcastState();  // Defer to reduce stack depth
                     logd("Lockmeister release");
                 }
                 return;
@@ -1234,22 +1176,27 @@ default
     }
     
     timer() {
+        // Process deferred state broadcasts
+        if (StateUpdatePending) {
+            broadcastState();
+        }
+
         // Advance holder detection state machine
         advanceHolderStateMachine();
-        
+
         // Check for offsim/auto-release
         if (Leashed) checkLeasherPresence();
         if (!Leashed && ReclipScheduled != 0) checkAutoReclip();
-        
+
         // Follow tick
         if (FollowActive && Leashed) followTick();
     }
     
     listen(integer channel, string name, key id, string msg) {
-        if (channel == -192837465) {
+        if (channel == LEASH_CHAN_DS) {
             handleHolderResponseDs(msg);
         }
-        else if (channel == -8888) {
+        else if (channel == LEASH_CHAN_LM) {
             handleHolderResponseOc(id, msg);
         }
     }
