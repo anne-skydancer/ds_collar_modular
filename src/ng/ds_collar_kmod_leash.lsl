@@ -838,8 +838,8 @@ tetherLeashInternal(key user, key target) {
         AuthorizedLmController = user;
         setLockmeisterState(TRUE, user);
 
-        // RLV follow assist
-        llOwnerSay("@follow:" + (string)target + "=force");
+        // RLV follow assist (follow the leasher)
+        llOwnerSay("@follow:" + (string)user + "=force");
 
         notifyLeashAction(user, "Leash grabbed", "by " + llKey2Name(user));
     }

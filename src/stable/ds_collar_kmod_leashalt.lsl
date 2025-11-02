@@ -18,44 +18,35 @@
    - Coffle: Collar-to-collar - follow the other collar wearer
    - Post: Object tether - stay within LeashLength of post object
    - Mode-specific ACL restrictions (Coffle: ACL 3,5 | Post: ACL 1,3,5)
-   
-   NEW FEATURES v1.0:
-   - Added offer acceptance dialog for leash offers
+
+   FEATURES v1.0:
+   - Offer acceptance dialog for leash offers
+   - "Offer" action for ACL 2 (Owned wearer) when not leashed
    - Target receives Accept/Decline dialog with 60s timeout
-   - Originator receives notification of acceptance/decline/timeout
-   
+   - Multi-protocol: DS Holder, OpenCollar 8.x, Avatar Direct, Lockmeister
+   - Yank rate limiting (5s cooldown)
+   - Cascading holder detection (2s DS → 2s OC → avatar direct)
+   - Offsim detection with auto-release (6s grace)
+   - Auto-reclip when leasher returns (limited attempts)
+   - Turn-to-face support (throttled)
+
    BUG FIXES v1.0:
    - CRITICAL: Fixed offer/pass target ACL verification deadlock
-   - request_acl_for_pass_target now updates PendingActionUser to target
-   - Prevents handle_acl_result from rejecting target's ACL response
-   
-   NEW FEATURES v1.0:
-   - Added "offer" action for ACL 2 (Owned wearer)
-   - Offer allows owned wearer to offer leash when not currently leashed
-   - Separate from "pass" action with distinct permissions and behavior
-   
-   BUG FIXES v1.0:
    - CRITICAL: Fixed auto-reclip after explicit unleash bug
    - CRITICAL: Fixed LM protocol to send controller UUID instead of wearer UUID
-   - Added holder name constant to top for easy maintenance
-   - Optimized link_message by checking "type" once at top
-   - Added channel constants (LEASH_CHAN_LM, LEASH_CHAN_DS) to top
-   
-   SECURITY FIXES v1.0:
-   - Added yank rate limiting (5s cooldown) to prevent griefing
    - Fixed pass target ACL verification to preserve original passer context
-   - Added Y2038 timestamp overflow protection
-   - Improved session randomness with multiple entropy sources
-   - Added production debug guard (dual-gate logging)
-   
+   - Added holder name constant for easy maintenance
+   - Optimized link_message by checking "type" once at top
+
    SECURITY FIXES v1.0:
    - Added ACL verification system (no longer trusts plugin flags)
    - Implemented holder detection state machine (no race conditions)
    - Added auto-reclip attempt limiting
    - Improved offsim detection with separate avatar/holder tracking
    - Enhanced session security with better randomness
-   - Added turn-to-face throttling to reduce RLV spam
+   - Added Y2038 timestamp overflow protection
    - Implemented Lockmeister authorization validation
+   - Added production debug guard (dual-gate logging)
    
    FEATURES:
    - Grab/Release/Pass/Offer/Yank leash actions
@@ -778,8 +769,8 @@ tetherLeashInternal(key user, key target) {
         AuthorizedLmController = user;
         setLockmeisterState(TRUE, user);
 
-        // RLV follow assist
-        llOwnerSay("@follow:" + (string)target + "=force");
+        // RLV follow assist (follow the leasher)
+        llOwnerSay("@follow:" + (string)user + "=force");
 
         notifyLeashAction(user, "Leash grabbed", "by " + llKey2Name(user));
     }
