@@ -785,7 +785,7 @@ tetherLeashInternal(key user, key target) {
     }
     // Is it an object?
     else {
-        list details = llGetObjectDetails(target, [OBJECT_POS, OBJECT_NAME, OBJECT_OWNER]);
+        list details = llGetObjectDetails(target, [OBJECT_POS, OBJECT_NAME, OBJECT_OWNER, OBJECT_ATTACHED_POINT]);
         if (llGetListLength(details) == 0) {
             llRegionSayTo(user, 0, "Target not found or out of range.");
             Leashed = FALSE;
@@ -796,9 +796,10 @@ tetherLeashInternal(key user, key target) {
 
         key owner = llList2Key(details, 2);
         string target_name = llList2String(details, 1);
+        integer attach_point = llList2Integer(details, 3);
 
-        // Is it worn by someone? (Coffle)
-        if (owner != NULL_KEY && owner != llGetOwner()) {
+        // Is it worn by someone? (Coffle) - check if actually attached
+        if (attach_point > 0 && owner != NULL_KEY && owner != llGetOwner()) {
             // === COFFLE MODE ===
             LeashTarget = target;
             CoffleTargetAvatar = owner;
