@@ -207,20 +207,12 @@ integer ControlsOk = FALSE;
 float LastTurnAngle = -999.0;
 float TURN_THRESHOLD = 0.1;  // ~5.7 degrees
 
-// Holder protocol state machine (IMPROVED)
-integer HOLDER_STATE_IDLE = 0;
-integer HOLDER_STATE_DS_PHASE = 1;
-integer HOLDER_STATE_OC_PHASE = 2;
-integer HOLDER_STATE_COMPLETE = 4;
-
-integer HolderState = 0;
-integer HolderPhaseStart = 0;
+// Holder protocol - tick based (0=idle, 1-4=DS phase, 5-8=OC phase, 9+=done, -1=success)
+integer HolderTick = 0;
 integer HolderListen = 0;
 integer HolderListenOC = 0;
 key HolderTarget = NULL_KEY;
 integer HolderSession = 0;
-float DS_PHASE_DURATION = 2.0;   // 2 seconds for DS native
-float OC_PHASE_DURATION = 2.0;   // 2 seconds for OC
 
 // Offsim detection & auto-reclip (IMPROVED)
 integer OffsimDetected = FALSE;
@@ -360,7 +352,7 @@ clearLeashState(integer clear_reclip) {
     CoffleTargetAvatar = NULL_KEY;
     persistLeashState(FALSE, NULL_KEY);
     HolderTarget = NULL_KEY;
-    HolderState = HOLDER_STATE_IDLE;
+    HolderTick = 0;
     AuthorizedLmController = NULL_KEY;
     closeAllHolderListens();
 
@@ -562,112 +554,78 @@ requestAclForPassTarget(key target) {
     logd("ACL query for pass target " + llKey2Name(target));
 }
 
-// ===== DS HOLDER PROTOCOL (IMPROVED STATE MACHINE) =====
+// ===== DS HOLDER PROTOCOL (TICK-BASED) =====
 beginHolderHandshake(key user) {
-    // Improved randomness for session ID using multiple entropy sources
     integer key_entropy = (integer)("0x" + llGetSubString((string)llGetOwner(), 0, 7));
-    HolderSession = (integer)(llFrand(999999.0) +
-                              (now() % 1000000) +
-                              (key_entropy % 1000));
-    HolderState = HOLDER_STATE_DS_PHASE;
-    HolderPhaseStart = now();
+    HolderSession = (integer)(llFrand(999999.0) + (llGetUnixTime() % 1000000) + (key_entropy % 1000));
+    HolderTick = 1;  // Start DS phase
 
-    // Phase 1: DS native only
     if (HolderListen == 0) {
         HolderListen = llListen(LEASH_CHAN_DS, "", NULL_KEY, "");
-        logd("DS holder listen opened");
     }
-    
-    // Send DS native JSON format on DS channel
-    string msg = llList2Json(JSON_OBJECT, [
+
+    llRegionSay(-192837465, llList2Json(JSON_OBJECT, [
         "type", "leash_req",
         "wearer", (string)llGetOwner(),
         "collar", (string)llGetKey(),
         "controller", (string)user,
         "session", (string)HolderSession,
         "origin", "leashpoint"
-    ]);
-    llRegionSay(-192837465, msg);
-    
-    logd("Holder handshake Phase 1 (DS native, 2s)");
+    ]));
+
+    logd("Holder handshake started");
 }
 
 handleHolderResponseDs(string msg) {
-    if (HolderState != HOLDER_STATE_DS_PHASE && HolderState != HOLDER_STATE_OC_PHASE) return;
+    if (HolderTick < 1 || HolderTick > 8) return;  // Only during DS or OC phase
     if (llJsonGetValue(msg, ["type"]) != "leash_target") return;
     if (llJsonGetValue(msg, ["ok"]) != "1") return;
-    integer session = (integer)llJsonGetValue(msg, ["session"]);
-    if (session != HolderSession) return;
-    
+    if ((integer)llJsonGetValue(msg, ["session"]) != HolderSession) return;
+
     HolderTarget = (key)llJsonGetValue(msg, ["holder"]);
-    string holder_name = llJsonGetValue(msg, ["name"]);
-    
-    logd("DS holder response: target=" + (string)HolderTarget + " name=" + holder_name);
-
-    HolderState = HOLDER_STATE_COMPLETE;
+    HolderTick = -1;  // Success
     closeAllHolderListens();
-
     setParticlesState(TRUE, HolderTarget);
-
     logd("DS holder mode activated");
 }
 
 handleHolderResponseOc(key holder_prim, string msg) {
-    if (HolderState != HOLDER_STATE_OC_PHASE) return;
-    // CRITICAL: Must match the UUID we sent in the ping (Leasher, not wearer)
-    string expected = (string)Leasher + "handle ok";
-    if (msg != expected) return;
-    
+    if (HolderTick < 5 || HolderTick > 8) return;  // Only during OC phase
+    if (msg != (string)Leasher + "handle ok") return;
+
     HolderTarget = holder_prim;
-
-    logd("OC holder response: target=" + (string)HolderTarget);
-
-    HolderState = HOLDER_STATE_COMPLETE;
+    HolderTick = -1;  // Success
     closeAllHolderListens();
-
     setParticlesState(TRUE, HolderTarget);
-
     logd("OC holder mode activated");
 }
 
 advanceHolderStateMachine() {
-    if (HolderState == HOLDER_STATE_IDLE || HolderState == HOLDER_STATE_COMPLETE) return;
-    
-    float elapsed = (float)(now() - HolderPhaseStart);
-    
-    if (HolderState == HOLDER_STATE_DS_PHASE) {
-        if (elapsed >= DS_PHASE_DURATION) {
-            // Transition to OC phase
-            logd("Holder handshake Phase 2 (OC, 2s)");
-            HolderState = HOLDER_STATE_OC_PHASE;
-            HolderPhaseStart = now();
-            if (HolderListen != 0) {
-                llListenRemove(HolderListen);
-                HolderListen = 0;
-            }
-            if (HolderListenOC == 0) {
-                HolderListenOC = llListen(LEASH_CHAN_LM, "", NULL_KEY, "");
-                logd("OC holder listen opened");
-            }
-            
-            // CRITICAL FIX: Send controller UUID + "collar" AND "handle" per LM protocol (Code Review Fix #4)
-            // The holder script expects the controller's UUID, not the wearer's UUID
-            // Send BOTH messages as per the LM protocol specification
-            llRegionSayTo(Leasher, LEASH_CHAN_LM, (string)Leasher + "collar");
-            llRegionSayTo(Leasher, LEASH_CHAN_LM, (string)Leasher + "handle");
-        }
-    }
-    else if (HolderState == HOLDER_STATE_OC_PHASE) {
-        if (elapsed >= OC_PHASE_DURATION) {
-            // Fallback to avatar direct
-            logd("Holder timeout - using avatar direct mode");
-            HolderState = HOLDER_STATE_COMPLETE;
-            closeAllHolderListens();
+    if (HolderTick <= 0) return;  // 0=idle, -1=success
 
-            if (Leasher != NULL_KEY) {
-                setParticlesState(TRUE, Leasher);
-            }
+    ++HolderTick;  // Increment tick counter
+
+    if (HolderTick == 5) {
+        // Transition to OC phase
+        if (HolderListen != 0) {
+            llListenRemove(HolderListen);
+            HolderListen = 0;
         }
+        if (HolderListenOC == 0) {
+            HolderListenOC = llListen(LEASH_CHAN_LM, "", NULL_KEY, "");
+        }
+        llRegionSayTo(Leasher, LEASH_CHAN_LM, (string)Leasher + "collar");
+        llRegionSayTo(Leasher, LEASH_CHAN_LM, (string)Leasher + "handle");
+        logd("Holder handshake OC phase");
+    }
+    else if (HolderTick == 9) {
+        // Timeout - fallback to avatar direct
+        HolderTick = 0;
+        closeAllHolderListens();
+        if (Leasher != NULL_KEY) {
+            setParticlesState(TRUE, Leasher);
+        }
+        logd("Holder timeout - avatar direct");
     }
 }
 
@@ -1099,7 +1057,7 @@ default
     state_entry() {
         closeAllHolderListens();
         HolderTarget = NULL_KEY;
-        HolderState = HOLDER_STATE_IDLE;
+        HolderTick = 0;
         AclPending = FALSE;
         PendingActionUser = NULL_KEY;
         PendingAction = "";
