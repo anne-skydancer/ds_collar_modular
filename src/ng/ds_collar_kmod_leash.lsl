@@ -307,6 +307,13 @@ sendOfferPending(key target, key originator) {
    STATE MANAGEMENT HELPERS
    =============================================================== */
 
+// Clamp leash length to valid range (1-20)
+integer clampLeashLength(integer len) {
+    if (len < 1) return 1;
+    if (len > 20) return 20;
+    return len;
+}
+
 // Close all holder protocol listeners
 closeAllHolderListens() {
     if (HolderListen != 0) {
@@ -353,9 +360,7 @@ clearLeashState(integer clear_reclip) {
 notifyLeashAction(key actor, string action_msg, string owner_details) {
     llRegionSayTo(actor, 0, action_msg);
     if (owner_details != "") {
-        string full_msg = action_msg;
-        full_msg = full_msg + " - " + owner_details;
-        llOwnerSay(full_msg);
+        llOwnerSay(action_msg + " - " + owner_details);
     } else {
         llOwnerSay(action_msg);
     }
@@ -366,10 +371,8 @@ notifyLeashAction(key actor, string action_msg, string owner_details) {
 notifyLeashTransfer(key from_user, key to_user, string action) {
     string to_name = llKey2Name(to_user);
     string from_name = llKey2Name(from_user);
-    string msg1 = "Leash ";
-    msg1 = msg1 + action + " to " + to_name;
-    string msg2 = "Leash received from ";
-    msg2 = msg2 + from_name;
+    string msg1 = "Leash " + action + " to " + to_name;
+    string msg2 = "Leash received from " + from_name;
     string msg3 = msg1 + " by " + from_name;
     llRegionSayTo(from_user, 0, msg1);
     llRegionSayTo(to_user, 0, msg2);
@@ -541,7 +544,7 @@ beginHolderHandshake(key user) {
         HolderListen = llListen(LEASH_CHAN_DS, "", NULL_KEY, "");
     }
 
-    llRegionSay(-192837465, llList2Json(JSON_OBJECT, [
+    llRegionSay(LEASH_CHAN_DS, llList2Json(JSON_OBJECT, [
         "type", "leash_req",
         "wearer", (string)llGetOwner(),
         "collar", (string)llGetKey(),
@@ -699,10 +702,7 @@ applySettingsSync(string payload) {
         Leasher = (key)llJsonGetValue(settings_json, [KEY_LEASHER]);
     }
     if (json_has(settings_json, [KEY_LEASH_LENGTH])) {
-        integer len = (integer)llJsonGetValue(settings_json, [KEY_LEASH_LENGTH]);
-        if (len < 1) len = 1;
-        else if (len > 20) len = 20;
-        LeashLength = len;
+        LeashLength = clampLeashLength((integer)llJsonGetValue(settings_json, [KEY_LEASH_LENGTH]));
     }
     if (json_has(settings_json, [KEY_LEASH_TURNTO])) {
         TurnToFace = (integer)llJsonGetValue(settings_json, [KEY_LEASH_TURNTO]);
@@ -716,12 +716,7 @@ applySettingsDelta(string payload) {
     if (setting_key != "" && value != "" && setting_key != JSON_INVALID && value != JSON_INVALID) {
         if (setting_key == KEY_LEASHED) Leashed = (integer)value;
         else if (setting_key == KEY_LEASHER) Leasher = (key)value;
-        else if (setting_key == KEY_LEASH_LENGTH) {
-            integer len = (integer)value;
-            if (len < 1) len = 1;
-            else if (len > 20) len = 20;
-            LeashLength = len;
-        }
+        else if (setting_key == KEY_LEASH_LENGTH) LeashLength = clampLeashLength((integer)value);
         else if (setting_key == KEY_LEASH_TURNTO) TurnToFace = (integer)value;
     }
 }
@@ -897,9 +892,7 @@ yankToLeasher() {
 }
 
 setLengthInternal(integer length) {
-    if (length < 1) length = 1;
-    if (length > 20) length = 20;
-    LeashLength = length;
+    LeashLength = clampLeashLength(length);
     persistSetting(KEY_LEASH_LENGTH, (string)LeashLength);
     deferBroadcastState();  // Defer to reduce stack depth
     logd("Length set to " + (string)length);
@@ -1200,10 +1193,10 @@ default
     }
     
     listen(integer channel, string name, key id, string msg) {
-        if (channel == -192837465) {
+        if (channel == LEASH_CHAN_DS) {
             handleHolderResponseDs(msg);
         }
-        else if (channel == -8888) {
+        else if (channel == LEASH_CHAN_LM) {
             handleHolderResponseOc(id, msg);
         }
     }
