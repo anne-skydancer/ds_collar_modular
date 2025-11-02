@@ -249,16 +249,6 @@ integer logd(string msg) {
     if (DEBUG && !PRODUCTION) llOwnerSay("[LEASH-KMOD] " + msg);
     return FALSE;
 }
-integer jsonHas(string j, list path) {
-    return (llJsonGetValue(j, path) != JSON_INVALID);
-}
-string jsonGet(string j, string k, string default_val) {
-    if (jsonHas(j, [k])) return llJsonGetValue(j, [k]);
-    return default_val;
-}
-integer now() {
-    return llGetUnixTime();
-}
 integer inAllowedList(integer level, list allowed) {
     return (llListFindList(allowed, [level]) != -1);
 }
@@ -324,13 +314,6 @@ sendOfferPending(key target, key originator) {
    STATE MANAGEMENT HELPERS
    =============================================================== */
 
-// Clamp leash length to valid range
-integer clampLeashLength(integer len) {
-    if (len < 1) return 1;
-    if (len > 20) return 20;
-    return len;
-}
-
 // Close all holder protocol listeners
 closeAllHolderListens() {
     if (HolderListen != 0) {
@@ -350,7 +333,8 @@ clearLeashState(integer clear_reclip) {
     Leasher = NULL_KEY;
     LeashTarget = NULL_KEY;
     CoffleTargetAvatar = NULL_KEY;
-    persistLeashState(FALSE, NULL_KEY);
+    persistSetting(KEY_LEASHED, "0");
+    persistSetting(KEY_LEASHER, (string)NULL_KEY);
     HolderTarget = NULL_KEY;
     HolderTick = 0;
     AuthorizedLmController = NULL_KEY;
@@ -632,8 +616,8 @@ advanceHolderStateMachine() {
 // ===== OFFSIM DETECTION & AUTO-RECLIP (IMPROVED) =====
 checkLeasherPresence() {
     if (!Leashed || Leasher == NULL_KEY) return;
-    
-    integer now_time = now();
+
+    integer now_time = llGetUnixTime();
     
     // Y2038 protection
     if (now_time < 0 || OffsimStartTime < 0) {
@@ -684,7 +668,7 @@ autoReleaseOffsim() {
 }
 
 checkAutoReclip() {
-    if (ReclipScheduled == 0 || now() < ReclipScheduled) return;
+    if (ReclipScheduled == 0 || llGetUnixTime() < ReclipScheduled) return;
     
     if (ReclipAttempts >= MAX_RECLIP_ATTEMPTS) {
         logd("Max reclip attempts reached, giving up");
@@ -699,9 +683,9 @@ checkAutoReclip() {
         
         // Request ACL verification before reclip
         requestAclForAction(LastLeasher, "grab", NULL_KEY);
-        
+
         ReclipAttempts = ReclipAttempts + 1;
-        ReclipScheduled = now() + 2;
+        ReclipScheduled = llGetUnixTime() + 2;
     }
 }
 
@@ -710,19 +694,6 @@ persistSetting(string setting_key, string value) {
     kSend(CONTEXT, "settings", SETTINGS_BUS,
         kPayload(["key", setting_key, "value", value]),
         NULL_KEY);
-}
-
-persistLeashState(integer leashed, key leasher) {
-    persistSetting(KEY_LEASHED, (string)leashed);
-    persistSetting(KEY_LEASHER, (string)leasher);
-}
-
-persistLength(integer length) {
-    persistSetting(KEY_LEASH_LENGTH, (string)length);
-}
-
-persistTurnto(integer turnto) {
-    persistSetting(KEY_LEASH_TURNTO, (string)turnto);
 }
 
 applySettingsSync(string payload) {
@@ -735,7 +706,10 @@ applySettingsSync(string payload) {
         Leasher = (key)llJsonGetValue(settings_json, [KEY_LEASHER]);
     }
     if (json_has(settings_json, [KEY_LEASH_LENGTH])) {
-        LeashLength = clampLeashLength((integer)llJsonGetValue(settings_json, [KEY_LEASH_LENGTH]));
+        integer len = (integer)llJsonGetValue(settings_json, [KEY_LEASH_LENGTH]);
+        if (len < 1) len = 1;
+        else if (len > 20) len = 20;
+        LeashLength = len;
     }
     if (json_has(settings_json, [KEY_LEASH_TURNTO])) {
         TurnToFace = (integer)llJsonGetValue(settings_json, [KEY_LEASH_TURNTO]);
@@ -749,7 +723,12 @@ applySettingsDelta(string payload) {
     if (setting_key != "" && value != "" && setting_key != JSON_INVALID && value != JSON_INVALID) {
         if (setting_key == KEY_LEASHED) Leashed = (integer)value;
         else if (setting_key == KEY_LEASHER) Leasher = (key)value;
-        else if (setting_key == KEY_LEASH_LENGTH) LeashLength = clampLeashLength((integer)value);
+        else if (setting_key == KEY_LEASH_LENGTH) {
+            integer len = (integer)value;
+            if (len < 1) len = 1;
+            else if (len > 20) len = 20;
+            LeashLength = len;
+        }
         else if (setting_key == KEY_LEASH_TURNTO) TurnToFace = (integer)value;
     }
 }
@@ -867,7 +846,8 @@ tetherLeashInternal(key user, key target) {
     }
 
     // Common finalization for all modes
-    persistLeashState(TRUE, user);
+    persistSetting(KEY_LEASHED, "1");
+    persistSetting(KEY_LEASHER, (string)user);
     startFollow();
     deferBroadcastState();  // Defer to reduce stack depth
 }
@@ -893,7 +873,8 @@ passLeashInternal(key new_leasher) {
     LeashTarget = NULL_KEY;
     CoffleTargetAvatar = NULL_KEY;
 
-    persistLeashState(TRUE, new_leasher);
+    persistSetting(KEY_LEASHED, "1");
+    persistSetting(KEY_LEASHER, (string)new_leasher);
 
     // Start holder handshake for new leasher
     beginHolderHandshake(new_leasher);
@@ -926,7 +907,7 @@ setLengthInternal(integer length) {
     if (length < 1) length = 1;
     if (length > 20) length = 20;
     LeashLength = length;
-    persistLength(LeashLength);
+    persistSetting(KEY_LEASH_LENGTH, (string)LeashLength);
     deferBroadcastState();  // Defer to reduce stack depth
     logd("Length set to " + (string)length);
 }
@@ -937,7 +918,7 @@ toggleTurnInternal() {
         llOwnerSay("@setrot=clear");
         LastTurnAngle = -999.0;
     }
-    persistTurnto(TurnToFace);
+    persistSetting(KEY_LEASH_TURNTO, (string)TurnToFace);
     deferBroadcastState();  // Defer to reduce stack depth
     logd("Turn-to-face: " + (string)TurnToFace);
 }
@@ -1114,7 +1095,7 @@ default
                 // Yank only works for current leasher (with rate limiting)
                 if (action == "yank") {
                     if (user == Leasher) {
-                        integer now_time = now();
+                        integer now_time = llGetUnixTime();
                         if ((now_time - LastYankTime) < YANK_COOLDOWN) {
                             integer wait_time = (integer)(YANK_COOLDOWN - (now_time - LastYankTime));
                             llRegionSayTo(user, 0, "Yank on cooldown. Wait " + (string)wait_time + "s.");
@@ -1156,7 +1137,8 @@ default
                     Leashed = TRUE;
                     Leasher = controller;
                     LastLeasher = controller;
-                    persistLeashState(TRUE, controller);
+                    persistSetting(KEY_LEASHED, "1");
+                    persistSetting(KEY_LEASHER, (string)controller);
                     startFollow();
                     llOwnerSay("Leashed by " + llKey2Name(controller) + " (Lockmeister)");
                     deferBroadcastState();  // Defer to reduce stack depth
@@ -1171,7 +1153,8 @@ default
                     key old_leasher = Leasher;
                     Leashed = FALSE;
                     Leasher = NULL_KEY;
-                    persistLeashState(FALSE, NULL_KEY);
+                    persistSetting(KEY_LEASHED, "0");
+                    persistSetting(KEY_LEASHER, (string)NULL_KEY);
                     AuthorizedLmController = NULL_KEY;
                     stopFollow();
                     llOwnerSay("Released by " + llKey2Name(old_leasher) + " (Lockmeister)");
