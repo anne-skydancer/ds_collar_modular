@@ -246,6 +246,9 @@ key AuthorizedLmController = NULL_KEY;
 integer LastYankTime = 0;
 float YANK_COOLDOWN = 5.0;  // 5 seconds between yanks
 
+// State broadcast optimization
+integer StateUpdatePending = FALSE;
+
 // Timers
 float FOLLOW_TICK = 0.5;
 
@@ -370,7 +373,7 @@ clearLeashState(integer clear_reclip) {
     setLockmeisterState(FALSE, NULL_KEY);
     setParticlesState(FALSE, NULL_KEY);
     stopFollow();
-    broadcastState();
+    deferBroadcastState();  // Defer to reduce stack depth
 }
 
 /* ===============================================================
@@ -380,22 +383,29 @@ clearLeashState(integer clear_reclip) {
 // Notify all parties about a leash action
 notifyLeashAction(key actor, string action_msg, string owner_details) {
     llRegionSayTo(actor, 0, action_msg);
-
     if (owner_details != "") {
-        llOwnerSay(action_msg + " - " + owner_details);
+        string full_msg = action_msg;
+        full_msg = full_msg + " - " + owner_details;
+        llOwnerSay(full_msg);
     } else {
         llOwnerSay(action_msg);
     }
-
     logd(action_msg);
 }
 
 // For multi-party notifications (like pass)
 notifyLeashTransfer(key from_user, key to_user, string action) {
-    llRegionSayTo(from_user, 0, "Leash " + action + " to " + llKey2Name(to_user));
-    llRegionSayTo(to_user, 0, "Leash received from " + llKey2Name(from_user));
-    llOwnerSay("Leash " + action + " to " + llKey2Name(to_user) + " by " + llKey2Name(from_user));
-    logd(action + " to " + llKey2Name(to_user) + " by " + llKey2Name(from_user));
+    string to_name = llKey2Name(to_user);
+    string from_name = llKey2Name(from_user);
+    string msg1 = "Leash ";
+    msg1 = msg1 + action + " to " + to_name;
+    string msg2 = "Leash received from ";
+    msg2 = msg2 + from_name;
+    string msg3 = msg1 + " by " + from_name;
+    llRegionSayTo(from_user, 0, msg1);
+    llRegionSayTo(to_user, 0, msg2);
+    llOwnerSay(msg3);
+    logd(action + " to " + to_name + " by " + from_name);
 }
 
 // ===== ACL VERIFICATION SYSTEM (NEW) =====
@@ -787,6 +797,10 @@ applySettingsDelta(string payload) {
 }
 
 // ===== STATE BROADCAST =====
+deferBroadcastState() {
+    StateUpdatePending = TRUE;
+}
+
 broadcastState() {
     // Calculate implicit mode for UI display
     integer display_mode = DISPLAY_MODE_AVATAR;
@@ -804,10 +818,11 @@ broadcastState() {
             "leasher", (string)Leasher,
             "length", (string)LeashLength,
             "turnto", (string)TurnToFace,
-            "mode", (string)display_mode,  // For UI display only
+            "mode", (string)display_mode,
             "target", (string)LeashTarget
         ]),
         NULL_KEY);
+    StateUpdatePending = FALSE;
 }
 
 // ===== UNIFIED LEASH ACTION (INTERNAL - CALLED AFTER ACL VERIFICATION) =====
@@ -896,7 +911,7 @@ tetherLeashInternal(key user, key target) {
     // Common finalization for all modes
     persistLeashState(TRUE, user);
     startFollow();
-    broadcastState();
+    deferBroadcastState();  // Defer to reduce stack depth
 }
 
 releaseLeashInternal(key user) {
@@ -930,7 +945,7 @@ passLeashInternal(key new_leasher) {
     setLockmeisterState(TRUE, new_leasher);
 
     notifyLeashTransfer(old_leasher, new_leasher, "passed");
-    broadcastState();
+    deferBroadcastState();  // Defer to reduce stack depth
 }
 
 yankToLeasher() {
@@ -954,7 +969,7 @@ setLengthInternal(integer length) {
     if (length > 20) length = 20;
     LeashLength = length;
     persistLength(LeashLength);
-    broadcastState();
+    deferBroadcastState();  // Defer to reduce stack depth
     logd("Length set to " + (string)length);
 }
 
@@ -965,7 +980,7 @@ toggleTurnInternal() {
         LastTurnAngle = -999.0;
     }
     persistTurnto(TurnToFace);
-    broadcastState();
+    deferBroadcastState();  // Defer to reduce stack depth
     logd("Turn-to-face: " + (string)TurnToFace);
 }
 
@@ -1186,7 +1201,7 @@ default
                     persistLeashState(TRUE, controller);
                     startFollow();
                     llOwnerSay("Leashed by " + llKey2Name(controller) + " (Lockmeister)");
-                    broadcastState();
+                    deferBroadcastState();  // Defer to reduce stack depth
                     logd("Lockmeister grab from " + llKey2Name(controller));
                 }
                 return;
@@ -1202,7 +1217,7 @@ default
                     AuthorizedLmController = NULL_KEY;
                     stopFollow();
                     llOwnerSay("Released by " + llKey2Name(old_leasher) + " (Lockmeister)");
-                    broadcastState();
+                    deferBroadcastState();  // Defer to reduce stack depth
                     logd("Lockmeister release");
                 }
                 return;
@@ -1234,13 +1249,18 @@ default
     }
     
     timer() {
+        // Process deferred state broadcasts
+        if (StateUpdatePending) {
+            broadcastState();
+        }
+
         // Advance holder detection state machine
         advanceHolderStateMachine();
-        
+
         // Check for offsim/auto-release
         if (Leashed) checkLeasherPresence();
         if (!Leashed && ReclipScheduled != 0) checkAutoReclip();
-        
+
         // Follow tick
         if (FollowActive && Leashed) followTick();
     }
