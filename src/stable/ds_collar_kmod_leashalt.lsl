@@ -1,14 +1,15 @@
 /* ===============================================================
-   DS Collar - Leash Kernel Module (v3.0 UNIFIED TETHER)
+   DS Collar - Leash Kernel Module (v3.0 UNIFIED TETHER - ALTERNATIVE)
 
    PURPOSE: Leashing engine - provides leash services to plugins
 
-   NEW FEATURES v3.0:
+   NEW FEATURES v3.0 (ALTERNATIVE IMPLEMENTATION):
    - UNIFIED TETHER ARCHITECTURE: Single function for all leash types
    - Auto-detection of target type (avatar/coffle/post) based on target
    - Implicit mode determination (no mode tracking variable)
    - Simplified follow logic with universal distance enforcement
    - Cosmetic button separation maintained (ACL enforced at UI layer)
+   - LEGACY MESSAGING: Compatible with stable branch messaging format
 
    FEATURES v2.0:
    - Three leash modes: Avatar, Coffle, Post
@@ -17,44 +18,35 @@
    - Coffle: Collar-to-collar - follow the other collar wearer
    - Post: Object tether - stay within LeashLength of post object
    - Mode-specific ACL restrictions (Coffle: ACL 3,5 | Post: ACL 1,3,5)
-   
-   NEW FEATURES v1.0:
-   - Added offer acceptance dialog for leash offers
+
+   FEATURES v1.0:
+   - Offer acceptance dialog for leash offers
+   - "Offer" action for ACL 2 (Owned wearer) when not leashed
    - Target receives Accept/Decline dialog with 60s timeout
-   - Originator receives notification of acceptance/decline/timeout
-   
+   - Multi-protocol: DS Holder, OpenCollar 8.x, Avatar Direct, Lockmeister
+   - Yank rate limiting (5s cooldown)
+   - Cascading holder detection (2s DS → 2s OC → avatar direct)
+   - Offsim detection with auto-release (6s grace)
+   - Auto-reclip when leasher returns (limited attempts)
+   - Turn-to-face support (throttled)
+
    BUG FIXES v1.0:
    - CRITICAL: Fixed offer/pass target ACL verification deadlock
-   - request_acl_for_pass_target now updates PendingActionUser to target
-   - Prevents handle_acl_result from rejecting target's ACL response
-   
-   NEW FEATURES v1.0:
-   - Added "offer" action for ACL 2 (Owned wearer)
-   - Offer allows owned wearer to offer leash when not currently leashed
-   - Separate from "pass" action with distinct permissions and behavior
-   
-   BUG FIXES v1.0:
    - CRITICAL: Fixed auto-reclip after explicit unleash bug
    - CRITICAL: Fixed LM protocol to send controller UUID instead of wearer UUID
-   - Added holder name constant to top for easy maintenance
-   - Optimized link_message by checking "type" once at top
-   - Added channel constants (LEASH_CHAN_LM, LEASH_CHAN_DS) to top
-   
-   SECURITY FIXES v1.0:
-   - Added yank rate limiting (5s cooldown) to prevent griefing
    - Fixed pass target ACL verification to preserve original passer context
-   - Added Y2038 timestamp overflow protection
-   - Improved session randomness with multiple entropy sources
-   - Added production debug guard (dual-gate logging)
-   
+   - Added holder name constant for easy maintenance
+   - Optimized link_message by checking "type" once at top
+
    SECURITY FIXES v1.0:
    - Added ACL verification system (no longer trusts plugin flags)
    - Implemented holder detection state machine (no race conditions)
    - Added auto-reclip attempt limiting
    - Improved offsim detection with separate avatar/holder tracking
    - Enhanced session security with better randomness
-   - Added turn-to-face throttling to reduce RLV spam
+   - Added Y2038 timestamp overflow protection
    - Implemented Lockmeister authorization validation
+   - Added production debug guard (dual-gate logging)
    
    FEATURES:
    - Grab/Release/Pass/Offer/Yank leash actions
@@ -73,20 +65,6 @@
    - Uses settings module for persistence
    - Uses auth module for ACL verification
    
-   ARCHITECTURE v3.0:
-   - Unified tether logic: Single tetherLeashInternal() function
-   - Auto-detection: llGetAgentInfo() → avatar vs object detection
-   - Implicit state: LeashTarget + CoffleTargetAvatar determine behavior
-   - No mode constants or tracking variables needed
-   - RLV follow is optional assist, distance enforcement is core
-
-   KANBAN MESSAGING v3.0:
-   - Uses universal kanban helper (~500-800 bytes)
-   - All messages use standardized {from, payload, to} structure
-   - Routing by channel + kFrom instead of "type" field
-   - Memory savings: ~3.6KB freed
-   - Cleaner message construction and routing
-
    CHANNELS:
    - 700: Auth queries
    - 800: Settings persistence
@@ -97,60 +75,6 @@
 
 integer DEBUG = FALSE;
 integer PRODUCTION = TRUE;  // Set FALSE for development
-
-string CONTEXT = "leash";
-
-/* ═══════════════════════════════════════════════════════════
-   KANBAN UNIVERSAL HELPER (~500-800 bytes)
-   ═══════════════════════════════════════════════════════════ */
-
-string kFrom = "";  // Sender context (populated by kRecv)
-string kTo = "";    // Recipient context (populated by kRecv)
-
-kSend(string from, string to, integer channel, string payload, key k) {
-    llMessageLinked(LINK_SET, channel,
-        llList2Json(JSON_OBJECT, [
-            "from", from,
-            "payload", payload,
-            "to", to
-        ]),
-        k
-    );
-}
-
-string kRecv(string msg, string my_context) {
-    // Quick validation: must be JSON object
-    if (llGetSubString(msg, 0, 0) != "{") return "";
-
-    // Extract from
-    string from = llJsonGetValue(msg, ["from"]);
-    if (from == JSON_INVALID) return "";
-
-    // Extract to
-    string to = llJsonGetValue(msg, ["to"]);
-    if (to == JSON_INVALID) return "";
-
-    // Check if for me (broadcast "" or direct to my_context)
-    if (to != "" && to != my_context) return "";
-
-    // Extract payload
-    string payload = llJsonGetValue(msg, ["payload"]);
-    if (payload == JSON_INVALID) return "";
-
-    // Set globals for routing
-    kFrom = from;
-    kTo = to;
-
-    return payload;
-}
-
-string kPayload(list kvp) {
-    return llList2Json(JSON_OBJECT, kvp);
-}
-integer json_has(string j, list path) {
-    return (llJsonGetValue(j, path) != JSON_INVALID);
-}
-
 integer AUTH_BUS = 700;
 integer SETTINGS_BUS = 800;
 integer UI_BUS = 900;
@@ -279,50 +203,53 @@ denyAccess(key user, string reason, string action, integer acl) {
 
 // ===== LOCKMEISTER PROTOCOL =====
 setLockmeisterState(integer enabled, key controller) {
+    string msg;
     if (enabled) {
-        kSend(CONTEXT, "particles", UI_BUS,
-            kPayload(["enable", 1, "controller", (string)controller]),
-            NULL_KEY);
+        msg = llList2Json(JSON_OBJECT, [
+            "type", "lm_enable",
+            "controller", (string)controller
+        ]);
     } else {
-        kSend(CONTEXT, "particles", UI_BUS,
-            kPayload(["disable", 1]),
-            NULL_KEY);
+        msg = llList2Json(JSON_OBJECT, [
+            "type", "lm_disable"
+        ]);
     }
+    llMessageLinked(LINK_SET, UI_BUS, msg, NULL_KEY);
 }
 
 // ===== PARTICLES PROTOCOL =====
 setParticlesState(integer active, key target) {
+    string msg;
     if (active) {
-        kSend(CONTEXT, "particles", UI_BUS,
-            kPayload([
-                "start", 1,
-                "source", PLUGIN_CONTEXT,
-                "target", (string)target,
-                "style", "chain"
-            ]),
-            NULL_KEY);
+        msg = llList2Json(JSON_OBJECT, [
+            "type", "particles_start",
+            "source", PLUGIN_CONTEXT,
+            "target", (string)target,
+            "style", "chain"
+        ]);
     } else {
-        kSend(CONTEXT, "particles", UI_BUS,
-            kPayload(["stop", 1, "source", PLUGIN_CONTEXT]),
-            NULL_KEY);
+        msg = llList2Json(JSON_OBJECT, [
+            "type", "particles_stop",
+            "source", PLUGIN_CONTEXT
+        ]);
     }
+    llMessageLinked(LINK_SET, UI_BUS, msg, NULL_KEY);
 }
 
 updateParticlesTarget(key target) {
-    kSend(CONTEXT, "particles", UI_BUS,
-        kPayload(["update", 1, "target", (string)target]),
-        NULL_KEY);
+    llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
+        "type", "particles_update",
+        "target", (string)target
+    ]), NULL_KEY);
 }
 
 // ===== OFFER PROTOCOL =====
 sendOfferPending(key target, key originator) {
-    kSend(CONTEXT, "", UI_BUS,
-        kPayload([
-            "offer_pending", 1,
-            "target", (string)target,
-            "originator", (string)originator
-        ]),
-        NULL_KEY);
+    llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
+        "type", "offer_pending",
+        "target", (string)target,
+        "originator", (string)originator
+    ]), NULL_KEY);
 }
 
 /* ===============================================================
@@ -404,22 +331,23 @@ requestAclForAction(key user, string action, key pass_target) {
     PendingActionUser = user;
     PendingAction = action;
     PendingPassTarget = pass_target;
-
-    kSend(CONTEXT, "auth", AUTH_BUS,
-        kPayload(["avatar", (string)user]),
-        user);
-
+    
+    llMessageLinked(LINK_SET, AUTH_BUS, llList2Json(JSON_OBJECT, [
+        "type", "acl_query",
+        "avatar", (string)user
+    ]), user);
+    
     logd("ACL query for " + action + " by " + llKey2Name(user));
 }
 
-handleAclResult(string payload) {
+handleAclResult(string msg) {
     if (!AclPending) return;
-    if (!json_has(payload, ["avatar"]) || !json_has(payload, ["level"])) return;
-
-    key avatar = (key)llJsonGetValue(payload, ["avatar"]);
+    if (!jsonHas(msg, ["avatar"]) || !jsonHas(msg, ["level"])) return;
+    
+    key avatar = (key)llJsonGetValue(msg, ["avatar"]);
     if (avatar != PendingActionUser) return;
-
-    integer acl_level = (integer)llJsonGetValue(payload, ["level"]);
+    
+    integer acl_level = (integer)llJsonGetValue(msg, ["level"]);
     AclPending = FALSE;
     
     logd("ACL result: " + (string)acl_level + " for " + PendingAction);
@@ -460,7 +388,7 @@ handleAclResult(string payload) {
     else if (PendingAction == "pass_target_check") {
         // This is the target verification for pass/offer action
         // Target must be level 1+ (public or higher) to receive leash
-        key target = (key)llJsonGetValue(payload, ["avatar"]);
+        key target = (key)llJsonGetValue(msg, ["avatar"]);
 
         logd("Target ACL check: " + llKey2Name(target) + " has ACL " + (string)acl_level + ", IsOfferMode=" + (string)PendingIsOffer);
 
@@ -544,11 +472,12 @@ requestAclForPassTarget(key target) {
     // Reuse pending state for target check
     PendingAction = "pass_target_check";
     AclPending = TRUE;
-
-    kSend(CONTEXT, "auth", AUTH_BUS,
-        kPayload(["avatar", (string)target]),
-        target);
-
+    
+    llMessageLinked(LINK_SET, AUTH_BUS, llList2Json(JSON_OBJECT, [
+        "type", "acl_query",
+        "avatar", (string)target
+    ]), target);
+    
     logd("ACL query for pass target " + llKey2Name(target));
 }
 
@@ -739,9 +668,11 @@ checkAutoReclip() {
 
 // ===== SETTINGS PERSISTENCE =====
 persistSetting(string setting_key, string value) {
-    kSend(CONTEXT, "settings", SETTINGS_BUS,
-        kPayload(["key", setting_key, "value", value]),
-        NULL_KEY);
+    llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
+        "type", "set",
+        "key", setting_key,
+        "value", value
+    ]), NULL_KEY);
 }
 
 persistLeashState(integer leashed, key leasher) {
@@ -757,28 +688,28 @@ persistTurnto(integer turnto) {
     persistSetting(KEY_LEASH_TURNTO, (string)turnto);
 }
 
-applySettingsSync(string payload) {
-    if (!json_has(payload, ["kv"])) return;
-    string settings_json = llJsonGetValue(payload, ["kv"]);
-    if (json_has(settings_json, [KEY_LEASHED])) {
+applySettingsSync(string msg) {
+    if (!jsonHas(msg, ["settings"])) return;
+    string settings_json = llJsonGetValue(msg, ["settings"]);
+    if (jsonHas(settings_json, [KEY_LEASHED])) {
         Leashed = (integer)llJsonGetValue(settings_json, [KEY_LEASHED]);
     }
-    if (json_has(settings_json, [KEY_LEASHER])) {
+    if (jsonHas(settings_json, [KEY_LEASHER])) {
         Leasher = (key)llJsonGetValue(settings_json, [KEY_LEASHER]);
     }
-    if (json_has(settings_json, [KEY_LEASH_LENGTH])) {
+    if (jsonHas(settings_json, [KEY_LEASH_LENGTH])) {
         LeashLength = clampLeashLength((integer)llJsonGetValue(settings_json, [KEY_LEASH_LENGTH]));
     }
-    if (json_has(settings_json, [KEY_LEASH_TURNTO])) {
+    if (jsonHas(settings_json, [KEY_LEASH_TURNTO])) {
         TurnToFace = (integer)llJsonGetValue(settings_json, [KEY_LEASH_TURNTO]);
     }
     logd("Settings loaded");
 }
 
-applySettingsDelta(string payload) {
-    string setting_key = llJsonGetValue(payload, ["key"]);
-    string value = llJsonGetValue(payload, ["value"]);
-    if (setting_key != "" && value != "" && setting_key != JSON_INVALID && value != JSON_INVALID) {
+applySettingsDelta(string msg) {
+    string setting_key = jsonGet(msg, "key", "");
+    string value = jsonGet(msg, "value", "");
+    if (setting_key != "" && value != "") {
         if (setting_key == KEY_LEASHED) Leashed = (integer)value;
         else if (setting_key == KEY_LEASHER) Leasher = (key)value;
         else if (setting_key == KEY_LEASH_LENGTH) LeashLength = clampLeashLength((integer)value);
@@ -798,16 +729,16 @@ broadcastState() {
         }
     }
 
-    kSend(CONTEXT, "", UI_BUS,
-        kPayload([
-            "leashed", (string)Leashed,
-            "leasher", (string)Leasher,
-            "length", (string)LeashLength,
-            "turnto", (string)TurnToFace,
-            "mode", (string)display_mode,  // For UI display only
-            "target", (string)LeashTarget
-        ]),
-        NULL_KEY);
+    string msg = llList2Json(JSON_OBJECT, [
+        "type", "leash_state",
+        "leashed", (string)Leashed,
+        "leasher", (string)Leasher,
+        "length", (string)LeashLength,
+        "turnto", (string)TurnToFace,
+        "mode", (string)display_mode,  // For UI display only
+        "target", (string)LeashTarget
+    ]);
+    llMessageLinked(LINK_SET, UI_BUS, msg, NULL_KEY);
 }
 
 // ===== UNIFIED LEASH ACTION (INTERNAL - CALLED AFTER ACL VERIFICATION) =====
@@ -1090,18 +1021,18 @@ default
         PendingAction = "";
         PendingPassTarget = NULL_KEY;
         AuthorizedLmController = NULL_KEY;
-
-        kSend(CONTEXT, "settings", SETTINGS_BUS,
-            kPayload(["get", 1]),
-            NULL_KEY);
+        
+        llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
+            "type", "settings_get"
+        ]), NULL_KEY);
         llSetTimerEvent(FOLLOW_TICK);
         llRequestPermissions(llGetOwner(), PERMISSION_TAKE_CONTROLS);
 
         // Memory diagnostics
         integer used = llGetUsedMemory();
         integer free = llGetFreeMemory();
-        llOwnerSay("Leash kmod ready (v3.0 UNIFIED TETHER) - Memory: " + (string)used + " used, " + (string)free + " free");
-        logd("Leash kmod ready (v3.0 UNIFIED TETHER)");
+        llOwnerSay("Leash kmod ready (v3.0 UNIFIED TETHER ALT) - Memory: " + (string)used + " used, " + (string)free + " free");
+        logd("Leash kmod ready (v3.0 UNIFIED TETHER ALT)");
     }
     
     on_rez(integer start_param) {
@@ -1120,24 +1051,24 @@ default
     }
     
     link_message(integer sender, integer num, string msg, key id) {
-        // Parse kanban message - kRecv validates and sets kFrom, kTo
-        string payload = kRecv(msg, CONTEXT);
-        if (payload == "") return;  // Not for us or invalid
-
-        /* ===== UI BUS ===== */
+        // OPTIMIZATION: Check "type" once at the top (Code Review Fix #3)
+        if (!jsonHas(msg, ["type"])) return;
+        string msg_type = llJsonGetValue(msg, ["type"]);
+        
         if (num == UI_BUS) {
-            // Leash action: has "action" field
-            if (json_has(payload, ["action"])) {
-                string action = llJsonGetValue(payload, ["action"]);
+            
+            // Commands from config plugin - NOW WITH ACL VERIFICATION
+            if (msg_type == "leash_action") {
+                string action = jsonGet(msg, "action", "");
                 if (action == "") return;
                 key user = id;
-
+                
                 // Query state doesn't need ACL
                 if (action == "query_state") {
                     broadcastState();
                     return;
                 }
-
+                
                 // Yank only works for current leasher (with rate limiting)
                 if (action == "yank") {
                     if (user == Leasher) {
@@ -1154,31 +1085,31 @@ default
                     }
                     return;
                 }
-
+                
                 // All other actions require ACL verification
-                key target = (key)llJsonGetValue(payload, ["target"]);
+                key target = (key)jsonGet(msg, "target", (string)NULL_KEY);
 
                 // Special case: set_length repurposes target field for length value
                 if (action == "set_length") {
-                    target = (key)llJsonGetValue(payload, ["length"]);
+                    target = (key)jsonGet(msg, "length", "0");
                 }
 
                 // Single call handles all actions
                 requestAclForAction(user, action, target);
                 return;
             }
-
-            // Lockmeister grabbed: has "controller" and "prim" fields
-            if (json_has(payload, ["controller"]) && json_has(payload, ["prim"])) {
-                key controller = (key)llJsonGetValue(payload, ["controller"]);
+            
+            // Lockmeister notifications from particles - VERIFY AUTHORIZATION
+            if (msg_type == "lm_grabbed") {
+                key controller = (key)jsonGet(msg, "controller", (string)NULL_KEY);
                 if (controller == NULL_KEY) return;
-
+                
                 // SECURITY: Only accept if this controller was authorized
                 if (controller != AuthorizedLmController) {
                     logd("Rejected LM grab from unauthorized controller: " + llKey2Name(controller));
                     return;
                 }
-
+                
                 if (!Leashed) {
                     Leashed = TRUE;
                     Leasher = controller;
@@ -1191,9 +1122,8 @@ default
                 }
                 return;
             }
-
-            // Lockmeister released: has "lm_released" marker from particles module
-            if (json_has(payload, ["lm_released"])) {
+            
+            if (msg_type == "lm_released") {
                 if (Leashed) {
                     key old_leasher = Leasher;
                     Leashed = FALSE;
@@ -1209,26 +1139,17 @@ default
             }
             return;
         }
-
-        /* ===== AUTH BUS ===== */
+        
         if (num == AUTH_BUS) {
-            // ACL result: has "avatar" and "level" fields
-            if (json_has(payload, ["avatar"]) && json_has(payload, ["level"])) {
-                handleAclResult(payload);
+            if (msg_type == "acl_result") {
+                handleAclResult(msg);
             }
             return;
         }
-
-        /* ===== SETTINGS BUS ===== */
+        
         if (num == SETTINGS_BUS) {
-            // Settings sync: has "kv" field (full sync)
-            if (json_has(payload, ["kv"])) {
-                applySettingsSync(payload);
-            }
-            // Settings delta: has "op" field
-            else if (json_has(payload, ["op"])) {
-                applySettingsDelta(payload);
-            }
+            if (msg_type == "settings_sync") applySettingsSync(msg);
+            else if (msg_type == "settings_delta") applySettingsDelta(msg);
             return;
         }
     }
