@@ -182,9 +182,17 @@ applySettingsSync(string msg) {
     if (!jsonHas(msg, ["settings"])) return;
     string settings_json = llJsonGetValue(msg, ["settings"]);
 
+    integer had_enabled_setting = FALSE;
     if (jsonHas(settings_json, [KEY_ENABLED])) {
         Enabled = (integer)llJsonGetValue(settings_json, [KEY_ENABLED]);
+        had_enabled_setting = TRUE;
     }
+    else {
+        // No persisted setting - use default TRUE and persist it
+        Enabled = TRUE;
+        persistEnabled(Enabled);
+    }
+
     if (jsonHas(settings_json, [KEY_PREFIX])) {
         CommandPrefix = llJsonGetValue(settings_json, [KEY_PREFIX]);
         if (CommandPrefix == "") CommandPrefix = "!";
@@ -301,6 +309,28 @@ handleAclResult(string msg) {
     PendingArgs = [];
 }
 
+/* ===== COMMAND LISTING ===== */
+sendCommandList(key user) {
+    // Build list of unique commands
+    list command_list = [];
+    integer i = 0;
+    integer len = llGetListLength(CommandRegistry);
+
+    while (i < len) {
+        string cmd = llList2String(CommandRegistry, i);
+        command_list += [cmd];
+        i = i + 2;
+    }
+
+    llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
+        "type", "chatcmd_list",
+        "commands", llList2Json(JSON_ARRAY, command_list),
+        "count", (string)llGetListLength(command_list)
+    ]), user);
+
+    logd("Sent command list: " + (string)llGetListLength(command_list) + " commands");
+}
+
 /* ===== CONFIGURATION INTERFACE ===== */
 handleChatCmdAction(string msg, key user) {
     string action = jsonGet(msg, "action", "");
@@ -308,6 +338,9 @@ handleChatCmdAction(string msg, key user) {
 
     if (action == "query_state") {
         broadcastState();
+    }
+    else if (action == "query_commands") {
+        sendCommandList(user);
     }
     else if (action == "toggle_enabled") {
         Enabled = !Enabled;
