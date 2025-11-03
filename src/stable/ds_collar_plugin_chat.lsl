@@ -180,7 +180,7 @@ showCommandsMenu() {
     body += "Prefix: " + CommandPrefix + "\n\n";
 
     // Button layout follows LSL dialog pattern (bottom-left to top-right)
-    // Indexes 0, 1, 2 are reserved for navigation:
+    // Indexes 0, 1, 2 are occupied by navigation buttons:
     // 0 = back nav (<<), 1 = forward nav (>>), 2 = Back button
     // Navigation uses wrap-around (consistent with other plugins)
 
@@ -188,30 +188,32 @@ showCommandsMenu() {
     integer end_idx = start_idx + COMMANDS_PER_PAGE - 1;
     if (end_idx >= total_cmds) end_idx = total_cmds - 1;
 
-    // Collect command buttons for this page
-    list cmd_buttons = [];
+    // Build body text (forward order for readability)
     if (total_cmds > 0) {
         integer i;
         for (i = start_idx; i <= end_idx && i < total_cmds; i++) {
             string cmd = llList2String(AvailableCommands, i);
             body += CommandPrefix + cmd + "\n";
-            cmd_buttons += [cmd];
         }
     }
     else {
         body += "No commands registered yet.";
     }
 
-    // Reverse command buttons so they display top-left to bottom-right
-    list reversed_cmds = [];
-    integer reverse_idx = llGetListLength(cmd_buttons) - 1;
-    while (reverse_idx >= 0) {
-        reversed_cmds += [llList2String(cmd_buttons, reverse_idx)];
-        reverse_idx = reverse_idx - 1;
+    // Collect buttons in reverse order (for top-left to bottom-right display)
+    // This avoids inefficient list reversal loop
+    list cmd_buttons = [];
+    if (total_cmds > 0) {
+        integer i;
+        for (i = end_idx; i >= start_idx; i--) {
+            if (i < total_cmds) {
+                cmd_buttons += [llList2String(AvailableCommands, i)];
+            }
+        }
     }
 
-    // Build final button array: navigation buttons + reversed commands
-    list buttons = ["<<", ">>", "Back"] + reversed_cmds;
+    // Build final button array: navigation buttons + command buttons
+    list buttons = ["<<", ">>", "Back"] + cmd_buttons;
 
     showMenu("commands", "Available Commands", body, buttons);
 }
