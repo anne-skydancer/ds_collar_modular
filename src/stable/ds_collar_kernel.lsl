@@ -527,6 +527,27 @@ integer check_owner_changed() {
 }
 
 /* ═══════════════════════════════════════════════════════════
+   ROUTING HELPERS
+   ═══════════════════════════════════════════════════════════ */
+
+// Generic helper to route registration fields to modules
+// Extracts field from registration message and forwards to target module
+route_field(string msg, string context, string field_name, string route_type, integer channel) {
+    if (!json_has(msg, [field_name])) return;
+
+    string field_value = llJsonGetValue(msg, [field_name]);
+
+    string routed_msg = llList2Json(JSON_OBJECT, [
+        "type", route_type,
+        "context", context,
+        field_name, field_value
+    ]);
+
+    llMessageLinked(LINK_SET, channel, routed_msg, NULL_KEY);
+    logd("Routed " + field_name + " to channel " + (string)channel + ": " + context);
+}
+
+/* ═══════════════════════════════════════════════════════════
    MESSAGE HANDLERS
    ═══════════════════════════════════════════════════════════ */
 
@@ -544,25 +565,9 @@ handle_register(string msg) {
     // Add to lifecycle queue (kernel stores min_acl for auth recovery, not enforcement)
     queue_add("REG", context, label, script, min_acl);
 
-    // Forward ACL requirement to auth module (auth's concern for enforcement)
-    string auth_msg = llList2Json(JSON_OBJECT, [
-        "type", "register_acl",
-        "context", context,
-        "min_acl", min_acl
-    ]);
-    llMessageLinked(LINK_SET, AUTH_BUS, auth_msg, NULL_KEY);
-
-    // Forward chat commands to chat command module (if present)
-    if (json_has(msg, ["commands"])) {
-        string commands_json = llJsonGetValue(msg, ["commands"]);
-        string chatcmd_msg = llList2Json(JSON_OBJECT, [
-            "type", "chatcmd_register",
-            "context", context,
-            "commands", commands_json
-        ]);
-        llMessageLinked(LINK_SET, UI_BUS, chatcmd_msg, NULL_KEY);
-        logd("Routed commands to chat module: " + context);
-    }
+    // Route fields to interested modules
+    route_field(msg, context, "min_acl", "register_acl", AUTH_BUS);
+    route_field(msg, context, "commands", "chatcmd_register", UI_BUS);
 }
 
 handle_pong(string msg) {
