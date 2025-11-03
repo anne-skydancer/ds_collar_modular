@@ -14,7 +14,7 @@ The chat command system consists of:
 1. Plugin registers with kernel, includes optional "commands" field
 2. Kernel routes "commands" field to chat command module (kmod_chatcmd)
 3. Chat command module registers commands in its registry
-4. User types command in chat (e.g., `!grab`)
+4. User types command in chat (e.g., `<prefix>grab`)
 5. kmod_chatcmd parses, verifies ACL, routes to plugin
 6. Plugin receives `chatcmd_invoke` message with ACL level
 7. Plugin handles command logic
@@ -125,7 +125,7 @@ handleChatCommand(string msg, key user) {
                 }
             }
             else {
-                llRegionSayTo(user, 0, "Usage: !length <number>");
+                llRegionSayTo(user, 0, "Usage: <prefix>length <number>");
             }
         }
         else {
@@ -138,10 +138,10 @@ handleChatCommand(string msg, key user) {
 ## Example Commands by Plugin
 
 ### Leash Plugin
-- `!grab` - Grab leash
-- `!release` - Release leash
-- `!yank` - Yank wearer to leasher
-- `!length <n>` - Set leash length (1-20m)
+- `<prefix>grab` - Grab leash
+- `<prefix>release` - Release leash
+- `<prefix>yank` - Yank wearer to leasher
+- `<prefix>length <n>` - Set leash length (1-20m)
 
 ### Bell Plugin (Example)
 ```lsl
@@ -222,12 +222,14 @@ Example:
 
 Users configure the chat command system via the "Chat Cmds" menu:
 - Enable/Disable: Turns on/off chat command processing
-- Prefix: Set command prefix (default: `!`)
+- Prefix: Set command prefix (default: `!`, configurable to any 1-5 character string)
 - Private Channel: Set private chat channel (default: 1)
 
 Commands are always active on both:
 - Channel 0 (public chat) when enabled
 - Configured private channel
+
+**Example:** If prefix is set to `#`, commands become `#grab`, `#release`, etc.
 
 ## Best Practices
 
@@ -241,10 +243,11 @@ Commands are always active on both:
 ## Testing
 
 1. Enable chat commands: Touch collar → Chat Cmds → Enable
-2. Test command: Type in chat: `!grab`
+2. Test command: Type in chat: `<prefix>grab` (default: `!grab`)
 3. Check response: Should execute or deny based on ACL
-4. Test args: `!length 5` should parse argument correctly
-5. Test unknown: `!invalid` should report unknown command
+4. Test args: `<prefix>length 5` should parse argument correctly
+5. Test unknown: `<prefix>invalid` should report unknown command
+6. Test custom prefix: Change prefix to `#`, then use `#grab`
 
 ## Security
 

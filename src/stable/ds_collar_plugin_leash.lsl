@@ -540,7 +540,7 @@ handleChatCommand(string msg, key user) {
                 }
             }
             else {
-                llRegionSayTo(user, 0, "Usage: !length <number>");
+                llRegionSayTo(user, 0, "Usage: <prefix>length <number>");
             }
         }
         else {
