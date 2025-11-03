@@ -136,7 +136,13 @@ registerSelf() {
         "context", PLUGIN_CONTEXT,
         "label", PLUGIN_LABEL,
         "min_acl", PLUGIN_MIN_ACL,
-        "script", llGetScriptName()
+        "script", llGetScriptName(),
+        "commands", llList2Json(JSON_ARRAY, [
+            "grab",
+            "release",
+            "yank",
+            "length"
+        ])
     ]), NULL_KEY);
 }
 
@@ -450,6 +456,97 @@ sendSetLength(integer length) {
         "length", (string)length,
         "acl_verified", "1"
     ]), CurrentUser);
+}
+
+// ===== CHAT COMMAND HANDLER =====
+handleChatCommand(string msg, key user) {
+    if (!jsonHas(msg, ["command"]) || !jsonHas(msg, ["context"])) return;
+
+    string context = llJsonGetValue(msg, ["context"]);
+    if (context != PLUGIN_CONTEXT) return;
+
+    string command = llJsonGetValue(msg, ["command"]);
+    integer acl_level = (integer)llJsonGetValue(msg, ["acl_level"]);
+
+    list args = [];
+    if (jsonHas(msg, ["args"])) {
+        string args_json = llJsonGetValue(msg, ["args"]);
+        string num_str = llJsonGetValue(args_json, ["length"]);
+        if (num_str != JSON_INVALID) {
+            integer num_args = (integer)num_str;
+            integer i = 0;
+            while (i < num_args) {
+                args += [llJsonGetValue(args_json, [i])];
+                i = i + 1;
+            }
+        }
+    }
+
+    logd("Chat command: " + command + " by " + llKey2Name(user) + " (ACL " + (string)acl_level + ")");
+
+    if (command == "grab") {
+        if (inAllowedList(acl_level, ALLOWED_ACL_GRAB)) {
+            llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
+                "type", "leash_action",
+                "action", "grab",
+                "acl_verified", "1"
+            ]), user);
+            llRegionSayTo(user, 0, "Leash grabbed.");
+        }
+        else {
+            llRegionSayTo(user, 0, "Access denied: insufficient permissions to grab leash");
+        }
+    }
+    else if (command == "release") {
+        if (acl_level >= 2 || user == Leasher) {
+            llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
+                "type", "leash_action",
+                "action", "release",
+                "acl_verified", "1"
+            ]), user);
+            llRegionSayTo(user, 0, "Leash released.");
+        }
+        else {
+            llRegionSayTo(user, 0, "Access denied: only leasher or authorized users can release");
+        }
+    }
+    else if (command == "yank") {
+        if (user == Leasher) {
+            llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
+                "type", "leash_action",
+                "action", "yank",
+                "acl_verified", "1"
+            ]), user);
+        }
+        else {
+            llRegionSayTo(user, 0, "Only the current leasher can yank.");
+        }
+    }
+    else if (command == "length") {
+        if (inAllowedList(acl_level, ALLOWED_ACL_SETTINGS)) {
+            if (llGetListLength(args) > 0) {
+                integer length = (integer)llList2String(args, 0);
+                if (length >= 1 && length <= 20) {
+                    llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
+                        "type", "leash_action",
+                        "action", "set_length",
+                        "length", (string)length,
+                        "acl_verified", "1"
+                    ]), user);
+                    llRegionSayTo(user, 0, "Leash length set to " + (string)length + "m");
+                }
+                else {
+                    llRegionSayTo(user, 0, "Length must be between 1 and 20 meters.");
+                }
+            }
+            else {
+                llRegionSayTo(user, 0, "Usage: !length <number>");
+            }
+        }
+        else {
+            llRegionSayTo(user, 0, "Access denied: insufficient permissions to change leash length");
+        }
+    }
 }
 
 // ===== BUTTON HANDLERS =====
@@ -794,6 +891,11 @@ default
                 key target = (key)llJsonGetValue(msg, ["target"]);
                 key originator = (key)llJsonGetValue(msg, ["originator"]);
                 showOfferDialog(target, originator);
+                return;
+            }
+
+            if (msg_type == "chatcmd_invoke") {
+                handleChatCommand(msg, id);
                 return;
             }
         }
