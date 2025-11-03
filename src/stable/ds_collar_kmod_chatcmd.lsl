@@ -4,11 +4,11 @@
    PURPOSE: Generic chat command routing infrastructure
 
    FEATURES:
-   - Listens on channel 0 (public) and configurable private channel
+   - Listens on channel 0 (public, toggleable) and private channel (always active)
    - Generic command registry (plugins register their commands)
    - Routes commands to appropriate plugin via UI_BUS
    - ACL verification before routing
-   - Rate limiting (prevents spam/griefing)
+   - Rate limiting (prevents spam/griefing, wearer exempt)
    - Persistent settings (enabled, prefix, private channel)
 
    ARCHITECTURE:
@@ -22,8 +22,8 @@
    - 700: Auth queries
    - 800: Settings persistence
    - 900: UI/command bus (receives chatcmd_register from kernel)
-   - 0: Public chat (when enabled)
-   - Configurable: Private chat channel (default 1)
+   - 0: Public chat (toggleable via Enabled flag)
+   - Configurable: Private chat channel (always active, default 1)
 
    COMMAND REGISTRY:
    - Stride list: [command_name, plugin_context, command_name, plugin_context, ...]
@@ -51,13 +51,14 @@
 
    SECURITY:
    - ACL verification before routing
-   - Rate limiting (5s cooldown per user per command)
-   - Owner can always use commands regardless of settings
+   - Rate limiting (5s cooldown per user per command, wearer exempt)
+   - Public chat (ch 0): Toggleable for accessibility
+   - Private chat: Always active for accessibility
 
    SETTINGS KEYS:
-   - chatcmd_enabled: 0/1
+   - chatcmd_enabled: 0/1 (controls public channel 0 listener only)
    - chatcmd_prefix: Command prefix string
-   - chatcmd_private_chan: Private channel number
+   - chatcmd_private_chan: Private channel number (always active)
    =============================================================== */
 
 integer DEBUG = FALSE;
@@ -177,14 +178,13 @@ integer checkCooldown(key user, string command_name) {
 setupListeners() {
     closeListeners();
 
-    if (!Enabled) {
-        logd("Chat commands disabled - no listeners active");
-        return;
+    // Public listener (channel 0) is toggleable via Enabled flag
+    if (Enabled) {
+        ListenPublic = llListen(0, "", NULL_KEY, "");
+        logd("Listening on channel 0 (public)");
     }
 
-    ListenPublic = llListen(0, "", NULL_KEY, "");
-    logd("Listening on channel 0 (public)");
-
+    // Private listener is always active (channel is configurable)
     if (PrivateChannel != 0) {
         ListenPrivate = llListen(PrivateChannel, "", NULL_KEY, "");
         logd("Listening on channel " + (string)PrivateChannel + " (private)");
@@ -276,11 +276,6 @@ broadcastState() {
 
 /* ===== COMMAND PARSING ===== */
 integer parseCommand(string msg_text, key speaker) {
-    // If disabled, no one can use commands (accessibility by design)
-    if (!Enabled) {
-        return FALSE;
-    }
-
     string trimmed = llStringTrim(msg_text, STRING_TRIM);
 
     if (llGetSubString(trimmed, 0, llStringLength(CommandPrefix) - 1) != CommandPrefix) {
@@ -494,11 +489,13 @@ default
         // Ignore messages from the collar object itself
         if (speaker == llGetKey()) return;
 
-        // If disabled, no one can use commands (accessibility by design)
-        if (!Enabled) return;
+        // Only process commands from the two listened channels
+        if (channel != 0 && channel != PrivateChannel) return;
 
-        if (channel == 0 || channel == PrivateChannel) {
-            parseCommand(msg_text, speaker);
-        }
+        // Public chat (channel 0) requires Enabled flag
+        // Private channel is always active
+        if (channel == 0 && !Enabled) return;
+
+        parseCommand(msg_text, speaker);
     }
 }
