@@ -74,6 +74,13 @@ integer inAllowedList(integer level, list allowed) {
     return (llListFindList(allowed, [level]) != -1);
 }
 
+integer calculateTotalPages() {
+    integer total_cmds = llGetListLength(AvailableCommands);
+    integer total_pages = (total_cmds + COMMANDS_PER_PAGE - 1) / COMMANDS_PER_PAGE;
+    if (total_pages == 0) total_pages = 1;
+    return total_pages;
+}
+
 /* ===== MENU DISPLAY ===== */
 showMenu(string context, string title, string body, list buttons) {
     SessionId = generateSessionId();
@@ -164,38 +171,49 @@ showSettingsMenu() {
 
 showCommandsMenu() {
     integer total_cmds = llGetListLength(AvailableCommands);
-    integer total_pages = (total_cmds + COMMANDS_PER_PAGE - 1) / COMMANDS_PER_PAGE;
+    integer total_pages = calculateTotalPages();
 
-    if (total_pages == 0) total_pages = 1;
     if (CommandsPage >= total_pages) CommandsPage = 0;
 
     string body = "Available Commands\n";
     body += "(Page " + (string)(CommandsPage + 1) + " of " + (string)total_pages + ")\n\n";
     body += "Prefix: " + CommandPrefix + "\n\n";
 
-    list buttons = ["Back"];
+    // Button layout follows LSL dialog pattern (bottom-left to top-right)
+    // Indexes 0, 1, 2 are occupied by navigation buttons:
+    // 0 = back nav (<<), 1 = forward nav (>>), 2 = Back button
+    // Navigation uses wrap-around (consistent with other plugins)
 
     integer start_idx = CommandsPage * COMMANDS_PER_PAGE;
     integer end_idx = start_idx + COMMANDS_PER_PAGE - 1;
     if (end_idx >= total_cmds) end_idx = total_cmds - 1;
 
+    // Build body text (forward order for readability)
     if (total_cmds > 0) {
         integer i;
         for (i = start_idx; i <= end_idx && i < total_cmds; i++) {
             string cmd = llList2String(AvailableCommands, i);
             body += CommandPrefix + cmd + "\n";
-            buttons += [cmd];
         }
     }
     else {
         body += "No commands registered yet.";
     }
 
-    // Add pagination buttons
-    if (total_pages > 1) {
-        if (CommandsPage > 0) buttons += ["◄ Prev"];
-        if (CommandsPage < total_pages - 1) buttons += ["Next ►"];
+    // Collect buttons in reverse order (for top-left to bottom-right display)
+    // This avoids inefficient list reversal loop
+    list cmd_buttons = [];
+    if (total_cmds > 0) {
+        integer i;
+        for (i = end_idx; i >= start_idx; i--) {
+            if (i < total_cmds) {
+                cmd_buttons += [llList2String(AvailableCommands, i)];
+            }
+        }
     }
+
+    // Build final button array: navigation buttons + command buttons
+    list buttons = ["<<", ">>", "Back"] + cmd_buttons;
 
     showMenu("commands", "Available Commands", body, buttons);
 }
@@ -263,13 +281,16 @@ handleButtonClick(string button) {
         }
     }
     else if (MenuContext == "commands") {
-        if (button == "◄ Prev") {
+        if (button == "<<") {
+            integer total_pages = calculateTotalPages();
             CommandsPage--;
-            if (CommandsPage < 0) CommandsPage = 0;
+            if (CommandsPage < 0) CommandsPage = total_pages - 1;  // Wrap to last page
             showCommandsMenu();
         }
-        else if (button == "Next ►") {
+        else if (button == ">>") {
+            integer total_pages = calculateTotalPages();
             CommandsPage++;
+            if (CommandsPage >= total_pages) CommandsPage = 0;  // Wrap to first page
             showCommandsMenu();
         }
         else if (button == "Back") {
