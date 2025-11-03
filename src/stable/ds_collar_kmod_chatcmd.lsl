@@ -1,22 +1,22 @@
 /* ===============================================================
    DS Collar - Chat Command Kernel Module (v1.0)
 
-   PURPOSE: Chat command processing engine for collar commands
+   PURPOSE: Generic chat command routing infrastructure
 
    FEATURES:
    - Listens on channel 0 (public) and configurable private channel
-   - Parses commands with configurable prefix (default: "!")
-   - ACL verification for all commands
-   - Routes commands to appropriate kernel modules
+   - Generic command registry (plugins register their commands)
+   - Routes commands to appropriate plugin via UI_BUS
+   - ACL verification before routing
+   - Rate limiting (prevents spam/griefing)
    - Persistent settings (enabled, prefix, private channel)
-   - Command throttling (prevents spam/griefing)
 
    ARCHITECTURE:
    - Kernel module (infrastructure, not a plugin)
-   - Receives chat on configured channels
-   - Verifies ACL before command execution
-   - Routes to leash module, status display, etc.
-   - Broadcasts state to configuration plugin
+   - Plugins register commands via chatcmd_register message
+   - Module routes commands back to plugins via chatcmd_invoke
+   - Plugin handles ACL and execution logic
+   - Configuration plugin controls enable/prefix/channel
 
    CHANNELS:
    - 700: Auth queries
@@ -25,15 +25,29 @@
    - 0: Public chat (when enabled)
    - Configurable: Private chat channel (default 1)
 
-   COMMANDS SUPPORTED:
-   - !grab - Grab leash (ACL 1+)
-   - !release - Release leash (ACL 2+ or current leasher)
-   - !yank - Yank to leasher (current leasher only)
-   - !status - Display collar status (ACL 1+)
-   - !length <n> - Set leash length (ACL 3+)
+   COMMAND REGISTRY:
+   - Stride list: [command_name, plugin_context, command_name, plugin_context, ...]
+   - Example: ["grab", "core_leash", "release", "core_leash", "bell", "core_bell"]
+
+   PROTOCOL:
+   Plugin registers commands:
+   {
+     "type": "chatcmd_register",
+     "context": "core_leash",
+     "commands": ["grab", "release", "yank", "length"]
+   }
+
+   Module routes to plugin:
+   {
+     "type": "chatcmd_invoke",
+     "command": "grab",
+     "args": ["arg1", "arg2"],
+     "user": "<uuid>",
+     "acl_level": 3
+   }
 
    SECURITY:
-   - All commands require ACL verification
+   - ACL verification before routing
    - Rate limiting (5s cooldown per user per command)
    - Owner can always use commands regardless of settings
 
@@ -63,6 +77,10 @@ integer PrivateChannel = 1;
 /* Listen handles */
 integer ListenPublic = 0;
 integer ListenPrivate = 0;
+
+/* Command registry: [command_name, plugin_context, command_name, plugin_context, ...] */
+list CommandRegistry = [];
+integer CMD_STRIDE = 2;
 
 /* ACL verification state */
 key PendingCommandUser = NULL_KEY;
@@ -97,6 +115,49 @@ integer now() {
         return 0;
     }
     return unix_time;
+}
+
+/* ===== COMMAND REGISTRY ===== */
+registerCommand(string command_name, string plugin_context) {
+    string cmd_lower = llToLower(command_name);
+
+    integer idx = llListFindList(CommandRegistry, [cmd_lower]);
+    if (idx != -1) {
+        CommandRegistry = llListReplaceList(CommandRegistry, [plugin_context], idx + 1, idx + 1);
+        logd("Updated command: " + cmd_lower + " -> " + plugin_context);
+    }
+    else {
+        CommandRegistry += [cmd_lower, plugin_context];
+        logd("Registered command: " + cmd_lower + " -> " + plugin_context);
+    }
+}
+
+unregisterPluginCommands(string plugin_context) {
+    list new_registry = [];
+    integer i = 0;
+    integer len = llGetListLength(CommandRegistry);
+
+    while (i < len) {
+        string cmd = llList2String(CommandRegistry, i);
+        string ctx = llList2String(CommandRegistry, i + 1);
+
+        if (ctx != plugin_context) {
+            new_registry += [cmd, ctx];
+        }
+        i += CMD_STRIDE;
+    }
+
+    CommandRegistry = new_registry;
+    logd("Unregistered all commands for: " + plugin_context);
+}
+
+string findPluginForCommand(string command_name) {
+    string cmd_lower = llToLower(command_name);
+    integer idx = llListFindList(CommandRegistry, [cmd_lower]);
+
+    if (idx == -1) return "";
+
+    return llList2String(CommandRegistry, idx + 1);
 }
 
 /* ===== RATE LIMITING ===== */
@@ -255,6 +316,12 @@ integer parseCommand(string msg_text, key speaker) {
     string command_name = llToLower(llList2String(parts, 0));
     list args = llList2List(parts, 1, -1);
 
+    string plugin_context = findPluginForCommand(command_name);
+    if (plugin_context == "") {
+        llRegionSayTo(speaker, 0, "Unknown command: " + CommandPrefix + command_name);
+        return FALSE;
+    }
+
     if (!checkCooldown(speaker, command_name)) {
         return FALSE;
     }
@@ -269,11 +336,11 @@ integer parseCommand(string msg_text, key speaker) {
         "avatar", (string)speaker
     ]), speaker);
 
-    logd("Command: " + command_name + " by " + llKey2Name(speaker));
+    logd("Command: " + command_name + " by " + llKey2Name(speaker) + " -> " + plugin_context);
     return TRUE;
 }
 
-/* ===== ACL VERIFICATION ===== */
+/* ===== ACL VERIFICATION & ROUTING ===== */
 handleAclResult(string msg) {
     if (!AclPending) return;
     if (!jsonHas(msg, ["avatar"]) || !jsonHas(msg, ["level"])) return;
@@ -286,88 +353,28 @@ handleAclResult(string msg) {
 
     logd("ACL result: " + (string)acl_level + " for " + PendingCommand);
 
-    executeCommand(PendingCommandUser, PendingCommand, PendingArgs, acl_level);
+    string plugin_context = findPluginForCommand(PendingCommand);
+    if (plugin_context == "") {
+        llRegionSayTo(PendingCommandUser, 0, "Command handler not found.");
+        PendingCommandUser = NULL_KEY;
+        PendingCommand = "";
+        PendingArgs = [];
+        return;
+    }
+
+    llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
+        "type", "chatcmd_invoke",
+        "command", PendingCommand,
+        "args", llList2Json(JSON_ARRAY, PendingArgs),
+        "acl_level", (string)acl_level,
+        "context", plugin_context
+    ]), PendingCommandUser);
+
+    logd("Routed: " + PendingCommand + " -> " + plugin_context + " (ACL " + (string)acl_level + ")");
 
     PendingCommandUser = NULL_KEY;
     PendingCommand = "";
     PendingArgs = [];
-}
-
-/* ===== COMMAND EXECUTION ===== */
-denyAccess(key user, string reason) {
-    llRegionSayTo(user, 0, "Access denied: " + reason);
-    logd("Denied: " + reason);
-}
-
-executeCommand(key user, string command_name, list args, integer acl_level) {
-    if (command_name == "grab") {
-        if (acl_level >= 1) {
-            llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
-                "type", "leash_action",
-                "action", "grab",
-                "acl_verified", "1"
-            ]), user);
-        }
-        else {
-            denyAccess(user, "insufficient permissions to grab leash");
-        }
-    }
-    else if (command_name == "release") {
-        if (acl_level >= 2) {
-            llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
-                "type", "leash_action",
-                "action", "release",
-                "acl_verified", "1"
-            ]), user);
-        }
-        else {
-            denyAccess(user, "insufficient permissions to release leash");
-        }
-    }
-    else if (command_name == "yank") {
-        llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
-            "type", "leash_action",
-            "action", "yank",
-            "acl_verified", "1"
-        ]), user);
-    }
-    else if (command_name == "status") {
-        if (acl_level >= 1) {
-            llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
-                "type", "chatcmd_status_request"
-            ]), user);
-        }
-        else {
-            denyAccess(user, "insufficient permissions to view status");
-        }
-    }
-    else if (command_name == "length") {
-        if (acl_level >= 3) {
-            if (llGetListLength(args) > 0) {
-                integer length = (integer)llList2String(args, 0);
-                if (length >= 1 && length <= 20) {
-                    llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
-                        "type", "leash_action",
-                        "action", "set_length",
-                        "length", (string)length,
-                        "acl_verified", "1"
-                    ]), user);
-                }
-                else {
-                    llRegionSayTo(user, 0, "Length must be between 1 and 20 meters.");
-                }
-            }
-            else {
-                llRegionSayTo(user, 0, "Usage: " + CommandPrefix + "length <number>");
-            }
-        }
-        else {
-            denyAccess(user, "insufficient permissions to change leash length");
-        }
-    }
-    else {
-        llRegionSayTo(user, 0, "Unknown command: " + CommandPrefix + command_name);
-    }
 }
 
 /* ===== CONFIGURATION INTERFACE ===== */
@@ -417,6 +424,37 @@ handleChatCmdAction(string msg, key user) {
     }
 }
 
+/* ===== COMMAND REGISTRATION ===== */
+handleChatCmdRegister(string msg) {
+    if (!jsonHas(msg, ["context"]) || !jsonHas(msg, ["commands"])) return;
+
+    string plugin_context = llJsonGetValue(msg, ["context"]);
+    string commands_json = llJsonGetValue(msg, ["commands"]);
+
+    string num_str = llJsonGetValue(commands_json, ["length"]);
+    if (num_str == JSON_INVALID) return;
+
+    integer num_commands = (integer)num_str;
+
+    integer i = 0;
+    while (i < num_commands) {
+        string cmd = llJsonGetValue(commands_json, [i]);
+        if (cmd != JSON_INVALID && cmd != "") {
+            registerCommand(cmd, plugin_context);
+        }
+        i = i + 1;
+    }
+
+    logd("Registered " + (string)num_commands + " commands for " + plugin_context);
+}
+
+handleChatCmdUnregister(string msg) {
+    if (!jsonHas(msg, ["context"])) return;
+
+    string plugin_context = llJsonGetValue(msg, ["context"]);
+    unregisterPluginCommands(plugin_context);
+}
+
 /* ===== EVENT HANDLERS ===== */
 default
 {
@@ -427,6 +465,7 @@ default
         PendingCommand = "";
         PendingArgs = [];
         CommandCooldowns = [];
+        CommandRegistry = [];
 
         llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
             "type", "settings_get"
@@ -453,6 +492,16 @@ default
         if (num == UI_BUS) {
             if (msg_type == "chatcmd_action") {
                 handleChatCmdAction(msg, id);
+                return;
+            }
+
+            if (msg_type == "chatcmd_register") {
+                handleChatCmdRegister(msg);
+                return;
+            }
+
+            if (msg_type == "chatcmd_unregister") {
+                handleChatCmdUnregister(msg);
                 return;
             }
         }
