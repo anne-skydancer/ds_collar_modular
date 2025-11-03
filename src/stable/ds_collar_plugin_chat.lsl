@@ -176,26 +176,9 @@ showCommandsMenu() {
     // Button layout follows LSL dialog pattern (bottom-left to top-right)
     // Indexes 0, 1, 2 are reserved for navigation:
     // 0 = back nav (◄ Prev), 1 = forward nav (Next ►), 2 = Back button
-    // This ensures navigation buttons appear at bottom of dialog
+    // Navigation uses wrap-around (consistent with other plugins)
 
-    list buttons = [];
-
-    // Add navigation buttons at indexes 0, 1, 2
-    if (total_pages > 1) {
-        if (CommandsPage > 0) {
-            buttons += ["◄ Prev"];
-        } else {
-            buttons += [" "];  // Placeholder
-        }
-        if (CommandsPage < total_pages - 1) {
-            buttons += ["Next ►"];
-        } else {
-            buttons += [" "];  // Placeholder
-        }
-    } else {
-        buttons += [" ", " "];  // Placeholders for single-page
-    }
-    buttons += ["Back"];  // Always at index 2
+    list buttons = ["◄ Prev", "Next ►", "Back"];
 
     integer start_idx = CommandsPage * COMMANDS_PER_PAGE;
     integer end_idx = start_idx + COMMANDS_PER_PAGE - 1;
@@ -281,12 +264,21 @@ handleButtonClick(string button) {
     }
     else if (MenuContext == "commands") {
         if (button == "◄ Prev") {
+            integer total_cmds = llGetListLength(AvailableCommands);
+            integer total_pages = (total_cmds + COMMANDS_PER_PAGE - 1) / COMMANDS_PER_PAGE;
+            if (total_pages == 0) total_pages = 1;
+
             CommandsPage--;
-            if (CommandsPage < 0) CommandsPage = 0;
+            if (CommandsPage < 0) CommandsPage = total_pages - 1;  // Wrap to last page
             showCommandsMenu();
         }
         else if (button == "Next ►") {
+            integer total_cmds = llGetListLength(AvailableCommands);
+            integer total_pages = (total_cmds + COMMANDS_PER_PAGE - 1) / COMMANDS_PER_PAGE;
+            if (total_pages == 0) total_pages = 1;
+
             CommandsPage++;
+            if (CommandsPage >= total_pages) CommandsPage = 0;  // Wrap to first page
             showCommandsMenu();
         }
         else if (button == "Back") {
