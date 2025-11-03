@@ -331,8 +331,9 @@ handleChatCmdAction(string msg, key user) {
     }
     else if (action == "set_private_chan") {
         integer new_chan = (integer)jsonGet(msg, "channel", "1");
-        // Range check for 32-bit signed integer is unnecessary in LSL
-        // (new_chan is always a 32-bit signed integer)
+        // Range check for 32-bit signed integer is unnecessary in LSL:
+        // LSL's integer type is always a 32-bit signed integer, and the type cast above
+        // ((integer)jsonGet(...)) automatically constrains new_chan to this range.
         if (new_chan == 0) {
             llRegionSayTo(user, 0, "Cannot use channel 0 as private channel");
             return;
@@ -437,9 +438,6 @@ default
     listen(integer channel, string speaker_name, key speaker, string msg_text) {
         // Ignore messages from the collar object itself
         if (speaker == llGetKey()) return;
-
-        // Only process commands from the two listened channels
-        if (channel != 0 && channel != PrivateChannel) return;
 
         // Public chat (channel 0) requires Enabled flag
         // Private channel is always active

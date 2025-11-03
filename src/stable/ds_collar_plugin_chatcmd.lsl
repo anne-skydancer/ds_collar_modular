@@ -394,7 +394,11 @@ default
         }
         else if (MenuContext == "awaiting_channel") {
             integer chan = (integer)trimmed;
-            // Channel validation is handled by kernel module
+            // Local validation for immediate feedback (kernel also validates)
+            if (chan <= 0) {
+                llRegionSayTo(CurrentUser, 0, "Channel must be a positive number. Try again or close the menu.");
+                return;
+            }
             sendSetChannel(chan);
             if (ChatListen != 0) {
                 llListenRemove(ChatListen);
