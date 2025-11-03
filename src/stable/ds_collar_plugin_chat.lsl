@@ -39,7 +39,7 @@ integer PLUGIN_MIN_ACL = 1;
 list ALLOWED_ACL_CONFIG = [2, 3, 4, 5];
 
 /* Current state (synced from kmod) */
-integer Enabled = FALSE;
+integer Enabled = TRUE;
 string CommandPrefix = "!";
 integer PrivateChannel = 1;
 
