@@ -117,13 +117,13 @@ For each non‑trivial function include:
  * Constructs the root plugin menu with 6-9 buttons plus Back.
  *
  * Inputs:  acl_level - caller's access level (0-5)
- * Returns: list of button labels (multiple of 3, padded with " ")
+ * Returns: list of button labels
  *
  * Side effects: None (pure function)
  *
  * Assumptions:
  *   - "Relax" is pinned to index 3 (bottom-left of row 2)
- *   - Result is always 9 or 12 buttons total
+ *   - Padding no longer required; llDialog handles layout
  *
  * Failure: Returns empty list if acl_level invalid
  */
@@ -137,7 +137,7 @@ list build_main_menu(integer acl_level) {
 * Prefer **why** over **what**; the code already says *what*.
 * Mark **problem areas** (race windows, throttles, rate limits) with `NOTE:`.
 * Mark **workarounds** for SL quirks (e.g., dataserver latency) with `WHY:`.
-* Document **UI layout logic** (e.g., why Relax sits at index 3; padding rules).
+* Document **UI layout logic** (e.g., why Relax sits at index 3; button order rationale).
 * Call out **magic numbers** and derive them briefly.
 * Comment patches with a `//PATCH` comment including the reason for the patch.
 
@@ -161,8 +161,8 @@ At major edits, add a short `/* WHY: ... DATE: YYYY‑MM‑DD */` block near the
 
 **Example:**
 ```lsl
-/* WHY: We pin page size to 8 because one slot is reserved for "Relax" and we
-   must keep the dialog a multiple of 3; see agents-style.md §2.4.
+/* WHY: We pin page size to 8 because one slot is reserved for "Relax" and
+   we want consistent pagination across all menus.
    DATE: 2025-09-23 */
 integer PAGE_SIZE = 8;
 ```
@@ -200,7 +200,7 @@ integer PAGE_SIZE = 8;
 ### 3.2) Dialog/UI Patterns
 
 * Precompute/persist button pages; do not rebuild on every click.
-* Pad once to multiples of 3; avoid per‑event padding work.
+* **Padding is no longer required** - llDialog handles button layout automatically.
 
 **Example:**
 ```lsl
@@ -213,7 +213,6 @@ integer build_pages() {
     integer i;
     for (i = 0; i < total_items; i += 9) {
         list page = get_items_slice(i, 9);
-        page = pad_to_multiple_of_3(page);
         ButtonPages += [llList2Json(JSON_ARRAY, page)];
     }
     return 0;
@@ -222,7 +221,6 @@ integer build_pages() {
 // BAD: Rebuilding on every click
 show_page(integer page_num) {
     list buttons = get_items_slice(page_num * 9, 9); // Allocates
-    buttons = pad_to_multiple_of_3(buttons);          // Allocates
     llDialog(user, text, buttons, chan);              // Allocates
 }
 ```
@@ -317,7 +315,7 @@ Use this end‑of‑pass checklist to confirm a script is **release‑ready**. E
 
 ### 4.3) UI / Dialogs & Listeners
 
-* ≤ 12 dialog buttons; padded to a multiple of 3 with a single space (`" "`).
+* ≤ 12 dialog buttons (padding no longer required - llDialog handles layout automatically).
 * **Back** button present where navigation requires it; pagination uses `<<` and `>>` consistently.
 * If a special button (e.g., **Relax**) is reserved, its index is enforced and documented.
 * Dialog channel is a **random negative integer** per session; listeners are scoped to `(avatar, channel)` and removed on close.
