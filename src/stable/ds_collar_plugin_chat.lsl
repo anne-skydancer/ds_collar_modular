@@ -173,12 +173,35 @@ showCommandsMenu() {
     body += "(Page " + (string)(CommandsPage + 1) + " of " + (string)total_pages + ")\n\n";
     body += "Prefix: " + CommandPrefix + "\n\n";
 
-    list buttons = ["Back"];
+    // Button layout follows LSL dialog pattern (bottom-left to top-right)
+    // Indexes 0, 1, 2 are reserved for navigation:
+    // 0 = back nav (◄ Prev), 1 = forward nav (Next ►), 2 = Back button
+    // This ensures navigation buttons appear at bottom of dialog
+
+    list buttons = [];
+
+    // Add navigation buttons at indexes 0, 1, 2
+    if (total_pages > 1) {
+        if (CommandsPage > 0) {
+            buttons += ["◄ Prev"];
+        } else {
+            buttons += [" "];  // Placeholder
+        }
+        if (CommandsPage < total_pages - 1) {
+            buttons += ["Next ►"];
+        } else {
+            buttons += [" "];  // Placeholder
+        }
+    } else {
+        buttons += [" ", " "];  // Placeholders for single-page
+    }
+    buttons += ["Back"];  // Always at index 2
 
     integer start_idx = CommandsPage * COMMANDS_PER_PAGE;
     integer end_idx = start_idx + COMMANDS_PER_PAGE - 1;
     if (end_idx >= total_cmds) end_idx = total_cmds - 1;
 
+    // Add command buttons starting at index 3
     if (total_cmds > 0) {
         integer i;
         for (i = start_idx; i <= end_idx && i < total_cmds; i++) {
@@ -189,12 +212,6 @@ showCommandsMenu() {
     }
     else {
         body += "No commands registered yet.";
-    }
-
-    // Add pagination buttons
-    if (total_pages > 1) {
-        if (CommandsPage > 0) buttons += ["◄ Prev"];
-        if (CommandsPage < total_pages - 1) buttons += ["Next ►"];
     }
 
     showMenu("commands", "Available Commands", body, buttons);
