@@ -178,24 +178,34 @@ showCommandsMenu() {
     // 0 = back nav (◄ Prev), 1 = forward nav (Next ►), 2 = Back button
     // Navigation uses wrap-around (consistent with other plugins)
 
-    list buttons = ["◄ Prev", "Next ►", "Back"];
-
     integer start_idx = CommandsPage * COMMANDS_PER_PAGE;
     integer end_idx = start_idx + COMMANDS_PER_PAGE - 1;
     if (end_idx >= total_cmds) end_idx = total_cmds - 1;
 
-    // Add command buttons starting at index 3
+    // Collect command buttons for this page
+    list cmd_buttons = [];
     if (total_cmds > 0) {
         integer i;
         for (i = start_idx; i <= end_idx && i < total_cmds; i++) {
             string cmd = llList2String(AvailableCommands, i);
             body += CommandPrefix + cmd + "\n";
-            buttons += [cmd];
+            cmd_buttons += [cmd];
         }
     }
     else {
         body += "No commands registered yet.";
     }
+
+    // Reverse command buttons so they display top-left to bottom-right
+    list reversed_cmds = [];
+    integer i = llGetListLength(cmd_buttons) - 1;
+    while (i >= 0) {
+        reversed_cmds += [llList2String(cmd_buttons, i)];
+        i = i - 1;
+    }
+
+    // Build final button array: navigation buttons + reversed commands
+    list buttons = ["◄ Prev", "Next ►", "Back"] + reversed_cmds;
 
     showMenu("commands", "Available Commands", body, buttons);
 }
