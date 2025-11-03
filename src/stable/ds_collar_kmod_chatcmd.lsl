@@ -13,12 +13,13 @@
 
    ARCHITECTURE:
    - Kernel module (infrastructure, not a plugin)
-   - Plugins register commands via chatcmd_register message
+   - Extracts commands from existing plugin registration messages
    - Module routes commands back to plugins via chatcmd_invoke
    - Plugin handles ACL and execution logic
    - Configuration plugin controls enable/prefix/channel
 
    CHANNELS:
+   - 500: Kernel lifecycle (listens for plugin registrations)
    - 700: Auth queries
    - 800: Settings persistence
    - 900: UI/command bus
@@ -30,10 +31,13 @@
    - Example: ["grab", "core_leash", "release", "core_leash", "bell", "core_bell"]
 
    PROTOCOL:
-   Plugin registers commands:
+   Plugin registers (includes optional commands field):
    {
-     "type": "chatcmd_register",
+     "type": "register",
      "context": "core_leash",
+     "label": "Leash",
+     "min_acl": 1,
+     "script": "ds_collar_plugin_leash.lsl",
      "commands": ["grab", "release", "yank", "length"]
    }
 
@@ -60,6 +64,7 @@
 integer DEBUG = FALSE;
 integer PRODUCTION = TRUE;
 
+integer KERNEL_LIFECYCLE = 500;
 integer AUTH_BUS = 700;
 integer SETTINGS_BUS = 800;
 integer UI_BUS = 900;
@@ -80,7 +85,6 @@ integer ListenPrivate = 0;
 
 /* Command registry: [command_name, plugin_context, command_name, plugin_context, ...] */
 list CommandRegistry = [];
-integer CMD_STRIDE = 2;
 
 /* ACL verification state */
 key PendingCommandUser = NULL_KEY;
@@ -130,25 +134,6 @@ registerCommand(string command_name, string plugin_context) {
         CommandRegistry += [cmd_lower, plugin_context];
         logd("Registered command: " + cmd_lower + " -> " + plugin_context);
     }
-}
-
-unregisterPluginCommands(string plugin_context) {
-    list new_registry = [];
-    integer i = 0;
-    integer len = llGetListLength(CommandRegistry);
-
-    while (i < len) {
-        string cmd = llList2String(CommandRegistry, i);
-        string ctx = llList2String(CommandRegistry, i + 1);
-
-        if (ctx != plugin_context) {
-            new_registry += [cmd, ctx];
-        }
-        i += CMD_STRIDE;
-    }
-
-    CommandRegistry = new_registry;
-    logd("Unregistered all commands for: " + plugin_context);
 }
 
 string findPluginForCommand(string command_name) {
@@ -424,11 +409,17 @@ handleChatCmdAction(string msg, key user) {
     }
 }
 
-/* ===== COMMAND REGISTRATION ===== */
-handleChatCmdRegister(string msg) {
-    if (!jsonHas(msg, ["context"]) || !jsonHas(msg, ["commands"])) return;
+/* ===== PLUGIN REGISTRATION (extracts commands) ===== */
+handlePluginRegistration(string msg) {
+    if (!jsonHas(msg, ["context"])) return;
 
     string plugin_context = llJsonGetValue(msg, ["context"]);
+
+    if (!jsonHas(msg, ["commands"])) {
+        logd("Plugin " + plugin_context + " registered without commands");
+        return;
+    }
+
     string commands_json = llJsonGetValue(msg, ["commands"]);
 
     string num_str = llJsonGetValue(commands_json, ["length"]);
@@ -446,13 +437,6 @@ handleChatCmdRegister(string msg) {
     }
 
     logd("Registered " + (string)num_commands + " commands for " + plugin_context);
-}
-
-handleChatCmdUnregister(string msg) {
-    if (!jsonHas(msg, ["context"])) return;
-
-    string plugin_context = llJsonGetValue(msg, ["context"]);
-    unregisterPluginCommands(plugin_context);
 }
 
 /* ===== EVENT HANDLERS ===== */
@@ -489,19 +473,16 @@ default
         if (!jsonHas(msg, ["type"])) return;
         string msg_type = llJsonGetValue(msg, ["type"]);
 
+        if (num == KERNEL_LIFECYCLE) {
+            if (msg_type == "register") {
+                handlePluginRegistration(msg);
+            }
+            return;
+        }
+
         if (num == UI_BUS) {
             if (msg_type == "chatcmd_action") {
                 handleChatCmdAction(msg, id);
-                return;
-            }
-
-            if (msg_type == "chatcmd_register") {
-                handleChatCmdRegister(msg);
-                return;
-            }
-
-            if (msg_type == "chatcmd_unregister") {
-                handleChatCmdUnregister(msg);
                 return;
             }
         }

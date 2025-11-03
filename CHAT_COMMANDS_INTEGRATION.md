@@ -19,38 +19,31 @@ The chat command system consists of:
 
 ## Integration Steps
 
-### Step 1: Register Commands
+### Step 1: Update Plugin Registration
 
-Add command registration to your plugin's `state_entry()`:
-
-```lsl
-state_entry() {
-    // Your existing initialization...
-    registerSelf();
-    registerChatCommands();  // NEW: Register your commands
-}
-```
-
-### Step 2: Implement Registration Function
+Modify your existing `registerSelf()` function to include commands:
 
 ```lsl
-registerChatCommands() {
-    llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
-        "type", "chatcmd_register",
+registerSelf() {
+    llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
+        "type", "register",
         "context", PLUGIN_CONTEXT,
-        "commands", llList2Json(JSON_ARRAY, [
+        "label", PLUGIN_LABEL,
+        "min_acl", PLUGIN_MIN_ACL,
+        "script", llGetScriptName(),
+        "commands", llList2Json(JSON_ARRAY, [    // NEW: Add this field
             "grab",
             "release",
             "yank",
             "length"
         ])
     ]), NULL_KEY);
-
-    logd("Chat commands registered");
 }
 ```
 
-### Step 3: Handle Commands
+**Note:** The `commands` field is optional. Plugins without chat commands can omit it.
+
+### Step 2: Handle Commands
 
 Add handler to your `link_message` event:
 
@@ -71,7 +64,7 @@ link_message(integer sender, integer num, string msg, key id) {
 }
 ```
 
-### Step 4: Implement Command Handler
+### Step 3: Implement Command Handler
 
 ```lsl
 handleChatCommand(string msg, key user) {
@@ -150,42 +143,47 @@ handleChatCommand(string msg, key user) {
 
 ### Bell Plugin (Example)
 ```lsl
-registerChatCommands() {
-    llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
-        "type", "chatcmd_register",
+registerSelf() {
+    llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
+        "type", "register",
         "context", "core_bell",
-        "commands", llList2Json(JSON_ARRAY, [
-            "bell",
-            "ring"
-        ])
+        "label", "Bell",
+        "min_acl", 1,
+        "script", llGetScriptName(),
+        "commands", llList2Json(JSON_ARRAY, ["bell", "ring"])
     ]), NULL_KEY);
 }
 ```
 
 ### Owner Plugin (Example)
 ```lsl
-registerChatCommands() {
-    llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
-        "type", "chatcmd_register",
+registerSelf() {
+    llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
+        "type", "register",
         "context", "core_owner",
-        "commands", llList2Json(JSON_ARRAY, [
-            "owner",
-            "trustee"
-        ])
+        "label", "Owner",
+        "min_acl", 3,
+        "script", llGetScriptName(),
+        "commands", llList2Json(JSON_ARRAY, ["owner", "trustee"])
     ]), NULL_KEY);
 }
 ```
 
 ## Message Protocol
 
-### Plugin → Module (Registration)
+### Plugin → Kernel (Registration - includes commands)
 ```json
 {
-  "type": "chatcmd_register",
+  "type": "register",
   "context": "core_leash",
+  "label": "Leash",
+  "min_acl": 1,
+  "script": "ds_collar_plugin_leash.lsl",
   "commands": ["grab", "release", "yank", "length"]
 }
 ```
+*(Channel 500 - KERNEL_LIFECYCLE)*
+*(Chat command module extracts "commands" field)*
 
 ### Module → Plugin (Command Invocation)
 ```json
@@ -198,14 +196,6 @@ registerChatCommands() {
 }
 ```
 *(Sent with `id` = user's UUID)*
-
-### Plugin → Module (Unregister)
-```json
-{
-  "type": "chatcmd_unregister",
-  "context": "core_leash"
-}
-```
 
 ## ACL Enforcement
 
@@ -229,7 +219,7 @@ Commands are always active on both:
 
 ## Best Practices
 
-1. **Register on startup**: Call `registerChatCommands()` in `state_entry()`
+1. **Include commands in registration**: Add `commands` field to existing `registerSelf()` call
 2. **Check context**: Verify `context` field matches your plugin
 3. **Validate ACL**: Each command should check `acl_level` appropriately
 4. **Parse args carefully**: Handle missing/invalid arguments gracefully
