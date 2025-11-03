@@ -530,18 +530,60 @@ integer check_owner_changed() {
    ROUTING HELPERS
    ═══════════════════════════════════════════════════════════ */
 
+// Validates that field_name contains only safe characters for JSON field names
+// Returns TRUE if safe (alphanumeric + underscore only), FALSE otherwise
+// SECURITY: Prevents JSON injection when building field names manually
+integer is_safe_field_name(string field_name) {
+    integer len = llStringLength(field_name);
+    if (len == 0 || len > 64) return FALSE;  // Reasonable length bounds
+
+    integer i = 0;
+    while (i < len) {
+        string c = llGetSubString(field_name, i, i);
+
+        // Allow: a-z, A-Z, 0-9, underscore
+        integer is_alpha = (c >= "a" && c <= "z") || (c >= "A" && c <= "Z");
+        integer is_digit = (c >= "0" && c <= "9");
+        integer is_underscore = (c == "_");
+
+        if (!is_alpha && !is_digit && !is_underscore) {
+            return FALSE;  // Unsafe character found
+        }
+
+        i = i + 1;
+    }
+
+    return TRUE;
+}
+
 // Generic helper to route registration fields to modules
 // Extracts field from registration message and forwards to target module
+// CRITICAL: Preserves JSON structure (arrays/objects) without double-encoding
+// SECURITY: Validates field_name to prevent JSON injection
+// PRECONDITION: field_name must contain only alphanumeric characters and underscores
 route_field(string msg, string context, string field_name, string route_type, integer channel) {
     if (!json_has(msg, [field_name])) return;
 
+    // SECURITY: Validate field_name before manual JSON construction
+    if (!is_safe_field_name(field_name)) {
+        llOwnerSay("[KERNEL] ERROR: Unsafe field name rejected: " + field_name);
+        logd("SECURITY: Rejected unsafe field_name: " + field_name);
+        return;
+    }
+
     string field_value = llJsonGetValue(msg, [field_name]);
 
+    // Build base message with proper encoding for type and context
     string routed_msg = llList2Json(JSON_OBJECT, [
         "type", route_type,
-        "context", context,
-        field_name, field_value
+        "context", context
     ]);
+
+    // Manually splice in field value to preserve JSON structure (arrays/objects)
+    // llList2Json would double-encode the field_value, breaking nested JSON
+    // SAFETY: field_name validated above to contain only safe characters
+    // Remove closing brace, add field, then close
+    routed_msg = llGetSubString(routed_msg, 0, -2) + ",\"" + field_name + "\":" + field_value + "}";
 
     llMessageLinked(LINK_SET, channel, routed_msg, NULL_KEY);
     logd("Routed " + field_name + " to channel " + (string)channel + ": " + context);
