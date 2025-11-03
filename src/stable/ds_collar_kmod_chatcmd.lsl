@@ -387,10 +387,8 @@ handleChatCmdAction(string msg, key user) {
     }
     else if (action == "set_private_chan") {
         integer new_chan = (integer)jsonGet(msg, "channel", "1");
-        if (new_chan < -2147483648 || new_chan > 2147483647) {
-            llRegionSayTo(user, 0, "Invalid channel number");
-            return;
-        }
+        // Range check for 32-bit signed integer is unnecessary in LSL
+        // (new_chan is always a 32-bit signed integer)
         if (new_chan == 0) {
             llRegionSayTo(user, 0, "Cannot use channel 0 as private channel");
             return;

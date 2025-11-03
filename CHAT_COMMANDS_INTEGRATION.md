@@ -14,7 +14,7 @@ The chat command system consists of:
 1. Plugin registers with kernel, includes optional "commands" field
 2. Kernel routes "commands" field to chat command module (kmod_chatcmd)
 3. Chat command module registers commands in its registry
-4. User types command in chat (e.g., `<prefix>grab`)
+4. User types command in chat (e.g., `<prefix>clip`)
 5. kmod_chatcmd parses, verifies ACL, routes to plugin
 6. Plugin receives `chatcmd_invoke` message with ACL level
 7. Plugin handles command logic
@@ -34,8 +34,8 @@ registerSelf() {
         "min_acl", PLUGIN_MIN_ACL,
         "script", llGetScriptName(),
         "commands", llList2Json(JSON_ARRAY, [    // NEW: Add this field
-            "grab",
-            "release",
+            "clip",
+            "unclip",
             "yank",
             "length"
         ])
@@ -91,22 +91,22 @@ handleChatCommand(string msg, key user) {
     }
 
     // Handle each command
-    if (command == "grab") {
+    if (command == "clip") {
         if (acl_level >= 1) {
-            sendLeashAction("grab");
-            llRegionSayTo(user, 0, "Leash grabbed.");
+            sendLeashAction("clip");
+            llRegionSayTo(user, 0, "Leash clipped.");
         }
         else {
-            llRegionSayTo(user, 0, "Access denied: insufficient permissions to grab leash");
+            llRegionSayTo(user, 0, "Access denied: insufficient permissions to clip leash");
         }
     }
-    else if (command == "release") {
+    else if (command == "unclip") {
         if (acl_level >= 2) {
-            sendLeashAction("release");
-            llRegionSayTo(user, 0, "Leash released.");
+            sendLeashAction("unclip");
+            llRegionSayTo(user, 0, "Leash unclipped.");
         }
         else {
-            llRegionSayTo(user, 0, "Access denied: insufficient permissions to release leash");
+            llRegionSayTo(user, 0, "Access denied: insufficient permissions to unclip leash");
         }
     }
     else if (command == "yank") {
@@ -138,8 +138,8 @@ handleChatCommand(string msg, key user) {
 ## Example Commands by Plugin
 
 ### Leash Plugin
-- `<prefix>grab` - Grab leash
-- `<prefix>release` - Release leash
+- `<prefix>clip` - Clip leash
+- `<prefix>unclip` - Unclip leash
 - `<prefix>yank` - Yank wearer to leasher
 - `<prefix>length <n>` - Set leash length (1-20m)
 
@@ -181,7 +181,7 @@ registerSelf() {
   "label": "Leash",
   "min_acl": 1,
   "script": "ds_collar_plugin_leash.lsl",
-  "commands": ["grab", "release", "yank", "length"]
+  "commands": ["clip", "unclip", "yank", "length"]
 }
 ```
 *(Channel 500 - KERNEL_LIFECYCLE)*
@@ -191,7 +191,7 @@ registerSelf() {
 {
   "type": "chatcmd_register",
   "context": "core_leash",
-  "commands": ["grab", "release", "yank", "length"]
+  "commands": ["clip", "unclip", "yank", "length"]
 }
 ```
 *(Channel 900 - UI_BUS)*
@@ -201,7 +201,7 @@ registerSelf() {
 ```json
 {
   "type": "chatcmd_invoke",
-  "command": "grab",
+  "command": "clip",
   "args": ["arg1", "arg2"],
   "acl_level": 3,
   "context": "core_leash"
@@ -214,8 +214,8 @@ registerSelf() {
 **IMPORTANT:** The module verifies ACL before routing, but **your plugin must still check ACL** for each command since different commands may require different ACL levels.
 
 Example:
-- `!grab` might allow ACL 1+ (public)
-- `!release` might require ACL 2+ (owned wearer)
+- `!clip` might allow ACL 1+ (public)
+- `!unclip` might require ACL 2+ (owned wearer)
 - `!length` might require ACL 3+ (trustee/owner)
 
 ## Configuration
@@ -229,7 +229,7 @@ Commands are always active on both:
 - Channel 0 (public chat) when enabled
 - Configured private channel
 
-**Example:** If prefix is set to `#`, commands become `#grab`, `#release`, etc.
+**Example:** If prefix is set to `#`, commands become `#clip`, `#unclip`, etc.
 
 ## Best Practices
 
@@ -243,11 +243,11 @@ Commands are always active on both:
 ## Testing
 
 1. Enable chat commands: Touch collar → Chat Cmds → Enable
-2. Test command: Type in chat: `<prefix>grab` (default: `!grab`)
+2. Test command: Type in chat: `<prefix>clip` (default: `!clip`)
 3. Check response: Should execute or deny based on ACL
 4. Test args: `<prefix>length 5` should parse argument correctly
 5. Test unknown: `<prefix>invalid` should report unknown command
-6. Test custom prefix: Change prefix to `#`, then use `#grab`
+6. Test custom prefix: Change prefix to `#`, then use `#clip`
 
 ## Security
 

@@ -379,7 +379,8 @@ default
         string trimmed = llStringTrim(msg_text, STRING_TRIM);
 
         if (MenuContext == "awaiting_prefix") {
-            if (llStringLength(trimmed) < 1 || llStringLength(trimmed) > 5) {
+            integer len = llStringLength(trimmed);
+            if (len < 1 || len > 5) {
                 llRegionSayTo(CurrentUser, 0, "Prefix must be 1-5 characters. Try again or close the menu.");
                 return;
             }
@@ -393,10 +394,7 @@ default
         }
         else if (MenuContext == "awaiting_channel") {
             integer chan = (integer)trimmed;
-            if (chan == 0) {
-                llRegionSayTo(CurrentUser, 0, "Cannot use channel 0. Try again or close the menu.");
-                return;
-            }
+            // Channel validation is handled by kernel module
             sendSetChannel(chan);
             if (ChatListen != 0) {
                 llListenRemove(ChatListen);
