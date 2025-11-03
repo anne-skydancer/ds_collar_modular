@@ -136,7 +136,17 @@ registerSelf() {
         "context", PLUGIN_CONTEXT,
         "label", PLUGIN_LABEL,
         "min_acl", PLUGIN_MIN_ACL,
-        "script", llGetScriptName()
+        "script", llGetScriptName(),
+        "commands", llList2Json(JSON_ARRAY, [
+            "clip",
+            "unclip",
+            "yank",
+            "length",
+            "turn",
+            "pass",
+            "coffle",
+            "post"
+        ])
     ]), NULL_KEY);
 }
 
@@ -240,14 +250,14 @@ buildAvatarMenu() {
     // Use llGetAgentList for nearby avatars (more efficient than sensor)
     list nearby = llGetAgentList(AGENT_LIST_PARCEL, []);
 
-    key owner = llGetOwner();
+    key wearer = llGetOwner();
     SensorCandidates = [];
     integer i = 0;
     integer count = 0;
 
     while (i < llGetListLength(nearby) && count < 9) {
         key detected = llList2Key(nearby, i);
-        if (detected != owner && detected != Leasher) {
+        if (detected != wearer && detected != Leasher) {
             string name = llKey2Name(detected);
             SensorCandidates += [name, detected];
             count++;
@@ -450,6 +460,166 @@ sendSetLength(integer length) {
         "length", (string)length,
         "acl_verified", "1"
     ]), CurrentUser);
+}
+
+// ===== CHAT COMMAND HELPERS =====
+cmdSendAction(string action, key user) {
+    llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
+        "type", "leash_action",
+        "action", action,
+        "acl_verified", "1"
+    ]), user);
+}
+
+cmdSendActionWithParam(string action, string param_key, string param_value, key user) {
+    llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
+        "type", "leash_action",
+        "action", action,
+        param_key, param_value,
+        "acl_verified", "1"
+    ]), user);
+}
+
+cmdDeny(key user, string reason) {
+    llRegionSayTo(user, 0, "Access denied: " + reason);
+}
+
+cmdReply(key user, string message) {
+    llRegionSayTo(user, 0, message);
+}
+
+// ===== CHAT COMMAND HANDLER =====
+handleChatCommand(string msg, key user) {
+    if (!jsonHas(msg, ["command"]) || !jsonHas(msg, ["context"])) return;
+
+    string context = llJsonGetValue(msg, ["context"]);
+    if (context != PLUGIN_CONTEXT) return;
+
+    string command = llJsonGetValue(msg, ["command"]);
+    integer acl_level = (integer)llJsonGetValue(msg, ["acl_level"]);
+
+    list args = [];
+    if (jsonHas(msg, ["args"])) {
+        string args_json = llJsonGetValue(msg, ["args"]);
+        string num_str = llJsonGetValue(args_json, ["length"]);
+        if (num_str != JSON_INVALID) {
+            integer num_args = (integer)num_str;
+            integer i = 0;
+            while (i < num_args) {
+                args += [llJsonGetValue(args_json, [i])];
+                i = i + 1;
+            }
+        }
+    }
+
+    logd("Chat command: " + command + " by " + llKey2Name(user) + " (ACL " + (string)acl_level + ")");
+
+    if (command == "clip") {
+        if (!inAllowedList(acl_level, ALLOWED_ACL_GRAB)) {
+            cmdDeny(user, "insufficient permissions to grab leash");
+        }
+        else {
+            cmdSendAction("grab", user);
+            cmdReply(user, "Leash grabbed.");
+        }
+    }
+    else if (command == "unclip") {
+        if (acl_level < 2 && user != Leasher) {
+            cmdDeny(user, "only leasher or authorized users can release");
+        }
+        else {
+            cmdSendAction("release", user);
+            cmdReply(user, "Leash released.");
+        }
+    }
+    else if (command == "yank") {
+        if (user != Leasher) {
+            cmdReply(user, "Only the current leasher can yank.");
+        }
+        else {
+            cmdSendAction("yank", user);
+        }
+    }
+    else if (command == "length") {
+        if (!inAllowedList(acl_level, ALLOWED_ACL_SETTINGS)) {
+            cmdDeny(user, "insufficient permissions to change leash length");
+        }
+        else if (llGetListLength(args) == 0) {
+            cmdReply(user, "Usage: <prefix>length <number>");
+        }
+        else {
+            integer length = (integer)llList2String(args, 0);
+            if (length < 1 || length > 20) {
+                cmdReply(user, "Length must be between 1 and 20 meters.");
+            }
+            else {
+                cmdSendActionWithParam("set_length", "length", (string)length, user);
+                cmdReply(user, "Leash length set to " + (string)length + "m");
+            }
+        }
+    }
+    else if (command == "turn") {
+        if (!inAllowedList(acl_level, ALLOWED_ACL_SETTINGS)) {
+            cmdDeny(user, "insufficient permissions to change settings");
+        }
+        else if (llGetListLength(args) == 0) {
+            cmdSendAction("toggle_turn", user);
+            cmdReply(user, "Turn-to-face toggled");
+        }
+        else {
+            string arg = llToLower(llList2String(args, 0));
+            if (arg != "on" && arg != "off") {
+                cmdReply(user, "Usage: <prefix>turn [on|off]");
+            }
+            else if (TurnToFace == (arg == "on")) {
+                cmdReply(user, "Turn-to-face already " + arg);
+            }
+            else {
+                cmdSendAction("toggle_turn", user);
+                cmdReply(user, "Turn-to-face " + arg);
+            }
+        }
+    }
+    else if (command == "pass") {
+        if (user != Leasher && !inAllowedList(acl_level, [3, 4, 5])) {
+            cmdDeny(user, "insufficient permissions to pass leash");
+        }
+        else if (!Leashed) {
+            cmdReply(user, "Not currently leashed.");
+        }
+        else {
+            CurrentUser = user;
+            UserAcl = acl_level;
+            IsOfferMode = FALSE;
+            showPassMenu();
+        }
+    }
+    else if (command == "coffle") {
+        if (!inAllowedList(acl_level, ALLOWED_ACL_COFFLE)) {
+            cmdDeny(user, "insufficient permissions for coffle");
+        }
+        else if (Leashed) {
+            cmdReply(user, "Already leashed. Unclip first.");
+        }
+        else {
+            CurrentUser = user;
+            UserAcl = acl_level;
+            showCoffleMenu();
+        }
+    }
+    else if (command == "post") {
+        if (!inAllowedList(acl_level, ALLOWED_ACL_POST)) {
+            cmdDeny(user, "insufficient permissions to post");
+        }
+        else if (Leashed) {
+            cmdReply(user, "Already leashed. Unclip first.");
+        }
+        else {
+            CurrentUser = user;
+            UserAcl = acl_level;
+            showPostMenu();
+        }
+    }
 }
 
 // ===== BUTTON HANDLERS =====
@@ -796,6 +966,11 @@ default
                 showOfferDialog(target, originator);
                 return;
             }
+
+            if (msg_type == "chatcmd_invoke") {
+                handleChatCommand(msg, id);
+                return;
+            }
         }
         
         if (num == AUTH_BUS) {
@@ -870,7 +1045,7 @@ default
         if (CurrentUser == NULL_KEY) return;
         if (SensorMode != "coffle" && SensorMode != "post") return;
 
-        key owner = llGetOwner();
+        key wearer = llGetOwner();
         key my_key = llGetKey();
         SensorCandidates = [];
         integer i = 0;
@@ -878,8 +1053,8 @@ default
         // Detect ALL objects for coffle/post (no limit, we'll paginate)
         while (i < num) {
             key detected = llDetectedKey(i);
-            // Exclude self (collar) and owner avatar
-            if (detected != my_key && detected != owner) {
+            // Exclude self (collar) and wearer
+            if (detected != my_key && detected != wearer) {
                 string name = llDetectedName(i);
                 SensorCandidates += [name, detected];
             }
