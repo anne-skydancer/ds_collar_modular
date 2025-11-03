@@ -50,7 +50,7 @@
 
    SECURITY:
    - ACL verification before routing
-   - Public chat (ch 0): Toggleable for accessibility
+   - Public chat (ch 0): Toggleable for security
    - Private chat: Always active for accessibility
 
    SETTINGS KEYS:
@@ -446,3 +446,4 @@ default
         parseCommand(msg_text, speaker);
     }
 }
+
