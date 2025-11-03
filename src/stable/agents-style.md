@@ -14,6 +14,10 @@
 * Group **constants, link numbers, and strings** at the top with comments.
 * Write **small, single‑purpose** functions; keep event bodies tiny.
 * Prefer explicit returns and early guards over deep nesting.
+* **No UTF-8 characters in code** - Use only ASCII characters (0-127) for maximum readability and compatibility. This includes:
+  * Variable names, function names, comments
+  * String literals (user-facing text should use escape sequences or be loaded from notecards)
+  * All code structure and whitespace
 
 **Example:**
 ```lsl
@@ -304,6 +308,7 @@ Use this end‑of‑pass checklist to confirm a script is **release‑ready**. E
 * Must compile under LSL: no ternary (`?:`), no `switch`, no `break`/`continue`, no chained declarations, no default params/overloads.
 * Only supported LSL APIs are called (verify against the LSL reference).
 * One symbol per line; all variables explicitly typed.
+* **No UTF-8 characters** - Code uses only ASCII (0-127) for readability and compatibility.
 * **lslint passes cleanly with zero errors**
 
 ### 4.2) Events & States
