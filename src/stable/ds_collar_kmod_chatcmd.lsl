@@ -8,7 +8,6 @@
    - Generic command registry (plugins register their commands)
    - Routes commands to appropriate plugin via UI_BUS
    - ACL verification before routing
-   - Rate limiting (prevents spam/griefing, wearer exempt)
    - Persistent settings (enabled, prefix, private channel)
 
    ARCHITECTURE:
@@ -51,7 +50,6 @@
 
    SECURITY:
    - ACL verification before routing
-   - Rate limiting (5s cooldown per user per command, wearer exempt)
    - Public chat (ch 0): Toggleable for accessibility
    - Private chat: Always active for accessibility
 
@@ -91,11 +89,6 @@ string PendingCommand = "";
 list PendingArgs = [];
 integer AclPending = FALSE;
 
-/* Rate limiting: [user_key, command, last_time, user_key, command, last_time, ...] */
-list CommandCooldowns = [];
-integer COOLDOWN_STRIDE = 3;
-integer COOLDOWN_DURATION = 5;
-
 /* ===== HELPERS ===== */
 integer logd(string msg) {
     if (DEBUG && !PRODUCTION) llOwnerSay("[CHATCMD-KMOD] " + msg);
@@ -109,12 +102,6 @@ integer jsonHas(string j, list path) {
 string jsonGet(string j, string k, string default_val) {
     if (jsonHas(j, [k])) return llJsonGetValue(j, [k]);
     return default_val;
-}
-
-integer now() {
-    // Return unix time directly. Even if negative (overflow), the cooldown
-    // math (elapsed = now - last_time) still works correctly for relative timing.
-    return llGetUnixTime();
 }
 
 /* ===== COMMAND REGISTRY ===== */
@@ -139,39 +126,6 @@ string findPluginForCommand(string command_name) {
     if (idx == -1) return "";
 
     return llList2String(CommandRegistry, idx + 1);
-}
-
-/* ===== RATE LIMITING ===== */
-integer checkCooldown(key user, string command_name) {
-    key wearer = llGetOwner();
-    if (user == wearer) return TRUE;  // Wearer has no cooldown
-
-    integer now_time = now();
-    integer i = 0;
-    integer len = llGetListLength(CommandCooldowns);
-
-    while (i < len) {
-        key stored_user = llList2Key(CommandCooldowns, i);
-        string stored_cmd = llList2String(CommandCooldowns, i + 1);
-        integer last_time = llList2Integer(CommandCooldowns, i + 2);
-
-        if (stored_user == user && stored_cmd == command_name) {
-            integer elapsed = now_time - last_time;
-            if (elapsed < COOLDOWN_DURATION) {
-                integer wait = COOLDOWN_DURATION - elapsed;
-                llRegionSayTo(user, 0, "Command on cooldown. Wait " + (string)wait + "s.");
-                return FALSE;
-            }
-            else {
-                CommandCooldowns = llListReplaceList(CommandCooldowns, [now_time], i + 2, i + 2);
-                return TRUE;
-            }
-        }
-        i += COOLDOWN_STRIDE;
-    }
-
-    CommandCooldowns += [user, command_name, now_time];
-    return TRUE;
 }
 
 /* ===== LISTEN MANAGEMENT ===== */
@@ -293,10 +247,6 @@ integer parseCommand(string msg_text, key speaker) {
     string plugin_context = findPluginForCommand(command_name);
     if (plugin_context == "") {
         llRegionSayTo(speaker, 0, "Unknown command: " + CommandPrefix + command_name);
-        return FALSE;
-    }
-
-    if (!checkCooldown(speaker, command_name)) {
         return FALSE;
     }
 
@@ -429,7 +379,6 @@ default
         PendingCommandUser = NULL_KEY;
         PendingCommand = "";
         PendingArgs = [];
-        CommandCooldowns = [];
         CommandRegistry = [];
 
         llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
