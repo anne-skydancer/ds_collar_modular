@@ -74,6 +74,13 @@ integer inAllowedList(integer level, list allowed) {
     return (llListFindList(allowed, [level]) != -1);
 }
 
+integer calculateTotalPages() {
+    integer total_cmds = llGetListLength(AvailableCommands);
+    integer total_pages = (total_cmds + COMMANDS_PER_PAGE - 1) / COMMANDS_PER_PAGE;
+    if (total_pages == 0) total_pages = 1;
+    return total_pages;
+}
+
 /* ===== MENU DISPLAY ===== */
 showMenu(string context, string title, string body, list buttons) {
     SessionId = generateSessionId();
@@ -164,9 +171,8 @@ showSettingsMenu() {
 
 showCommandsMenu() {
     integer total_cmds = llGetListLength(AvailableCommands);
-    integer total_pages = (total_cmds + COMMANDS_PER_PAGE - 1) / COMMANDS_PER_PAGE;
+    integer total_pages = calculateTotalPages();
 
-    if (total_pages == 0) total_pages = 1;
     if (CommandsPage >= total_pages) CommandsPage = 0;
 
     string body = "Available Commands\n";
@@ -198,10 +204,10 @@ showCommandsMenu() {
 
     // Reverse command buttons so they display top-left to bottom-right
     list reversed_cmds = [];
-    integer i = llGetListLength(cmd_buttons) - 1;
-    while (i >= 0) {
-        reversed_cmds += [llList2String(cmd_buttons, i)];
-        i = i - 1;
+    integer reverse_idx = llGetListLength(cmd_buttons) - 1;
+    while (reverse_idx >= 0) {
+        reversed_cmds += [llList2String(cmd_buttons, reverse_idx)];
+        reverse_idx = reverse_idx - 1;
     }
 
     // Build final button array: navigation buttons + reversed commands
@@ -274,19 +280,13 @@ handleButtonClick(string button) {
     }
     else if (MenuContext == "commands") {
         if (button == "<<") {
-            integer total_cmds = llGetListLength(AvailableCommands);
-            integer total_pages = (total_cmds + COMMANDS_PER_PAGE - 1) / COMMANDS_PER_PAGE;
-            if (total_pages == 0) total_pages = 1;
-
+            integer total_pages = calculateTotalPages();
             CommandsPage--;
             if (CommandsPage < 0) CommandsPage = total_pages - 1;  // Wrap to last page
             showCommandsMenu();
         }
         else if (button == ">>") {
-            integer total_cmds = llGetListLength(AvailableCommands);
-            integer total_pages = (total_cmds + COMMANDS_PER_PAGE - 1) / COMMANDS_PER_PAGE;
-            if (total_pages == 0) total_pages = 1;
-
+            integer total_pages = calculateTotalPages();
             CommandsPage++;
             if (CommandsPage >= total_pages) CommandsPage = 0;  // Wrap to first page
             showCommandsMenu();
