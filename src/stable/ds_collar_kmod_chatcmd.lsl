@@ -311,14 +311,13 @@ handleAclResult(string msg) {
 
 /* ===== COMMAND LISTING ===== */
 sendCommandList(key user) {
-    // Build list of unique commands with their contexts
+    // Build list of unique commands
     list command_list = [];
     integer i = 0;
     integer len = llGetListLength(CommandRegistry);
 
     while (i < len) {
         string cmd = llList2String(CommandRegistry, i);
-        string ctx = llList2String(CommandRegistry, i + 1);
         command_list += [cmd];
         i = i + 2;
     }
