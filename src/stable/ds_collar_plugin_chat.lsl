@@ -175,7 +175,7 @@ showCommandsMenu() {
 
     // Button layout follows LSL dialog pattern (bottom-left to top-right)
     // Indexes 0, 1, 2 are reserved for navigation:
-    // 0 = back nav (◄ Prev), 1 = forward nav (Next ►), 2 = Back button
+    // 0 = back nav (<<), 1 = forward nav (>>), 2 = Back button
     // Navigation uses wrap-around (consistent with other plugins)
 
     integer start_idx = CommandsPage * COMMANDS_PER_PAGE;
@@ -205,7 +205,7 @@ showCommandsMenu() {
     }
 
     // Build final button array: navigation buttons + reversed commands
-    list buttons = ["◄ Prev", "Next ►", "Back"] + reversed_cmds;
+    list buttons = ["<<", ">>", "Back"] + reversed_cmds;
 
     showMenu("commands", "Available Commands", body, buttons);
 }
@@ -273,7 +273,7 @@ handleButtonClick(string button) {
         }
     }
     else if (MenuContext == "commands") {
-        if (button == "◄ Prev") {
+        if (button == "<<") {
             integer total_cmds = llGetListLength(AvailableCommands);
             integer total_pages = (total_cmds + COMMANDS_PER_PAGE - 1) / COMMANDS_PER_PAGE;
             if (total_pages == 0) total_pages = 1;
@@ -282,7 +282,7 @@ handleButtonClick(string button) {
             if (CommandsPage < 0) CommandsPage = total_pages - 1;  // Wrap to last page
             showCommandsMenu();
         }
-        else if (button == "Next ►") {
+        else if (button == ">>") {
             integer total_cmds = llGetListLength(AvailableCommands);
             integer total_pages = (total_cmds + COMMANDS_PER_PAGE - 1) / COMMANDS_PER_PAGE;
             if (total_pages == 0) total_pages = 1;
