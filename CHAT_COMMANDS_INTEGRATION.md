@@ -11,11 +11,13 @@ The chat command system consists of:
 
 ## How It Works
 
-1. Plugin registers commands on startup
-2. User types command in chat (e.g., `!grab`)
-3. kmod_chatcmd parses, verifies ACL, routes to plugin
-4. Plugin receives `chatcmd_invoke` message with ACL level
-5. Plugin handles command logic
+1. Plugin registers with kernel, includes optional "commands" field
+2. Kernel routes "commands" field to chat command module (kmod_chatcmd)
+3. Chat command module registers commands in its registry
+4. User types command in chat (e.g., `!grab`)
+5. kmod_chatcmd parses, verifies ACL, routes to plugin
+6. Plugin receives `chatcmd_invoke` message with ACL level
+7. Plugin handles command logic
 
 ## Integration Steps
 
@@ -171,7 +173,7 @@ registerSelf() {
 
 ## Message Protocol
 
-### Plugin → Kernel (Registration - includes commands)
+### Plugin → Kernel (Registration - includes optional commands)
 ```json
 {
   "type": "register",
@@ -183,7 +185,17 @@ registerSelf() {
 }
 ```
 *(Channel 500 - KERNEL_LIFECYCLE)*
-*(Chat command module extracts "commands" field)*
+
+### Kernel → Chat Module (Routes commands field)
+```json
+{
+  "type": "chatcmd_register",
+  "context": "core_leash",
+  "commands": ["grab", "release", "yank", "length"]
+}
+```
+*(Channel 900 - UI_BUS)*
+*(Kernel automatically routes "commands" field to chat command module)*
 
 ### Module → Plugin (Command Invocation)
 ```json

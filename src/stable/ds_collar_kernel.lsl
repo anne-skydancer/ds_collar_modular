@@ -53,6 +53,7 @@ integer PRODUCTION = TRUE;  // Set FALSE for development builds
    ═══════════════════════════════════════════════════════════ */
 integer KERNEL_LIFECYCLE = 500;
 integer AUTH_BUS = 700;
+integer UI_BUS = 900;
 
 /* ═══════════════════════════════════════════════════════════
    CONSTANTS
@@ -550,6 +551,18 @@ handle_register(string msg) {
         "min_acl", min_acl
     ]);
     llMessageLinked(LINK_SET, AUTH_BUS, auth_msg, NULL_KEY);
+
+    // Forward chat commands to chat command module (if present)
+    if (json_has(msg, ["commands"])) {
+        string commands_json = llJsonGetValue(msg, ["commands"]);
+        string chatcmd_msg = llList2Json(JSON_OBJECT, [
+            "type", "chatcmd_register",
+            "context", context,
+            "commands", commands_json
+        ]);
+        llMessageLinked(LINK_SET, UI_BUS, chatcmd_msg, NULL_KEY);
+        logd("Routed commands to chat module: " + context);
+    }
 }
 
 handle_pong(string msg) {

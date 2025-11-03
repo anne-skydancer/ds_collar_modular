@@ -13,16 +13,15 @@
 
    ARCHITECTURE:
    - Kernel module (infrastructure, not a plugin)
-   - Extracts commands from existing plugin registration messages
+   - Receives routed commands from kernel (kernel extracts from registration)
    - Module routes commands back to plugins via chatcmd_invoke
    - Plugin handles ACL and execution logic
    - Configuration plugin controls enable/prefix/channel
 
    CHANNELS:
-   - 500: Kernel lifecycle (listens for plugin registrations)
    - 700: Auth queries
    - 800: Settings persistence
-   - 900: UI/command bus
+   - 900: UI/command bus (receives chatcmd_register from kernel)
    - 0: Public chat (when enabled)
    - Configurable: Private chat channel (default 1)
 
@@ -64,7 +63,6 @@
 integer DEBUG = FALSE;
 integer PRODUCTION = TRUE;
 
-integer KERNEL_LIFECYCLE = 500;
 integer AUTH_BUS = 700;
 integer SETTINGS_BUS = 800;
 integer UI_BUS = 900;
@@ -409,17 +407,11 @@ handleChatCmdAction(string msg, key user) {
     }
 }
 
-/* ===== PLUGIN REGISTRATION (extracts commands) ===== */
-handlePluginRegistration(string msg) {
-    if (!jsonHas(msg, ["context"])) return;
+/* ===== CHAT COMMAND REGISTRATION (routed from kernel) ===== */
+handleChatCmdRegister(string msg) {
+    if (!jsonHas(msg, ["context"]) || !jsonHas(msg, ["commands"])) return;
 
     string plugin_context = llJsonGetValue(msg, ["context"]);
-
-    if (!jsonHas(msg, ["commands"])) {
-        logd("Plugin " + plugin_context + " registered without commands");
-        return;
-    }
-
     string commands_json = llJsonGetValue(msg, ["commands"]);
 
     string num_str = llJsonGetValue(commands_json, ["length"]);
@@ -473,14 +465,12 @@ default
         if (!jsonHas(msg, ["type"])) return;
         string msg_type = llJsonGetValue(msg, ["type"]);
 
-        if (num == KERNEL_LIFECYCLE) {
-            if (msg_type == "register") {
-                handlePluginRegistration(msg);
-            }
-            return;
-        }
-
         if (num == UI_BUS) {
+            if (msg_type == "chatcmd_register") {
+                handleChatCmdRegister(msg);
+                return;
+            }
+
             if (msg_type == "chatcmd_action") {
                 handleChatCmdAction(msg, id);
                 return;
