@@ -25,7 +25,9 @@
    CHANGELOG v2.4:
    - [CRITICAL FIX] Prevent bootstrap on every teleport/region crossing
    - Added owner change detection (only reset when owner actually changes)
-   - Matches kernel's pattern: check_owner_changed() instead of blind reset
+   - Bootstrap now runs on: logon (attach), owner change, soft reset
+   - Bootstrap does NOT run on: teleport, region crossing
+   - Matches kernel's pattern: check_owner_changed() for on_rez events
    - Eliminates wasteful and disruptive bootstrap during normal teleports
 
    CHANGELOG v2.3:
@@ -510,8 +512,8 @@ default
 
     attach(key id) {
         if (id == NULL_KEY) return;
-        // Only reset if owner changed - prevents bootstrap on every teleport
-        check_owner_changed();
+        // Bootstrap on attach (covers logon and initial attach)
+        llResetScript();
     }
     
     timer() {
