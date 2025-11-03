@@ -51,6 +51,11 @@ string SessionId = "";
 string MenuContext = "";
 integer ChatListen = 0;
 
+/* Command listing state */
+list AvailableCommands = [];
+integer CommandsPage = 0;
+integer COMMANDS_PER_PAGE = 9;
+
 /* ===== HELPERS ===== */
 integer logd(string msg) {
     if (DEBUG) llOwnerSay("[CHATCMD-UI] " + msg);
@@ -131,6 +136,8 @@ showMainMenu() {
         }
     }
 
+    buttons += ["Commands"];
+
     if (inAllowedList(UserAcl, ALLOWED_ACL_CONFIG)) {
         buttons += ["Settings"];
     }
@@ -153,6 +160,44 @@ showSettingsMenu() {
     body += "Channel: Say channel number";
 
     showMenu("settings", "Settings", body, buttons);
+}
+
+showCommandsMenu() {
+    integer total_cmds = llGetListLength(AvailableCommands);
+    integer total_pages = (total_cmds + COMMANDS_PER_PAGE - 1) / COMMANDS_PER_PAGE;
+
+    if (total_pages == 0) total_pages = 1;
+    if (CommandsPage >= total_pages) CommandsPage = 0;
+
+    string body = "Available Commands\n";
+    body += "(Page " + (string)(CommandsPage + 1) + " of " + (string)total_pages + ")\n\n";
+    body += "Prefix: " + CommandPrefix + "\n\n";
+
+    list buttons = ["Back"];
+
+    integer start_idx = CommandsPage * COMMANDS_PER_PAGE;
+    integer end_idx = start_idx + COMMANDS_PER_PAGE - 1;
+    if (end_idx >= total_cmds) end_idx = total_cmds - 1;
+
+    if (total_cmds > 0) {
+        integer i;
+        for (i = start_idx; i <= end_idx && i < total_cmds; i++) {
+            string cmd = llList2String(AvailableCommands, i);
+            body += CommandPrefix + cmd + "\n";
+            buttons += [cmd];
+        }
+    }
+    else {
+        body += "No commands registered yet.";
+    }
+
+    // Add pagination buttons
+    if (total_pages > 1) {
+        if (CommandsPage > 0) buttons += ["◄ Prev"];
+        if (CommandsPage < total_pages - 1) buttons += ["Next ►"];
+    }
+
+    showMenu("commands", "Available Commands", body, buttons);
 }
 
 /* ===== ACTIONS ===== */
@@ -186,6 +231,13 @@ queryState() {
     ]), NULL_KEY);
 }
 
+queryCommands() {
+    llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
+        "type", "chatcmd_action",
+        "action", "query_commands"
+    ]), CurrentUser);
+}
+
 /* ===== BUTTON HANDLERS ===== */
 handleButtonClick(string button) {
     logd("Button: " + button + " in context: " + MenuContext);
@@ -197,6 +249,10 @@ handleButtonClick(string button) {
                 queryState();
             }
         }
+        else if (button == "Commands") {
+            CommandsPage = 0;
+            queryCommands();
+        }
         else if (button == "Settings") {
             if (inAllowedList(UserAcl, ALLOWED_ACL_CONFIG)) {
                 showSettingsMenu();
@@ -204,6 +260,20 @@ handleButtonClick(string button) {
         }
         else if (button == "Back") {
             returnToRoot();
+        }
+    }
+    else if (MenuContext == "commands") {
+        if (button == "◄ Prev") {
+            CommandsPage--;
+            if (CommandsPage < 0) CommandsPage = 0;
+            showCommandsMenu();
+        }
+        else if (button == "Next ►") {
+            CommandsPage++;
+            showCommandsMenu();
+        }
+        else if (button == "Back") {
+            showMainMenu();
         }
     }
     else if (MenuContext == "settings") {
@@ -246,6 +316,8 @@ cleanupSession() {
     AclPending = FALSE;
     SessionId = "";
     MenuContext = "";
+    AvailableCommands = [];
+    CommandsPage = 0;
     logd("Session cleaned up");
 }
 
@@ -320,6 +392,32 @@ default
                         showSettingsMenu();
                     }
                 }
+                return;
+            }
+
+            if (msg_type == "chatcmd_list") {
+                if (id != CurrentUser) return;
+
+                AvailableCommands = [];
+                if (jsonHas(msg, ["commands"])) {
+                    string commands_json = llJsonGetValue(msg, ["commands"]);
+                    string num_str = llJsonGetValue(commands_json, ["length"]);
+
+                    if (num_str != JSON_INVALID) {
+                        integer num_commands = (integer)num_str;
+                        integer i;
+                        for (i = 0; i < num_commands; i++) {
+                            string cmd = llJsonGetValue(commands_json, [i]);
+                            if (cmd != JSON_INVALID && cmd != "") {
+                                AvailableCommands += [cmd];
+                            }
+                        }
+                    }
+                }
+
+                logd("Received " + (string)llGetListLength(AvailableCommands) + " commands");
+                MenuContext = "commands";
+                showCommandsMenu();
                 return;
             }
         }
