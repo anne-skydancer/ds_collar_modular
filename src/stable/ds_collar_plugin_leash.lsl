@@ -250,14 +250,14 @@ buildAvatarMenu() {
     // Use llGetAgentList for nearby avatars (more efficient than sensor)
     list nearby = llGetAgentList(AGENT_LIST_PARCEL, []);
 
-    key owner = llGetOwner();
+    key wearer = llGetOwner();
     SensorCandidates = [];
     integer i = 0;
     integer count = 0;
 
     while (i < llGetListLength(nearby) && count < 9) {
         key detected = llList2Key(nearby, i);
-        if (detected != owner && detected != Leasher) {
+        if (detected != wearer && detected != Leasher) {
             string name = llKey2Name(detected);
             SensorCandidates += [name, detected];
             count++;
@@ -1045,7 +1045,7 @@ default
         if (CurrentUser == NULL_KEY) return;
         if (SensorMode != "coffle" && SensorMode != "post") return;
 
-        key owner = llGetOwner();
+        key wearer = llGetOwner();
         key my_key = llGetKey();
         SensorCandidates = [];
         integer i = 0;
@@ -1053,8 +1053,8 @@ default
         // Detect ALL objects for coffle/post (no limit, we'll paginate)
         while (i < num) {
             key detected = llDetectedKey(i);
-            // Exclude self (collar) and owner avatar
-            if (detected != my_key && detected != owner) {
+            // Exclude self (collar) and wearer
+            if (detected != my_key && detected != wearer) {
                 string name = llDetectedName(i);
                 SensorCandidates += [name, detected];
             }

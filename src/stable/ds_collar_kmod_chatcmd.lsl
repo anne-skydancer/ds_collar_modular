@@ -142,8 +142,8 @@ string findPluginForCommand(string command_name) {
 
 /* ===== RATE LIMITING ===== */
 integer checkCooldown(key user, string command_name) {
-    key owner = llGetOwner();
-    if (user == owner) return TRUE;
+    key wearer = llGetOwner();
+    if (user == wearer) return TRUE;  // Wearer has no cooldown
 
     integer now_time = now();
     integer i = 0;
@@ -276,9 +276,9 @@ broadcastState() {
 
 /* ===== COMMAND PARSING ===== */
 integer parseCommand(string msg_text, key speaker) {
-    key owner = llGetOwner();
+    key wearer = llGetOwner();
 
-    if (!Enabled && speaker != owner) {
+    if (!Enabled && speaker != wearer) {
         return FALSE;
     }
 
@@ -494,13 +494,13 @@ default
     }
 
     listen(integer channel, string speaker_name, key speaker, string msg_text) {
-        key owner = llGetOwner();
+        key wearer = llGetOwner();
 
         // Ignore messages from the collar object itself
         if (speaker == llGetKey()) return;
 
-        // Allow owner commands always, others only if Enabled
-        if (!Enabled && speaker != owner) return;
+        // Allow wearer commands always, others only if Enabled
+        if (!Enabled && speaker != wearer) return;
 
         if (channel == 0 || channel == PrivateChannel) {
             parseCommand(msg_text, speaker);
