@@ -22,7 +22,7 @@
    - 950: Dialog system
 
    ACL REQUIREMENTS:
-   - Configuration: ACL 3+ (Trustee, Unowned, Owner)
+   - Configuration: ACL 2+ (Owned, Trustee, Unowned, Owner)
    - View status: ACL 1+ (Public, Owned, Trustee, Unowned, Owner)
    =============================================================== */
 
@@ -36,7 +36,7 @@ string PLUGIN_CONTEXT = "core_chatcmd";
 string PLUGIN_LABEL = "Chat Cmds";
 integer PLUGIN_MIN_ACL = 1;
 
-list ALLOWED_ACL_CONFIG = [3, 4, 5];
+list ALLOWED_ACL_CONFIG = [2, 3, 4, 5];
 
 /* Current state (synced from kmod) */
 integer Enabled = FALSE;
