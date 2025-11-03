@@ -333,8 +333,8 @@ default
                 if (jsonHas(msg, ["level"])) {
                     UserAcl = (integer)llJsonGetValue(msg, ["level"]);
                     AclPending = FALSE;
-                    llSetTimerEvent(0.15);
                     logd("ACL received: " + (string)UserAcl + " for " + llKey2Name(avatar));
+                    showMainMenu();
                 }
                 return;
             }
