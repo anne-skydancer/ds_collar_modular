@@ -111,12 +111,9 @@ string jsonGet(string j, string k, string default_val) {
 }
 
 integer now() {
-    integer unix_time = llGetUnixTime();
-    if (unix_time < 0) {
-        llOwnerSay("[CHATCMD] ERROR: Timestamp overflow");
-        return 0;
-    }
-    return unix_time;
+    // Return unix time directly. Even if negative (overflow), the cooldown
+    // math (elapsed = now - last_time) still works correctly for relative timing.
+    return llGetUnixTime();
 }
 
 /* ===== COMMAND REGISTRY ===== */
@@ -499,8 +496,10 @@ default
     listen(integer channel, string speaker_name, key speaker, string msg_text) {
         key owner = llGetOwner();
 
-        if (speaker == owner || speaker == llGetKey()) return;
+        // Ignore messages from the collar object itself
+        if (speaker == llGetKey()) return;
 
+        // Allow owner commands always, others only if Enabled
         if (!Enabled && speaker != owner) return;
 
         if (channel == 0 || channel == PrivateChannel) {
