@@ -1,27 +1,33 @@
 /* =============================================================================
-   MODULE: ds_collar_kmod_bootstrap.lsl (v2.3 - Soft Reset Authorization Fix)
+   MODULE: ds_collar_kmod_bootstrap.lsl (v2.4 - Teleport Bootstrap Fix)
    SECURITY AUDIT: MEDIUM-023 FIX APPLIED
-   
+
    ROLE: Startup coordination, RLV detection, owner name resolution
-   
+
    FEATURES:
    - IM notifications during startup (visible to wearer)
    - Multi-channel RLV detection (4711, relay channels)
    - Accepts RLV responses from wearer OR NULL_KEY
    - Progressive status updates
    - Retry logic for RLV detection
-   
+
    CHANNELS:
    - 500 (KERNEL_LIFECYCLE): Soft reset coordination
    - 700 (AUTH_BUS): ACL queries for wearer
    - 800 (SETTINGS_BUS): Initial settings request
-   
+
    SECURITY FIXES APPLIED:
    - [MEDIUM-023] Soft reset authorization validation (v2.3)
    - [MEDIUM] Integer overflow protection for timestamps
    - [LOW] Production mode guards debug logging
    - [ENHANCEMENT] Name resolution timeout added (30s)
-   
+
+   CHANGELOG v2.4:
+   - [CRITICAL FIX] Prevent bootstrap on every teleport/region crossing
+   - Added owner change detection (only reset when owner actually changes)
+   - Matches kernel's pattern: check_owner_changed() instead of blind reset
+   - Eliminates wasteful and disruptive bootstrap during normal teleports
+
    CHANGELOG v2.3:
    - Added 'from' field validation for soft_reset messages
    - Only authorized senders (kernel, maintenance, bootstrap) can trigger reset
@@ -65,6 +71,9 @@ string KEY_OWNER_HONS = "owner_honorifics";
    STATE
    ═══════════════════════════════════════════════════════════ */
 integer BootstrapComplete = FALSE;
+
+// Owner tracking
+key LastOwner = NULL_KEY;
 
 // RLV detection
 list RlvChannels = [];          // List of channels we're listening on
@@ -134,6 +143,22 @@ integer is_authorized_reset_sender(string from) {
     if (from == "kernel") return TRUE;
     if (from == "maintenance") return TRUE;
     if (from == "bootstrap") return TRUE;
+    return FALSE;
+}
+
+// Owner change detection (prevents unnecessary resets on teleport)
+integer check_owner_changed() {
+    key current_owner = llGetOwner();
+    if (current_owner == NULL_KEY) return FALSE;
+
+    if (LastOwner != NULL_KEY && current_owner != LastOwner) {
+        logd("Owner changed: " + (string)LastOwner + " -> " + (string)current_owner);
+        LastOwner = current_owner;
+        llResetScript();
+        return TRUE;
+    }
+
+    LastOwner = current_owner;
     return FALSE;
 }
 
@@ -460,30 +485,33 @@ announce_status() {
 default
 {
     state_entry() {
+        LastOwner = llGetOwner();
         BootstrapComplete = FALSE;
         SettingsReceived = FALSE;
         NameResolutionDeadline = 0;
-        
+
         logd("Bootstrap started");
         sendIM("DS Collar starting up. Please wait...");
-        
+
         // Start RLV detection
         start_rlv_probe();
-        
+
         // Request settings
         request_settings();
-        
+
         // Start timer for RLV probe management
         llSetTimerEvent(1.0);
     }
-    
+
     on_rez(integer start_param) {
-        llResetScript();
+        // Only reset if owner changed - prevents bootstrap on every teleport
+        check_owner_changed();
     }
-    
+
     attach(key id) {
         if (id == NULL_KEY) return;
-        llResetScript();
+        // Only reset if owner changed - prevents bootstrap on every teleport
+        check_owner_changed();
     }
     
     timer() {
@@ -584,7 +612,7 @@ default
     
     changed(integer change) {
         if (change & CHANGED_OWNER) {
-            llResetScript();
+            check_owner_changed();
         }
     }
 }
