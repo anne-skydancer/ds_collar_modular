@@ -72,7 +72,7 @@ string KEY_PREFIX = "chatcmd_prefix";
 string KEY_PRIVATE_CHAN = "chatcmd_private_chan";
 
 /* Chat command state */
-integer Enabled = FALSE;
+integer Enabled = TRUE;
 string CommandPrefix = "!";
 integer PrivateChannel = 1;
 
