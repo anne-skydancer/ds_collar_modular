@@ -399,18 +399,15 @@ default
                 if (id != CurrentUser) return;
 
                 AvailableCommands = [];
-                if (jsonHas(msg, ["commands"])) {
+                if (jsonHas(msg, ["commands"]) && jsonHas(msg, ["count"])) {
                     string commands_json = llJsonGetValue(msg, ["commands"]);
-                    string num_str = llJsonGetValue(commands_json, ["length"]);
+                    integer num_commands = (integer)llJsonGetValue(msg, ["count"]);
 
-                    if (num_str != JSON_INVALID) {
-                        integer num_commands = (integer)num_str;
-                        integer i;
-                        for (i = 0; i < num_commands; i++) {
-                            string cmd = llJsonGetValue(commands_json, [i]);
-                            if (cmd != JSON_INVALID && cmd != "") {
-                                AvailableCommands += [cmd];
-                            }
+                    integer i;
+                    for (i = 0; i < num_commands; i++) {
+                        string cmd = llJsonGetValue(commands_json, [i]);
+                        if (cmd != JSON_INVALID && cmd != "") {
+                            AvailableCommands += [cmd];
                         }
                     }
                 }
