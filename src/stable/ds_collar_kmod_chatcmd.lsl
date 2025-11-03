@@ -276,9 +276,8 @@ broadcastState() {
 
 /* ===== COMMAND PARSING ===== */
 integer parseCommand(string msg_text, key speaker) {
-    key wearer = llGetOwner();
-
-    if (!Enabled && speaker != wearer) {
+    // If disabled, no one can use commands (accessibility by design)
+    if (!Enabled) {
         return FALSE;
     }
 
@@ -492,13 +491,11 @@ default
     }
 
     listen(integer channel, string speaker_name, key speaker, string msg_text) {
-        key wearer = llGetOwner();
-
         // Ignore messages from the collar object itself
         if (speaker == llGetKey()) return;
 
-        // Allow wearer commands always, others only if Enabled
-        if (!Enabled && speaker != wearer) return;
+        // If disabled, no one can use commands (accessibility by design)
+        if (!Enabled) return;
 
         if (channel == 0 || channel == PrivateChannel) {
             parseCommand(msg_text, speaker);
