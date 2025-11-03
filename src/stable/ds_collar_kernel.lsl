@@ -532,16 +532,22 @@ integer check_owner_changed() {
 
 // Generic helper to route registration fields to modules
 // Extracts field from registration message and forwards to target module
+// CRITICAL: Preserves JSON structure (arrays/objects) without double-encoding
 route_field(string msg, string context, string field_name, string route_type, integer channel) {
     if (!json_has(msg, [field_name])) return;
 
     string field_value = llJsonGetValue(msg, [field_name]);
 
+    // Build base message with proper encoding for type and context
     string routed_msg = llList2Json(JSON_OBJECT, [
         "type", route_type,
-        "context", context,
-        field_name, field_value
+        "context", context
     ]);
+
+    // Manually splice in field value to preserve JSON structure (arrays/objects)
+    // llList2Json would double-encode the field_value, breaking nested JSON
+    // Remove closing brace, add field, then close
+    routed_msg = llGetSubString(routed_msg, 0, -2) + ",\"" + field_name + "\":" + field_value + "}";
 
     llMessageLinked(LINK_SET, channel, routed_msg, NULL_KEY);
     logd("Routed " + field_name + " to channel " + (string)channel + ": " + context);
