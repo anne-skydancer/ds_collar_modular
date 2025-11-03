@@ -194,7 +194,7 @@ handleButtonClick(string button) {
         if (button == "Enable" || button == "Disable") {
             if (inAllowedList(UserAcl, ALLOWED_ACL_CONFIG)) {
                 sendChatCmdAction("toggle_enabled");
-                llSetTimerEvent(0.15);
+                queryState();
             }
         }
         else if (button == "Settings") {
@@ -312,8 +312,13 @@ default
                 }
                 logd("State synced");
 
-                if (CurrentUser != NULL_KEY && MenuContext == "main") {
-                    showMainMenu();
+                if (CurrentUser != NULL_KEY) {
+                    if (MenuContext == "main") {
+                        showMainMenu();
+                    }
+                    else if (MenuContext == "settings") {
+                        showSettingsMenu();
+                    }
                 }
                 return;
             }
@@ -333,8 +338,9 @@ default
                 if (jsonHas(msg, ["level"])) {
                     UserAcl = (integer)llJsonGetValue(msg, ["level"]);
                     AclPending = FALSE;
+                    MenuContext = "main";
                     logd("ACL received: " + (string)UserAcl + " for " + llKey2Name(avatar));
-                    showMainMenu();
+                    queryState();
                 }
                 return;
             }
@@ -390,7 +396,7 @@ default
                 ChatListen = 0;
             }
             MenuContext = "settings";
-            llSetTimerEvent(0.15);
+            queryState();
         }
         else if (MenuContext == "awaiting_channel") {
             integer chan = (integer)trimmed;
@@ -405,7 +411,7 @@ default
                 ChatListen = 0;
             }
             MenuContext = "settings";
-            llSetTimerEvent(0.15);
+            queryState();
         }
     }
 }
