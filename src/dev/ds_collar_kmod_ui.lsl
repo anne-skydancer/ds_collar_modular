@@ -448,65 +448,55 @@ send_render_menu(key user, string menu_type) {
     // Batch update for performance (SESSION_PAGE=3, SESSION_TOTAL_PAGES=4 are consecutive)
     Sessions = llListReplaceList(Sessions, [current_page, total_pages], session_idx + SESSION_PAGE, session_idx + SESSION_TOTAL_PAGES);
 
-    // PERFORMANCE: Build buttons in final llDialog order to eliminate Menu reordering
-    // and Dialog processing overhead. Use strided list format.
-    // Format: [label, context, state, label, context, state, ...] (STRIDE=3)
+    // PERFORMANCE: Build buttons in final llDialog order (bottom-up layout)
+    // Format: [label, context, state, ...] stride=3, nav buttons prepended
     
-    // Calculate page slice
     integer start_idx = current_page * MAX_FUNC_BTNS * PLUGIN_STRIDE;
     integer end_idx = start_idx + (MAX_FUNC_BTNS * PLUGIN_STRIDE);
-    if (end_idx > llGetListLength(filtered)) {
-        end_idx = llGetListLength(filtered);
-    }
+    if (end_idx > llGetListLength(filtered)) end_idx = llGetListLength(filtered);
     
-    // Extract page slice as alphabetically sorted list [context, label, min_acl, ...]
     list page_buttons = llList2List(filtered, start_idx, end_idx - 1);
     integer page_count = llGetListLength(page_buttons) / PLUGIN_STRIDE;
     
-    // Convert to [label, context, state] format and apply llDialog layout in one pass
-    // llDialog displays bottom-to-top, left-to-right in 3-column grid
-    // For alphabetical top-to-bottom reading, we need to reverse complete rows
+    // Build in reverse row order for llDialog bottom-up display
+    list button_triplets = [];
+    integer partial = page_count % 3;
+    integer complete_rows = page_count / 3;
     
-    list button_triplets = [];  // Will be [label, context, state, label, context, state, ...]
-    integer row_size = 3;
-    integer complete_rows = page_count / row_size;
-    integer partial_count = page_count % row_size;
-    
-    // Process complete rows in reverse order (bottom row becomes top row)
-    integer row = complete_rows - 1;
-    while (row >= 0) {
-        integer row_start = (partial_count + row * row_size) * PLUGIN_STRIDE;
-        integer j = 0;
-        while (j < row_size) {
-            integer idx = row_start + j * PLUGIN_STRIDE;
-            string context = llList2String(page_buttons, idx + PLUGIN_CONTEXT);
-            string label = llList2String(page_buttons, idx + PLUGIN_LABEL);
-            integer button_state = get_plugin_state(context);
-            
-            button_triplets += [label, context, button_state];
-            j++;
-        }
+    // Complete rows (reversed)
+    integer row = complete_rows;
+    while (row > 0) {
         row--;
-    }
-    
-    // Append partial row at end (will display at top in dialog)
-    if (partial_count > 0) {
-        integer i = 0;
-        while (i < partial_count * PLUGIN_STRIDE) {
-            string context = llList2String(page_buttons, i + PLUGIN_CONTEXT);
-            string label = llList2String(page_buttons, i + PLUGIN_LABEL);
-            integer button_state = get_plugin_state(context);
-            
-            button_triplets += [label, context, button_state];
-            i += PLUGIN_STRIDE;
+        integer base = (partial + row * 3) * PLUGIN_STRIDE;
+        integer col = 0;
+        while (col < 3) {
+            integer idx = base + col * PLUGIN_STRIDE;
+            button_triplets += [
+                llList2String(page_buttons, idx + PLUGIN_LABEL),
+                llList2String(page_buttons, idx + PLUGIN_CONTEXT),
+                get_plugin_state(llList2String(page_buttons, idx + PLUGIN_CONTEXT))
+            ];
+            col++;
         }
     }
     
-    // Prepend navigation buttons (they go to bottom row in dialog)
-    // Nav buttons have no context or state: [label, "", 0]
+    // Partial row (top of dialog)
+    if (partial > 0) {
+        integer i = 0;
+        while (i < partial) {
+            integer idx = i * PLUGIN_STRIDE;
+            button_triplets += [
+                llList2String(page_buttons, idx + PLUGIN_LABEL),
+                llList2String(page_buttons, idx + PLUGIN_CONTEXT),
+                get_plugin_state(llList2String(page_buttons, idx + PLUGIN_CONTEXT))
+            ];
+            i++;
+        }
+    }
+    
+    // Nav buttons at front (bottom row in dialog)
     list final_buttons = ["<<", "", "0", ">>", "", "0", "Close", "", "0"] + button_triplets;
     
-    // Send as simple JSON array (much faster than array of objects)
     string buttons_json = llList2Json(JSON_ARRAY, final_buttons);
     string session_id = llList2String(Sessions, session_idx + SESSION_ID);
     
