@@ -6,11 +6,10 @@ PURPOSE: Session management, ACL filtering, and plugin list orchestration
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
 - PERFORMANCE: Added ACL result caching (5min TTL) to eliminate repeated AUTH_BUS queries
-- PERFORMANCE: Converted session age from absolute to activity-based (120s idle, 600s max)
-- PERFORMANCE: Added dialog timeout extension on navigation to avoid listener recreation
 - Split UI logic from menu rendering to delegate visuals to ds_collar_menu.lsl
 - Added UUID-based plugin change detection to avoid registration races
 - Enforced touch range validation and blacklist checks during session start
+- Revalidated ACL levels on session return with time-based expiry
 - Guarded debug logging for production and handled owner change resets
 --------------------*/
 
@@ -38,7 +37,7 @@ integer PLUGIN_LABEL = 1;
 integer PLUGIN_MIN_ACL = 2;
 
 /* Session list stride - SECURITY FIX: Added SESSION_CREATED_TIME */
-integer SESSION_STRIDE = 10;  // PERFORMANCE: Increased from 9 for SESSION_LAST_ACTIVITY
+integer SESSION_STRIDE = 9;
 integer SESSION_USER = 0;
 integer SESSION_ACL = 1;
 integer SESSION_IS_BLACKLISTED = 2;
@@ -48,7 +47,6 @@ integer SESSION_ID = 5;
 integer SESSION_FILTERED_START = 6;
 integer SESSION_CREATED_TIME = 7;  // SECURITY FIX: Timestamp for ACL refresh
 integer SESSION_CONTEXT = 8;  // Context filter for this session (root or sos)
-integer SESSION_LAST_ACTIVITY = 9;  // PERFORMANCE: Timestamp of last interaction
 
 /* Plugin state list stride: [context, state] */
 integer PLUGIN_STATE_STRIDE = 2;
@@ -56,8 +54,7 @@ integer PLUGIN_STATE_CONTEXT = 0;
 integer PLUGIN_STATE_VALUE = 1;
 
 integer MAX_SESSIONS = 5;
-integer SESSION_IDLE_TIMEOUT = 120;  // PERFORMANCE: 2 minutes idle before refresh
-integer SESSION_ABSOLUTE_MAX = 600;  // PERFORMANCE: 10 minutes absolute maximum
+integer SESSION_MAX_AGE = 60;  // Seconds before ACL refresh required
 
 /* Touch tracking stride */
 integer TOUCH_DATA_STRIDE = 2;
@@ -219,17 +216,6 @@ set_plugin_state(string context, integer button_state) {
 
 /* -------------------- SESSION MANAGEMENT -------------------- */
 
-// PERFORMANCE: Reset session activity timestamp
-reset_session_activity(key user) {
-    integer session_idx = find_session_idx(user);
-    if (session_idx == -1) return;
-    
-    integer now_time = llGetUnixTime();
-    Sessions = llListReplaceList(Sessions, [now_time], 
-        session_idx + SESSION_LAST_ACTIVITY, 
-        session_idx + SESSION_LAST_ACTIVITY);
-}
-
 integer find_session_idx(key user) {
     integer i = 0;
     integer len = llGetListLength(Sessions);
@@ -359,11 +345,9 @@ create_session(key user, integer acl, integer is_blacklisted, string context_fil
     FilteredPluginsData += filtered;
 
     // SECURITY FIX: Add timestamp to session
-    // PERFORMANCE: Add last activity timestamp
     string session_id = generate_session_id(user);
     integer created_time = llGetUnixTime();
-    integer last_activity = created_time;  // PERFORMANCE: Initialize to creation time
-    Sessions += [user, acl, is_blacklisted, 0, 0, session_id, filtered_start, created_time, context_filter, last_activity];
+    Sessions += [user, acl, is_blacklisted, 0, 0, session_id, filtered_start, created_time, context_filter];
 
     // MEMORY OPTIMIZATION: Only build debug string if actually debugging
     if (DEBUG && !PRODUCTION) {
@@ -585,9 +569,6 @@ handle_button_click(key user, string button, string context) {
         return;
     }
 
-    // PERFORMANCE: Reset session activity on every interaction
-    reset_session_activity(user);
-
     // SECURITY FIX: Check blacklist status
     integer is_blacklisted = llList2Integer(Sessions, session_idx + SESSION_IS_BLACKLISTED);
     if (is_blacklisted) {
@@ -599,22 +580,12 @@ handle_button_click(key user, string button, string context) {
     integer current_page = llList2Integer(Sessions, session_idx + SESSION_PAGE);
     integer total_pages = llList2Integer(Sessions, session_idx + SESSION_TOTAL_PAGES);
     string session_context = llList2String(Sessions, session_idx + SESSION_CONTEXT);
-    string session_id = llList2String(Sessions, session_idx + SESSION_ID);
 
     // Handle navigation buttons (no context)
     if (button == "<<") {
         current_page -= 1;
         if (current_page < 0) current_page = total_pages - 1;
         Sessions = llListReplaceList(Sessions, [current_page], session_idx + SESSION_PAGE, session_idx + SESSION_PAGE);
-        
-        // PERFORMANCE: Extend dialog timeout on navigation
-        string extend_msg = llList2Json(JSON_OBJECT, [
-            "type", "dialog_extend",
-            "session_id", session_id,
-            "timeout", 60
-        ]);
-        llMessageLinked(LINK_SET, DIALOG_BUS, extend_msg, NULL_KEY);
-        
         send_render_menu(user, session_context);
         return;
     }
@@ -628,15 +599,6 @@ handle_button_click(key user, string button, string context) {
         current_page += 1;
         if (current_page >= total_pages) current_page = 0;
         Sessions = llListReplaceList(Sessions, [current_page], session_idx + SESSION_PAGE, session_idx + SESSION_PAGE);
-        
-        // PERFORMANCE: Extend dialog timeout on navigation
-        string extend_msg = llList2Json(JSON_OBJECT, [
-            "type", "dialog_extend",
-            "session_id", session_id,
-            "timeout", 60
-        ]);
-        llMessageLinked(LINK_SET, DIALOG_BUS, extend_msg, NULL_KEY);
-        
         send_render_menu(user, session_context);
         return;
     }
@@ -838,41 +800,28 @@ handle_return(string msg) {
 
     logd("Return requested for " + llKey2Name(user_key));
 
-    // PERFORMANCE: Check idle vs absolute timeout
+    // SECURITY FIX: Check session age and re-validate if stale
     integer session_idx = find_session_idx(user_key);
     if (session_idx != -1) {
         integer created_time = llList2Integer(Sessions, session_idx + SESSION_CREATED_TIME);
-        integer last_activity = llList2Integer(Sessions, session_idx + SESSION_LAST_ACTIVITY);
-        integer now_time = llGetUnixTime();
-        
-        integer age = now_time - created_time;
-        integer idle_time = now_time - last_activity;
-        
-        // Check absolute maximum first (security boundary)
-        if (age > SESSION_ABSOLUTE_MAX) {
-            logd("Session exceeded absolute max (" + (string)age + "s), forcing re-auth");
+        integer age = llGetUnixTime() - created_time;
+
+        if (age > SESSION_MAX_AGE) {
+            logd("Session too old (" + (string)age + "s), re-validating ACL");
             string session_context = llList2String(Sessions, session_idx + SESSION_CONTEXT);
             cleanup_session(user_key);
-            
+
             if (session_context == SOS_CONTEXT) {
                 start_sos_session(user_key);
             }
             else {
                 start_root_session(user_key);
             }
-            return;
         }
-        
-        // Check idle timeout (may trigger ACL refresh, but with cache it's fast)
-        if (idle_time > SESSION_IDLE_TIMEOUT) {
-            logd("Session idle for " + (string)idle_time + "s, allowing but may refresh");
-            // Could optionally force re-auth here, but ACL cache makes it fast
+        else {
+            string session_context = llList2String(Sessions, session_idx + SESSION_CONTEXT);
+            send_render_menu(user_key, session_context);
         }
-        
-        // Session is valid - reset activity and render
-        reset_session_activity(user_key);
-        string session_context = llList2String(Sessions, session_idx + SESSION_CONTEXT);
-        send_render_menu(user_key, session_context);
     }
     else {
         start_root_session(user_key);
@@ -959,7 +908,7 @@ default
         PendingAcl = [];
         TouchData = [];
         PluginStates = [];
-        AclCache = [];
+        AclCache = [];  // PERFORMANCE: ACL result cache
 
         logd("UI module started (v4.0 - UI/Kmod split - logic only)");
 

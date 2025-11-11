@@ -2,11 +2,17 @@
 /*--------------------
 MODULE: ds_collar_kmod_dialogs.lsl
 VERSION: 1.00
-REVISION: 22
+REVISION: 23
 PURPOSE: Centralized dialog management for shared listener handling
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
-- PERFORMANCE: Added dialog_extend message handler to extend timeout without recreating listener
+- PERFORMANCE: Added activity-based timeout tracking (Phase 2)
+  * Idle timeout increased from 60s → 120s (gives users more time to read menus)
+  * Absolute max timeout 600s prevents indefinite open dialogs
+  * Timeout reason tracking ("idle" vs "absolute_max") for diagnostics
+- PERFORMANCE: Added dialog_extend message handler (Phase 3 infrastructure)
+  * Can extend timeout without recreating listener (prepared for Phase 4)
+  * Currently dialog sessions close after each button click (ephemeral)
 - Centralized dialog sessions remove per-plugin listen management
 - Dedicated dialog bus coordinates all open and timeout events
 - Channel collision detection mitigates negative channel reuse conflicts
@@ -25,14 +31,19 @@ integer DIALOG_BUS = 950;
 integer CHANNEL_BASE = -8000000;
 integer SESSION_MAX = 10;  // Maximum concurrent sessions
 
-/* Session list stride: [session_id, user_key, channel, listen_handle, timeout_unix, button_map] */
-integer SESSION_STRIDE = 6;
+// PERFORMANCE: Activity-based timeout constants (Phase 2)
+integer SESSION_IDLE_TIMEOUT = 120;   // 2 minutes of inactivity closes dialog
+integer SESSION_ABSOLUTE_MAX = 600;   // 10 minutes absolute max lifetime
+
+/* Session list stride: [session_id, user_key, channel, listen_handle, timeout_unix, button_map, last_activity_unix] */
+integer SESSION_STRIDE = 7;
 integer SESSION_ID = 0;
 integer SESSION_USER = 1;
 integer SESSION_CHANNEL = 2;
 integer SESSION_LISTEN = 3;
 integer SESSION_TIMEOUT = 4;
 integer SESSION_BUTTON_MAP = 5;  // List of [button_text, context] pairs
+integer SESSION_LAST_ACTIVITY = 6;  // Last interaction timestamp for idle detection
 
 /* -------------------- STATE -------------------- */
 list Sessions = [];
@@ -85,6 +96,34 @@ integer now() {
 
 /* -------------------- SESSION MANAGEMENT -------------------- */
 
+// PERFORMANCE: Activity tracking helper (Phase 2)
+update_session_activity(integer session_idx) {
+    if (session_idx < 0) return;
+    
+    integer now_unix = now();
+    integer creation_time = llList2Integer(Sessions, session_idx + SESSION_LAST_ACTIVITY);
+    integer age = now_unix - creation_time;
+    
+    // Extend timeout if still within absolute max
+    integer new_timeout;
+    if (age < SESSION_ABSOLUTE_MAX) {
+        new_timeout = now_unix + SESSION_IDLE_TIMEOUT;
+        // Cap at absolute max
+        integer absolute_deadline = creation_time + SESSION_ABSOLUTE_MAX;
+        if (new_timeout > absolute_deadline) {
+            new_timeout = absolute_deadline;
+        }
+    }
+    else {
+        // Exceeded absolute max, force expiry
+        new_timeout = now_unix - 1;
+    }
+    
+    Sessions = llListReplaceList(Sessions, [new_timeout, now_unix], 
+        session_idx + SESSION_TIMEOUT, 
+        session_idx + SESSION_LAST_ACTIVITY);
+}
+
 integer find_session_idx(string session_id) {
     integer i = 0;
     integer len = llGetListLength(Sessions);
@@ -126,18 +165,30 @@ prune_expired_sessions() {
         integer timeout = llList2Integer(Sessions, i + SESSION_TIMEOUT);
         
         if (timeout > 0 && now_unix >= timeout) {
-            // Session expired, send timeout message
+            // Session expired (idle or absolute max)
             string session_id = llList2String(Sessions, i + SESSION_ID);
             key user = llList2Key(Sessions, i + SESSION_USER);
+            
+            // PERFORMANCE: Determine expiry reason (Phase 2)
+            integer last_activity = llList2Integer(Sessions, i + SESSION_LAST_ACTIVITY);
+            integer age = now_unix - last_activity;
+            string reason;
+            if (age >= SESSION_ABSOLUTE_MAX) {
+                reason = "absolute_max";
+            }
+            else {
+                reason = "idle";
+            }
             
             string timeout_msg = llList2Json(JSON_OBJECT, [
                 "type", "dialog_timeout",
                 "session_id", session_id,
-                "user", (string)user
+                "user", (string)user,
+                "reason", reason
             ]);
             llMessageLinked(LINK_SET, DIALOG_BUS, timeout_msg, NULL_KEY);
             
-            logd("Session timeout: " + session_id);
+            logd("Session timeout (" + reason + "): " + session_id);
             
             close_session_at_idx(i);
             // Don't increment i, list shifted
@@ -351,13 +402,15 @@ handle_dialog_open(string msg) {
     integer listen_handle = llListen(channel, "", user, "");
 
     // Calculate timeout timestamp
+    integer now_unix = now();
     integer timeout_unix = 0;
     if (timeout > 0) {
-        timeout_unix = now() + timeout;
+        timeout_unix = now_unix + timeout;
     }
 
+    // PERFORMANCE: Initialize last_activity for idle tracking (Phase 2)
     // Add to sessions (serialize button_map as JSON to maintain SESSION_STRIDE)
-    Sessions += [session_id, user, channel, listen_handle, timeout_unix, llList2Json(JSON_ARRAY, button_map)];
+    Sessions += [session_id, user, channel, listen_handle, timeout_unix, llList2Json(JSON_ARRAY, button_map), now_unix];
 
     // Show dialog
     llDialog(user, title + "\n\n" + message, buttons, channel);
@@ -432,9 +485,10 @@ handle_numbered_list_dialog(string msg, string session_id, key user) {
     integer listen_handle = llListen(channel, "", user, "");
     
     // Calculate timeout timestamp
+    integer now_unix = now();
     integer timeout_unix = 0;
     if (timeout > 0) {
-        timeout_unix = now() + timeout;
+        timeout_unix = now_unix + timeout;
     }
 
     // Build button_map for numbered list (buttons have no context)
@@ -445,8 +499,9 @@ handle_numbered_list_dialog(string msg, string session_id, key user) {
         j++;
     }
 
+    // PERFORMANCE: Initialize last_activity for idle tracking (Phase 2)
     // Add to sessions (serialize button_map as JSON to maintain SESSION_STRIDE)
-    Sessions += [session_id, user, channel, listen_handle, timeout_unix, llList2Json(JSON_ARRAY, button_map)];
+    Sessions += [session_id, user, channel, listen_handle, timeout_unix, llList2Json(JSON_ARRAY, button_map), now_unix];
 
     // Show dialog
     llDialog(user, title + "\n\n" + body, buttons, channel);
@@ -548,7 +603,7 @@ default
 
                     logd("Button click: " + message + " (context: " + clicked_context + ") from " + llKey2Name(id));
 
-                    // Close session after response
+                    // Close session after response (ephemeral per-dialog session)
                     close_session_at_idx(i);
                     return;
                 }
