@@ -35,14 +35,14 @@
 integer DEBUG = FALSE;
 integer PRODUCTION = TRUE;  // Set FALSE for development builds
 
-/* ═══════════════════════════════════════════════════════════
+/* ===========================================================
    CONSOLIDATED ABI
-   ═══════════════════════════════════════════════════════════ */
+   =========================================================== */
 integer SETTINGS_BUS = 800;
 
-/* ═══════════════════════════════════════════════════════════
+/* ===========================================================
    SETTINGS KEYS
-   ═══════════════════════════════════════════════════════════ */
+   =========================================================== */
 string KEY_MULTI_OWNER_MODE = "multi_owner_mode";
 string KEY_OWNER_KEY        = "owner_key";
 string KEY_OWNER_KEYS       = "owner_keys";
@@ -61,16 +61,16 @@ string KEY_BELL_SOUND_ENABLED = "bell_sound_enabled";
 string KEY_BELL_VOLUME = "bell_volume";
 string KEY_BELL_SOUND = "bell_sound";
 
-/* ═══════════════════════════════════════════════════════════
+/* ===========================================================
    NOTECARD CONFIG
-   ═══════════════════════════════════════════════════════════ */
+   =========================================================== */
 string NOTECARD_NAME = "settings";
 string COMMENT_PREFIX = "#";
 string SEPARATOR = "=";
 
-/* ═══════════════════════════════════════════════════════════
+/* ===========================================================
    STATE
-   ═══════════════════════════════════════════════════════════ */
+   =========================================================== */
 key LastOwner = NULL_KEY;
 string KvJson = "{}";
 
@@ -81,9 +81,9 @@ key NotecardKey = NULL_KEY;  // Track settings notecard changes
 
 integer MaxListLen = 64;
 
-/* ═══════════════════════════════════════════════════════════
+/* ===========================================================
    HELPERS
-   ═══════════════════════════════════════════════════════════ */
+   =========================================================== */
 integer logd(string msg) {
     // SECURITY FIX: Production mode guard
     if (DEBUG && !PRODUCTION) llOwnerSay("[SETTINGS] " + msg);
@@ -93,13 +93,26 @@ integer logd(string msg) {
 integer json_has(string j, list path) {
     return (llJsonGetValue(j, path) != JSON_INVALID);
 }
-
-integer is_json_obj(string s) {
-    return (llGetSubString(s, 0, 0) == "{");
+string get_msg_type(string msg) {
+    if (!json_has(msg, ["type"])) return "";
+    return llJsonGetValue(msg, ["type"]);
 }
 
-integer is_json_arr(string s) {
-    return (llGetSubString(s, 0, 0) == "[");
+// MEMORY OPTIMIZATION: Compact field validation helper
+integer validate_required_fields(string json_str, list field_names, string function_name) {
+    integer i = 0;
+    integer len = llGetListLength(field_names);
+    while (i < len) {
+        string field = llList2String(field_names, i);
+        if (!json_has(json_str, [field])) {
+            if (DEBUG && !PRODUCTION) {
+                logd("ERROR: " + function_name + " missing '" + field + "' field");
+            }
+            return FALSE;
+        }
+        i += 1;
+    }
+    return TRUE;
 }
 
 string normalize_bool(string s) {
@@ -135,9 +148,9 @@ list list_unique(list source_list) {
     return unique_list;
 }
 
-/* ═══════════════════════════════════════════════════════════
+/* ===========================================================
    KV OPERATIONS
-   ═══════════════════════════════════════════════════════════ */
+   =========================================================== */
 
 string kv_get(string key_name) {
     string val = llJsonGetValue(KvJson, [key_name]);
@@ -167,7 +180,7 @@ integer kv_set_list(string key_name, list values) {
 integer kv_list_add_unique(string key_name, string elem) {
     string arr = kv_get(key_name);
     list current_list = [];
-    if (is_json_arr(arr)) {
+    if (llJsonValueType(arr, []) == JSON_ARRAY) {
         current_list = llJson2List(arr);
     }
     
@@ -180,7 +193,7 @@ integer kv_list_add_unique(string key_name, string elem) {
 
 integer kv_list_remove_all(string key_name, string elem) {
     string arr = kv_get(key_name);
-    if (!is_json_arr(arr)) return FALSE;
+    if (llJsonValueType(arr, []) != JSON_ARRAY) return FALSE;
     
     list current_list = llJson2List(arr);
     list new_list = list_remove_all(current_list, elem);
@@ -190,9 +203,9 @@ integer kv_list_remove_all(string key_name, string elem) {
     return kv_set_list(key_name, new_list);
 }
 
-/* ═══════════════════════════════════════════════════════════
+/* ===========================================================
    VALIDATION HELPERS
-   ═══════════════════════════════════════════════════════════ */
+   =========================================================== */
 
 // SECURITY FIX: Check if external owner exists
 integer has_external_owner() {
@@ -200,7 +213,7 @@ integer has_external_owner() {
     
     if (kv_get(KEY_MULTI_OWNER_MODE) == "1") {
         string owner_keys = kv_get(KEY_OWNER_KEYS);
-        if (is_json_arr(owner_keys)) {
+        if (llJsonValueType(owner_keys, []) == JSON_ARRAY) {
             list owners = llJson2List(owner_keys);
             integer i = 0;
             while (i < llGetListLength(owners)) {
@@ -229,7 +242,7 @@ integer is_owner(string who) {
     
     // Check multi-owner list
     string owner_keys = kv_get(KEY_OWNER_KEYS);
-    if (is_json_arr(owner_keys)) {
+    if (llJsonValueType(owner_keys, []) == JSON_ARRAY) {
         list owners = llJson2List(owner_keys);
         if (llListFindList(owners, [who]) != -1) return TRUE;
     }
@@ -237,9 +250,9 @@ integer is_owner(string who) {
     return FALSE;
 }
 
-/* ═══════════════════════════════════════════════════════════
+/* ===========================================================
    ROLE EXCLUSIVITY GUARDS
-   ═══════════════════════════════════════════════════════════ */
+   =========================================================== */
 
 // SECURITY FIX: Returns FALSE if owner add should be rejected
 // BROADCAST FIX: Emits deltas for all guard-side mutations to keep ACL consumers in sync
@@ -255,7 +268,7 @@ integer apply_owner_set_guard(string who) {
 
     // Remove owner from trustees and broadcast the change
     string trustees_arr = kv_get(KEY_TRUSTEES);
-    if (is_json_arr(trustees_arr)) {
+    if (llJsonValueType(trustees_arr, []) == JSON_ARRAY) {
         list trustees = llJson2List(trustees_arr);
         if (llListFindList(trustees, [who]) != -1) {
             // Only process if actually present
@@ -269,7 +282,7 @@ integer apply_owner_set_guard(string who) {
 
     // Remove owner from blacklist and broadcast the change
     string blacklist_arr = kv_get(KEY_BLACKLIST);
-    if (is_json_arr(blacklist_arr)) {
+    if (llJsonValueType(blacklist_arr, []) == JSON_ARRAY) {
         list blacklist = llJson2List(blacklist_arr);
         if (llListFindList(blacklist, [who]) != -1) {
             // Only process if actually present
@@ -294,7 +307,7 @@ integer apply_trustee_add_guard(string who) {
 
     // Remove from blacklist and broadcast the change
     string blacklist_arr = kv_get(KEY_BLACKLIST);
-    if (is_json_arr(blacklist_arr)) {
+    if (llJsonValueType(blacklist_arr, []) == JSON_ARRAY) {
         list blacklist = llJson2List(blacklist_arr);
         if (llListFindList(blacklist, [who]) != -1) {
             // Only process if actually present
@@ -313,7 +326,7 @@ integer apply_trustee_add_guard(string who) {
 integer apply_blacklist_add_guard(string who) {
     // Remove from trustees and broadcast the change
     string trustees_arr = kv_get(KEY_TRUSTEES);
-    if (is_json_arr(trustees_arr)) {
+    if (llJsonValueType(trustees_arr, []) == JSON_ARRAY) {
         list trustees = llJson2List(trustees_arr);
         if (llListFindList(trustees, [who]) != -1) {
             // Only process if actually present
@@ -336,7 +349,7 @@ integer apply_blacklist_add_guard(string who) {
 
     // Remove from multi-owner list and broadcast the change
     string owner_keys_arr = kv_get(KEY_OWNER_KEYS);
-    if (is_json_arr(owner_keys_arr)) {
+    if (llJsonValueType(owner_keys_arr, []) == JSON_ARRAY) {
         list owner_keys = llJson2List(owner_keys_arr);
         if (llListFindList(owner_keys, [who]) != -1) {
             // Only process if actually present
@@ -350,9 +363,9 @@ integer apply_blacklist_add_guard(string who) {
     return TRUE;
 }
 
-/* ═══════════════════════════════════════════════════════════
+/* ===========================================================
    BROADCASTING
-   ═══════════════════════════════════════════════════════════ */
+   =========================================================== */
 
 broadcast_full_sync() {
     string msg = llList2Json(JSON_OBJECT, [
@@ -402,9 +415,9 @@ broadcast_delta_list_remove(string key_name, string elem) {
     logd("Broadcast: delta list_remove " + key_name);
 }
 
-/* ═══════════════════════════════════════════════════════════
+/* ===========================================================
    KEY VALIDATION
-   ═══════════════════════════════════════════════════════════ */
+   =========================================================== */
 
 integer is_allowed_key(string k) {
     if (k == KEY_MULTI_OWNER_MODE) return TRUE;
@@ -423,6 +436,8 @@ integer is_allowed_key(string k) {
     if (k == KEY_BELL_SOUND_ENABLED) return TRUE;
     if (k == KEY_BELL_VOLUME) return TRUE;
     if (k == KEY_BELL_SOUND) return TRUE;
+    // Chat command module keys (chatcmd_enabled, chatcmd_prefix, chatcmd_private_chan, chatcmd_registry_*)
+    if (llGetSubString(k, 0, 7) == "chatcmd_") return TRUE;
     return FALSE;
 }
 
@@ -432,9 +447,9 @@ integer is_notecard_only_key(string k) {
     return FALSE;
 }
 
-/* ═══════════════════════════════════════════════════════════
+/* ===========================================================
    NOTECARD PARSING
-   ═══════════════════════════════════════════════════════════ */
+   =========================================================== */
 
 parse_notecard_line(string line) {
     line = llStringTrim(line, STRING_TRIM);
@@ -545,9 +560,9 @@ integer start_notecard_reading() {
     return TRUE;
 }
 
-/* ═══════════════════════════════════════════════════════════
+/* ===========================================================
    MESSAGE HANDLERS
-   ═══════════════════════════════════════════════════════════ */
+   =========================================================== */
 
 handle_settings_get() {
     broadcast_full_sync();
@@ -568,7 +583,7 @@ handle_set(string msg) {
     // Bulk list set
     if (json_has(msg, ["values"])) {
         string values_arr = llJsonGetValue(msg, ["values"]);
-        if (is_json_arr(values_arr)) {
+        if (llJsonValueType(values_arr, []) == JSON_ARRAY) {
             list new_list = llJson2List(values_arr);
             new_list = list_unique(new_list);
             
@@ -697,9 +712,9 @@ handle_list_remove(string msg) {
     }
 }
 
-/* ═══════════════════════════════════════════════════════════
+/* ===========================================================
    EVENTS
-   ═══════════════════════════════════════════════════════════ */
+   =========================================================== */
 
 default
 {
@@ -745,13 +760,13 @@ default
             // Only act if the settings notecard specifically changed
             key current_notecard_key = llGetInventoryKey(NOTECARD_NAME);
             if (current_notecard_key != NotecardKey) {
-                // Notecard was deleted → reset to defaults
+                // Notecard was deleted -> reset to defaults
                 if (current_notecard_key == NULL_KEY) {
                     logd("Settings notecard deleted, resetting to defaults");
                     llResetScript();
                 }
                 else {
-                    // Notecard edited or re-added → reload and overlay
+                    // Notecard edited or re-added -> reload and overlay
                     logd("Settings notecard changed, reloading settings");
                     NotecardKey = current_notecard_key;
                     start_notecard_reading();
@@ -778,9 +793,8 @@ default
     
     link_message(integer sender, integer num, string msg, key id) {
         if (num != SETTINGS_BUS) return;
-        if (!json_has(msg, ["type"])) return;
-        
-        string msg_type = llJsonGetValue(msg, ["type"]);
+        string msg_type = get_msg_type(msg);
+        if (msg_type == "") return;
         
         if (msg_type == "settings_get") {
             handle_settings_get();

@@ -421,7 +421,7 @@ default
 
         integer used = llGetUsedMemory();
         integer free_mem = llGetFreeMemory();
-        llOwnerSay("Chat command kmod ready (v1.0) - Memory: " + (string)used + " used, " + (string)free_mem + " free");
+        logd(("Chat command kmod ready (v1.0) - Memory: " + (string)used + " used, " + (string)free_mem + " free"));
         logd("Chat command kmod ready");
     }
 
@@ -479,4 +479,5 @@ default
         parseCommand(msg_text, speaker);
     }
 }
+
 

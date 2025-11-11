@@ -1,3 +1,4 @@
+
 /* =============================================================================
    PLUGIN: ds_collar_plugin_tpe.lsl (v2.0 - Wearer Confirmation)
    

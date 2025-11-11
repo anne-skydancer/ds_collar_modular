@@ -1,5 +1,5 @@
 /* =============================================================================
-   MODULE: ds_collar_kmod_bootstrap.lsl (v2.4 - Teleport Bootstrap Fix)
+   MODULE: ds_collar_kmod_bootstrap.lsl (v2.5 - Display Name Throttling Fix)
    SECURITY AUDIT: MEDIUM-023 FIX APPLIED
 
    ROLE: Startup coordination, RLV detection, owner name resolution
@@ -10,6 +10,7 @@
    - Accepts RLV responses from wearer OR NULL_KEY
    - Progressive status updates
    - Retry logic for RLV detection
+   - Rate-limited display name resolution (prevents throttling)
 
    CHANNELS:
    - 500 (KERNEL_LIFECYCLE): Soft reset coordination
@@ -21,6 +22,12 @@
    - [MEDIUM] Integer overflow protection for timestamps
    - [LOW] Production mode guards debug logging
    - [ENHANCEMENT] Name resolution timeout added (30s)
+
+   CHANGELOG v2.5:
+   - [CRITICAL FIX] Rate-limit llRequestDisplayName to prevent throttling
+   - Display name requests now queued and spaced 2.5 seconds apart
+   - Fixes "Too many llRequestDisplayName requests. Throttled" error on bootstrap
+   - Prevents first-click delay caused by throttling backlog
 
    CHANGELOG v2.4:
    - [CRITICAL FIX] Prevent bootstrap on every teleport/region crossing
@@ -39,16 +46,16 @@
 integer DEBUG = FALSE;
 integer PRODUCTION = TRUE;  // Set FALSE for development builds
 
-/* ═══════════════════════════════════════════════════════════
+/* ===========================================================
    CONSOLIDATED ABI
-   ═══════════════════════════════════════════════════════════ */
+   =========================================================== */
 integer KERNEL_LIFECYCLE = 500;
 integer AUTH_BUS = 700;
 integer SETTINGS_BUS = 800;
 
-/* ═══════════════════════════════════════════════════════════
+/* ===========================================================
    RLV DETECTION CONFIG
-   ═══════════════════════════════════════════════════════════ */
+   =========================================================== */
 integer RLV_PROBE_TIMEOUT_SEC = 30;
 integer RLV_RETRY_INTERVAL_SEC = 4;
 integer RLV_MAX_RETRIES = 8;
@@ -60,18 +67,23 @@ integer USE_RELAY_CHAN = TRUE;
 integer RELAY_CHAN = -1812221819;
 integer PROBE_RELAY_BOTH_SIGNS = TRUE;  // Also try positive relay channel
 
-/* ═══════════════════════════════════════════════════════════
+/* ===========================================================
+   DISPLAY NAME REQUEST RATE LIMITING
+   =========================================================== */
+float NAME_REQUEST_INTERVAL_SEC = 2.5;  // Space requests 2.5s apart to avoid throttling
+
+/* ===========================================================
    SETTINGS KEYS
-   ═══════════════════════════════════════════════════════════ */
+   =========================================================== */
 string KEY_MULTI_OWNER_MODE = "multi_owner_mode";
 string KEY_OWNER_KEY = "owner_key";
 string KEY_OWNER_KEYS = "owner_keys";
 string KEY_OWNER_HON = "owner_hon";
 string KEY_OWNER_HONS = "owner_honorifics";
 
-/* ═══════════════════════════════════════════════════════════
+/* ===========================================================
    STATE
-   ═══════════════════════════════════════════════════════════ */
+   =========================================================== */
 integer BootstrapComplete = FALSE;
 
 // Owner tracking
@@ -103,9 +115,14 @@ list OwnerDisplayNames = [];
 integer NameResolutionDeadline = 0;
 integer NAME_RESOLUTION_TIMEOUT_SEC = 30;
 
-/* ═══════════════════════════════════════════════════════════
+// Name request queue (rate-limited)
+list PendingNameRequests = [];  // List of owner keys waiting for display name requests
+integer NAME_REQUEST_STRIDE = 1;
+integer NextNameRequestTime = 0;  // Timestamp when next request can be sent
+
+/* ===========================================================
    HELPERS
-   ═══════════════════════════════════════════════════════════ */
+   =========================================================== */
 integer logd(string msg) {
     if (DEBUG && !PRODUCTION) llOwnerSay("[BOOTSTRAP] " + msg);
     return FALSE;
@@ -114,10 +131,11 @@ integer logd(string msg) {
 integer json_has(string j, list path) {
     return (llJsonGetValue(j, path) != JSON_INVALID);
 }
-
-integer is_json_arr(string s) {
-    return (llGetSubString(s, 0, 0) == "[");
+string get_msg_type(string msg) {
+    if (!json_has(msg, ["type"])) return "";
+    return llJsonGetValue(msg, ["type"]);
 }
+
 
 integer now() {
     integer unix_time = llGetUnixTime();
@@ -164,9 +182,9 @@ integer check_owner_changed() {
     return FALSE;
 }
 
-/* ═══════════════════════════════════════════════════════════
+/* ===========================================================
    RLV DETECTION - Multi-Channel Approach
-   ═══════════════════════════════════════════════════════════ */
+   =========================================================== */
 
 addProbeChannel(integer ch) {
     if (ch == 0) return;
@@ -255,9 +273,9 @@ stop_rlv_probe() {
     }
 }
 
-/* ═══════════════════════════════════════════════════════════
+/* ===========================================================
    SETTINGS LOADING
-   ═══════════════════════════════════════════════════════════ */
+   =========================================================== */
 
 request_settings() {
     string msg = llList2Json(JSON_OBJECT, [
@@ -290,7 +308,7 @@ apply_settings_sync(string msg) {
     
     if (json_has(kv_json, [KEY_OWNER_KEYS])) {
         string owner_keys_json = llJsonGetValue(kv_json, [KEY_OWNER_KEYS]);
-        if (is_json_arr(owner_keys_json)) {
+        if (llJsonValueType(owner_keys_json, []) == JSON_ARRAY) {
             OwnerKeys = llJson2List(owner_keys_json);
         }
     }
@@ -301,7 +319,7 @@ apply_settings_sync(string msg) {
     
     if (json_has(kv_json, [KEY_OWNER_HONS])) {
         string owner_hons_json = llJsonGetValue(kv_json, [KEY_OWNER_HONS]);
-        if (is_json_arr(owner_hons_json)) {
+        if (llJsonValueType(owner_hons_json, []) == JSON_ARRAY) {
             OwnerHonorifics = llJson2List(owner_hons_json);
         }
     }
@@ -313,14 +331,65 @@ apply_settings_sync(string msg) {
     start_name_resolution();
 }
 
-/* ═══════════════════════════════════════════════════════════
+/* ===========================================================
    NAME RESOLUTION
-   ═══════════════════════════════════════════════════════════ */
+   =========================================================== */
+
+// Process next queued display name request (rate-limited)
+process_next_name_request() {
+    integer current_time = now();
+    if (current_time == 0) return;  // Overflow protection
+
+    // Check if we have any pending requests
+    if (llGetListLength(PendingNameRequests) == 0) return;
+
+    // Check if we're allowed to make a request yet
+    if (NextNameRequestTime > 0 && current_time < NextNameRequestTime) return;
+
+    // Get next owner key from queue
+    key owner = llList2Key(PendingNameRequests, 0);
+    PendingNameRequests = llDeleteSubList(PendingNameRequests, 0, 0);
+
+    // Make the request
+    if (owner != NULL_KEY) {
+        key query_id = llRequestDisplayName(owner);
+        OwnerNameQueries += [query_id, owner];
+
+        // Find the index for this owner
+        integer owner_idx = -1;
+        if (MultiOwnerMode) {
+            owner_idx = llListFindList(OwnerKeys, [(string)owner]);
+        }
+        else {
+            if (owner == OwnerKey) owner_idx = 0;
+        }
+
+        // Initialize display name placeholder
+        if (owner_idx != -1) {
+            if (owner_idx >= llGetListLength(OwnerDisplayNames)) {
+                OwnerDisplayNames += ["(loading...)"];
+            }
+        }
+
+        logd("Requested display name (queued)");
+
+        // Schedule next request (cast needed: NAME_REQUEST_INTERVAL_SEC is float)
+        integer next_time = current_time + (integer)NAME_REQUEST_INTERVAL_SEC;
+        if (next_time > current_time) {  // Overflow protection
+            NextNameRequestTime = next_time;
+        }
+        else {
+            NextNameRequestTime = current_time;
+        }
+    }
+}
 
 start_name_resolution() {
     OwnerNameQueries = [];
     OwnerDisplayNames = [];
-    
+    PendingNameRequests = [];
+    NextNameRequestTime = 0;
+
     integer current_time = now();
     if (current_time > 0) {
         integer deadline = current_time + NAME_RESOLUTION_TIMEOUT_SEC;
@@ -331,36 +400,38 @@ start_name_resolution() {
             NameResolutionDeadline = current_time;
         }
     }
-    
+
     if (MultiOwnerMode) {
-        // Multi-owner: resolve all names
+        // Multi-owner: queue all owner keys for rate-limited requests
         integer i = 0;
         integer len = llGetListLength(OwnerKeys);
         while (i < len) {
             string owner_str = llList2String(OwnerKeys, i);
             key owner = (key)owner_str;
             if (owner != NULL_KEY) {
-                key query_id = llRequestDisplayName(owner);
-                OwnerNameQueries += [query_id, owner];
+                PendingNameRequests += [owner];
                 OwnerDisplayNames += ["(loading...)"];
-                logd("Requesting owner name " + (string)(i + 1));
             }
             i += 1;
         }
+        logd("Queued " + (string)llGetListLength(PendingNameRequests) + " name requests");
     }
     else {
-        // Single owner: resolve one name
+        // Single owner: queue one request
         if (OwnerKey != NULL_KEY) {
-            key query_id = llRequestDisplayName(OwnerKey);
-            OwnerNameQueries += [query_id, OwnerKey];
+            PendingNameRequests += [OwnerKey];
             OwnerDisplayNames += ["(loading...)"];
-            logd("Requesting owner name");
+            logd("Queued owner name request");
         }
     }
-    
+
     // If no owners, we're done
-    if (llGetListLength(OwnerNameQueries) == 0) {
+    if (llGetListLength(PendingNameRequests) == 0) {
         check_bootstrap_complete();
+    }
+    else {
+        // Start processing the queue
+        process_next_name_request();
     }
 }
 
@@ -402,18 +473,21 @@ handle_dataserver_name(key query_id, string name) {
     }
 }
 
-/* ═══════════════════════════════════════════════════════════
+/* ===========================================================
    BOOTSTRAP COMPLETION
-   ═══════════════════════════════════════════════════════════ */
+   =========================================================== */
 
 check_bootstrap_complete() {
     if (BootstrapComplete) return;
-    
+
     // Check all conditions
-    if (RlvReady && SettingsReceived && llGetListLength(OwnerNameQueries) == 0) {
+    // CRITICAL: Must check BOTH OwnerNameQueries (sent requests) AND PendingNameRequests (queued requests)
+    if (RlvReady && SettingsReceived &&
+        llGetListLength(OwnerNameQueries) == 0 &&
+        llGetListLength(PendingNameRequests) == 0) {
         BootstrapComplete = TRUE;
         logd("Bootstrap complete");
-        
+
         // Announce final status
         announce_status();
     }
@@ -480,9 +554,9 @@ announce_status() {
     sendIM("Collar startup complete.");
 }
 
-/* ═══════════════════════════════════════════════════════════
+/* ===========================================================
    EVENTS
-   ═══════════════════════════════════════════════════════════ */
+   =========================================================== */
 
 default
 {
@@ -491,6 +565,8 @@ default
         BootstrapComplete = FALSE;
         SettingsReceived = FALSE;
         NameResolutionDeadline = 0;
+        PendingNameRequests = [];
+        NextNameRequestTime = 0;
 
         logd("Bootstrap started");
         sendIM("DS Collar starting up. Please wait...");
@@ -501,7 +577,7 @@ default
         // Request settings
         request_settings();
 
-        // Start timer for RLV probe management
+        // Start timer for RLV probe management and name request processing
         llSetTimerEvent(1.0);
     }
 
@@ -519,7 +595,7 @@ default
     timer() {
         integer current_time = now();
         if (current_time == 0) return; // Overflow protection
-        
+
         // Handle RLV probe retries
         if (RlvProbing && !RlvReady) {
             // Check if we should send another query
@@ -532,7 +608,7 @@ default
                     RlvNextRetry = next_retry_time;
                 }
             }
-            
+
             // Check for timeout
             if (RlvProbeDeadline > 0 && current_time >= RlvProbeDeadline) {
                 logd("RLV probe timed out");
@@ -540,16 +616,25 @@ default
                 check_bootstrap_complete();
             }
         }
-        
+
+        // Process queued display name requests (rate-limited)
+        if (llGetListLength(PendingNameRequests) > 0) {
+            process_next_name_request();
+        }
+
         // Check name resolution timeout
-        if (llGetListLength(OwnerNameQueries) > 0 && NameResolutionDeadline > 0 && current_time >= NameResolutionDeadline) {
+        if ((llGetListLength(OwnerNameQueries) > 0 || llGetListLength(PendingNameRequests) > 0) &&
+            NameResolutionDeadline > 0 && current_time >= NameResolutionDeadline) {
             logd("Name resolution timed out, proceeding with fallback names");
             OwnerNameQueries = []; // Clear pending queries
+            PendingNameRequests = []; // Clear pending requests
             check_bootstrap_complete();
         }
-        
+
         // Stop timer if bootstrap complete
-        if (BootstrapComplete && !RlvProbing && llGetListLength(OwnerNameQueries) == 0) {
+        if (BootstrapComplete && !RlvProbing &&
+            llGetListLength(OwnerNameQueries) == 0 &&
+            llGetListLength(PendingNameRequests) == 0) {
             llSetTimerEvent(0.0);
         }
     }
@@ -578,9 +663,8 @@ default
     }
     
     link_message(integer sender, integer num, string msg, key id) {
-        if (!json_has(msg, ["type"])) return;
-        
-        string msg_type = llJsonGetValue(msg, ["type"]);
+        string msg_type = get_msg_type(msg);
+        if (msg_type == "") return;
         
         /* ===== SETTINGS BUS ===== */
         if (num == SETTINGS_BUS) {

@@ -568,15 +568,7 @@ default
             else if (type == "ping") {
                 send_pong();
             }
-            else if (type == "soft_reset" || type == "soft_reset_all") {
-                // Check if this is a targeted reset
-                if (json_has(msg, ["context"])) {
-                    string target_context = llJsonGetValue(msg, ["context"]);
-                    if (target_context != "" && target_context != PLUGIN_CONTEXT) {
-                        return; // Not for us, ignore
-                    }
-                }
-                // Either no context (broadcast) or matches our context
+            else if (type == "soft_reset") {
                 llResetScript();
             }
         }
@@ -600,21 +592,10 @@ default
             if (type == "start") {
                 if (!json_has(msg, ["context"])) return;
                 string context = llJsonGetValue(msg, ["context"]);
-
+                
                 if (context == PLUGIN_CONTEXT) {
                     CurrentUser = id;
                     request_acl(CurrentUser);
-                }
-            }
-            else if (type == "emergency_restrict_clear") {
-                // Emergency SOS clear - only allow if sender is the collar wearer
-                // The id parameter contains the requesting user's key
-                // NOTE: User feedback is sent by SOS plugin, not here (avoid duplicate messages)
-                if (id == llGetOwner()) {
-                    remove_all_restrictions();
-                    logd("Emergency restrict clear executed");
-                } else {
-                    logd("Emergency restrict clear denied: sender " + llKey2Name(id) + " is not wearer.");
                 }
             }
         }

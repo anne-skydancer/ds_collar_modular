@@ -67,6 +67,8 @@ integer MODE_OFF = 0;
 integer MODE_ON = 1;
 integer MODE_HARDCORE = 2;
 
+integer SOS_MSG_NUM = 555;  // SOS emergency channel
+
 // ORG relay spec wildcard UUID (accepts commands from any avatar)
 key WILDCARD_UUID = "ffffffff-ffff-ffff-ffff-ffffffffffff";
 
@@ -835,19 +837,8 @@ default
             if (msg_type == "start") {
                 handle_start(msg);
             }
-            else if (msg_type == "emergency_relay_clear") {
-                // Emergency SOS clear - only allow if sender is the collar wearer
-                // The id parameter contains the requesting user's key
-                // NOTE: User feedback is sent by SOS plugin, not here (avoid duplicate messages)
-                if (id == llGetOwner()) {
-                    safeword_clear_all();
-                    logd("Emergency relay clear executed");
-                } else {
-                    logd("Emergency relay clear denied: sender " + llKey2Name(id) + " is not wearer.");
-                }
-            }
         }
-
+        
         /* ===== DIALOG ===== */
         else if (num == DIALOG_BUS) {
             if (msg_type == "dialog_response") {
@@ -855,6 +846,14 @@ default
             }
             else if (msg_type == "dialog_timeout") {
                 handle_dialog_timeout(msg);
+            }
+        }
+        
+        /* ===== SOS ===== */
+        else if (num == SOS_MSG_NUM) {
+            if (msg_type == "sos_release") {
+                safeword_clear_all();
+                llOwnerSay("[SOS] All RLV restrictions cleared.");
             }
         }
     }

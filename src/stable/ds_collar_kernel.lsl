@@ -48,16 +48,16 @@
 integer DEBUG = FALSE;
 integer PRODUCTION = TRUE;  // Set FALSE for development builds
 
-/* ═══════════════════════════════════════════════════════════
+/* ===========================================================
    CONSOLIDATED ABI
-   ═══════════════════════════════════════════════════════════ */
+   =========================================================== */
 integer KERNEL_LIFECYCLE = 500;
 integer AUTH_BUS = 700;
 integer UI_BUS = 900;
 
-/* ═══════════════════════════════════════════════════════════
+/* ===========================================================
    CONSTANTS
-   ═══════════════════════════════════════════════════════════ */
+   =========================================================== */
 float   PING_INTERVAL_SEC     = 5.0;
 integer PING_TIMEOUT_SEC      = 15;
 float   INV_SWEEP_INTERVAL    = 3.0;
@@ -85,9 +85,9 @@ integer QUEUE_TIMESTAMP = 5;  // Registration timestamp
 /* Authorized senders for privileged operations */
 list AUTHORIZED_RESET_SENDERS = ["bootstrap", "maintenance"];
 
-/* ═══════════════════════════════════════════════════════════
+/* ===========================================================
    STATE
-   ═══════════════════════════════════════════════════════════ */
+   =========================================================== */
 list PluginRegistry = [];           // Active plugin registry
 list RegistrationQueue = [];        // Pending operations queue (Unix modprobe style)
 integer PendingBatchTimer = FALSE;  // TRUE if batch timer is active
@@ -98,9 +98,9 @@ integer LastDiscoveryUnix = 0;      // Track last active plugin discovery
 key LastOwner = NULL_KEY;
 integer LastScriptCount = 0;        // Track script count to detect add/remove
 
-/* ═══════════════════════════════════════════════════════════
+/* ===========================================================
    HELPERS
-   ═══════════════════════════════════════════════════════════ */
+   =========================================================== */
 integer logd(string msg) {
     if (DEBUG && !PRODUCTION) llOwnerSay("[KERNEL] " + msg);
     return FALSE;
@@ -108,6 +108,28 @@ integer logd(string msg) {
 
 integer json_has(string j, list path) {
     return (llJsonGetValue(j, path) != JSON_INVALID);
+}
+string get_msg_type(string msg) {
+    if (!json_has(msg, ["type"])) return "";
+    return llJsonGetValue(msg, ["type"]);
+}
+
+
+// MEMORY OPTIMIZATION: Compact field validation helper
+integer validate_required_fields(string json_str, list field_names, string function_name) {
+    integer i = 0;
+    integer len = llGetListLength(field_names);
+    while (i < len) {
+        string field = llList2String(field_names, i);
+        if (!json_has(json_str, [field])) {
+            if (DEBUG && !PRODUCTION) {
+                logd("ERROR: " + function_name + " missing '" + field + "' field");
+            }
+            return FALSE;
+        }
+        i += 1;
+    }
+    return TRUE;
 }
 
 integer now() {
@@ -146,9 +168,9 @@ integer is_plugin_script(string script_name) {
     return (llSubStringIndex(script_name, "ds_collar_plugin_") == 0);
 }
 
-/* ═══════════════════════════════════════════════════════════
+/* ===========================================================
    QUEUE MANAGEMENT (Unix modprobe-style)
-   ═══════════════════════════════════════════════════════════ */
+   =========================================================== */
 
 // Add operation to queue (deduplicates by context)
 // Schedules batch processing if not already scheduled
@@ -240,9 +262,9 @@ integer process_queue() {
     return changes_made;
 }
 
-/* ═══════════════════════════════════════════════════════════
+/* ===========================================================
    REGISTRY MANAGEMENT
-   ═══════════════════════════════════════════════════════════ */
+   =========================================================== */
 
 // Find plugin index in registry by context
 integer registry_find(string context) {
@@ -296,12 +318,11 @@ integer registry_upsert(string context, string label, string script, integer min
 
         integer uuid_changed = (old_uuid != script_uuid);
 
-        // Update registry (timestamp and min_acl always update)
-        PluginRegistry = llListReplaceList(PluginRegistry, [label], idx + REG_LABEL, idx + REG_LABEL);
-        PluginRegistry = llListReplaceList(PluginRegistry, [script], idx + REG_SCRIPT, idx + REG_SCRIPT);
-        PluginRegistry = llListReplaceList(PluginRegistry, [script_uuid], idx + REG_SCRIPT_UUID, idx + REG_SCRIPT_UUID);
-        PluginRegistry = llListReplaceList(PluginRegistry, [now_unix], idx + REG_LAST_SEEN, idx + REG_LAST_SEEN);
-        PluginRegistry = llListReplaceList(PluginRegistry, [min_acl], idx + REG_MIN_ACL, idx + REG_MIN_ACL);
+        // Update registry (timestamp and min_acl always update) - batched for performance
+        PluginRegistry = llListReplaceList(PluginRegistry,
+            [label, script, script_uuid, now_unix, min_acl],
+            idx + REG_LABEL,
+            idx + REG_MIN_ACL);
 
         if (uuid_changed) {
             logd("Updated (UUID changed): " + context + " (" + label + ") min_acl=" + (string)min_acl + " " +
@@ -401,9 +422,9 @@ integer prune_missing_scripts() {
     return pruned;
 }
 
-/* ═══════════════════════════════════════════════════════════
+/* ===========================================================
    PLUGIN DISCOVERY (Active pull-based detection)
-   ═══════════════════════════════════════════════════════════ */
+   =========================================================== */
 
 // Actively discover new or changed plugin scripts
 // Enumerates inventory, detects new/recompiled plugins, triggers registration
@@ -416,26 +437,24 @@ integer discover_plugins() {
         string script_name = llGetInventoryName(INVENTORY_SCRIPT, i);
 
         // Only check plugin scripts (not kernel modules)
-        if (!is_plugin_script(script_name)) jump next_script;
+        if (is_plugin_script(script_name)) {
+            key script_uuid = llGetInventoryKey(script_name);
+            integer idx = registry_find_by_script(script_name);
 
-        key script_uuid = llGetInventoryKey(script_name);
-        integer idx = registry_find_by_script(script_name);
-
-        // New script - not in registry
-        if (idx == -1) {
-            discoveries = discoveries + 1;
-            logd("Discovered new plugin: " + script_name);
-            jump next_script;
+            // New script - not in registry
+            if (idx == -1) {
+                discoveries = discoveries + 1;
+                logd("Discovered new plugin: " + script_name);
+            }
+            else {
+                // Check if UUID changed (recompiled/replaced)
+                key registered_uuid = llList2Key(PluginRegistry, idx + REG_SCRIPT_UUID);
+                if (registered_uuid != script_uuid) {
+                    discoveries = discoveries + 1;
+                    logd("Detected UUID change: " + script_name);
+                }
+            }
         }
-
-        // Check if UUID changed (recompiled/replaced)
-        key registered_uuid = llList2Key(PluginRegistry, idx + REG_SCRIPT_UUID);
-        if (registered_uuid != script_uuid) {
-            discoveries = discoveries + 1;
-            logd("Detected UUID change: " + script_name);
-        }
-
-        @next_script;
     }
 
     // If we found new/changed scripts, broadcast register_now
@@ -447,9 +466,9 @@ integer discover_plugins() {
     return discoveries;
 }
 
-/* ═══════════════════════════════════════════════════════════
+/* ===========================================================
    BROADCASTING
-   ═══════════════════════════════════════════════════════════ */
+   =========================================================== */
 
 // Request all plugins to register (no time window - event-driven)
 broadcast_register_now() {
@@ -507,9 +526,9 @@ broadcast_plugin_list() {
     logd("Broadcast: plugin_list (" + (string)llGetListLength(plugins) + " plugins)");
 }
 
-/* ═══════════════════════════════════════════════════════════
+/* ===========================================================
    OWNER CHANGE DETECTION
-   ═══════════════════════════════════════════════════════════ */
+   =========================================================== */
 
 integer check_owner_changed() {
     key current_owner = llGetOwner();
@@ -526,9 +545,9 @@ integer check_owner_changed() {
     return FALSE;
 }
 
-/* ═══════════════════════════════════════════════════════════
+/* ===========================================================
    ROUTING HELPERS
-   ═══════════════════════════════════════════════════════════ */
+   =========================================================== */
 
 // Validates that field_name contains only safe characters for JSON field names
 // Returns TRUE if safe (alphanumeric + underscore only), FALSE otherwise
@@ -542,9 +561,11 @@ integer is_safe_field_name(string field_name) {
         string c = llGetSubString(field_name, i, i);
 
         // Allow: a-z, A-Z, 0-9, underscore
-        integer is_alpha = (c >= "a" && c <= "z") || (c >= "A" && c <= "Z");
-        integer is_digit = (c >= "0" && c <= "9");
-        integer is_underscore = (c == "_");
+        // Use ASCII comparisons via llOrd() for efficiency
+        integer ascii = llOrd(c, 0);
+        integer is_alpha = ((ascii >= 97 && ascii <= 122) || (ascii >= 65 && ascii <= 90));
+        integer is_digit = (ascii >= 48 && ascii <= 57);
+        integer is_underscore = (ascii == 95);
 
         if (!is_alpha && !is_digit && !is_underscore) {
             return FALSE;  // Unsafe character found
@@ -589,9 +610,9 @@ route_field(string msg, string context, string field_name, string route_type, in
     logd("Routed " + field_name + " to channel " + (string)channel + ": " + context);
 }
 
-/* ═══════════════════════════════════════════════════════════
+/* ===========================================================
    MESSAGE HANDLERS
-   ═══════════════════════════════════════════════════════════ */
+   =========================================================== */
 
 handle_register(string msg) {
     if (!json_has(msg, ["context"])) return;
@@ -692,9 +713,9 @@ handle_acl_registry_request() {
     logd("ACL registry sent: " + (string)(len / REG_STRIDE) + " entries");
 }
 
-/* ═══════════════════════════════════════════════════════════
+/* ===========================================================
    EVENTS
-   ═══════════════════════════════════════════════════════════ */
+   =========================================================== */
 
 default
 {
@@ -792,9 +813,8 @@ default
     }
     
     link_message(integer sender, integer num, string msg, key id) {
-        if (!json_has(msg, ["type"])) return;
-
-        string msg_type = llJsonGetValue(msg, ["type"]);
+        string msg_type = get_msg_type(msg);
+        if (msg_type == "") return;
 
         if (num == KERNEL_LIFECYCLE) {
             if (msg_type == "register") {

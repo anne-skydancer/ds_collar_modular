@@ -29,8 +29,8 @@
    3. HUD sends menu request Ã¢â€ â€™ Collar triggers UI for HUD wearer
    ============================================================================= */
 
-integer DEBUG = TRUE;
-integer PRODUCTION = FALSE;  // Set FALSE for development
+integer DEBUG = FALSE;
+integer PRODUCTION = TRUE;  // Set FALSE for development
 
 /* ═══════════════════════════════════════════════════════════
    CONSOLIDATED ABI
