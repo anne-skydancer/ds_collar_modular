@@ -1,4 +1,3 @@
-
 /*--------------------
 MODULE: ds_collar_kmod_dialogs.lsl
 VERSION: 1.00
@@ -540,3 +539,4 @@ default
         }
     }
 }
+
