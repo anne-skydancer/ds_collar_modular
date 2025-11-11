@@ -1,10 +1,12 @@
 /*--------------------
 MODULE: ds_collar_kmod_auth.lsl
 VERSION: 1.00
-REVISION: 21
+REVISION: 22
 PURPOSE: Authoritative ACL and policy engine
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- PERFORMANCE: Added ACL result caching (5min TTL, max 10 entries) to eliminate repeated ACL computations
+- Cache invalidation on owner/trustee/blacklist changes ensures security
 - Owner change detection resets the module to prevent stale ACL data
 - Corrected default ACL response to return NOACCESS instead of BLACKLIST
 - Reordered blacklist evaluation to run before other access checks
@@ -58,6 +60,17 @@ integer PLUGIN_ACL_STRIDE = 2;
 integer PLUGIN_ACL_CONTEXT = 0;
 integer PLUGIN_ACL_MIN_ACL = 1;
 
+/* ACL cache: [avatar_key, acl_level, is_blacklisted, cached_time] */
+list AclCache = [];
+integer ACL_CACHE_STRIDE = 4;
+integer ACL_CACHE_AVATAR = 0;
+integer ACL_CACHE_LEVEL = 1;
+integer ACL_CACHE_BLACKLISTED = 2;
+integer ACL_CACHE_TIME = 3;
+
+integer ACL_CACHE_TTL = 300;  // 5 minutes
+integer ACL_CACHE_MAX = 10;   // Limit cache size
+
 /* -------------------- HELPERS -------------------- */
 integer logd(string msg) {
     if (DEBUG && !PRODUCTION) llOwnerSay("[AUTH] " + msg);
@@ -74,6 +87,66 @@ integer is_json_arr(string s) {
 
 integer list_has_key(list search_list, key k) {
     return (llListFindList(search_list, [(string)k]) != -1);
+}
+
+/* -------------------- ACL CACHE MANAGEMENT -------------------- */
+
+integer get_cached_acl(key avatar) {
+    integer i = 0;
+    integer len = llGetListLength(AclCache);
+    integer now_time = llGetUnixTime();
+    
+    while (i < len) {
+        if (llList2Key(AclCache, i + ACL_CACHE_AVATAR) == avatar) {
+            integer cached_time = llList2Integer(AclCache, i + ACL_CACHE_TIME);
+            if ((now_time - cached_time) < ACL_CACHE_TTL) {
+                // Cache hit - return level (caller will extract blacklist separately)
+                return i;  // Return cache index for extraction
+            }
+            else {
+                // Expired - remove from cache
+                logd("ACL cache expired for " + llKey2Name(avatar));
+                AclCache = llDeleteSubList(AclCache, i, i + ACL_CACHE_STRIDE - 1);
+                return -1;
+            }
+        }
+        i += ACL_CACHE_STRIDE;
+    }
+    return -1;  // Not in cache
+}
+
+update_acl_cache(key avatar, integer acl_level, integer is_blacklisted) {
+    integer now_time = llGetUnixTime();
+    
+    // Check if avatar already in cache
+    integer i = 0;
+    integer len = llGetListLength(AclCache);
+    while (i < len) {
+        if (llList2Key(AclCache, i + ACL_CACHE_AVATAR) == avatar) {
+            // Update existing entry
+            AclCache = llListReplaceList(AclCache, 
+                [avatar, acl_level, is_blacklisted, now_time], 
+                i, i + ACL_CACHE_STRIDE - 1);
+            logd("Updated ACL cache for " + llKey2Name(avatar));
+            return;
+        }
+        i += ACL_CACHE_STRIDE;
+    }
+    
+    // Add new entry
+    AclCache += [avatar, acl_level, is_blacklisted, now_time];
+    logd("Added ACL cache for " + llKey2Name(avatar));
+    
+    // Enforce cache size limit (LRU eviction)
+    if (llGetListLength(AclCache) / ACL_CACHE_STRIDE > ACL_CACHE_MAX) {
+        AclCache = llDeleteSubList(AclCache, 0, ACL_CACHE_STRIDE - 1);
+        logd("ACL cache limit reached, removed oldest entry");
+    }
+}
+
+clear_acl_cache() {
+    AclCache = [];
+    logd("ACL cache cleared");
 }
 
 /* -------------------- OWNER CHECKING -------------------- */
@@ -236,12 +309,82 @@ list filter_plugins_for_user(key user, list plugin_contexts) {
 
 /* -------------------- POLICY FLAGS -------------------- */
 
+send_cached_acl_result(key av, string correlation_id, integer level, integer is_blacklisted) {
+    // Send cached result without recomputing
+    key wearer = llGetOwner();
+    integer is_wearer = (av == wearer);
+    integer owner_set = has_owner();
+    
+    // Recompute policy flags (lightweight, no list searches)
+    integer policy_tpe = 0;
+    integer policy_public_only = 0;
+    integer policy_owned_only = 0;
+    integer policy_trustee_access = 0;
+    integer policy_wearer_unowned = 0;
+    integer policy_primary_owner = 0;
+    
+    if (is_wearer) {
+        if (TpeMode) {
+            policy_tpe = 1;
+        }
+        else {
+            if (owner_set) {
+                policy_owned_only = 1;
+            }
+            else {
+                policy_wearer_unowned = 1;
+            }
+        }
+        
+        if (!owner_set) {
+            policy_trustee_access = 1;
+        }
+    }
+    else {
+        if (PublicMode) {
+            policy_public_only = 1;
+        }
+        if (level == ACL_TRUSTEE) {
+            policy_trustee_access = 1;
+        }
+        if (level == ACL_PRIMARY_OWNER) {
+            policy_primary_owner = 1;
+        }
+    }
+    
+    // Build response
+    string msg = llList2Json(JSON_OBJECT, [
+        "type", "acl_result",
+        "avatar", (string)av,
+        "level", level,
+        "is_wearer", is_wearer,
+        "is_blacklisted", is_blacklisted,
+        "owner_set", owner_set,
+        "policy_tpe", policy_tpe,
+        "policy_public_only", policy_public_only,
+        "policy_owned_only", policy_owned_only,
+        "policy_trustee_access", policy_trustee_access,
+        "policy_wearer_unowned", policy_wearer_unowned,
+        "policy_primary_owner", policy_primary_owner
+    ]);
+    
+    // Add correlation ID if provided
+    if (correlation_id != "") {
+        msg = llJsonSetValue(msg, ["id"], correlation_id);
+    }
+    
+    llMessageLinked(LINK_SET, AUTH_BUS, msg, NULL_KEY);
+}
+
 send_acl_result(key av, string correlation_id) {
     key wearer = llGetOwner();
     integer is_wearer = (av == wearer);
     integer owner_set = has_owner();
     integer level = compute_acl_level(av);
     integer is_blacklisted = list_has_key(Blacklist, av);
+    
+    // PERFORMANCE: Cache the result
+    update_acl_cache(av, level, is_blacklisted);
     
     // Policy flags
     integer policy_tpe = 0;
@@ -482,12 +625,16 @@ apply_settings_delta(string msg) {
                 logd("Delta: added trustee " + elem);
                 // Enforce exclusivity after adding trustee
                 enforce_role_exclusivity();
+                // Invalidate cache when ACL lists change
+                clear_acl_cache();
             }
         }
         else if (key_name == KEY_BLACKLIST) {
             if (llListFindList(Blacklist, [elem]) == -1) {
                 Blacklist += [elem];
                 logd("Delta: added blacklist " + elem);
+                // Invalidate cache when ACL lists change
+                clear_acl_cache();
             }
         }
     }
@@ -505,6 +652,8 @@ apply_settings_delta(string msg) {
                 idx = llListFindList(OwnerKeys, [elem]);
             }
             logd("Delta: removed owner " + elem);
+            // Invalidate cache when ACL lists change
+            clear_acl_cache();
         }
         else if (key_name == KEY_TRUSTEES) {
             integer idx = llListFindList(TrusteeList, [elem]);
@@ -513,6 +662,8 @@ apply_settings_delta(string msg) {
                 idx = llListFindList(TrusteeList, [elem]);
             }
             logd("Delta: removed trustee " + elem);
+            // Invalidate cache when ACL lists change
+            clear_acl_cache();
         }
         else if (key_name == KEY_BLACKLIST) {
             integer idx = llListFindList(Blacklist, [elem]);
@@ -521,6 +672,8 @@ apply_settings_delta(string msg) {
                 idx = llListFindList(Blacklist, [elem]);
             }
             logd("Delta: removed blacklist " + elem);
+            // Invalidate cache when ACL lists change
+            clear_acl_cache();
         }
     }
 }
@@ -551,6 +704,18 @@ handle_acl_query(string msg) {
         return;
     }
 
+    // PERFORMANCE: Check cache first
+    integer cache_idx = get_cached_acl(av);
+    if (cache_idx != -1) {
+        // Cache hit - send cached result
+        integer cached_level = llList2Integer(AclCache, cache_idx + ACL_CACHE_LEVEL);
+        integer cached_blacklisted = llList2Integer(AclCache, cache_idx + ACL_CACHE_BLACKLISTED);
+        logd("ACL cache hit for " + llKey2Name(av) + ": " + (string)cached_level);
+        send_cached_acl_result(av, correlation_id, cached_level, cached_blacklisted);
+        return;
+    }
+
+    // Cache miss - compute and cache
     send_acl_result(av, correlation_id);
 }
 

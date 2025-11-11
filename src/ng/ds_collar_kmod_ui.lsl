@@ -1,11 +1,10 @@
 /*--------------------
 MODULE: ds_collar_kmod_ui.lsl
 VERSION: 1.00
-REVISION: 41
+REVISION: 40
 PURPOSE: Session management, ACL filtering, and plugin list orchestration
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
-- PERFORMANCE: Added ACL result caching (5min TTL) to eliminate repeated AUTH_BUS queries
 - Split UI logic from menu rendering to delegate visuals to ds_collar_menu.lsl
 - Added UUID-based plugin change detection to avoid registration races
 - Enforced touch range validation and blacklist checks during session start
@@ -66,15 +65,6 @@ integer PENDING_ACL_STRIDE = 2;
 integer PENDING_ACL_AVATAR = 0;
 integer PENDING_ACL_CONTEXT = 1;
 
-/* ACL cache stride: [avatar_key, acl_level, cached_time] */
-integer ACL_CACHE_STRIDE = 3;
-integer ACL_CACHE_AVATAR = 0;
-integer ACL_CACHE_LEVEL = 1;
-integer ACL_CACHE_TIME = 2;
-
-integer ACL_CACHE_TTL = 300;  // 5 minutes
-integer ACL_CACHE_MAX = 10;   // Limit cache size
-
 /* -------------------- STATE -------------------- */
 list AllPlugins = [];
 list Sessions = [];
@@ -82,7 +72,6 @@ list FilteredPluginsData = [];
 list PendingAcl = [];
 list TouchData = [];
 list PluginStates = [];  // Stores toggle button states [context, state]
-list AclCache = [];  // ACL result cache
 
 /* -------------------- HELPERS -------------------- */
 integer logd(string msg) {
@@ -119,62 +108,6 @@ integer validate_required_fields(string json_str, list field_names, string funct
 
 string generate_session_id(key user) {
     return "ui_" + (string)user + "_" + (string)llGetUnixTime();
-}
-
-/* -------------------- ACL CACHE MANAGEMENT -------------------- */
-
-integer get_cached_acl(key avatar) {
-    integer i = 0;
-    integer len = llGetListLength(AclCache);
-    integer now_time = llGetUnixTime();
-    
-    while (i < len) {
-        if (llList2Key(AclCache, i + ACL_CACHE_AVATAR) == avatar) {
-            integer cached_time = llList2Integer(AclCache, i + ACL_CACHE_TIME);
-            if ((now_time - cached_time) < ACL_CACHE_TTL) {
-                integer acl_level = llList2Integer(AclCache, i + ACL_CACHE_LEVEL);
-                logd("ACL cache hit for " + llKey2Name(avatar) + ": " + (string)acl_level);
-                return acl_level;
-            }
-            else {
-                logd("ACL cache expired for " + llKey2Name(avatar));
-                AclCache = llDeleteSubList(AclCache, i, i + ACL_CACHE_STRIDE - 1);
-                return -999;
-            }
-        }
-        i += ACL_CACHE_STRIDE;
-    }
-    return -999;
-}
-
-update_acl_cache(key avatar, integer acl_level) {
-    integer now_time = llGetUnixTime();
-    
-    integer i = 0;
-    integer len = llGetListLength(AclCache);
-    while (i < len) {
-        if (llList2Key(AclCache, i + ACL_CACHE_AVATAR) == avatar) {
-            AclCache = llListReplaceList(AclCache, 
-                [avatar, acl_level, now_time], 
-                i, i + ACL_CACHE_STRIDE - 1);
-            logd("Updated ACL cache for " + llKey2Name(avatar) + ": " + (string)acl_level);
-            return;
-        }
-        i += ACL_CACHE_STRIDE;
-    }
-    
-    AclCache += [avatar, acl_level, now_time];
-    logd("Added ACL cache for " + llKey2Name(avatar) + ": " + (string)acl_level);
-    
-    if (llGetListLength(AclCache) / ACL_CACHE_STRIDE > ACL_CACHE_MAX) {
-        AclCache = llDeleteSubList(AclCache, 0, ACL_CACHE_STRIDE - 1);
-        logd("ACL cache limit reached, removed oldest entry");
-    }
-}
-
-clear_acl_cache() {
-    AclCache = [];
-    logd("ACL cache cleared");
 }
 
 /* -------------------- PLUGIN STATE MANAGEMENT -------------------- */
@@ -712,8 +645,6 @@ handle_acl_result(string msg) {
     integer level = (integer)llJsonGetValue(msg, ["level"]);
     integer is_blacklisted = (integer)llJsonGetValue(msg, ["is_blacklisted"]);
 
-    update_acl_cache(avatar, level);
-
     integer idx = llListFindList(PendingAcl, [avatar]);
     if (idx == -1 || idx % PENDING_ACL_STRIDE != PENDING_ACL_AVATAR) return;
 
@@ -748,15 +679,6 @@ handle_start(string msg, key user_key) {
 start_root_session(key user_key) {
     logd("Root session start request from " + llKey2Name(user_key));
 
-    integer cached_acl = get_cached_acl(user_key);
-    if (cached_acl != -999) {
-        logd("Using cached ACL for root session");
-        integer is_blacklisted = 0;
-        create_session(user_key, cached_acl, is_blacklisted, ROOT_CONTEXT);
-        send_render_menu(user_key, ROOT_CONTEXT);
-        return;
-    }
-
     integer idx = llListFindList(PendingAcl, [user_key]);
     if (idx != -1 && idx % PENDING_ACL_STRIDE == PENDING_ACL_AVATAR) return;
 
@@ -771,15 +693,6 @@ start_root_session(key user_key) {
 
 start_sos_session(key user_key) {
     logd("SOS session start request from " + llKey2Name(user_key));
-
-    integer cached_acl = get_cached_acl(user_key);
-    if (cached_acl != -999) {
-        logd("Using cached ACL for SOS session");
-        integer is_blacklisted = 0;
-        create_session(user_key, cached_acl, is_blacklisted, SOS_CONTEXT);
-        send_render_menu(user_key, SOS_CONTEXT);
-        return;
-    }
 
     integer idx = llListFindList(PendingAcl, [user_key]);
     if (idx != -1 && idx % PENDING_ACL_STRIDE == PENDING_ACL_AVATAR) return;
@@ -908,7 +821,6 @@ default
         PendingAcl = [];
         TouchData = [];
         PluginStates = [];
-        AclCache = [];  // PERFORMANCE: ACL result cache
 
         logd("UI module started (v4.0 - UI/Kmod split - logic only)");
 
@@ -1046,7 +958,6 @@ default
     // SECURITY FIX: Reset on owner change
     changed(integer change) {
         if (change & CHANGED_OWNER) {
-            clear_acl_cache();
             llResetScript();
         }
     }
