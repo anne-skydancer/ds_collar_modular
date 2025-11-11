@@ -112,7 +112,7 @@ integer PRODUCTION = TRUE;
 **TYPE PREFIX:** Use appropriate prefix for script type:
 - `MODULE:` for kernel modules (ds_collar_kmod_*.lsl)
 - `PLUGIN:` for plugins (ds_collar_plugin_*.lsl)
-- `KERNEL:` or `MODULE:` for the main kernel (ds_collar_kernel.lsl)
+- `MODULE:` for the main kernel (ds_collar_kernel.lsl)
 - Descriptive name for standalone scripts (e.g., `CONTROL HUD:`, `LEASH HOLDER:`)
 
 **VERSION:** Semantic version number (e.g., 1.00, 1.01, 2.00)
