@@ -54,8 +54,8 @@ ALL scripts (modules, plugins, kmods, HUDs, standalone scripts) MUST use this st
 ```lsl
 /*--------------------
 MODULE: ds_collar_kernel.lsl
-VERSION: Semantic number starting with 1.00, changine with .01 for an enhancement, .1 for new feature, and version bump for a major rewrite, Version numbers do not change for bug fixes
-REVISION: progressive integer that increases with each revision or bug fix
+VERSION: 1.00
+REVISION: 5
 PURPOSE: Plugin registry, lifecycle management, heartbeat monitoring
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
@@ -616,3 +616,4 @@ TODO: Known unimplemented or as-yet not developed functionality
 **Document Version:** 2.1
 **Last Updated:** 2025-11-11
 **Maintained by:** DS Collar Modular Project
+
