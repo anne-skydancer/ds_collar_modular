@@ -104,6 +104,7 @@ CHANGES:
 --------------------*/
 
 integer DEBUG = FALSE;
+integer PRODUCTION = TRUE;
 ```
 
 ### 2.2) File Header Components
