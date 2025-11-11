@@ -49,7 +49,7 @@ integer validate_input(string msg) {
 
 **MANDATORY header format for ALL scripts:**
 
-This is the ONLY approved header format. ALL scripts (modules, plugins, kmods, HUDs, standalone scripts) MUST use this exact structure:
+ALL scripts (modules, plugins, kmods, HUDs, standalone scripts) MUST use this structure with the appropriate TYPE PREFIX for the script category:
 
 ```lsl
 /*--------------------
