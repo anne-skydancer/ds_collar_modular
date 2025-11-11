@@ -1,11 +1,25 @@
-// ds_leash_holder_point.lsl — minimal leash-holder target responder
-// Works with ds_collar_plugin_leash.lsl (LEASH_HOLDER_CHAN must match)
+/*--------------------
+SCRIPT: ds_collar_leash_holder.lsl
+VERSION: 1.00
+REVISION: 1
+PURPOSE: Minimal leash-holder target responder for external objects
+ARCHITECTURE: Direct channel listener with prim discovery fallback
+CHANGES:
+- Auto-detect leash point prim by name "LeashPoint" or description "leash:point"
+- Fall back to script's own prim if no dedicated leash point found
+- Compatible with ds_collar_plugin_leash.lsl leash targeting system
+KNOWN ISSUES: None known
+TODO: None pending
+--------------------*/
 
+/* -------------------- CONSTANTS -------------------- */
 integer DEBUG = FALSE;
 integer LEASH_HOLDER_CHAN = -192837465;
 
+/* -------------------- STATE -------------------- */
 integer gListen = 0;
 
+/* -------------------- HELPERS -------------------- */
 integer logd(string s) { if (DEBUG) llOwnerSay("[HOLDER] " + s); return TRUE; }
 
 key primByName(string wantLower) {

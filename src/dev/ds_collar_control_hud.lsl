@@ -1,31 +1,27 @@
-/* =============================================================================
-   CONTROL HUD: ds_collar_control_hud_v2.lsl
-   
-   PURPOSE: Auto-detect nearby collars and connect automatically
-            Works like RLV relay - broadcast and listen for responses
-   
-   COMPATIBLE WITH: ds_collar_kmod_remote_v2.lsl
-   
-   FEATURES:
-   - Auto-scan on attach
-   - Auto-connect to single collar
-   - Multi-collar selection dialog
-   - ACL level verification
-   - RLV relay-style workflow
-   ============================================================================= */
+/*--------------------
+SCRIPT: ds_collar_control_hud.lsl
+VERSION: 1.00
+REVISION: 5
+PURPOSE: Auto-detect nearby collars and connect automatically
+ARCHITECTURE: RLV relay-style broadcast and listen workflow
+CHANGES:
+- Auto-scan on attach with timeout
+- Auto-connect to single collar or show selection dialog
+- ACL level verification before menu display
+- RLV relay-style broadcast discovery protocol
+- Multi-collar selection with avatar name display
+KNOWN ISSUES: None known
+TODO: None pending
+--------------------*/
 
 integer DEBUG = TRUE;
 
-/* ═══════════════════════════════════════════════════════════
-   EXTERNAL PROTOCOL CHANNELS
-   ═══════════════════════════════════════════════════════════ */
+/* -------------------- EXTERNAL PROTOCOL CHANNELS -------------------- */
 integer COLLAR_ACL_QUERY_CHAN = -8675309;
 integer COLLAR_ACL_REPLY_CHAN = -8675310;
 integer COLLAR_MENU_CHAN      = -8675311;
 
-/* ═══════════════════════════════════════════════════════════
-   ACL LEVELS
-   ═══════════════════════════════════════════════════════════ */
+/* -------------------- ACL CONSTANTS -------------------- */
 integer ACL_BLACKLIST     = -1;
 integer ACL_NOACCESS      = 0;
 integer ACL_PUBLIC        = 1;
@@ -34,23 +30,17 @@ integer ACL_TRUSTEE       = 3;
 integer ACL_UNOWNED       = 4;
 integer ACL_PRIMARY_OWNER = 5;
 
-/* ═══════════════════════════════════════════════════════════
-   DIALOG SETTINGS
-   ═══════════════════════════════════════════════════════════ */
+/* -------------------- DIALOG SETTINGS -------------------- */
 float QUERY_TIMEOUT_SEC = 3.0;
 float COLLAR_SCAN_TIME = 2.0;
 integer DIALOG_CHANNEL = -98765;
 float LONG_TOUCH_THRESHOLD = 1.5;
 
-/* ═══════════════════════════════════════════════════════════
-   CONTEXT TYPES
-   ═══════════════════════════════════════════════════════════ */
+/* -------------------- CONSTANTS -------------------- */
 string ROOT_CONTEXT = "core_root";
 string SOS_CONTEXT = "sos_root";
 
-/* ═══════════════════════════════════════════════════════════
-   STATE (PascalCase for globals)
-   ═══════════════════════════════════════════════════════════ */
+/* -------------------- STATE -------------------- */
 key HudWearer = NULL_KEY;
 integer CollarListenHandle = 0;
 integer DialogListenHandle = 0;
@@ -75,9 +65,7 @@ string RequestedContext = "";
 /* Display name lookup */
 key DisplayNameQueryId = NULL_KEY;
 
-/* ═══════════════════════════════════════════════════════════
-   HELPERS
-   ═══════════════════════════════════════════════════════════ */
+/* -------------------- HELPERS -------------------- */
 
 integer logd(string msg) {
     if (DEBUG) llOwnerSay("[HUD] " + msg);
@@ -88,9 +76,7 @@ integer json_has(string json_str, list path) {
     return (llJsonGetValue(json_str, path) != JSON_INVALID);
 }
 
-/* ═══════════════════════════════════════════════════════════
-   SESSION MANAGEMENT
-   ═══════════════════════════════════════════════════════════ */
+/* -------------------- SESSION MANAGEMENT -------------------- */
 
 cleanup_session() {
     if (CollarListenHandle != 0) {
@@ -116,9 +102,7 @@ cleanup_session() {
     llSetTimerEvent(0.0);
 }
 
-/* ═══════════════════════════════════════════════════════════
-   COLLAR DETECTION
-   ═══════════════════════════════════════════════════════════ */
+/* -------------------- COLLAR DETECTION -------------------- */
 
 add_detected_collar(key avatar_key, key collar_key, string avatar_name) {
     // Check if already detected
@@ -186,9 +170,7 @@ process_scan_results() {
     show_collar_selection_dialog();
 }
 
-/* ═══════════════════════════════════════════════════════════
-   COLLAR SELECTION DIALOG
-   ═══════════════════════════════════════════════════════════ */
+/* -------------------- COLLAR SELECTION DIALOG -------------------- */
 
 show_collar_selection_dialog() {
     integer num_collars = llGetListLength(DetectedCollars) / COLLAR_STRIDE;
@@ -220,9 +202,7 @@ show_collar_selection_dialog() {
     llSetTimerEvent(30.0);
 }
 
-/* ═══════════════════════════════════════════════════════════
-   ACL QUERY
-   ═══════════════════════════════════════════════════════════ */
+/* -------------------- ACL QUERY -------------------- */
 
 request_acl_from_collar(key avatar_key) {
     string json_msg = llList2Json(JSON_OBJECT, [
@@ -247,9 +227,7 @@ request_acl_from_collar(key avatar_key) {
     logd("ACL query sent for " + TargetAvatarName);
 }
 
-/* ═══════════════════════════════════════════════════════════
-   MENU TRIGGERING
-   ═══════════════════════════════════════════════════════════ */
+/* -------------------- MENU TRIGGERING -------------------- */
 
 trigger_collar_menu() {
     if (TargetCollarKey == NULL_KEY) {
@@ -267,9 +245,7 @@ trigger_collar_menu() {
     // The actual menu triggering and success message will be handled in dataserver()
 }
 
-/* ═══════════════════════════════════════════════════════════
-   ACL LEVEL PROCESSING
-   ═══════════════════════════════════════════════════════════ */
+/* -------------------- ACL LEVEL PROCESSING -------------------- */
 
 process_acl_result(integer level) {
     // Explicitly whitelist known ACL levels that grant access
@@ -297,9 +273,7 @@ process_acl_result(integer level) {
     }
 }
 
-/* ═══════════════════════════════════════════════════════════
-   EVENTS
-   ═══════════════════════════════════════════════════════════ */
+/* -------------------- EVENTS -------------------- */
 
 default {
     state_entry() {
