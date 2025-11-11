@@ -135,6 +135,11 @@ integer PRODUCTION = TRUE;
 
 ALL scripts MUST use dashed borders for major code sections:
 
+> **Header border style convention:**  
+> - **File headers** (at the very top of the script) use compact dashed borders, e.g. `/*-------------------- ... --------------------*/`  
+> - **Internal section headers** (for major code sections) use longer dashed borders with centered section names, e.g. `/* -------------------- SECTION NAME -------------------- */`  
+>  
+> This distinction helps visually separate the file-level metadata from internal code organization. Always follow these conventions for clarity.
 ```lsl
 /* -------------------- CONSOLIDATED ABI -------------------- */
 integer KERNEL_LIFECYCLE = 500;
