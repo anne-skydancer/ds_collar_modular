@@ -47,64 +47,144 @@ integer validate_input(string msg) {
 
 ### 2.1) File Header Template
 
-**Standard header format for all scripts:**
+**Standard compact header format (modules, plugins, kmods):**
 
 ```lsl
-/* =============================================================
-   SCRIPT: <name>.lsl
-   ROLE  : <what this script does>
-   NOTES : <quirks, ABI versions, permissions, UI rules>
-   ============================================================= */
+/*--------------------
+MODULE: ds_collar_kernel.lsl
+VERSION: 1.00
+REVISION: 34
+PURPOSE: Plugin registry, lifecycle management, heartbeat monitoring
+ARCHITECTURE: Consolidated message bus lanes
+CHANGES:
+- Event-driven plugin registration queue replaces broadcast storms
+- Adaptive timer shifts between batch processing and heartbeat modes
+- Inventory discovery detects new or updated plugin scripts automatically
+- Authorized reset handling protects against unauthorized soft resets
+- Deferred plugin list responses avoid race conditions during registration
+--------------------*/
 
 integer DEBUG = FALSE;
 integer PRODUCTION = TRUE;
+```
 
-integer logd(string s) {
-    if (DEBUG && !PRODUCTION) llOwnerSay("[<TAG>] " + s);
-    return 0;
-}
+**For plugins, use `PLUGIN:` prefix:**
+
+```lsl
+/*--------------------
+PLUGIN: ds_collar_plugin_bell.lsl
+VERSION: 1.00
+REVISION: 10
+PURPOSE: Bell visibility and jingling control for the collar
+ARCHITECTURE: Consolidated message bus lanes
+CHANGES:
+- Added independent toggles for bell visibility and sound playback
+- Enabled jingle loop while wearer moves with adjustable volume levels
+--------------------*/
+```
+
+**Extended header format (for complex standalone scripts like HUDs):**
+
+```lsl
+/* =============================================================================
+   CONTROL HUD: ds_collar_control_hud.lsl
+
+   PURPOSE: Auto-detect nearby collars and connect automatically
+            Works like RLV relay - broadcast and listen for responses
+
+   COMPATIBLE WITH: ds_collar_kmod_remote.lsl
+
+   FEATURES:
+   - Auto-scan on attach
+   - Auto-connect to single collar
+   - Multi-collar selection dialog
+   - ACL level verification
+   - RLV relay-style workflow
+   ============================================================================= */
+
+integer DEBUG = FALSE;
 ```
 
 ### 2.2) File Header Components
 
-**ROLE / Summary:** One sentence on what the script does.
+**TYPE PREFIX:** Use appropriate prefix for script type:
+- `MODULE:` for kernel modules (ds_collar_kmod_*.lsl)
+- `PLUGIN:` for plugins (ds_collar_plugin_*.lsl)
+- `KERNEL:` or `MODULE:` for the main kernel (ds_collar_kernel.lsl)
+- Descriptive name for standalone scripts (e.g., `CONTROL HUD:`)
 
-**ABI & Dependencies:** Link numbers used, message types, external modules.
+**VERSION:** Semantic version number (e.g., 1.00, 1.01, 2.00)
 
-**Permissions:** What is requested and why.
+**REVISION:** Integer revision counter, increments with each change
 
-**Events Used:** Key events and the reason each exists.
+**PURPOSE:** One-sentence description of what the script does
 
-**Resource Notes:** Timers, listeners, particles, HTTP caps.
+**ARCHITECTURE:** Brief note on the system architecture (e.g., "Consolidated message bus lanes")
 
-**Constraints:** Known sim limits, viewer quirks, race conditions.
+**CHANGES:** Bulleted list of notable changes, improvements, or fixes
+- Use present tense verbs (e.g., "Adds", "Fixes", "Improves")
+- Focus on significant behavioral or architectural changes
+- Keep bullets concise and descriptive
 
-**Known Issues / TODO:** List with short bullets and dates.
+**For extended headers (optional fields):**
+- **COMPATIBLE WITH:** List of related scripts this works with
+- **FEATURES:** Bulleted list of main capabilities
 
-**Example:**
+### 2.3) Section Headers
+
+**Standard section header format (most scripts):**
+
+Use dashed borders for major code sections:
+
 ```lsl
-/* =============================================================
-   SCRIPT: ds_collar_plugin_bell.lsl
-   ROLE  : Manages bell visibility, sound, and movement detection
+/* -------------------- CONSOLIDATED ABI -------------------- */
+integer KERNEL_LIFECYCLE = 500;
+integer AUTH_BUS = 700;
+integer UI_BUS = 900;
 
-   ABI   : Stable Plugin ABI (v1.0)
-          Uses: K_PLUGIN_START (900), K_PLUGIN_RETURN_NUM (901)
+/* -------------------- CONSTANTS -------------------- */
+float PING_INTERVAL_SEC = 5.0;
+integer PING_TIMEOUT_SEC = 15;
 
-   PERMS : None required
+/* -------------------- STATE -------------------- */
+list PluginRegistry = [];
+integer LastPingUnix = 0;
 
-   EVENTS: touch_start - Main menu access
-           listen - Dialog responses
-           link_message - Registration, auth, settings sync
-           timer - Movement detection (2s interval)
-
-   NOTES : Reserved button at index 3 for "Relax"
-           Heartbeat timeout: 60s
-
-   TODO  : Add volume slider (2025-11-10)
-   ============================================================= */
+/* -------------------- HELPERS -------------------- */
+integer logd(string msg) {
+    if (DEBUG && !PRODUCTION) llOwnerSay("[TAG] " + msg);
+    return FALSE;
+}
 ```
 
-### 2.3) Function Documentation
+**Extended section header format (for complex standalone scripts):**
+
+Use double-line borders for enhanced visual separation:
+
+```lsl
+/* ═══════════════════════════════════════════════════════════
+   EXTERNAL PROTOCOL CHANNELS
+   ═══════════════════════════════════════════════════════════ */
+integer COLLAR_ACL_QUERY_CHAN = -8675309;
+integer COLLAR_ACL_REPLY_CHAN = -8675310;
+
+/* ═══════════════════════════════════════════════════════════
+   ACL LEVELS
+   ═══════════════════════════════════════════════════════════ */
+integer ACL_BLACKLIST = -1;
+integer ACL_NOACCESS = 0;
+```
+
+**Common section names:**
+- `CONSOLIDATED ABI` - Message bus channel numbers
+- `CONSTANTS` - Configuration constants and magic numbers
+- `STATE` - Global state variables
+- `HELPERS` - Utility functions
+- `SETTINGS KEYS` - Persistent settings key strings
+- `ACL CONSTANTS` - Access control level definitions
+- `DIALOG SETTINGS` - UI configuration
+
+### 2.4) Function Documentation
 
 For each non‑trivial function include:
 
@@ -136,7 +216,7 @@ list build_main_menu(integer acl_level) {
 }
 ```
 
-### 2.4) Inline Comments (focus on reasoning)
+### 2.5) Inline Comments (focus on reasoning)
 
 * Prefer **why** over **what**; the code already says *what*.
 * Mark **problem areas** (race windows, throttles, rate limits) with `NOTE:`.
@@ -159,7 +239,7 @@ if (llGetUnixTime() - LastHeartbeat > 60) {
 if (avatar == NULL_KEY) return;
 ```
 
-### 2.5) Change Rationale Blocks
+### 2.6) Change Rationale Blocks
 
 At major edits, add a short `/* WHY: ... DATE: YYYY‑MM‑DD */` block near the change.
 
@@ -171,14 +251,14 @@ At major edits, add a short `/* WHY: ... DATE: YYYY‑MM‑DD */` block near the
 integer PAGE_SIZE = 8;
 ```
 
-### 2.6) Comment Tags
+### 2.7) Comment Tags
 
 - `TODO:` for planned work
 - `FIXME:` for known bugs
 - `HACK:` for temporary compromises
 - `PATCH:` for bug fixes with rationale
 
-### 2.7) Comment Style
+### 2.8) Comment Style
 
 - Use `//` for short notes; `/* ... */` for multi‑line context
 - Keep comments accurate; delete stale ones immediately
@@ -530,6 +610,6 @@ link_message(integer sender, integer num, string str, key id) {
 
 ---
 
-**Document Version:** 2.0
-**Last Updated:** 2025-11-03
+**Document Version:** 2.1
+**Last Updated:** 2025-11-11
 **Maintained by:** DS Collar Modular Project
