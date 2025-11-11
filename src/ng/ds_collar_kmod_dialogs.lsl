@@ -2,10 +2,11 @@
 /*--------------------
 MODULE: ds_collar_kmod_dialogs.lsl
 VERSION: 1.00
-REVISION: 21
+REVISION: 22
 PURPOSE: Centralized dialog management for shared listener handling
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- PERFORMANCE: Added dialog_extend message handler to extend timeout without recreating listener
 - Centralized dialog sessions remove per-plugin listen management
 - Dedicated dialog bus coordinates all open and timeout events
 - Channel collision detection mitigates negative channel reuse conflicts
@@ -453,6 +454,31 @@ handle_numbered_list_dialog(string msg, string session_id, key user) {
     logd("Opened numbered list: " + session_id + " (" + (string)item_count + " items)");
 }
 
+// PERFORMANCE: Extend dialog timeout without recreating session
+handle_dialog_extend(string msg) {
+    if (!validate_required_fields(msg, ["session_id"], "handle_dialog_extend")) return;
+    
+    string session_id = llJsonGetValue(msg, ["session_id"]);
+    integer session_idx = find_session_idx(session_id);
+    
+    if (session_idx == -1) {
+        logd("Cannot extend non-existent session: " + session_id);
+        return;
+    }
+    
+    integer timeout_extension = 60;  // Default 60s
+    if (json_has(msg, ["timeout"])) {
+        timeout_extension = (integer)llJsonGetValue(msg, ["timeout"]);
+    }
+    
+    integer new_timeout = now() + timeout_extension;
+    Sessions = llListReplaceList(Sessions, [new_timeout], 
+        session_idx + SESSION_TIMEOUT, 
+        session_idx + SESSION_TIMEOUT);
+    
+    logd("Extended timeout for session: " + session_id + " (+" + (string)timeout_extension + "s)");
+}
+
 handle_dialog_close(string msg) {
     if (!json_has(msg, ["session_id"])) return;
     
@@ -549,6 +575,9 @@ default
 
         if (msg_type == "dialog_open") {
             handle_dialog_open(msg);
+        }
+        else if (msg_type == "dialog_extend") {
+            handle_dialog_extend(msg);
         }
         else if (msg_type == "dialog_close") {
             handle_dialog_close(msg);
