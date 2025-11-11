@@ -1,7 +1,7 @@
 /*--------------------
 MODULE: ds_collar_menu.lsl
 VERSION: 1.00
-REVISION: 10
+REVISION: 11
 PURPOSE: Menu rendering and visual presentation service
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
@@ -10,6 +10,7 @@ CHANGES:
 - Maintains stateless presentation separate from business logic
 - Routes dialogs through dedicated dialog module for display
 - Provides single-responsibility rendering for easier maintenance
+- PERFORMANCE: Pass-through mode - buttons arrive pre-ordered from UI
 --------------------*/
 
 integer DEBUG = FALSE;
@@ -122,35 +123,13 @@ render_menu(string msg) {
     integer current_page = (integer)llJsonGetValue(msg, ["page"]);
     integer total_pages = (integer)llJsonGetValue(msg, ["total_pages"]);
     string buttons_json = llJsonGetValue(msg, ["buttons"]);
-    integer has_nav = (integer)llJsonGetValue(msg, ["has_nav"]);
 
-    // Parse buttons array (now contains button data objects)
-    list button_data_list = llJson2List(buttons_json);
-
-    // Reorder for natural display
-    list reordered = reorder_buttons_for_display(button_data_list);
-
-    // DESIGN DECISION: Navigation row is ALWAYS present (DO NOT CHANGE)
-    //
-    // The navigation buttons (<<, >>, Close) are added at the front, placing
-    // them in the bottom row of the dialog. Navigation buttons are plain strings,
-    // plugin buttons are JSON objects.
-    //
-    // IMPORTANT: has_nav is always 1. The navigation row must be present even
-    // for single-page menus. This provides:
-    // - Consistent UI layout across all menu states
-    // - Predictable button positions (muscle memory)
-    // - Uniform user experience
-    //
-    // This is a deliberate design decision and is NOT open to modification.
-    // Do not add conditional logic to hide navigation based on page count.
-    list final_button_data = [];
-    if (has_nav) {
-        final_button_data = ["<<", ">>", "Close"] + reordered;
-    }
-    else {
-        final_button_data = ["Close"] + reordered;
-    }
+    // PERFORMANCE: Buttons now arrive in final llDialog order from UI
+    // Format: [label, context, label, context, ...] strided list
+    // No reordering needed - pass through directly
+    
+    // Parse button array (simple strings, not JSON objects)
+    list button_data = llJson2List(buttons_json);
 
     // Construct title based on menu type
     string title = "";
@@ -181,17 +160,14 @@ render_menu(string msg) {
         body_text = "Choose:";
     }
 
-    // Convert button data back to JSON (mixed array of strings and objects)
-    string final_button_data_json = llList2Json(JSON_ARRAY, final_button_data);
-
-    // Send to dialog bus with button_data field
+    // Send to dialog bus - buttons already in final format
     string dialog_msg = llList2Json(JSON_OBJECT, [
         "type", "dialog_open",
         "session_id", session_id,
         "user", (string)user,
         "title", title,
         "body", body_text,
-        "button_data", final_button_data_json,
+        "button_data", buttons_json,
         "timeout", 60
     ]);
 

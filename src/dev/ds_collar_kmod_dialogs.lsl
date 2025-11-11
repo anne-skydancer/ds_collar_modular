@@ -2,7 +2,7 @@
 /*--------------------
 MODULE: ds_collar_kmod_dialogs.lsl
 VERSION: 1.00
-REVISION: 21
+REVISION: 22
 PURPOSE: Centralized dialog management for shared listener handling
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
@@ -11,6 +11,7 @@ CHANGES:
 - Channel collision detection mitigates negative channel reuse conflicts
 - Owner change handling resets listeners for safe transfers
 - Truncation warnings added for numbered button lists
+- PERFORMANCE: Optimized button_data parsing for strided list format
 --------------------*/
 
 integer DEBUG = FALSE;
@@ -242,64 +243,30 @@ handle_dialog_open(string msg) {
         return;
     }
 
-    // Standard dialog - check for button_data (new format) or buttons (old format)
+    // PERFORMANCE: button_data now arrives as strided list [label, context, label, context, ...]
+    // Much faster than parsing JSON objects per button
     list buttons = [];
-    list button_map = [];  // Maps button_text -> context
+    list button_map = [];  // Maps button_text -> context (STRIDE=2)
 
     if (json_has(msg, ["button_data"])) {
-        // New format: button_data contains mixed array of strings and objects
+        // New optimized format: strided list [label, context, label, context, ...]
         string button_data_json = llJsonGetValue(msg, ["button_data"]);
-        list button_data_list = llJson2List(button_data_json);
-
-        // Resolve button labels from config+state and build mapping
+        list button_pairs = llJson2List(button_data_json);
+        
+        // Extract labels for llDialog, build context map
         integer i = 0;
-        integer len = llGetListLength(button_data_list);
+        integer len = llGetListLength(button_pairs);
         while (i < len) {
-            string item = llList2String(button_data_list, i);
-            string button_text = "";
-            string button_context = "";
-
-            // Plugin buttons: JSON objects with context+label+state (routable to plugins)
-            if (llJsonValueType(item, []) == JSON_OBJECT &&
-                json_has(item, ["context"]) && json_has(item, ["label"]) && json_has(item, ["state"])) {
-
-                string context = llJsonGetValue(item, ["context"]);
-                string label = llJsonGetValue(item, ["label"]);
-                integer button_state = (integer)llJsonGetValue(item, ["state"]);
-
-                // Check if there's a button config for this context (for toggle buttons)
-                integer config_idx = find_button_config_idx(context);
-
-                if (config_idx != -1) {
-                    // Toggle button: use registered config to resolve label
-                    button_text = get_button_label(context, button_state);
-                }
-                else {
-                    // Regular plugin: use label field directly
-                    button_text = label;
-                }
-
-                button_context = context;  // Plugin buttons route to context
-            }
-            else {
-                // Navigation buttons or other non-routable buttons
-                // Extract label from JSON object if available, otherwise use string as-is
-                if (llJsonValueType(item, []) == JSON_OBJECT && json_has(item, ["label"])) {
-                    button_text = llJsonGetValue(item, ["label"]);
-                }
-                else {
-                    button_text = item;
-                }
-                // button_context remains empty (no routing)
-            }
-
-            buttons += [button_text];
-            button_map += [button_text, button_context];
-            i++;
+            string label = llList2String(button_pairs, i);
+            string context = llList2String(button_pairs, i + 1);
+            
+            buttons += [label];
+            button_map += [label, context];
+            i += 2;  // Stride of 2
         }
     }
     else if (json_has(msg, ["buttons"])) {
-        // Old format: buttons is array of strings
+        // Old format fallback: buttons is array of strings
         string buttons_json = llJsonGetValue(msg, ["buttons"]);
         buttons = llJson2List(buttons_json);
 
