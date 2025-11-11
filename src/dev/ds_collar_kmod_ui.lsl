@@ -283,6 +283,7 @@ create_session(key user, integer acl, integer is_blacklisted, string context_fil
 
     // MEMORY OPTIMIZATION: Only build debug string if actually debugging
     if (DEBUG && !PRODUCTION) {
+        integer plugin_count = llGetListLength(filtered) / PLUGIN_STRIDE;
         logd("Created " + context_filter + " session for " + llKey2Name(user) + " (ACL=" + (string)acl + ", blacklisted=" + (string)is_blacklisted + ", " +
              (string)plugin_count + " plugins)");
     }
