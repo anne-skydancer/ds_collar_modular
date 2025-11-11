@@ -47,7 +47,9 @@ integer validate_input(string msg) {
 
 ### 2.1) File Header Template
 
-**Standard compact header format (modules, plugins, kmods):**
+**MANDATORY header format for ALL scripts:**
+
+This is the ONLY approved header format. ALL scripts (modules, plugins, kmods, HUDs, standalone scripts) MUST use this exact structure:
 
 ```lsl
 /*--------------------
@@ -81,26 +83,25 @@ CHANGES:
 - Added independent toggles for bell visibility and sound playback
 - Enabled jingle loop while wearer moves with adjustable volume levels
 --------------------*/
+
+integer DEBUG = FALSE;
+integer PRODUCTION = TRUE;
 ```
 
-**Extended header format (for complex standalone scripts like HUDs):**
+**For standalone scripts (HUDs, external tools), use descriptive prefix:**
 
 ```lsl
-/* =============================================================================
-   CONTROL HUD: ds_collar_control_hud.lsl
-
-   PURPOSE: Auto-detect nearby collars and connect automatically
-            Works like RLV relay - broadcast and listen for responses
-
-   COMPATIBLE WITH: ds_collar_kmod_remote.lsl
-
-   FEATURES:
-   - Auto-scan on attach
-   - Auto-connect to single collar
-   - Multi-collar selection dialog
-   - ACL level verification
-   - RLV relay-style workflow
-   ============================================================================= */
+/*--------------------
+CONTROL HUD: ds_collar_control_hud.lsl
+VERSION: 1.00
+REVISION: 5
+PURPOSE: Auto-detect nearby collars and connect automatically
+ARCHITECTURE: RLV relay-style broadcast and listen workflow
+CHANGES:
+- Auto-scan on attach with timeout
+- Auto-connect to single collar or show selection dialog
+- ACL level verification before menu display
+--------------------*/
 
 integer DEBUG = FALSE;
 ```
@@ -111,30 +112,27 @@ integer DEBUG = FALSE;
 - `MODULE:` for kernel modules (ds_collar_kmod_*.lsl)
 - `PLUGIN:` for plugins (ds_collar_plugin_*.lsl)
 - `KERNEL:` or `MODULE:` for the main kernel (ds_collar_kernel.lsl)
-- Descriptive name for standalone scripts (e.g., `CONTROL HUD:`)
+- Descriptive name for standalone scripts (e.g., `CONTROL HUD:`, `LEASH HOLDER:`)
 
 **VERSION:** Semantic version number (e.g., 1.00, 1.01, 2.00)
 
 **REVISION:** Integer revision counter, increments with each change
 
-**PURPOSE:** One-sentence description of what the script does
+**PURPOSE:** Brief description of what the script does (one or two lines maximum)
 
-**ARCHITECTURE:** Brief note on the system architecture (e.g., "Consolidated message bus lanes")
+**ARCHITECTURE:** Brief note on the system architecture or design pattern used
 
 **CHANGES:** Bulleted list of notable changes, improvements, or fixes
 - Use present tense verbs (e.g., "Adds", "Fixes", "Improves")
 - Focus on significant behavioral or architectural changes
 - Keep bullets concise and descriptive
-
-**For extended headers (optional fields):**
-- **COMPATIBLE WITH:** List of related scripts this works with
-- **FEATURES:** Bulleted list of main capabilities
+- 3-5 bullets recommended, more if needed for clarity
 
 ### 2.3) Section Headers
 
-**Standard section header format (most scripts):**
+**MANDATORY section header format for ALL scripts:**
 
-Use dashed borders for major code sections:
+ALL scripts MUST use dashed borders for major code sections:
 
 ```lsl
 /* -------------------- CONSOLIDATED ABI -------------------- */
@@ -155,24 +153,6 @@ integer logd(string msg) {
     if (DEBUG && !PRODUCTION) llOwnerSay("[TAG] " + msg);
     return FALSE;
 }
-```
-
-**Extended section header format (for complex standalone scripts):**
-
-Use double-line borders for enhanced visual separation:
-
-```lsl
-/* ═══════════════════════════════════════════════════════════
-   EXTERNAL PROTOCOL CHANNELS
-   ═══════════════════════════════════════════════════════════ */
-integer COLLAR_ACL_QUERY_CHAN = -8675309;
-integer COLLAR_ACL_REPLY_CHAN = -8675310;
-
-/* ═══════════════════════════════════════════════════════════
-   ACL LEVELS
-   ═══════════════════════════════════════════════════════════ */
-integer ACL_BLACKLIST = -1;
-integer ACL_NOACCESS = 0;
 ```
 
 **Common section names:**
