@@ -242,26 +242,37 @@ handle_dialog_open(string msg) {
         return;
     }
 
-    // PERFORMANCE: button_data now arrives as strided list [label, context, label, context, ...]
-    // Much faster than parsing JSON objects per button
+    // PERFORMANCE: button_data now arrives as strided list [label, context, state, label, context, state, ...]
+    // Dialog resolves toggle button labels using state + button configs
     list buttons = [];
     list button_map = [];  // Maps button_text -> context (STRIDE=2)
 
     if (json_has(msg, ["button_data"])) {
-        // New optimized format: strided list [label, context, label, context, ...]
+        // New optimized format: strided list [label, context, state, ...] (STRIDE=3)
         string button_data_json = llJsonGetValue(msg, ["button_data"]);
-        list button_pairs = llJson2List(button_data_json);
+        list button_triplets = llJson2List(button_data_json);
         
-        // Extract labels for llDialog, build context map
+        // Extract labels for llDialog, resolve toggle buttons, build context map
         integer i = 0;
-        integer len = llGetListLength(button_pairs);
+        integer len = llGetListLength(button_triplets);
         while (i < len) {
-            string label = llList2String(button_pairs, i);
-            string context = llList2String(button_pairs, i + 1);
+            string label = llList2String(button_triplets, i);
+            string context = llList2String(button_triplets, i + 1);
+            integer button_state = (integer)llList2String(button_triplets, i + 2);
             
-            buttons += [label];
-            button_map += [label, context];
-            i += 2;  // Stride of 2
+            // Check if this button has a toggle config
+            string final_label = label;
+            if (context != "") {  // Skip navigation buttons (empty context)
+                integer config_idx = find_button_config_idx(context);
+                if (config_idx != -1) {
+                    // Toggle button: resolve label based on state
+                    final_label = get_button_label(context, button_state);
+                }
+            }
+            
+            buttons += [final_label];
+            button_map += [final_label, context];
+            i += 3;  // Stride of 3
         }
     }
     else if (json_has(msg, ["buttons"])) {

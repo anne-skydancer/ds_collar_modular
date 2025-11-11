@@ -125,7 +125,7 @@ render_menu(string msg) {
     string buttons_json = llJsonGetValue(msg, ["buttons"]);
 
     // PERFORMANCE: Buttons now arrive in final llDialog order from UI
-    // Format: [label, context, label, context, ...] strided list
+    // Format: [label, context, state, label, context, state, ...] strided list (STRIDE=3)
     // No reordering needed - pass through directly
     
     // Parse button array (simple strings, not JSON objects)
@@ -175,7 +175,7 @@ render_menu(string msg) {
 
     logd("Rendered " + menu_type + " menu for " + llKey2Name(user) + " (page " +
          (string)(current_page + 1) + "/" + (string)total_pages + ", " +
-         (string)(llGetListLength(button_data) / 2) + " buttons)");
+         (string)(llGetListLength(button_data) / 3) + " buttons)");
 }
 
 show_message(string msg) {

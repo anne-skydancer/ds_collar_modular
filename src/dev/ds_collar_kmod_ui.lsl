@@ -449,8 +449,8 @@ send_render_menu(key user, string menu_type) {
     Sessions = llListReplaceList(Sessions, [current_page, total_pages], session_idx + SESSION_PAGE, session_idx + SESSION_TOTAL_PAGES);
 
     // PERFORMANCE: Build buttons in final llDialog order to eliminate Menu reordering
-    // and Dialog processing overhead. Use strided list instead of JSON objects.
-    // Format: [label, context, label, context, ...] (STRIDE=2)
+    // and Dialog processing overhead. Use strided list format.
+    // Format: [label, context, state, label, context, state, ...] (STRIDE=3)
     
     // Calculate page slice
     integer start_idx = current_page * MAX_FUNC_BTNS * PLUGIN_STRIDE;
@@ -463,11 +463,11 @@ send_render_menu(key user, string menu_type) {
     list page_buttons = llList2List(filtered, start_idx, end_idx - 1);
     integer page_count = llGetListLength(page_buttons) / PLUGIN_STRIDE;
     
-    // Convert to [label, context] format and apply llDialog layout in one pass
+    // Convert to [label, context, state] format and apply llDialog layout in one pass
     // llDialog displays bottom-to-top, left-to-right in 3-column grid
     // For alphabetical top-to-bottom reading, we need to reverse complete rows
     
-    list button_pairs = [];  // Will be [label, context, label, context, ...]
+    list button_triplets = [];  // Will be [label, context, state, label, context, state, ...]
     integer row_size = 3;
     integer complete_rows = page_count / row_size;
     integer partial_count = page_count % row_size;
@@ -483,10 +483,7 @@ send_render_menu(key user, string menu_type) {
             string label = llList2String(page_buttons, idx + PLUGIN_LABEL);
             integer button_state = get_plugin_state(context);
             
-            // TODO: Handle toggle button state resolution here if needed
-            // For now, just use label as-is
-            
-            button_pairs += [label, context];
+            button_triplets += [label, context, button_state];
             j++;
         }
         row--;
@@ -500,13 +497,14 @@ send_render_menu(key user, string menu_type) {
             string label = llList2String(page_buttons, i + PLUGIN_LABEL);
             integer button_state = get_plugin_state(context);
             
-            button_pairs += [label, context];
+            button_triplets += [label, context, button_state];
             i += PLUGIN_STRIDE;
         }
     }
     
     // Prepend navigation buttons (they go to bottom row in dialog)
-    list final_buttons = ["<<", "", ">>", "", "Close", ""] + button_pairs;
+    // Nav buttons have no context or state: [label, "", 0]
+    list final_buttons = ["<<", "", "0", ">>", "", "0", "Close", "", "0"] + button_triplets;
     
     // Send as simple JSON array (much faster than array of objects)
     string buttons_json = llList2Json(JSON_ARRAY, final_buttons);
