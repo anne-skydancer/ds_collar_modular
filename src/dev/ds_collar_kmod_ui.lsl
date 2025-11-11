@@ -139,14 +139,10 @@ set_plugin_state(string context, integer button_state) {
     integer idx = find_plugin_state_idx(context);
 
     if (idx != -1) {
-        // Update existing state
         PluginStates = llListReplaceList(PluginStates, [button_state], idx + PLUGIN_STATE_VALUE, idx + PLUGIN_STATE_VALUE);
-        logd("Updated state for " + context + ": " + (string)button_state);
     }
     else {
-        // Add new state
         PluginStates += [context, button_state];
-        logd("Registered state for " + context + ": " + (string)button_state);
     }
 }
 
@@ -223,20 +219,16 @@ cleanup_session(key user) {
     }
 
     Sessions = llDeleteSubList(Sessions, idx, idx + SESSION_STRIDE - 1);
-
-    logd("Session cleaned up for " + llKey2Name(user));
 }
 
 create_session(key user, integer acl, integer is_blacklisted, string context_filter) {
     integer existing_idx = find_session_idx(user);
     if (existing_idx != -1) {
-        logd("Session already exists for " + llKey2Name(user) + ", updating");
         cleanup_session(user);
     }
 
     if (llGetListLength(Sessions) / SESSION_STRIDE >= MAX_SESSIONS) {
         key oldest_user = llList2Key(Sessions, 0 + SESSION_USER);
-        logd("Session limit reached, removing oldest: " + llKey2Name(oldest_user));
         cleanup_session(oldest_user);
     }
 
@@ -277,28 +269,17 @@ create_session(key user, integer acl, integer is_blacklisted, string context_fil
     integer filtered_start = llGetListLength(FilteredPluginsData);
     FilteredPluginsData += filtered;
 
-    // SECURITY FIX: Add timestamp to session
     string session_id = generate_session_id(user);
     integer created_time = llGetUnixTime();
     Sessions += [user, acl, is_blacklisted, 0, 0, session_id, filtered_start, created_time, context_filter];
-
-    // MEMORY OPTIMIZATION: Only build debug string if actually debugging
-    if (DEBUG && !PRODUCTION) {
-        integer plugin_count = llGetListLength(filtered) / PLUGIN_STRIDE;
-        logd("Created " + context_filter + " session for " + llKey2Name(user) + " (ACL=" + (string)acl + ", blacklisted=" + (string)is_blacklisted + ", " +
-             (string)plugin_count + " plugins)");
-    }
 }
 
 /* -------------------- PLUGIN LIST MANAGEMENT -------------------- */
 
 apply_plugin_list(string plugins_json) {
     AllPlugins = [];
-    
-    logd("apply_plugin_list called with: " + plugins_json);
 
     if (llJsonValueType(plugins_json, []) != JSON_ARRAY) {
-        logd("ERROR: Not a JSON array!");
         return;
     }
     
@@ -330,35 +311,22 @@ apply_plugin_list(string plugins_json) {
         i += 1;
     }
 
-    logd("Plugin list updated: " + (string)(llGetListLength(AllPlugins) / PLUGIN_STRIDE) + " plugins");
-
-    // PERFORMANCE: Pre-sort plugin list alphabetically by label
-    // Eliminates need to sort on every session creation (10-20ms saved per touch)
     integer plugin_count = llGetListLength(AllPlugins) / PLUGIN_STRIDE;
     if (plugin_count > 1) {
         AllPlugins = llListSortStrided(AllPlugins, PLUGIN_STRIDE, PLUGIN_LABEL, TRUE);
-        logd("Pre-sorted " + (string)plugin_count + " plugins alphabetically");
     }
 
-    // Request ACL data from auth module
     string request = llList2Json(JSON_OBJECT, ["type", "plugin_acl_list_request"]);
     llMessageLinked(LINK_SET, AUTH_BUS, request, NULL_KEY);
 }
 
 apply_plugin_acl_list(string acl_json) {
-    logd("apply_plugin_acl_list called");
-
-    if (llJsonValueType(acl_json, []) != JSON_ARRAY) {
-        logd("ERROR: Not a JSON array!");
-        return;
-    }
+    if (llJsonValueType(acl_json, []) != JSON_ARRAY) return;
 
     integer count = 0;
     while (llJsonValueType(acl_json, [count]) != JSON_INVALID) {
         count += 1;
     }
-
-    logd("ACL array length: " + (string)count);
 
     integer i = 0;
     while (i < count) {
