@@ -54,8 +54,8 @@ ALL scripts (modules, plugins, kmods, HUDs, standalone scripts) MUST use this st
 ```lsl
 /*--------------------
 MODULE: ds_collar_kernel.lsl
-VERSION: 1.00
-REVISION: 34
+VERSION: Semantic number starting with 1.00, changine with .01 for an enhancement, .1 for new feature, and version bump for a major rewrite, Version numbers do not change for bug fixes
+REVISION: progressive integer that increases with each revision or bug fix
 PURPOSE: Plugin registry, lifecycle management, heartbeat monitoring
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
@@ -64,6 +64,8 @@ CHANGES:
 - Inventory discovery detects new or updated plugin scripts automatically
 - Authorized reset handling protects against unauthorized soft resets
 - Deferred plugin list responses avoid race conditions during registration
+KNOWN ISSUES: Known problematic behaviours in the script
+TODO: Known unimplemented or as-yet not developed functionality
 --------------------*/
 
 integer DEBUG = FALSE;
@@ -82,6 +84,8 @@ ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
 - Add independent toggles for bell visibility and sound playback
 - Enable jingle loop while wearer moves with adjustable volume levels
+KNOWN ISSUES: Known problematic behaviours in the script
+TODO: Known unimplemented or as-yet not developed functionality
 --------------------*/
 
 integer DEBUG = FALSE;
@@ -92,7 +96,7 @@ integer PRODUCTION = TRUE;
 
 ```lsl
 /*--------------------
-CONTROL HUD: ds_collar_control_hud.lsl
+SCRIPT: ds_collar_control_hud.lsl
 VERSION: 1.00
 REVISION: 5
 PURPOSE: Auto-detect nearby collars and connect automatically
@@ -101,6 +105,8 @@ CHANGES:
 - Auto-scan on attach with timeout
 - Auto-connect to single collar or show selection dialog
 - ACL level verification before menu display
+KNOWN ISSUES: Known problematic behaviours in the script
+TODO: Known unimplemented or as-yet not developed functionality
 --------------------*/
 
 integer DEBUG = FALSE;
@@ -112,10 +118,10 @@ integer PRODUCTION = TRUE;
 **TYPE PREFIX:** Use appropriate prefix for script type:
 - `MODULE:` for kernel modules (ds_collar_kmod_*.lsl)
 - `PLUGIN:` for plugins (ds_collar_plugin_*.lsl)
-- `MODULE:` for the main kernel (ds_collar_kernel.lsl)
-- Descriptive name for standalone scripts (e.g., `CONTROL HUD:`, `LEASH HOLDER:`)
+- `KERNEL:` for the main kernel (ds_collar_kernel.lsl)
+- `SCRIPT:` for standalone scripts (remote HUD, leash holder, etc.)
 
-**VERSION:** Semantic version number (e.g., 1.00, 1.01, 2.00)
+**VERSION:** Semantic version number (e.g., 1.00, 1.01, 1.1, 2.00). Version number does not change with bug fixes.
 
 **REVISION:** Integer revision counter, increments with each change
 
@@ -169,6 +175,8 @@ integer logd(string msg) {
 - `SETTINGS KEYS` - Persistent settings key strings
 - `ACL CONSTANTS` - Access control level definitions
 - `DIALOG SETTINGS` - UI configuration
+- `EVENTS` - Events section
+- `STATES` - States section
 
 ### 2.4) Function Documentation
 
@@ -502,17 +510,18 @@ link_message(integer sender, integer num, string str, key id) {
 ### 7.1) Version Format
 
 ```
-[MAJOR].[MINOR]_[ENHANCEMENT]
+[MAJOR].[(ENHANCEMENT)(MINOR)] Rev.[revision]
 ```
 
 **Components:**
-- **MAJOR** - Major version number (integer)
-- **MINOR** - Minor version number (integer, represents feature additions)
-- **ENHANCEMENT** - Enhancement letter (a, b, c, etc., represents non-breaking improvements)
+- **MAJOR** - Major version number (integer) - Rewrite or radical rethinking  1.x -> 2.0
+- **FEATURE ADDITIONS** - 
+- **QoL ENHANCEMENT** - Redefining exixting functionality (integer, represents feature additions) -> 1.0 -> 1.01
+- **REVISION** - Revision integer (1, 2, 3, etc., represents non-breaking improvements, bug fixes, and patches)
 
 ### 7.2) Version Change Rules
 
-#### Security Fixes, Patches, and Hotfixes → **NO VERSION CHANGE**
+#### Security Fixes, Patches, and Hotfixes → **NO VERSION CHANGE, REVISION INCREASE**
 
 **Definition:**
 - Security vulnerability fixes
@@ -523,9 +532,10 @@ link_message(integer sender, integer num, string str, key id) {
 
 **Versioning:**
 - Version number **remains unchanged**
-- Update header notes to document the fix
+- Revision number **INCREASES**
+- Update header notes to document the fix in the CHANGES: section
 
-#### Enhancements → **MINOR INCREMENT** (underscore notation)
+#### QoL Enhancements → **MINOR INCREMENT** (underscore notation)
 
 **Definition:**
 - Quality-of-life improvements
@@ -536,10 +546,10 @@ link_message(integer sender, integer num, string str, key id) {
 - Additional options/settings for existing features
 
 **Versioning:**
-- Append `_a` to current version
-- Subsequent enhancements increment the letter: `_b`, `_c`, etc.
+- Bump version number by one centesimal: 1.0 -> 1.01
+- Revision number **RESETS**
 
-**Examples:** `1.0` → `1.0_a` → `1.0_b`
+**Examples:** `1.0 Rev. 45` -> `1.01 Rev.1` -> `1.01 Rev.2` -> `1.02 Rev.1`
 
 #### Feature Additions → **DOT INCREMENT** (minor version)
 
@@ -552,8 +562,8 @@ link_message(integer sender, integer num, string str, key id) {
 - Breaking changes to existing features (with migration path)
 
 **Versioning:**
-- Increment MINOR version: `1.0` → `1.1` → `1.2`
-- Reset enhancement letter (remove `_x` suffix)
+- Bump version number by one decimal: `1.0` -> `1.1` -> `1.2`
+- Reset revision number: `1.05 Rev.37` -> `1.1 Rev.1` 
 
 #### Major Overhauls → **MAJOR VERSION CHANGE**
 
@@ -564,25 +574,32 @@ link_message(integer sender, integer num, string str, key id) {
 - Fundamental changes to how the system works
 
 **Versioning:**
-- Increment MAJOR version: `1.x` → `2.0`
-- Reset MINOR to `0`
-- Remove enhancement letter
+- Increment MAJOR version: `1.x` -> `2.0`
+- Reset revision number
 
 ### 7.3) Header Format with Version
 
 ```lsl
-/* =============================================================================
-   [TYPE]: [filename].lsl (v[VERSION] - [DESCRIPTION])
-
-   [Additional header content...]
-   ============================================================================= */
+/*--------------------
+SCRIPT: ds_collar_control_hud.lsl
+VERSION: 1.0
+REVISION: 5
+PURPOSE: Auto-detect nearby collars and connect automatically
+ARCHITECTURE: RLV relay-style broadcast and listen workflow
+CHANGES:
+- Auto-scan on attach with timeout
+- Auto-connect to single collar or show selection dialog
+- ACL level verification before menu display
+KNOWN ISSUES: Known problematic behaviours in the script
+TODO: Known unimplemented or as-yet not developed functionality
+--------------------*/
 ```
 
 **Examples:**
 ```lsl
-/* MODULE: ds_collar_kernel.lsl (v1.0 - Consolidated ABI) */
-/* PLUGIN: ds_collar_plugin_bell.lsl (v1.0_a - Volume Control) */
-/* PLUGIN: ds_collar_plugin_trustees.lsl (v1.3 - New Feature) */
+/* MODULE: ds_collar_kernel.lsl (v1.0 Rev. 25 - Consolidated ABI) */
+/* PLUGIN: ds_collar_plugin_bell.lsl (v1.01 Rev.2 - Volume Control) */
+/* PLUGIN: ds_collar_plugin_trustees.lsl (v1.1 Rev.33 - New Feature) */
 ```
 
 ---
