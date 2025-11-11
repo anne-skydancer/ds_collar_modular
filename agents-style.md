@@ -80,8 +80,8 @@ REVISION: 10
 PURPOSE: Bell visibility and jingling control for the collar
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
-- Added independent toggles for bell visibility and sound playback
-- Enabled jingle loop while wearer moves with adjustable volume levels
+- Add independent toggles for bell visibility and sound playback
+- Enable jingle loop while wearer moves with adjustable volume levels
 --------------------*/
 
 integer DEBUG = FALSE;
