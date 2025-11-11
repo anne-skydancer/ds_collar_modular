@@ -175,7 +175,7 @@ render_menu(string msg) {
 
     logd("Rendered " + menu_type + " menu for " + llKey2Name(user) + " (page " +
          (string)(current_page + 1) + "/" + (string)total_pages + ", " +
-         (string)llGetListLength(button_data_list) + " buttons)");
+         (string)(llGetListLength(button_data) / 2) + " buttons)");
 }
 
 show_message(string msg) {
