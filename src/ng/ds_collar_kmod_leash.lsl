@@ -1,10 +1,12 @@
 /*--------------------
 MODULE: ds_collar_kmod_leash.lsl
 VERSION: 1.00
-REVISION: 20
+REVISION: 21
 PURPOSE: Leashing engine providing leash services to plugins
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- REVISION 21: Memory optimization (-180 LOC): ACL tick pattern, inlined wrappers,
+  removed unused variables. Reduced from 1,142 to 962 lines (15.8% reduction).
 - Added avatar, coffle, and post leash modes with distance enforcement
 - Introduced offer acceptance dialog and notifications with timeout handling
 - Corrected ACL verification flow for offer and pass actions to prevent deadlocks
