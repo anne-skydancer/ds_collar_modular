@@ -330,12 +330,8 @@ handle_menu_request_external(string message) {
     float distance = llVecDist(hud_wearer_pos, llGetPos());
 
     if (distance > MAX_DETECTION_RANGE) {
-             " ignored - " + (string)((integer)distance) + "m away (max: " +
-             (string)((integer)MAX_DETECTION_RANGE) + "m)");
         return;
     }
-
-         " at " + (string)((integer)distance) + "m");
 
     // Check if already pending for this user
     integer i = 0;

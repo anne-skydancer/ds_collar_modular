@@ -79,13 +79,6 @@ default {
         }
     }
 
-    // Optional: quick debug — touch to print chosen prim key
-    touch_start(integer n) {
-        if (!DEBUG) return;
-        key k = leashPrimKey();
-        llOwnerSay("LeashPoint = " + (string)k);
-    }
-
     listen(integer ch, string name, key src, string msg) {
         if (ch != LEASH_HOLDER_CHAN) return;
 
