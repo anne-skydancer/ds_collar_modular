@@ -2,10 +2,12 @@
 /*--------------------
 PLUGIN: ds_collar_plugin_leash.lsl
 VERSION: 1.00
-REVISION: 20
+REVISION: 21
 PURPOSE: User interface and configuration for the leashing system
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- REVISION 21: Stack-heap collision fix: Removed unused functions (ROOT_CONTEXT,
+  get_msg_type, validate_required_fields, registerSelf, sendPong). 993→968 lines.
 - Added coffle and post modes with ACL-restricted access controls
 - Leveraged llGetAgentList for efficient avatar selection on pass/offer
 - Introduced offer acceptance dialogs and state tracking
@@ -25,7 +27,6 @@ integer DIALOG_BUS = 950;
 string PLUGIN_CONTEXT = "core_leash";
 string PLUGIN_LABEL = "Leash";
 integer PLUGIN_MIN_ACL = 1;
-string ROOT_CONTEXT = "core_root";
 
 /* -------------------- CONFIGURATION -------------------- */
 float STATE_QUERY_DELAY = 0.15;  // 150ms delay for non-blocking state queries
@@ -73,26 +74,6 @@ integer IsRegistered = FALSE;
 integer json_has(string j, list path) {
     return (llJsonGetValue(j, path) != JSON_INVALID);
 }
-string get_msg_type(string msg) {
-    if (!json_has(msg, ["type"])) return "";
-    return llJsonGetValue(msg, ["type"]);
-}
-
-
-// MEMORY OPTIMIZATION: Compact field validation helper
-integer validate_required_fields(string json_str, list field_names, string function_name) {
-    integer i = 0;
-    integer len = llGetListLength(field_names);
-    while (i < len) {
-        string field = llList2String(field_names, i);
-        if (!json_has(json_str, [field])) {
-            return FALSE;
-        }
-        i += 1;
-    }
-    return TRUE;
-}
-
 string generate_session_id() {
     return PLUGIN_CONTEXT + "_" + (string)llGetUnixTime();
 }
@@ -161,15 +142,6 @@ send_pong() {
         "type", "pong",
         "context", PLUGIN_CONTEXT
     ]), NULL_KEY);
-}
-
-// Deprecated aliases for backward compatibility
-registerSelf() {
-    register_self();
-}
-
-sendPong() {
-    send_pong();
 }
 
 /* -------------------- MENU SYSTEM -------------------- */
