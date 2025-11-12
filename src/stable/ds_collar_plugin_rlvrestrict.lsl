@@ -71,9 +71,6 @@ integer json_has(string json_str, list path) {
     return (llJsonGetValue(json_str, path) != JSON_INVALID);
 }
 
-
-}
-
 string generate_session_id() {
     return llGetScriptName() + "_" + (string)llGetKey() + "_" + (string)llGetUnixTime();
 }

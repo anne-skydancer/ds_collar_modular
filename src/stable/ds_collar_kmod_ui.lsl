@@ -90,7 +90,6 @@ integer validate_required_fields(string json_str, list field_names, string funct
     while (i < len) {
         string field = llList2String(field_names, i);
         if (!json_has(json_str, [field])) {
-            }
             return FALSE;
         }
         i += 1;
@@ -269,10 +268,6 @@ create_session(key user, integer acl, integer is_blacklisted, string context_fil
     string session_id = generate_session_id(user);
     integer created_time = llGetUnixTime();
     Sessions += [user, acl, is_blacklisted, 0, 0, session_id, filtered_start, created_time, context_filter];
-
-    // MEMORY OPTIMIZATION: Only build debug string if actually debugging
-             (string)plugin_count + " plugins)");
-    }
 }
 
 /* -------------------- PLUGIN LIST MANAGEMENT -------------------- */
@@ -459,11 +454,6 @@ send_render_menu(key user, string menu_type) {
     ]);
 
     llMessageLinked(LINK_SET, UI_BUS, msg, NULL_KEY);
-
-    // MEMORY OPTIMIZATION: Only build debug string if actually debugging
-             (string)(current_page + 1) + "/" + (string)total_pages + ", " +
-             (string)llGetListLength(button_data) + " buttons)");
-    }
 }
 
 /* -------------------- BUTTON HANDLING -------------------- */

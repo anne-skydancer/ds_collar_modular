@@ -76,7 +76,6 @@ integer validate_required_fields(string json_str, list field_names, string funct
     while (i < len) {
         string field = llList2String(field_names, i);
         if (!json_has(json_str, [field])) {
-            }
             return FALSE;
         }
         i += 1;
@@ -267,11 +266,7 @@ integer registry_upsert(string context, string label, string script, integer min
             idx + REG_LABEL,
             idx + REG_MIN_ACL);
 
-        if (uuid_changed) {
-                 (string)old_uuid + " -> " + (string)script_uuid);
-        }
-        else {
-        }
+        // Note: uuid_changed tracked but not logged to reduce spam
 
         return uuid_changed;
     }

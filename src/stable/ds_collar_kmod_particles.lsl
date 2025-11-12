@@ -147,7 +147,6 @@ handle_lm_message(key id, string msg) {
         
         // CRITICAL: Only accept handles belonging to the authorized controller
         if (LmController != NULL_KEY && owner_key != LmController) {
-                 ", but authorized controller is " + llKey2Name(LmController) + " - ignoring");
             return;
         }
         
