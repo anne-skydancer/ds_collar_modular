@@ -1,10 +1,12 @@
 /*--------------------
 MODULE: ds_collar_kmod_leash.lsl
 VERSION: 1.00
-REVISION: 21
+REVISION: 22
 PURPOSE: Leashing engine providing leash services to plugins
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- REVISION 22: Stack-heap collision fix: Inlined all wrapper calls in grab/coffle/post
+  functions to reduce call depth by 4-5 levels. Prevents runtime crashes. 1,050 lines.
 - REVISION 21: Memory optimization (-180 LOC): ACL tick pattern, inlined wrappers,
   removed unused variables. Reduced from 1,142 to 962 lines (15.8% reduction).
 - Added avatar, coffle, and post leash modes with distance enforcement
@@ -631,19 +633,53 @@ grabLeashInternal(key user) {
     Leashed = TRUE;
     Leasher = user;
     LastLeasher = user;
-    LeashMode = MODE_AVATAR;  // Standard avatar leashing
-    LeashTarget = NULL_KEY;   // No special target for avatar mode
-    CoffleTargetAvatar = NULL_KEY;  // Not used in avatar mode
-    persistLeashState(TRUE, user);
+    LeashMode = MODE_AVATAR;
+    LeashTarget = NULL_KEY;
+    CoffleTargetAvatar = NULL_KEY;
+
+    // Inline persist to reduce stack depth
+    llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
+        "type", "set", "key", KEY_LEASHED, "value", "1"
+    ]), NULL_KEY);
+    llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
+        "type", "set", "key", KEY_LEASHER, "value", (string)user
+    ]), NULL_KEY);
+
     beginHolderHandshake(user);
 
-    // Enable Lockmeister for this authorized controller
+    // Enable Lockmeister - inline to reduce stack depth
     AuthorizedLmController = user;
-    setLockmeisterState(TRUE, user);
+    llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
+        "type", "lm_enable",
+        "controller", (string)user
+    ]), NULL_KEY);
 
-    startFollow();
-    notifyLeashAction(user, "Leash grabbed", "by " + llKey2Name(user));
-    broadcastState();
+    // Inline startFollow (avatar mode)
+    if (Leashed) {
+        FollowActive = TRUE;
+        if (Leasher != NULL_KEY) {
+            llOwnerSay("@follow:" + (string)Leasher + "=force");
+        }
+        llRequestPermissions(llGetOwner(), PERMISSION_TAKE_CONTROLS);
+        logd("Follow started for mode " + (string)LeashMode);
+    }
+
+    // Inline notification
+    string action_msg = "Leash grabbed";
+    llRegionSayTo(user, 0, action_msg);
+    llOwnerSay(action_msg + " - by " + llKey2Name(user));
+    logd(action_msg);
+
+    // Inline broadcastState
+    llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
+        "type", "leash_state",
+        "leashed", "1",
+        "leasher", (string)Leasher,
+        "length", (string)LeashLength,
+        "turnto", (string)TurnToFace,
+        "mode", (string)LeashMode,
+        "target", (string)LeashTarget
+    ]), NULL_KEY);
 }
 
 releaseLeashInternal(key user) {
@@ -689,9 +725,6 @@ coffleLeashInternal(key user, key target_collar) {
         return;
     }
 
-    // Verify target exists and get its owner
-    // NOTE: OBJECT_OWNER returns the avatar wearing the collar, not the ACL owner (Dom)
-    // This validation allows coffling between different subs with the same Dom
     list details = llGetObjectDetails(target_collar, [OBJECT_POS, OBJECT_NAME, OBJECT_OWNER]);
     if (llGetListLength(details) == 0) {
         llRegionSayTo(user, 0, "Target collar not found or out of range.");
@@ -713,18 +746,51 @@ coffleLeashInternal(key user, key target_collar) {
     LastLeasher = user;
     LeashMode = MODE_COFFLE;
     LeashTarget = target_collar;
-    CoffleTargetAvatar = collar_owner;  // Store the avatar wearing the target collar
-    persistLeashState(TRUE, user);
+    CoffleTargetAvatar = collar_owner;
 
-    // Start particles to target collar
-    setParticlesState(TRUE, target_collar);
+    // Inline persist to reduce stack depth
+    llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
+        "type", "set", "key", KEY_LEASHED, "value", "1"
+    ]), NULL_KEY);
+    llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
+        "type", "set", "key", KEY_LEASHER, "value", (string)user
+    ]), NULL_KEY);
 
-    // Enable follow mechanics to the target avatar (the one wearing the collar)
-    startFollow();
+    // Inline particles to reduce stack depth
+    llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
+        "type", "particles_start",
+        "source", PLUGIN_CONTEXT,
+        "target", (string)target_collar,
+        "style", "chain"
+    ]), NULL_KEY);
 
+    // Inline startFollow (coffle mode)
+    if (Leashed) {
+        FollowActive = TRUE;
+        if (CoffleTargetAvatar != NULL_KEY) {
+            llOwnerSay("@follow:" + (string)CoffleTargetAvatar + "=force");
+        }
+        llRequestPermissions(llGetOwner(), PERMISSION_TAKE_CONTROLS);
+        logd("Follow started for mode " + (string)LeashMode);
+    }
+
+    // Inline notification
     string target_name = llList2String(details, 1);
-    notifyLeashAction(user, "Coffled to " + llKey2Name(collar_owner), target_name);
-    broadcastState();
+    string action_msg = "Coffled to " + llKey2Name(collar_owner);
+    llRegionSayTo(user, 0, action_msg);
+    llOwnerSay(action_msg + " - " + target_name);
+    logd(action_msg);
+
+    // Inline broadcastState
+    llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
+        "type", "leash_state",
+        "leashed", "1",
+        "leasher", (string)Leasher,
+        "length", (string)LeashLength,
+        "turnto", (string)TurnToFace,
+        "mode", (string)LeashMode,
+        "target", (string)LeashTarget
+    ]), NULL_KEY);
 }
 
 postLeashInternal(key user, key post_object) {
@@ -745,18 +811,48 @@ postLeashInternal(key user, key post_object) {
     LastLeasher = user;
     LeashMode = MODE_POST;
     LeashTarget = post_object;
-    CoffleTargetAvatar = NULL_KEY;  // Not used for post mode
-    persistLeashState(TRUE, user);
+    CoffleTargetAvatar = NULL_KEY;
 
-    // Start particles to post object
-    setParticlesState(TRUE, post_object);
+    // Inline persistLeashState to reduce stack depth
+    llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
+        "type", "set", "key", KEY_LEASHED, "value", "1"
+    ]), NULL_KEY);
+    llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
+        "type", "set", "key", KEY_LEASHER, "value", (string)user
+    ]), NULL_KEY);
 
-    // Enable distance enforcement (via follow mechanics)
-    startFollow();
+    // Inline setParticlesState to reduce stack depth
+    llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
+        "type", "particles_start",
+        "source", PLUGIN_CONTEXT,
+        "target", (string)post_object,
+        "style", "chain"
+    ]), NULL_KEY);
 
+    // Inline startFollow to reduce stack depth
+    if (Leashed) {
+        FollowActive = TRUE;
+        llRequestPermissions(llGetOwner(), PERMISSION_TAKE_CONTROLS);
+        logd("Follow started for mode " + (string)LeashMode);
+    }
+
+    // Inline notifyLeashAction to reduce stack depth
     string object_name = llList2String(details, 1);
-    notifyLeashAction(user, "Posted to " + object_name, "by " + llKey2Name(user));
-    broadcastState();
+    string action_msg = "Posted to " + object_name;
+    llRegionSayTo(user, 0, action_msg);
+    llOwnerSay(action_msg + " - by " + llKey2Name(user));
+    logd(action_msg);
+
+    // Inline broadcastState to reduce stack depth
+    llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
+        "type", "leash_state",
+        "leashed", "1",
+        "leasher", (string)Leasher,
+        "length", (string)LeashLength,
+        "turnto", (string)TurnToFace,
+        "mode", (string)LeashMode,
+        "target", (string)LeashTarget
+    ]), NULL_KEY);
 }
 
 yankToLeasher() {
