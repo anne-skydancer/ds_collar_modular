@@ -38,7 +38,6 @@ integer validate_required_fields(string json_str, list field_names, string funct
     while (i < len) {
         string field = llList2String(field_names, i);
         if (!json_has(json_str, [field])) {
-            }
             return FALSE;
         }
         i += 1;
@@ -189,9 +188,6 @@ render_menu(string msg) {
     ]);
 
     llMessageLinked(LINK_SET, DIALOG_BUS, dialog_msg, NULL_KEY);
-
-         (string)(current_page + 1) + "/" + (string)total_pages + ", " +
-         (string)llGetListLength(button_data_list) + " buttons)");
 }
 
 show_message(string msg) {
