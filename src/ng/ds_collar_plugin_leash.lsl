@@ -2,13 +2,16 @@
 /*--------------------
 PLUGIN: ds_collar_plugin_leash.lsl
 VERSION: 1.00
-REVISION: 21
+REVISION: 23
 PURPOSE: User interface and configuration for the leashing system
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- REVISION 23: Harmonized with ng routing system: Added SCRIPT_ID, is_message_for_me(),
+  create_routed_message(), create_broadcast() for proper message routing.
+- REVISION 22: Stack-heap collision fix for ng branch: Started from stable Rev 21,
+  added DEBUG/PRODUCTION flags with 4 inline debug statements at critical points.
 - REVISION 21: Stack-heap collision fix: Removed unused functions (ROOT_CONTEXT,
-  get_msg_type, validate_required_fields, create_broadcast, create_routed_message,
-  registerSelf, sendPong). 1,040→1,006 lines (-34 lines, -3.3%).
+  get_msg_type, validate_required_fields, registerSelf, sendPong). 993→968 lines.
 - Added coffle and post modes with ACL-restricted access controls
 - Leveraged llGetAgentList for efficient avatar selection on pass/offer
 - Introduced offer acceptance dialogs and state tracking
@@ -18,6 +21,7 @@ CHANGES:
 
 integer DEBUG = TRUE;
 integer PRODUCTION = FALSE;
+
 string SCRIPT_ID = "plugin_leash";
 
 /* -------------------- CONSOLIDATED ABI -------------------- */
@@ -73,15 +77,11 @@ string PendingQueryContext = "";  // Which menu to show after query completes
 integer IsRegistered = FALSE;
 
 /* -------------------- HELPERS -------------------- */
-integer logd(string msg) {
-    if (DEBUG && !PRODUCTION) llOwnerSay("[" + PLUGIN_CONTEXT + "] " + msg);
-    return FALSE;
-}
+
 
 integer json_has(string j, list path) {
     return (llJsonGetValue(j, path) != JSON_INVALID);
 }
-
 string generate_session_id() {
     return PLUGIN_CONTEXT + "_" + (string)llGetUnixTime();
 }
@@ -94,13 +94,27 @@ integer inAllowedList(integer level, list allowed) {
 
 integer is_message_for_me(string msg) {
     if (llGetSubString(msg, 0, 0) != "{") return FALSE;
+    
     integer to_pos = llSubStringIndex(msg, "\"to\"");
     if (to_pos == -1) return TRUE;
+    
     string header = llGetSubString(msg, 0, to_pos + 100);
+    
     if (llSubStringIndex(header, "\"*\"") != -1) return TRUE;
     if (llSubStringIndex(header, SCRIPT_ID) != -1) return TRUE;
     if (llSubStringIndex(header, "\"plugin:*\"") != -1) return TRUE;
+    if (llSubStringIndex(header, "plugin:" + PLUGIN_CONTEXT) != -1) return TRUE;
+    
     return FALSE;
+}
+
+string create_routed_message(string to_id, list fields) {
+    list routed = ["from", SCRIPT_ID, "to", to_id] + fields;
+    return llList2Json(JSON_OBJECT, routed);
+}
+
+string create_broadcast(list fields) {
+    return create_routed_message("*", fields);
 }
 
 /* -------------------- UNIFIED MENU DISPLAY -------------------- */
@@ -126,7 +140,6 @@ requestAcl(key user) {
         "type", "acl_query",
         "avatar", (string)user
     ]), user);
-    logd("ACL query sent for " + llKey2Name(user));
 }
 
 /* -------------------- PLUGIN REGISTRATION -------------------- */
@@ -386,7 +399,6 @@ showOfferDialog(key target, key originator) {
         "timeout", 60
     ]), NULL_KEY);
     
-    logd("Offer dialog shown to " + llKey2Name(target) + " from " + offerer_name);
 }
 
 handleOfferResponse(string button) {
@@ -399,12 +411,10 @@ handleOfferResponse(string button) {
         ]), OfferTarget);
         
         llRegionSayTo(OfferOriginator, 0, llKey2Name(OfferTarget) + " accepted your leash offer.");
-        logd("Offer accepted by " + llKey2Name(OfferTarget));
     }
     else {
         llRegionSayTo(OfferOriginator, 0, llKey2Name(OfferTarget) + " declined your leash offer.");
         llRegionSayTo(OfferTarget, 0, "You declined the leash offer.");
-        logd("Offer declined by " + llKey2Name(OfferTarget));
     }
     
     // Clear offer state
@@ -420,7 +430,6 @@ cleanupOfferDialog() {
     OfferDialogSession = "";
     OfferTarget = NULL_KEY;
     OfferOriginator = NULL_KEY;
-    logd("Offer dialog timed out");
 }
 
 /* -------------------- ACTIONS -------------------- */
@@ -430,20 +439,17 @@ giveHolderObject() {
     // Deny ACL 0 (no access) and ACL -1 (blacklisted)
     if (UserAcl == 2 || UserAcl < 1) {
         llRegionSayTo(CurrentUser, 0, "Access denied: Insufficient permissions to receive leash holder.");
-        logd("Holder request denied for ACL " + (string)UserAcl);
         return;
     }
 
     string holder_name = "D/s Collar leash holder";
     if (llGetInventoryType(holder_name) != INVENTORY_OBJECT) {
         llRegionSayTo(CurrentUser, 0, "Error: Holder object not found in collar inventory.");
-        logd("Holder object not in inventory");
         return;
     }
     llGiveInventory(CurrentUser, holder_name);
     llRegionSayTo(CurrentUser, 0, "Leash holder given.");
-    logd("Gave holder to " + llKey2Name(CurrentUser) + " (ACL " + (string)UserAcl + ")");}
-
+}
 
 sendLeashAction(string action) {
     llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
@@ -521,7 +527,6 @@ handleChatCommand(string msg, key user) {
         }
     }
 
-    logd("Chat command: " + command + " by " + llKey2Name(user) + " (ACL " + (string)acl_level + ")");
 
     if (command == "clip") {
         if (!inAllowedList(acl_level, ALLOWED_ACL_GRAB)) {
@@ -633,7 +638,7 @@ handleChatCommand(string msg, key user) {
 
 /* -------------------- BUTTON HANDLERS -------------------- */
 handleButtonClick(string button) {
-    logd("Button: " + button + " in context: " + MenuContext);
+    if (DEBUG && !PRODUCTION) llOwnerSay("[" + PLUGIN_CONTEXT + "] Button: " + button + " (context: " + MenuContext + ")");
     
     if (MenuContext == "main") {
         if (button == "Clip") {
@@ -852,7 +857,6 @@ cleanupSession() {
     SensorCandidates = [];
     SensorPage = 0;
     IsOfferMode = FALSE;
-    logd("Session cleaned up");
 }
 
 queryState() {
@@ -868,7 +872,6 @@ scheduleStateQuery(string next_menu_context) {
     PendingStateQuery = TRUE;
     PendingQueryContext = next_menu_context;
     llSetTimerEvent(STATE_QUERY_DELAY);
-    logd("Scheduled state query, will show: " + next_menu_context);
 }
 
 /* -------------------- EVENT HANDLERS -------------------- */
@@ -879,7 +882,7 @@ default
         register_self();
         register_chat_commands();
         queryState();
-        logd("Leash UI ready (v2.0 MULTI-MODE)");
+        if (DEBUG && !PRODUCTION) llOwnerSay("[" + PLUGIN_CONTEXT + "] Plugin ready");
     }
     
     on_rez(integer start_param) {
@@ -897,7 +900,6 @@ default
             llSetTimerEvent(0.0);  // Stop timer
             queryState();
             // Menu will be shown when leash_state response arrives
-            logd("Timer fired: querying state for " + PendingQueryContext);
         }
     }
 
@@ -951,7 +953,6 @@ default
                 if (json_has(msg, ["target"])) {
                     LeashTarget = (key)llJsonGetValue(msg, ["target"]);
                 }
-                logd("State synced");
 
                 // If we were waiting for state update, show the pending menu
                 if (PendingQueryContext != "") {
@@ -967,7 +968,6 @@ default
                     else if (menu_to_show == "main") {
                         showMainMenu();
                     }
-                    logd("Showed pending menu: " + menu_to_show);
                 }
                 return;
             }
@@ -1000,8 +1000,8 @@ default
                 if (json_has(msg, ["level"])) {
                     UserAcl = (integer)llJsonGetValue(msg, ["level"]);
                     AclPending = FALSE;
+                    if (DEBUG && !PRODUCTION) llOwnerSay("[" + PLUGIN_CONTEXT + "] ACL " + (string)UserAcl + " for " + llKey2Name(avatar));
                     scheduleStateQuery("main");
-                    logd("ACL received: " + (string)UserAcl + " for " + llKey2Name(avatar));
                 }
                 return;
             }
@@ -1043,7 +1043,6 @@ default
                 
                 // Otherwise handle menu dialog timeout
                 if (timeout_session != SessionId) return;
-                logd("Dialog timeout");
                 cleanupSession();
                 return;
             }
@@ -1086,6 +1085,7 @@ default
             return;
         }
 
+        if (DEBUG && !PRODUCTION) llOwnerSay("[" + PLUGIN_CONTEXT + "] Sensor: " + (string)(llGetListLength(SensorCandidates)/2) + " objects for " + SensorMode);
         // Display the menu (starts at page 0)
         displayObjectMenu();
     }
