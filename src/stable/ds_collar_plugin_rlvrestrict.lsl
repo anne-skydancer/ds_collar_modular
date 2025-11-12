@@ -12,8 +12,6 @@ CHANGES:
 - Enforces maximum restriction count and cleans up session context on exit
 --------------------*/
 
-integer DEBUG = FALSE;
-integer PRODUCTION = TRUE;
 
 /* -------------------- CHANNELS (v2 Consolidated Architecture) -------------------- */
 
@@ -73,10 +71,7 @@ integer json_has(string json_str, list path) {
     return (llJsonGetValue(json_str, path) != JSON_INVALID);
 }
 
-logd(string msg) {
-    if (DEBUG) {
-        llOwnerSay("[RLVRESTRICT] " + msg);
-    }
+
 }
 
 string generate_session_id() {
@@ -93,8 +88,6 @@ register_self() {
         "min_acl", PLUGIN_MIN_ACL,
         "script", llGetScriptName()
     ]), NULL_KEY);
-    
-    logd("Registered with kernel");
 }
 
 send_pong() {
@@ -130,8 +123,6 @@ persist_restrictions() {
         "key", KEY_RESTRICTIONS,
         "value", csv
     ]), NULL_KEY);
-    
-    logd("Persisted restrictions: " + csv);
 }
 
 apply_settings_sync(string msg) {
@@ -144,7 +135,6 @@ apply_settings_sync(string msg) {
         
         if (csv != "") {
             Restrictions = llParseString2List(csv, [","], []);
-            logd("Loaded " + (string)llGetListLength(Restrictions) + " restrictions from settings");
             
             // Reapply all restrictions
             integer i = 0;
@@ -157,7 +147,6 @@ apply_settings_sync(string msg) {
         }
         else {
             Restrictions = [];
-            logd("No restrictions loaded");
         }
     }
 }
@@ -199,8 +188,6 @@ apply_settings_delta(string msg) {
                 llOwnerSay(restr_cmd + "=y");
                 i = i + 1;
             }
-            
-            logd("Delta: restrictions updated");
         }
     }
 }
@@ -245,7 +232,6 @@ toggle_restriction(string restr_cmd) {
         // Remove restriction
         Restrictions = llDeleteSubList(Restrictions, idx, idx);
         llOwnerSay("@clear=" + llGetSubString(restr_cmd, 1, -1));
-        logd("Removed restriction: " + restr_cmd);
     }
     else {
         // Add restriction
@@ -256,7 +242,6 @@ toggle_restriction(string restr_cmd) {
         
         Restrictions += [restr_cmd];
         llOwnerSay(restr_cmd + "=y");
-        logd("Added restriction: " + restr_cmd);
     }
     
     persist_restrictions();
@@ -273,7 +258,6 @@ remove_all_restrictions() {
     
     Restrictions = [];
     persist_restrictions();
-    logd("All restrictions removed via safeword");
 }
 
 /* -------------------- CATEGORY HELPERS -------------------- */
@@ -518,8 +502,6 @@ default
         llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
             "type", "settings_get"
         ]), NULL_KEY);
-        
-        logd("Plugin initialized");
     }
     
     on_rez(integer param) {

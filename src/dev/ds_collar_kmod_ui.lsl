@@ -14,8 +14,8 @@ CHANGES:
 - PERFORMANCE: Pre-compute llDialog layout, use strided list encoding (30-50ms faster)
 --------------------*/
 
-integer DEBUG = FALSE;
-integer PRODUCTION = TRUE;  // Set FALSE for development builds
+integer DEBUG = TRUE;
+integer PRODUCTION = FALSE;  // Set FALSE for development builds
 
 /* -------------------- CONSOLIDATED ABI -------------------- */
 integer KERNEL_LIFECYCLE = 500;
@@ -370,6 +370,10 @@ send_message(key user, string message_text) {
 }
 
 send_render_menu(key user, string menu_type) {
+    if (DEBUG && !PRODUCTION) {
+        llOwnerSay("[UI] T+" + (string)llGetTime() + "s send_render_menu START");
+    }
+
     integer session_idx = find_session_idx(user);
     if (session_idx == -1) {
         logd("ERROR: No session for " + llKey2Name(user));
@@ -480,11 +484,8 @@ send_render_menu(key user, string menu_type) {
 
     llMessageLinked(LINK_SET, UI_BUS, msg, NULL_KEY);
 
-    // MEMORY OPTIMIZATION: Only build debug string if actually debugging
     if (DEBUG && !PRODUCTION) {
-        logd("Sent render request for " + menu_type + " menu to " + llKey2Name(user) + " (page " +
-             (string)(current_page + 1) + "/" + (string)total_pages + ", " +
-             (string)page_count + " buttons)");
+        llOwnerSay("[UI] T+" + (string)llGetTime() + "s Sent to Menu module");
     }
 }
 
@@ -636,6 +637,10 @@ handle_plugin_list(string msg) {
 handle_acl_result(string msg) {
     if (!validate_required_fields(msg, ["avatar", "level", "is_blacklisted"], "handle_acl_result")) return;
 
+    if (DEBUG && !PRODUCTION) {
+        llOwnerSay("[UI] T+" + (string)llGetTime() + "s ACL result received");
+    }
+
     key avatar = (key)llJsonGetValue(msg, ["avatar"]);
     integer level = (integer)llJsonGetValue(msg, ["level"]);
     integer is_blacklisted = (integer)llJsonGetValue(msg, ["is_blacklisted"]);
@@ -646,9 +651,16 @@ handle_acl_result(string msg) {
     string requested_context = llList2String(PendingAcl, idx + PENDING_ACL_CONTEXT);
     PendingAcl = llDeleteSubList(PendingAcl, idx, idx + PENDING_ACL_STRIDE - 1);
 
-    logd("ACL result: " + (string)level + " (blacklisted=" + (string)is_blacklisted + ") for " + llKey2Name(avatar) + " (context: " + requested_context + ")");
+    if (DEBUG && !PRODUCTION) {
+        llOwnerSay("[UI] T+" + (string)llGetTime() + "s Creating session");
+    }
 
     create_session(avatar, level, is_blacklisted, requested_context);
+    
+    if (DEBUG && !PRODUCTION) {
+        llOwnerSay("[UI] T+" + (string)llGetTime() + "s Sending render_menu");
+    }
+    
     send_render_menu(avatar, requested_context);
 }
 
@@ -672,7 +684,9 @@ handle_start(string msg, key user_key) {
 }
 
 start_root_session(key user_key) {
-    logd("Root session start request from " + llKey2Name(user_key));
+    if (DEBUG && !PRODUCTION) {
+        llOwnerSay("[UI] T+" + (string)llGetTime() + "s start_root_session()");
+    }
 
     integer idx = llListFindList(PendingAcl, [user_key]);
     if (idx != -1 && idx % PENDING_ACL_STRIDE == PENDING_ACL_AVATAR) return;
@@ -683,6 +697,11 @@ start_root_session(key user_key) {
         "type", "acl_query",
         "avatar", (string)user_key
     ]);
+    
+    if (DEBUG && !PRODUCTION) {
+        llOwnerSay("[UI] T+" + (string)llGetTime() + "s Sending acl_query");
+    }
+    
     llMessageLinked(LINK_SET, AUTH_BUS, acl_query, NULL_KEY);
 }
 
@@ -873,6 +892,7 @@ default
     touch_end(integer num_detected) {
         key wearer = llGetOwner();
         integer i = 0;
+        float touch_time = llGetTime();  // DIAGNOSTIC: High-resolution timestamp
 
         while (i < num_detected) {
             key toucher = llDetectedKey(i);
@@ -887,7 +907,9 @@ default
 
                     TouchData = llDeleteSubList(TouchData, j, j + TOUCH_DATA_STRIDE - 1);
 
-                    logd("Touch end from " + llKey2Name(toucher) + " (duration: " + (string)duration + "s)");
+                    if (DEBUG && !PRODUCTION) {
+                        llOwnerSay("[UI] ========== TOUCH END T=0.000s ==========");
+                    }
 
                     if (duration >= LONG_TOUCH_THRESHOLD && toucher == wearer) {
                         start_sos_session(toucher);

@@ -12,8 +12,6 @@ CHANGES:
 - Returns control to root context after state changes
 --------------------*/
 
-integer DEBUG = FALSE;
-integer PRODUCTION = TRUE;
 
 /* -------------------- CONSOLIDATED ABI -------------------- */
 integer KERNEL_LIFECYCLE = 500;
@@ -46,10 +44,7 @@ string KEY_PUBLIC_MODE = "public_mode";
 integer PublicModeEnabled = FALSE;
 
 /* -------------------- HELPERS -------------------- */
-integer logd(string msg) {
-    if (DEBUG) llOwnerSay("[PUBLIC] " + msg);
-    return FALSE;
-}
+
 
 integer json_has(string j, list path) {
     return (llJsonGetValue(j, path) != JSON_INVALID);
@@ -71,7 +66,6 @@ register_self() {
         "script", llGetScriptName()
     ]);
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, msg, NULL_KEY);
-    logd("Registered with kernel as: " + label);
 }
 
 send_pong() {
@@ -96,7 +90,6 @@ apply_settings_sync(string msg) {
         PublicModeEnabled = (integer)llJsonGetValue(kv_json, [KEY_PUBLIC_MODE]);
     }
     
-    logd("Settings sync: public=" + (string)PublicModeEnabled);
     
     // If state changed, update label
     if (old_state != PublicModeEnabled) {
@@ -116,7 +109,6 @@ apply_settings_delta(string msg) {
         if (json_has(changes, [KEY_PUBLIC_MODE])) {
             integer old_state = PublicModeEnabled;
             PublicModeEnabled = (integer)llJsonGetValue(changes, [KEY_PUBLIC_MODE]);
-            logd("Delta: public_mode = " + (string)PublicModeEnabled);
             
             // If state changed, update label
             if (old_state != PublicModeEnabled) {
@@ -137,7 +129,6 @@ persist_public_mode(integer new_value) {
         "value", (string)new_value
     ]);
     llMessageLinked(LINK_SET, SETTINGS_BUS, msg, NULL_KEY);
-    logd("Persisting public_mode=" + (string)new_value);
 }
 
 /* -------------------- UI LABEL UPDATE -------------------- */
@@ -161,8 +152,6 @@ update_ui_label_and_return(key user) {
         "user", (string)user
     ]);
     llMessageLinked(LINK_SET, UI_BUS, msg, NULL_KEY);
-    
-    logd("Updated UI label to: " + new_label + " and returning to root");
 }
 
 /* -------------------- DIRECT TOGGLE ACTION -------------------- */
@@ -229,8 +218,6 @@ default {
             "type", "settings_get"
         ]);
         llMessageLinked(LINK_SET, SETTINGS_BUS, msg, NULL_KEY);
-        
-        logd("Ready");
     }
     
     on_rez(integer start_param) {

@@ -12,8 +12,6 @@ CHANGES:
 - Integrates ACL validation, name caching, and dialog-driven UI flows
 --------------------*/
 
-integer DEBUG = FALSE;
-integer PRODUCTION = TRUE;
 
 /* -------------------- ABI CHANNELS -------------------- */
 integer KERNEL_LIFECYCLE = 500;
@@ -64,9 +62,6 @@ list HONORIFICS = ["Master", "Mistress", "Daddy", "Mommy", "King", "Queen"];
 
 /* -------------------- HELPERS -------------------- */
 
-logd(string msg) {
-    if (DEBUG) llOwnerSay("[" + PLUGIN_LABEL + "] " + msg);
-}
 
 integer json_has(string j, list path) {
     return (llJsonGetValue(j, path) != JSON_INVALID);
@@ -212,7 +207,6 @@ apply_settings_delta(string msg) {
         
         if (json_has(changes, [KEY_RUNAWAY_ENABLED])) {
             RunawayEnabled = (integer)llJsonGetValue(changes, [KEY_RUNAWAY_ENABLED]);
-            logd("Delta: runaway_enabled = " + (string)RunawayEnabled);
         }
     }
 }

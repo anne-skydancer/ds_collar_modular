@@ -12,8 +12,6 @@ CHANGES:
 - Startup workflow delivers IM status updates during initialization
 --------------------*/
 
-integer DEBUG = FALSE;
-integer PRODUCTION = TRUE;  // Set FALSE for development builds
 
 /* -------------------- CONSOLIDATED ABI -------------------- */
 integer KERNEL_LIFECYCLE = 500;
@@ -80,10 +78,7 @@ integer NAME_REQUEST_STRIDE = 1;
 integer NextNameRequestTime = 0;  // Timestamp when next request can be sent
 
 /* -------------------- HELPERS -------------------- */
-integer logd(string msg) {
-    if (DEBUG && !PRODUCTION) llOwnerSay("[BOOTSTRAP] " + msg);
-    return FALSE;
-}
+
 
 integer json_has(string j, list path) {
     return (llJsonGetValue(j, path) != JSON_INVALID);
@@ -129,7 +124,6 @@ integer check_owner_changed() {
     if (current_owner == NULL_KEY) return FALSE;
 
     if (LastOwner != NULL_KEY && current_owner != LastOwner) {
-        logd("Owner changed: " + (string)LastOwner + " -> " + (string)current_owner);
         LastOwner = current_owner;
         llResetScript();
         return TRUE;
@@ -148,7 +142,6 @@ addProbeChannel(integer ch) {
     integer handle = llListen(ch, "", NULL_KEY, "");  // Accept from anyone (NULL_KEY important!)
     RlvChannels += [ch];
     RlvListenHandles += [handle];
-    logd("RLV probe channel added: " + (string)ch);
 }
 
 clearProbeChannels() {
@@ -171,12 +164,10 @@ sendRlvQueries() {
         llOwnerSay("@versionnew=" + (string)ch);
         i += 1;
     }
-    logd("RLV @versionnew sent (attempt " + (string)(RlvRetryCount + 1) + ")");
 }
 
 start_rlv_probe() {
     if (RlvProbing) {
-        logd("RLV probe already active");
         return;
     }
     
@@ -185,7 +176,6 @@ start_rlv_probe() {
         RlvReady = TRUE;
         RlvActive = FALSE;
         RlvVersion = "";
-        logd("Not attached, skipping RLV detection");
         return;
     }
     
@@ -209,7 +199,6 @@ start_rlv_probe() {
     RlvProbeDeadline = now() + RLV_PROBE_TIMEOUT_SEC;
     RlvNextRetry = now() + RLV_INITIAL_DELAY_SEC;  // Initial delay before first probe
     
-    logd("RLV probe started on " + (string)llGetListLength(RlvChannels) + " channels");
     sendIM("Detecting RLV...");
 }
 
@@ -219,11 +208,9 @@ stop_rlv_probe() {
     RlvReady = TRUE;
     
     if (RlvActive) {
-        logd("RLV detected: " + RlvVersion);
         sendIM("RLV: " + RlvVersion);
     }
     else {
-        logd("RLV not detected");
         sendIM("RLV: Not detected");
     }
 }
@@ -235,7 +222,6 @@ request_settings() {
         "type", "settings_get"
     ]);
     llMessageLinked(LINK_SET, SETTINGS_BUS, msg, NULL_KEY);
-    logd("Requested settings");
 }
 
 apply_settings_sync(string msg) {
@@ -278,7 +264,6 @@ apply_settings_sync(string msg) {
     }
     
     SettingsReceived = TRUE;
-    logd("Settings received");
     
     // Start name resolution
     start_name_resolution();
@@ -322,7 +307,6 @@ process_next_name_request() {
             }
         }
 
-        logd("Requested display name (queued)");
 
         // Schedule next request (cast needed: NAME_REQUEST_INTERVAL_SEC is float)
         integer next_time = current_time + (integer)NAME_REQUEST_INTERVAL_SEC;
@@ -365,14 +349,12 @@ start_name_resolution() {
             }
             i += 1;
         }
-        logd("Queued " + (string)llGetListLength(PendingNameRequests) + " name requests");
     }
     else {
         // Single owner: queue one request
         if (OwnerKey != NULL_KEY) {
             PendingNameRequests += [OwnerKey];
             OwnerDisplayNames += ["(loading...)"];
-            logd("Queued owner name request");
         }
     }
 
@@ -406,7 +388,6 @@ handle_dataserver_name(key query_id, string name) {
             
             if (owner_idx != -1 && owner_idx < llGetListLength(OwnerDisplayNames)) {
                 OwnerDisplayNames = llListReplaceList(OwnerDisplayNames, [name], owner_idx, owner_idx);
-                logd("Resolved name: " + name);
             }
             
             // Remove this query
@@ -414,7 +395,6 @@ handle_dataserver_name(key query_id, string name) {
             
             // Check if all names resolved
             if (llGetListLength(OwnerNameQueries) == 0) {
-                logd("All owner names resolved");
                 check_bootstrap_complete();
             }
             
@@ -435,7 +415,6 @@ check_bootstrap_complete() {
         llGetListLength(OwnerNameQueries) == 0 &&
         llGetListLength(PendingNameRequests) == 0) {
         BootstrapComplete = TRUE;
-        logd("Bootstrap complete");
 
         // Announce final status
         announce_status();
@@ -514,8 +493,6 @@ default
         NameResolutionDeadline = 0;
         PendingNameRequests = [];
         NextNameRequestTime = 0;
-
-        logd("Bootstrap started");
         sendIM("DS Collar starting up. Please wait...");
 
         // Start RLV detection
@@ -558,7 +535,6 @@ default
 
             // Check for timeout
             if (RlvProbeDeadline > 0 && current_time >= RlvProbeDeadline) {
-                logd("RLV probe timed out");
                 stop_rlv_probe();
                 check_bootstrap_complete();
             }
@@ -572,7 +548,6 @@ default
         // Check name resolution timeout
         if ((llGetListLength(OwnerNameQueries) > 0 || llGetListLength(PendingNameRequests) > 0) &&
             NameResolutionDeadline > 0 && current_time >= NameResolutionDeadline) {
-            logd("Name resolution timed out, proceeding with fallback names");
             OwnerNameQueries = []; // Clear pending queries
             PendingNameRequests = []; // Clear pending requests
             check_bootstrap_complete();
@@ -597,7 +572,6 @@ default
         // Any reply means RLV is active
         RlvActive = TRUE;
         RlvVersion = llStringTrim(message, STRING_TRIM);
-        logd("RLV reply on channel " + (string)channel + " from " + (string)id + ": " + RlvVersion);
         
         // Stop probing immediately
         stop_rlv_probe();
@@ -625,19 +599,16 @@ default
             if (msg_type == "soft_reset" || msg_type == "soft_reset_all") {
                 // SECURITY FIX (v2.3 - MEDIUM-023): Validate sender authorization
                 if (!json_has(msg, ["from"])) {
-                    logd("SECURITY: Rejected soft_reset without 'from' field");
                     return;
                 }
                 
                 string from = llJsonGetValue(msg, ["from"]);
                 
                 if (!is_authorized_reset_sender(from)) {
-                    logd("SECURITY: Rejected soft_reset from unauthorized sender: " + from);
                     return;
                 }
                 
                 // Authorized - proceed with reset
-                logd("Accepting soft_reset from: " + from);
                 llResetScript();
             }
         }

@@ -13,7 +13,7 @@ TODO: None pending
 --------------------*/
 
 /* -------------------- CONSTANTS -------------------- */
-integer DEBUG = FALSE;
+integer DEBUG = TRUE;
 integer LEASH_HOLDER_CHAN = -192837465;
 
 /* -------------------- STATE -------------------- */

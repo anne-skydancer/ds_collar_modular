@@ -12,8 +12,6 @@ CHANGES:
 - Deferred plugin list responses avoid race conditions during registration
 --------------------*/
 
-integer DEBUG = FALSE;
-integer PRODUCTION = TRUE;  // Set FALSE for development builds
 
 /* -------------------- CONSOLIDATED ABI -------------------- */
 integer KERNEL_LIFECYCLE = 500;
@@ -60,10 +58,7 @@ key LastOwner = NULL_KEY;
 integer LastScriptCount = 0;        // Track script count to detect add/remove
 
 /* -------------------- HELPERS -------------------- */
-integer logd(string msg) {
-    if (DEBUG && !PRODUCTION) llOwnerSay("[KERNEL] " + msg);
-    return FALSE;
-}
+
 
 integer json_has(string j, list path) {
     return (llJsonGetValue(j, path) != JSON_INVALID);
@@ -81,8 +76,6 @@ integer validate_required_fields(string json_str, list field_names, string funct
     while (i < len) {
         string field = llList2String(field_names, i);
         if (!json_has(json_str, [field])) {
-            if (DEBUG && !PRODUCTION) {
-                logd("ERROR: " + function_name + " missing '" + field + "' field");
             }
             return FALSE;
         }
@@ -156,14 +149,12 @@ integer queue_add(string op_type, string context, string label, string script, i
     new_queue += [op_type, context, label, script, min_acl, timestamp];
     RegistrationQueue = new_queue;
 
-    logd("Queued " + op_type + ": " + context + " (" + label + ") min_acl=" + (string)min_acl);
 
     // Schedule batch processing if not already scheduled
     // This creates a small batching window for startup bursts
     if (!PendingBatchTimer) {
         PendingBatchTimer = TRUE;
         llSetTimerEvent(BATCH_WINDOW_SEC);
-        logd("Batch timer started (" + (string)BATCH_WINDOW_SEC + "s window)");
     }
 
     return 1;
@@ -178,7 +169,6 @@ integer process_queue() {
         if (PendingBatchTimer) {
             PendingBatchTimer = FALSE;
             llSetTimerEvent(PING_INTERVAL_SEC);
-            logd("Batch timer stopped - switching to heartbeat mode");
         }
         return FALSE;
     }
@@ -187,7 +177,6 @@ integer process_queue() {
     integer i = 0;
     integer len = llGetListLength(RegistrationQueue);
 
-    logd("Processing queue: " + (string)(len / QUEUE_STRIDE) + " operations");
 
     while (i < len) {
         string op_type = llList2String(RegistrationQueue, i + QUEUE_OP_TYPE);
@@ -264,7 +253,6 @@ integer registry_upsert(string context, string label, string script, integer min
     if (idx == -1) {
         // New plugin - add to registry
         PluginRegistry += [context, label, script, script_uuid, now_unix, min_acl];
-        logd("Registered: " + context + " (" + label + ") min_acl=" + (string)min_acl + " UUID=" + (string)script_uuid);
         return TRUE;
     }
     else {
@@ -280,11 +268,9 @@ integer registry_upsert(string context, string label, string script, integer min
             idx + REG_MIN_ACL);
 
         if (uuid_changed) {
-            logd("Updated (UUID changed): " + context + " (" + label + ") min_acl=" + (string)min_acl + " " +
                  (string)old_uuid + " -> " + (string)script_uuid);
         }
         else {
-            logd("Updated (no change): " + context + " min_acl=" + (string)min_acl);
         }
 
         return uuid_changed;
@@ -298,7 +284,6 @@ integer registry_remove(string context) {
     if (idx == -1) return FALSE;
 
     PluginRegistry = llDeleteSubList(PluginRegistry, idx, idx + REG_STRIDE - 1);
-    logd("Unregistered: " + context);
     return TRUE;
 }
 
@@ -338,7 +323,6 @@ integer prune_dead_plugins() {
         }
         else {
             // Prune dead plugin
-            logd("Pruned dead plugin: " + context);
             pruned += 1;
         }
         
@@ -366,7 +350,6 @@ integer prune_missing_scripts() {
         }
         else {
             // Script missing, prune plugin
-            logd("Pruned missing script: " + context + " (" + script + ")");
             pruned += 1;
         }
         
@@ -397,14 +380,12 @@ integer discover_plugins() {
             // New script - not in registry
             if (idx == -1) {
                 discoveries = discoveries + 1;
-                logd("Discovered new plugin: " + script_name);
             }
             else {
                 // Check if UUID changed (recompiled/replaced)
                 key registered_uuid = llList2Key(PluginRegistry, idx + REG_SCRIPT_UUID);
                 if (registered_uuid != script_uuid) {
                     discoveries = discoveries + 1;
-                    logd("Detected UUID change: " + script_name);
                 }
             }
         }
@@ -412,7 +393,6 @@ integer discover_plugins() {
 
     // If we found new/changed scripts, broadcast register_now
     if (discoveries > 0) {
-        logd("Active discovery: " + (string)discoveries + " new/changed plugins");
         broadcast_register_now();
     }
 
@@ -428,7 +408,6 @@ broadcast_register_now() {
     ]);
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, msg, NULL_KEY);
 
-    logd("Broadcast: register_now (queue-based processing)");
 }
 
 // Heartbeat ping to all plugins
@@ -474,7 +453,6 @@ broadcast_plugin_list() {
     string msg = "{\"type\":\"plugin_list\",\"plugins\":" + plugins_array + "}";
 
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, msg, NULL_KEY);
-    logd("Broadcast: plugin_list (" + (string)llGetListLength(plugins) + " plugins)");
 }
 
 /* -------------------- OWNER CHANGE DETECTION -------------------- */
@@ -484,7 +462,6 @@ integer check_owner_changed() {
     if (current_owner == NULL_KEY) return FALSE;
     
     if (LastOwner != NULL_KEY && current_owner != LastOwner) {
-        logd("Owner changed: " + (string)LastOwner + " -> " + (string)current_owner);
         LastOwner = current_owner;
         llResetScript();
         return TRUE;
@@ -535,7 +512,6 @@ route_field(string msg, string context, string field_name, string route_type, in
     // SECURITY: Validate field_name before manual JSON construction
     if (!is_safe_field_name(field_name)) {
         llOwnerSay("[KERNEL] ERROR: Unsafe field name rejected: " + field_name);
-        logd("SECURITY: Rejected unsafe field_name: " + field_name);
         return;
     }
 
@@ -554,7 +530,6 @@ route_field(string msg, string context, string field_name, string route_type, in
     routed_msg = llGetSubString(routed_msg, 0, -2) + ",\"" + field_name + "\":" + field_value + "}";
 
     llMessageLinked(LINK_SET, channel, routed_msg, NULL_KEY);
-    logd("Routed " + field_name + " to channel " + (string)channel + ": " + context);
 }
 
 /* -------------------- MESSAGE HANDLERS -------------------- */
@@ -591,7 +566,6 @@ handle_plugin_list_request() {
     // until registration window completes
     if (PendingBatchTimer) {
         PendingPluginListRequest = TRUE;
-        logd("Plugin list request deferred - waiting for registration batch to complete");
         return;
     }
 
@@ -600,7 +574,6 @@ handle_plugin_list_request() {
 
     // Broadcast current list
     broadcast_plugin_list();
-    logd("Plugin list broadcast (immediate response)");
 }
 
 handle_soft_reset(string msg) {
@@ -608,19 +581,16 @@ handle_soft_reset(string msg) {
     string from = llJsonGetValue(msg, ["from"]);
 
     if (from == JSON_INVALID || from == "") {
-        logd("Rejected soft_reset: missing 'from' field");
         llOwnerSay("[KERNEL] ERROR: Soft reset rejected - sender not identified");
         return;
     }
 
     if (!is_authorized_sender(from)) {
-        logd("Rejected soft_reset from unauthorized sender: " + from);
         llOwnerSay("[KERNEL] ERROR: Soft reset rejected - unauthorized sender: " + from);
         return;
     }
 
     // Authorized - proceed with reset
-    logd("Soft reset authorized by: " + from);
     PluginRegistry = [];
     RegistrationQueue = [];
     PendingBatchTimer = FALSE;
@@ -635,7 +605,6 @@ handle_soft_reset(string msg) {
 handle_acl_registry_request() {
     // Auth module requesting ACL repopulation (recovery from reset)
     // Send all ACL data from kernel's registry
-    logd("ACL registry request received from auth module");
 
     integer i = 0;
     integer len = llGetListLength(PluginRegistry);
@@ -655,7 +624,6 @@ handle_acl_registry_request() {
         i += REG_STRIDE;
     }
 
-    logd("ACL registry sent: " + (string)(len / REG_STRIDE) + " entries");
 }
 
 /* -------------------- EVENTS -------------------- */
@@ -673,7 +641,6 @@ default
         LastDiscoveryUnix = now();
         LastScriptCount = count_scripts();
 
-        logd("Kernel started (UUID-based change detection, active plugin discovery)");
 
         // Immediately broadcast register_now (plugins add to queue)
         broadcast_register_now();
@@ -704,7 +671,6 @@ default
             if (changes || PendingPluginListRequest) {
                 broadcast_plugin_list();
                 if (PendingPluginListRequest) {
-                    logd("Plugin list broadcast (deferred response to request)");
                 }
                 PendingPluginListRequest = FALSE;
             }
@@ -721,7 +687,6 @@ default
                 // Prune dead plugins and broadcast if any removed
                 integer pruned = prune_dead_plugins();
                 if (pruned > 0) {
-                    logd("Pruned " + (string)pruned + " dead plugins");
                     broadcast_plugin_list();
                 }
 
@@ -736,7 +701,6 @@ default
                 // Prune missing scripts and broadcast if any removed
                 integer pruned = prune_missing_scripts();
                 if (pruned > 0) {
-                    logd("Pruned " + (string)pruned + " missing scripts");
                     broadcast_plugin_list();
                 }
 
@@ -790,7 +754,6 @@ default
             integer current_script_count = count_scripts();
 
             if (current_script_count != LastScriptCount) {
-                logd("Script count changed: " + (string)LastScriptCount + " -> " + (string)current_script_count);
                 LastScriptCount = current_script_count;
 
                 // Clear registry and queue, trigger re-registration

@@ -13,8 +13,6 @@ CHANGES:
 - Routed leash actions and state synchronization through kernel messages
 --------------------*/
 
-integer DEBUG = FALSE;
-integer PRODUCTION = TRUE;
 
 /* -------------------- CONSOLIDATED ABI -------------------- */
 integer KERNEL_LIFECYCLE = 500;
@@ -70,10 +68,7 @@ string PendingQueryContext = "";  // Which menu to show after query completes
 integer IsRegistered = FALSE;
 
 /* -------------------- HELPERS -------------------- */
-integer logd(string msg) {
-    if (DEBUG && !PRODUCTION) llOwnerSay("[" + PLUGIN_CONTEXT + "] " + msg);
-    return FALSE;
-}
+
 
 integer json_has(string j, list path) {
     return (llJsonGetValue(j, path) != JSON_INVALID);
@@ -91,8 +86,6 @@ integer validate_required_fields(string json_str, list field_names, string funct
     while (i < len) {
         string field = llList2String(field_names, i);
         if (!json_has(json_str, [field])) {
-            if (DEBUG && !PRODUCTION) {
-                logd("ERROR: " + function_name + " missing '" + field + "' field");
             }
             return FALSE;
         }
@@ -132,7 +125,6 @@ requestAcl(key user) {
         "type", "acl_query",
         "avatar", (string)user
     ]), user);
-    logd("ACL query sent for " + llKey2Name(user));
 }
 
 /* -------------------- PLUGIN REGISTRATION -------------------- */
@@ -401,7 +393,6 @@ showOfferDialog(key target, key originator) {
         "timeout", 60
     ]), NULL_KEY);
     
-    logd("Offer dialog shown to " + llKey2Name(target) + " from " + offerer_name);
 }
 
 handleOfferResponse(string button) {
@@ -414,12 +405,10 @@ handleOfferResponse(string button) {
         ]), OfferTarget);
         
         llRegionSayTo(OfferOriginator, 0, llKey2Name(OfferTarget) + " accepted your leash offer.");
-        logd("Offer accepted by " + llKey2Name(OfferTarget));
     }
     else {
         llRegionSayTo(OfferOriginator, 0, llKey2Name(OfferTarget) + " declined your leash offer.");
         llRegionSayTo(OfferTarget, 0, "You declined the leash offer.");
-        logd("Offer declined by " + llKey2Name(OfferTarget));
     }
     
     // Clear offer state
@@ -435,7 +424,6 @@ cleanupOfferDialog() {
     OfferDialogSession = "";
     OfferTarget = NULL_KEY;
     OfferOriginator = NULL_KEY;
-    logd("Offer dialog timed out");
 }
 
 /* -------------------- ACTIONS -------------------- */
@@ -445,19 +433,16 @@ giveHolderObject() {
     // Deny ACL 0 (no access) and ACL -1 (blacklisted)
     if (UserAcl == 2 || UserAcl < 1) {
         llRegionSayTo(CurrentUser, 0, "Access denied: Insufficient permissions to receive leash holder.");
-        logd("Holder request denied for ACL " + (string)UserAcl);
         return;
     }
 
     string holder_name = "D/s Collar leash holder";
     if (llGetInventoryType(holder_name) != INVENTORY_OBJECT) {
         llRegionSayTo(CurrentUser, 0, "Error: Holder object not found in collar inventory.");
-        logd("Holder object not in inventory");
         return;
     }
     llGiveInventory(CurrentUser, holder_name);
     llRegionSayTo(CurrentUser, 0, "Leash holder given.");
-    logd("Gave holder to " + llKey2Name(CurrentUser) + " (ACL " + (string)UserAcl + ")");}
 
 
 sendLeashAction(string action) {
@@ -536,7 +521,6 @@ handleChatCommand(string msg, key user) {
         }
     }
 
-    logd("Chat command: " + command + " by " + llKey2Name(user) + " (ACL " + (string)acl_level + ")");
 
     if (command == "clip") {
         if (!inAllowedList(acl_level, ALLOWED_ACL_GRAB)) {
@@ -648,7 +632,6 @@ handleChatCommand(string msg, key user) {
 
 /* -------------------- BUTTON HANDLERS -------------------- */
 handleButtonClick(string button) {
-    logd("Button: " + button + " in context: " + MenuContext);
     
     if (MenuContext == "main") {
         if (button == "Clip") {
@@ -867,7 +850,6 @@ cleanupSession() {
     SensorCandidates = [];
     SensorPage = 0;
     IsOfferMode = FALSE;
-    logd("Session cleaned up");
 }
 
 queryState() {
@@ -883,7 +865,6 @@ scheduleStateQuery(string next_menu_context) {
     PendingStateQuery = TRUE;
     PendingQueryContext = next_menu_context;
     llSetTimerEvent(STATE_QUERY_DELAY);
-    logd("Scheduled state query, will show: " + next_menu_context);
 }
 
 /* -------------------- EVENT HANDLERS -------------------- */
@@ -894,7 +875,6 @@ default
         register_self();
         register_chat_commands();
         queryState();
-        logd("Leash UI ready (v2.0 MULTI-MODE)");
     }
     
     on_rez(integer start_param) {
@@ -912,7 +892,6 @@ default
             llSetTimerEvent(0.0);  // Stop timer
             queryState();
             // Menu will be shown when leash_state response arrives
-            logd("Timer fired: querying state for " + PendingQueryContext);
         }
     }
 
@@ -964,7 +943,6 @@ default
                 if (json_has(msg, ["target"])) {
                     LeashTarget = (key)llJsonGetValue(msg, ["target"]);
                 }
-                logd("State synced");
 
                 // If we were waiting for state update, show the pending menu
                 if (PendingQueryContext != "") {
@@ -980,7 +958,6 @@ default
                     else if (menu_to_show == "main") {
                         showMainMenu();
                     }
-                    logd("Showed pending menu: " + menu_to_show);
                 }
                 return;
             }
@@ -1014,7 +991,6 @@ default
                     UserAcl = (integer)llJsonGetValue(msg, ["level"]);
                     AclPending = FALSE;
                     scheduleStateQuery("main");
-                    logd("ACL received: " + (string)UserAcl + " for " + llKey2Name(avatar));
                 }
                 return;
             }
@@ -1056,7 +1032,6 @@ default
                 
                 // Otherwise handle menu dialog timeout
                 if (timeout_session != SessionId) return;
-                logd("Dialog timeout");
                 cleanupSession();
                 return;
             }

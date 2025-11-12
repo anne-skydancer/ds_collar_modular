@@ -12,8 +12,8 @@ CHANGES:
 - Guarded debug logging for safer production deployments
 --------------------*/
 
-integer DEBUG = FALSE;
-integer PRODUCTION = TRUE;  // Set FALSE for development builds
+integer DEBUG = TRUE;
+integer PRODUCTION = FALSE;  // Set FALSE for development builds
 
 /* -------------------- CONSOLIDATED ABI -------------------- */
 integer KERNEL_LIFECYCLE = 500;

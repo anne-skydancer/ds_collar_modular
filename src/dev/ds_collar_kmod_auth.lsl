@@ -12,8 +12,8 @@ CHANGES:
 - Guarded debug logging for safer production deployments
 --------------------*/
 
-integer DEBUG = FALSE;
-integer PRODUCTION = TRUE;  // Set FALSE for development builds
+integer DEBUG = TRUE;
+integer PRODUCTION = FALSE;  // Set FALSE for development builds
 
 /* -------------------- CONSOLIDATED ABI -------------------- */
 integer KERNEL_LIFECYCLE = 500;
@@ -48,9 +48,7 @@ integer PublicMode = FALSE;
 integer TpeMode = FALSE;
 
 integer SettingsReady = FALSE;
-list PendingQueries = [];  // [avatar_key, correlation_id, avatar_key, correlation_id, ...]
-integer PENDING_STRIDE = 2;
-integer MAX_PENDING_QUERIES = 50;  // Prevent unbounded growth
+// PERFORMANCE FIX: No longer queue pending queries - respond immediately with safe defaults
 
 /* Plugin ACL registry: [context, min_acl, context, min_acl, ...] */
 list PluginAclRegistry = [];
@@ -423,16 +421,9 @@ apply_settings_sync(string msg) {
     SettingsReady = TRUE;
     logd("Settings sync applied (multi_owner=" + (string)MultiOwnerMode + ")");
     
-    // Process pending queries
-    integer i = 0;
-    integer len = llGetListLength(PendingQueries);
-    while (i < len) {
-        key av = llList2Key(PendingQueries, i);
-        string corr_id = llList2String(PendingQueries, i + 1);
-        send_acl_result(av, corr_id);
-        i += PENDING_STRIDE;
-    }
-    PendingQueries = [];
+    // PERFORMANCE FIX: No longer queue pending queries - we respond immediately with safe defaults
+    // Active sessions will get correct ACL when they navigate/interact
+}
 }
 
 apply_settings_delta(string msg) {
@@ -530,6 +521,8 @@ apply_settings_delta(string msg) {
 handle_acl_query(string msg) {
     if (!json_has(msg, ["avatar"])) return;
 
+    if (DEBUG && !PRODUCTION) llOwnerSay("[AUTH] T+" + (string)llGetTime() + "s ACL query received");
+
     key av = (key)llJsonGetValue(msg, ["avatar"]);
     if (av == NULL_KEY) return;
 
@@ -538,20 +531,15 @@ handle_acl_query(string msg) {
         correlation_id = llJsonGetValue(msg, ["id"]);
     }
 
-    if (!SettingsReady) {
-        // SECURITY FIX: Limit pending query queue size
-        if (llGetListLength(PendingQueries) / PENDING_STRIDE >= MAX_PENDING_QUERIES) {
-            logd("WARNING: Pending query limit reached, discarding oldest");
-            PendingQueries = llDeleteSubList(PendingQueries, 0, PENDING_STRIDE - 1);
-        }
-
-        // Queue this query
-        PendingQueries += [av, correlation_id];
-        logd("Queued ACL query for " + llKey2Name(av));
-        return;
-    }
-
+    // PERFORMANCE FIX: Always respond immediately, even if settings not fully loaded
+    // Use safe defaults (wearer-only access) until settings arrive
+    // This prevents first-touch delay while eliminating security risk
     send_acl_result(av, correlation_id);
+    
+    if (DEBUG && !PRODUCTION) {
+        llOwnerSay("[AUTH] T+" + (string)llGetTime() + "s ACL result sent" + 
+                   (SettingsReady ? "" : " (safe defaults)"));
+    }
 }
 
 handle_register_acl(string msg) {
@@ -599,7 +587,6 @@ default
 {
     state_entry() {
         SettingsReady = FALSE;
-        PendingQueries = [];
         PluginAclRegistry = [];
 
         logd("Auth module started (with plugin ACL registry)");

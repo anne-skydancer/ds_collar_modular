@@ -13,14 +13,12 @@ TODO: None pending
 --------------------*/
 
 /* -------------------- CONSTANTS -------------------- */
-integer DEBUG = FALSE;
 integer LEASH_HOLDER_CHAN = -192837465;
 
 /* -------------------- STATE -------------------- */
 integer gListen = 0;
 
 /* -------------------- HELPERS -------------------- */
-integer logd(string s) { if (DEBUG) llOwnerSay("[HOLDER] " + s); return TRUE; }
 
 key primByName(string wantLower) {
     integer n = llGetNumberOfPrims();
@@ -69,7 +67,6 @@ integer openListen() {
 default {
     state_entry() {
         openListen();
-        logd("listening on " + (string)LEASH_HOLDER_CHAN);
     }
 
     on_rez(integer p) {
@@ -108,6 +105,5 @@ default {
         reply = llJsonSetValue(reply, ["session"], (string)session);
 
         llRegionSayTo(collar, LEASH_HOLDER_CHAN, reply);
-        logd("sent target " + (string)targetPrim + " → " + (string)collar + " (sess " + (string)session + ")");
     }
 }

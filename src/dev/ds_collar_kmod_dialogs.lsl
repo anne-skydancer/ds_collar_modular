@@ -13,8 +13,8 @@ CHANGES:
 - PERFORMANCE: Optimized button_data parsing for strided list format
 --------------------*/
 
-integer DEBUG = FALSE;
-integer PRODUCTION = TRUE;  // Set FALSE for development builds
+integer DEBUG = TRUE;
+integer PRODUCTION = FALSE;  // Set FALSE for development builds
 
 /* -------------------- CONSOLIDATED ABI -------------------- */
 integer KERNEL_LIFECYCLE = 500;
@@ -229,6 +229,8 @@ string get_button_label(string context, integer button_state) {
 /* -------------------- DIALOG DISPLAY -------------------- */
 
 handle_dialog_open(string msg) {
+    if (DEBUG && !PRODUCTION) llOwnerSay("[DIALOG] T+" + (string)llGetTime() + "s dialog_open received");
+
     if (!validate_required_fields(msg, ["session_id", "user"], "handle_dialog_open")) {
         return;
     }
@@ -338,7 +340,7 @@ handle_dialog_open(string msg) {
     // Show dialog
     llDialog(user, title + "\n\n" + message, buttons, channel);
 
-    logd("Opened dialog: " + session_id + " for " + llKey2Name(user) + " on channel " + (string)channel);
+    if (DEBUG && !PRODUCTION) llOwnerSay("[DIALOG] T+" + (string)llGetTime() + "s llDialog() called - DONE");
 }
 
 handle_numbered_list_dialog(string msg, string session_id, key user) {

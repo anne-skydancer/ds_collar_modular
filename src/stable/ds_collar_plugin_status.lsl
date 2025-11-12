@@ -12,8 +12,6 @@ CHANGES:
 - Supports multi-owner mode by tracking ordered owner sets
 --------------------*/
 
-integer DEBUG = FALSE;
-integer PRODUCTION = TRUE;
 
 /* -------------------- CONSOLIDATED ABI -------------------- */
 integer KERNEL_LIFECYCLE = 500;
@@ -69,10 +67,7 @@ key CurrentUser = NULL_KEY;
 string SessionId = "";
 
 /* -------------------- HELPERS -------------------- */
-integer logd(string msg) {
-    if (DEBUG) llOwnerSay("[STATUS] " + msg);
-    return FALSE;
-}
+
 
 integer json_has(string j, list path) {
     return (llJsonGetValue(j, path) != JSON_INVALID);
@@ -97,7 +92,6 @@ register_self() {
         "script", llGetScriptName()
     ]);
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, msg, NULL_KEY);
-    logd("Registered with kernel");
 }
 
 send_pong() {
@@ -193,8 +187,6 @@ apply_settings_sync(string msg) {
         TpeMode = (integer)llJsonGetValue(kv_json, [KEY_TPE_MODE]);
     }
     
-    logd("Settings sync applied");
-    
     // Check if we need to refresh owner names
     integer needs_refresh = FALSE;
     
@@ -265,7 +257,6 @@ apply_settings_delta(string msg) {
         if (list_key == KEY_OWNER_KEYS || list_key == KEY_TRUSTEES || 
             list_key == KEY_OWNER_HONS || list_key == KEY_TRUSTEE_HONS) {
             // Request full sync to refresh lists
-            logd("List changed, requesting full sync");
         }
     }
 }
@@ -288,14 +279,12 @@ request_owner_names() {
             }
         }
         
-        logd("Requested " + (string)count + " display names");
     }
     else {
         if (OwnerKey != NULL_KEY) {
             OwnerDisplay = "";
             OwnerDisplayQuery = llRequestDisplayName(OwnerKey);
             OwnerLegacyQuery = llRequestAgentData(OwnerKey, DATA_NAME);
-            logd("Requested owner display name");
         }
         else {
             OwnerDisplay = "";
@@ -449,7 +438,6 @@ show_status_menu() {
     ]);
     
     llMessageLinked(LINK_SET, DIALOG_BUS, msg, NULL_KEY);
-    logd("Status menu shown");
 }
 
 /* -------------------- BUTTON HANDLING -------------------- */
@@ -462,7 +450,6 @@ handle_button_click(string button) {
     }
     
     // Unknown button - shouldn't happen
-    logd("Unhandled button: " + button);
 }
 
 /* -------------------- UI NAVIGATION -------------------- */
@@ -480,7 +467,6 @@ ui_return_root() {
 cleanup_session() {
     CurrentUser = NULL_KEY;
     SessionId = "";
-    logd("Session cleaned up");
 }
 
 /* -------------------- EVENTS -------------------- */
@@ -497,8 +483,6 @@ default {
         OwnerNameQueries = [];
         
         register_self();
-        
-        logd("Ready");
     }
     
     on_rez(integer start_param) {
@@ -589,7 +573,6 @@ default {
                 if (llJsonGetValue(msg, ["session_id"]) != SessionId) return;
                 
                 cleanup_session();
-                logd("Dialog timeout");
                 return;
             }
             
@@ -604,7 +587,6 @@ default {
             if (idx != -1) {
                 if (idx < llGetListLength(OwnerDisplayNames)) {
                     OwnerDisplayNames = llListReplaceList(OwnerDisplayNames, [data], idx, idx);
-                    logd("Received display name: " + data);
                 }
             }
         }
@@ -612,12 +594,10 @@ default {
         else {
             if (query_id == OwnerDisplayQuery) {
                 OwnerDisplay = data;
-                logd("Owner display name resolved: " + data);
             }
             else if (query_id == OwnerLegacyQuery) {
                 if (OwnerDisplay == "") {
                     OwnerDisplay = data;
-                    logd("Owner legacy name resolved: " + data);
                 }
             }
         }

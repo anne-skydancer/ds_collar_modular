@@ -13,8 +13,8 @@ CHANGES:
 - PERFORMANCE: Pass-through mode - buttons arrive pre-ordered from UI
 --------------------*/
 
-integer DEBUG = FALSE;
-integer PRODUCTION = TRUE;  // Set FALSE for development builds
+integer DEBUG = TRUE;
+integer PRODUCTION = FALSE;  // Set FALSE for development builds
 
 /* -------------------- CONSOLIDATED ABI -------------------- */
 integer UI_BUS = 900;
@@ -111,6 +111,8 @@ list reorder_buttons_for_display(list buttons) {
 /* -------------------- RENDERING -------------------- */
 
 render_menu(string msg) {
+    if (DEBUG && !PRODUCTION) llOwnerSay("[MENU] T+" + (string)llGetTime() + "s render_menu received");
+
     // Validate required fields
     if (!validate_required_fields(msg, ["user", "session_id", "menu_type", "buttons"], "render_menu")) {
         return;
@@ -160,6 +162,8 @@ render_menu(string msg) {
         body_text = "Choose:";
     }
 
+    if (DEBUG && !PRODUCTION) llOwnerSay("[MENU] T+" + (string)llGetTime() + "s Sending to Dialog");
+
     // Send to dialog bus - buttons already in final format
     string dialog_msg = llList2Json(JSON_OBJECT, [
         "type", "dialog_open",
@@ -172,10 +176,6 @@ render_menu(string msg) {
     ]);
 
     llMessageLinked(LINK_SET, DIALOG_BUS, dialog_msg, NULL_KEY);
-
-    logd("Rendered " + menu_type + " menu for " + llKey2Name(user) + " (page " +
-         (string)(current_page + 1) + "/" + (string)total_pages + ", " +
-         (string)(llGetListLength(button_data) / 3) + " buttons)");
 }
 
 show_message(string msg) {

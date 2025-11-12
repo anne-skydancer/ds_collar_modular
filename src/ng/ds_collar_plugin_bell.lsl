@@ -12,8 +12,8 @@ CHANGES:
 - Prevented premature resets by deferring defaults until settings load
 --------------------*/
 
-integer DEBUG = FALSE;
-integer PRODUCTION = TRUE;
+integer DEBUG = TRUE;
+integer PRODUCTION = FALSE;
 integer KERNEL_LIFECYCLE = 500;
 integer AUTH_BUS = 700;
 integer SETTINGS_BUS = 800;

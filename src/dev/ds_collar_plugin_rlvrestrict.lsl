@@ -12,8 +12,8 @@ CHANGES:
 - Enforces maximum restriction count and cleans up session context on exit
 --------------------*/
 
-integer DEBUG = FALSE;
-integer PRODUCTION = TRUE;
+integer DEBUG = TRUE;
+integer PRODUCTION = FALSE;
 
 /* -------------------- CHANNELS (v2 Consolidated Architecture) -------------------- */
 

@@ -12,8 +12,8 @@ CHANGES:
 - Integrates ACL validation, name caching, and dialog-driven UI flows
 --------------------*/
 
-integer DEBUG = FALSE;
-integer PRODUCTION = TRUE;
+integer DEBUG = TRUE;
+integer PRODUCTION = FALSE;
 
 /* -------------------- ABI CHANNELS -------------------- */
 integer KERNEL_LIFECYCLE = 500;

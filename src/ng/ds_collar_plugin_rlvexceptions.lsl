@@ -12,8 +12,8 @@ CHANGES:
 - Presents ACL-gated dialog workflow for managing exception sets
 --------------------*/
 
-integer DEBUG = FALSE;
-integer PRODUCTION = TRUE;
+integer DEBUG = TRUE;
+integer PRODUCTION = FALSE;
 
 /* -------------------- ABI CHANNELS -------------------- */
 integer KERNEL_LIFECYCLE = 500;

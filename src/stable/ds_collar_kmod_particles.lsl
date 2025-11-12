@@ -12,8 +12,6 @@ CHANGES:
 - Improved target validation and timer lifecycle management for UI messages
 --------------------*/
 
-integer DEBUG = FALSE;
-integer PRODUCTION = TRUE;  // Set FALSE for development
 
 /* -------------------- CONSOLIDATED ABI -------------------- */
 integer KERNEL_LIFECYCLE = 500;
@@ -45,10 +43,7 @@ integer LmLastPing = 0;
 integer LmAuthorized = FALSE;  // NEW: Explicit authorization flag
 
 /* -------------------- HELPERS -------------------- */
-integer logd(string msg) {
-    if (DEBUG && !PRODUCTION) llOwnerSay("[PARTICLES] " + msg);
-    return FALSE;
-}
+
 
 integer json_has(string j, list path) {
     return (llJsonGetValue(j, path) != JSON_INVALID);
@@ -70,7 +65,6 @@ integer needs_timer() {
 open_lm_listen() {
     if (LmListen == 0) {
         LmListen = llListen(LEASH_CHAN_LM, "", NULL_KEY, "");
-        logd("Lockmeister listen opened");
     }
 }
 
@@ -78,7 +72,6 @@ close_lm_listen() {
     if (LmListen != 0) {
         llListenRemove(LmListen);
         LmListen = 0;
-        logd("Lockmeister listen closed");
     }
 }
 
@@ -95,7 +88,6 @@ lm_ping() {
         llRegionSayTo(LmController, LEASH_CHAN_LM, wearer + "handle");
         llRegionSayTo(LmController, LEASH_CHAN_LM, wearer + "|LMV2|RequestPoint|handle");
         llRegionSayTo(LmController, LEASH_CHAN_LM, wearer + "|LMV2|RequestPoint|collar");
-        logd("LM ping sent");
     }
 }
 
@@ -113,14 +105,12 @@ handle_lm_message(key id, string msg) {
     
     // Verify the UUID in message matches the object owner
     if ((key)msg_uuid != owner_key) {
-        logd("LM message UUID mismatch: " + msg_uuid + " vs " + (string)owner_key);
         return;
     }
     
     // Handle explicit release commands
     if (protocol == "collar free" || protocol == "handle free") {
         if (LmActive && id == LmTargetPrim) {
-            logd("LM explicit release received from " + (string)id);
             
             LmActive = FALSE;
             LmController = NULL_KEY;
@@ -143,7 +133,6 @@ handle_lm_message(key id, string msg) {
             }
             if (!needs_timer()) {
                 llSetTimerEvent(0.0);
-                logd("Timer stopped - no active sources");
             }
         }
         return;
@@ -153,13 +142,11 @@ handle_lm_message(key id, string msg) {
     if (protocol == "collar ok" || protocol == "handle ok") {
         // SECURITY: Only accept if Lockmeister mode was explicitly authorized
         if (!LmAuthorized) {
-            logd("Rejected LM response - not authorized. Call lm_enable first.");
             return;
         }
         
         // CRITICAL: Only accept handles belonging to the authorized controller
         if (LmController != NULL_KEY && owner_key != LmController) {
-            logd("Handle belongs to " + llKey2Name(owner_key) + 
                  ", but authorized controller is " + llKey2Name(LmController) + " - ignoring");
             return;
         }
@@ -167,7 +154,6 @@ handle_lm_message(key id, string msg) {
         // If we're already locked onto a handle, ONLY accept responses from THAT handle
         if (LmActive && LmTargetPrim != NULL_KEY) {
             if (id != LmTargetPrim) {
-                logd("Already locked to " + (string)LmTargetPrim + ", ignoring other handle " + (string)id);
                 return;
             }
             // Same handle confirming - just update ping time
@@ -175,13 +161,11 @@ handle_lm_message(key id, string msg) {
             return;
         }
         
-        logd("LM response received from object " + (string)id + " (owner: " + llKey2Name(owner_key) + ")");
         
         // Priority check: If DS native is already rendering to a holder prim, don't override
         if (SourcePlugin == "core_leash" && TargetKey != NULL_KEY) {
             // Check if current target is a prim (not avatar)
             if (llGetAgentSize(TargetKey) == ZERO_VECTOR) {
-                logd("DS holder already active, ignoring Lockmeister response");
                 return;
             }
         }
@@ -220,13 +204,10 @@ integer find_leashpoint_link() {
         string desc = llToLower(llStringTrim(llList2String(params, 1), STRING_TRIM));
         
         if (name == "leashpoint" && desc == "leashpoint") {
-            logd("Found leashpoint at link " + (string)i);
             return i;
         }
         i = i + 1;
     }
-    
-    logd("No leashpoint found, using LINK_ROOT");
     return LINK_ROOT;
 }
 
@@ -241,7 +222,6 @@ render_chain_particles(key target) {
         // Clear particles
         llLinkParticleSystem(LeashpointLink, []);
         ParticlesActive = FALSE;
-        logd("Particles cleared");
         return;
     }
     
@@ -269,14 +249,12 @@ render_chain_particles(key target) {
     ]);
     
     ParticlesActive = TRUE;
-    logd("Particles rendered to " + (string)target);
 }
 
 /* -------------------- MESSAGE HANDLERS -------------------- */
 
 handle_particles_start(string msg) {
     if (!json_has(msg, ["source"]) || !json_has(msg, ["target"])) {
-        logd("ERROR: particles_start missing source or target");
         return;
     }
     
@@ -286,13 +264,11 @@ handle_particles_start(string msg) {
     // Validate target exists in-world
     list details = llGetObjectDetails(target, [OBJECT_POS]);
     if (llGetListLength(details) == 0) {
-        logd("ERROR: Target " + (string)target + " not found in-world");
         return;
     }
     
     // Priority: Lockmeister < DS leash
     if (SourcePlugin == "lockmeister" && source == "core_leash") {
-        logd("Overriding Lockmeister with DS leash");
         if (LmActive) {
             LmActive = FALSE;
             LmController = NULL_KEY;
@@ -302,7 +278,6 @@ handle_particles_start(string msg) {
         }
     }
     else if (SourcePlugin != "" && SourcePlugin != source) {
-        logd("Ignoring start request from " + source + " (active source: " + SourcePlugin + ")");
         return;
     }
     
@@ -316,7 +291,6 @@ handle_particles_start(string msg) {
         ParticleStyle = "chain";
     }
     
-    logd("Start request from " + SourcePlugin + " to target " + (string)TargetKey);
     
     render_chain_particles(TargetKey);
     llSetTimerEvent(PARTICLE_UPDATE_RATE);
@@ -324,7 +298,6 @@ handle_particles_start(string msg) {
 
 handle_particles_stop(string msg) {
     if (!json_has(msg, ["source"])) {
-        logd("ERROR: particles_stop missing source");
         return;
     }
     
@@ -332,11 +305,8 @@ handle_particles_stop(string msg) {
     
     // Only stop if request is from the same plugin that started it
     if (source != SourcePlugin) {
-        logd("Ignoring stop request from " + source + " (active source: " + SourcePlugin + ")");
         return;
     }
-    
-    logd("Stop request from " + source);
     
     render_chain_particles(NULL_KEY);
     
@@ -347,13 +317,11 @@ handle_particles_stop(string msg) {
     // Stop timer if nothing needs it
     if (!needs_timer()) {
         llSetTimerEvent(0.0);
-        logd("Timer stopped - no active sources");
     }
 }
 
 handle_particles_update(string msg) {
     if (!json_has(msg, ["target"])) {
-        logd("ERROR: particles_update missing target");
         return;
     }
     
@@ -362,12 +330,10 @@ handle_particles_update(string msg) {
     // SECURITY: Validate target exists in-world
     list details = llGetObjectDetails(new_target, [OBJECT_POS]);
     if (llGetListLength(details) == 0) {
-        logd("ERROR: Update target " + (string)new_target + " not found in-world");
         return;
     }
     
     if (new_target != TargetKey) {
-        logd("Updating target to: " + (string)new_target);
         TargetKey = new_target;
         render_chain_particles(TargetKey);
     }
@@ -376,7 +342,6 @@ handle_particles_update(string msg) {
 handle_lm_enable(string msg) {
     // Enable Lockmeister listening
     if (!json_has(msg, ["controller"])) {
-        logd("ERROR: lm_enable missing controller");
         return;
     }
     
@@ -388,7 +353,6 @@ handle_lm_enable(string msg) {
     LmLastPing = now();
     llSetTimerEvent(PARTICLE_UPDATE_RATE);
     
-    logd("Lockmeister AUTHORIZED for " + llKey2Name(LmController));
 }
 
 handle_lm_disable() {
@@ -414,10 +378,7 @@ handle_lm_disable() {
     // Check if timer should stop
     if (!needs_timer()) {
         llSetTimerEvent(0.0);
-        logd("Timer stopped - no active sources");
     }
-    
-    logd("Lockmeister disabled and deauthorized");
 }
 
 /* -------------------- EVENTS -------------------- */
@@ -436,7 +397,6 @@ default
         LmAuthorized = FALSE;
         close_lm_listen();
         
-        logd("Particles module ready (v2.2 SECURITY PATCH)");
     }
     
     on_rez(integer start_param) {
@@ -512,7 +472,6 @@ default
             list details = llGetObjectDetails(TargetKey, [OBJECT_POS]);
             if (llGetListLength(details) == 0) {
                 // Target disappeared (offsim or logged out)
-                logd("Target lost, clearing particles");
                 render_chain_particles(NULL_KEY);
                 
                 // If Lockmeister was active, stop it
@@ -536,7 +495,6 @@ default
                 // Only stop timer if nothing needs it
                 if (!needs_timer()) {
                     llSetTimerEvent(0.0);
-                    logd("Timer stopped - no active sources");
                 }
             }
         }

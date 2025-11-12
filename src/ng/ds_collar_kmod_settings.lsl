@@ -12,8 +12,8 @@ CHANGES:
 - Consolidated settings channel handling for consistent module access
 --------------------*/
 
-integer DEBUG = FALSE;
-integer PRODUCTION = TRUE;  // Set FALSE for development builds
+integer DEBUG = TRUE;
+integer PRODUCTION = FALSE;  // Set FALSE for development builds
 
 /* -------------------- CONSOLIDATED ABI -------------------- */
 integer SETTINGS_BUS = 800;

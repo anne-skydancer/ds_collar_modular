@@ -12,8 +12,6 @@ CHANGES:
 - Automatically returns control to root menu after handling SOS request
 --------------------*/
 
-integer DEBUG = FALSE;
-integer PRODUCTION = TRUE;
 
 /* -------------------- CONSOLIDATED ABI -------------------- */
 integer KERNEL_LIFECYCLE = 500;
@@ -33,10 +31,7 @@ integer AclPending = FALSE;
 string SessionId = "";
 
 /* -------------------- HELPERS -------------------- */
-integer logd(string msg) {
-    if (DEBUG) llOwnerSay("[SOS] " + msg);
-    return FALSE;
-}
+
 
 integer json_has(string j, list path) {
     return (llJsonGetValue(j, path) != JSON_INVALID);
@@ -55,8 +50,6 @@ register_self() {
         "min_acl", PLUGIN_MIN_ACL,
         "script", llGetScriptName()
     ]), NULL_KEY);
-
-    logd("SOS plugin registered");
 }
 
 send_pong() {
@@ -74,7 +67,6 @@ request_acl(key user) {
         "avatar", (string)user
     ]), user);
 
-    logd("ACL query sent for " + llKey2Name(user));
 }
 
 /* -------------------- MENU DISPLAY -------------------- */
@@ -102,7 +94,6 @@ show_sos_menu() {
         "timeout", 60
     ]), NULL_KEY);
 
-    logd("Showing SOS menu to " + llKey2Name(CurrentUser));
 }
 
 /* -------------------- EMERGENCY ACTIONS -------------------- */
@@ -113,7 +104,6 @@ action_unleash() {
     ]), CurrentUser);
 
     llRegionSayTo(CurrentUser, 0, "[SOS] Leash released.");
-    logd("Emergency leash release triggered by " + llKey2Name(CurrentUser));
 }
 
 action_clear_rlv() {
@@ -126,7 +116,6 @@ action_clear_rlv() {
     llOwnerSay("@clear");
 
     llRegionSayTo(CurrentUser, 0, "[SOS] All RLV restrictions cleared.");
-    logd("Emergency RLV clear triggered by " + llKey2Name(CurrentUser));
 }
 
 action_clear_relay() {
@@ -136,12 +125,10 @@ action_clear_relay() {
     ]), CurrentUser);
 
     llRegionSayTo(CurrentUser, 0, "[SOS] All relay restrictions cleared.");
-    logd("Emergency relay clear triggered by " + llKey2Name(CurrentUser));
 }
 
 /* -------------------- BUTTON HANDLER -------------------- */
 handle_button_click(string button) {
-    logd("Button clicked: " + button);
 
     if (button == "Back") {
         return_to_root();
@@ -182,8 +169,6 @@ cleanup_session() {
     UserAcl = -999;
     AclPending = FALSE;
     SessionId = "";
-
-    logd("Session cleaned up");
 }
 
 /* -------------------- EVENT HANDLERS -------------------- */
@@ -191,13 +176,10 @@ default {
     state_entry() {
         cleanup_session();
         register_self();
-
-        logd("SOS Emergency plugin initialized");
     }
 
     on_rez(integer start_param) {
         // Preserve state on attach/detach
-        logd("Rezzed - state preserved");
     }
 
     changed(integer change_mask) {
@@ -273,7 +255,6 @@ default {
                     }
 
                     show_sos_menu();
-                    logd("SOS menu shown - ACL: " + (string)UserAcl);
                 }
                 return;
             }
@@ -299,8 +280,6 @@ default {
 
                 string timeout_session = llJsonGetValue(msg, ["session_id"]);
                 if (timeout_session != SessionId) return;
-
-                logd("Dialog timeout");
                 cleanup_session();
                 return;
             }

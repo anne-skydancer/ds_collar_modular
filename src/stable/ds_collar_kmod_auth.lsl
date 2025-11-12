@@ -12,8 +12,6 @@ CHANGES:
 - Guarded debug logging for safer production deployments
 --------------------*/
 
-integer DEBUG = FALSE;
-integer PRODUCTION = TRUE;  // Set FALSE for development builds
 
 /* -------------------- CONSOLIDATED ABI -------------------- */
 integer KERNEL_LIFECYCLE = 500;
@@ -59,10 +57,7 @@ integer PLUGIN_ACL_CONTEXT = 0;
 integer PLUGIN_ACL_MIN_ACL = 1;
 
 /* -------------------- HELPERS -------------------- */
-integer logd(string msg) {
-    if (DEBUG && !PRODUCTION) llOwnerSay("[AUTH] " + msg);
-    return FALSE;
-}
+
 
 integer json_has(string j, list path) {
     return (llJsonGetValue(j, path) != JSON_INVALID);
@@ -138,7 +133,6 @@ register_plugin_acl(string context, integer min_acl) {
             // Update existing
             PluginAclRegistry = llListReplaceList(PluginAclRegistry, [min_acl],
                 i + PLUGIN_ACL_MIN_ACL, i + PLUGIN_ACL_MIN_ACL);
-            logd("Updated plugin ACL: " + context + " requires " + (string)min_acl);
             return;
         }
         i += PLUGIN_ACL_STRIDE;
@@ -146,7 +140,6 @@ register_plugin_acl(string context, integer min_acl) {
 
     // Add new entry
     PluginAclRegistry += [context, min_acl];
-    logd("Registered plugin ACL: " + context + " requires " + (string)min_acl);
 }
 
 // Broadcast plugin ACL list to UI
@@ -182,7 +175,6 @@ broadcast_plugin_acl_list() {
     // Manual outer object construction for same reason
     string msg = "{\"type\":\"plugin_acl_list\",\"acl_data\":" + acl_array + "}";
     llMessageLinked(LINK_SET, AUTH_BUS, msg, NULL_KEY);
-    logd("Broadcast plugin ACL list: " + (string)llGetListLength(acl_data) + " entries");
 }
 
 // Check if user can access a specific plugin
@@ -302,7 +294,6 @@ send_acl_result(key av, string correlation_id) {
     }
     
     llMessageLinked(LINK_SET, AUTH_BUS, msg, NULL_KEY);
-    logd("ACL result: " + llKey2Name(av) + " = " + (string)level);
 }
 
 /* -------------------- ROLE EXCLUSIVITY VALIDATION -------------------- */
@@ -320,14 +311,12 @@ enforce_role_exclusivity() {
             integer idx = llListFindList(TrusteeList, [owner]);
             if (idx != -1) {
                 TrusteeList = llDeleteSubList(TrusteeList, idx, idx);
-                logd("WARNING: Removed " + owner + " from trustees (is owner)");
             }
             
             // Remove from blacklist
             idx = llListFindList(Blacklist, [owner]);
             if (idx != -1) {
                 Blacklist = llDeleteSubList(Blacklist, idx, idx);
-                logd("WARNING: Removed " + owner + " from blacklist (is owner)");
             }
         }
     }
@@ -339,14 +328,12 @@ enforce_role_exclusivity() {
             integer idx = llListFindList(TrusteeList, [owner]);
             if (idx != -1) {
                 TrusteeList = llDeleteSubList(TrusteeList, idx, idx);
-                logd("WARNING: Removed " + owner + " from trustees (is owner)");
             }
             
             // Remove from blacklist
             idx = llListFindList(Blacklist, [owner]);
             if (idx != -1) {
                 Blacklist = llDeleteSubList(Blacklist, idx, idx);
-                logd("WARNING: Removed " + owner + " from blacklist (is owner)");
             }
         }
     }
@@ -358,7 +345,6 @@ enforce_role_exclusivity() {
         integer idx = llListFindList(Blacklist, [trustee]);
         if (idx != -1) {
             Blacklist = llDeleteSubList(Blacklist, idx, idx);
-            logd("WARNING: Removed " + trustee + " from blacklist (is trustee)");
         }
     }
 }
@@ -421,7 +407,6 @@ apply_settings_sync(string msg) {
     enforce_role_exclusivity();
     
     SettingsReady = TRUE;
-    logd("Settings sync applied (multi_owner=" + (string)MultiOwnerMode + ")");
     
     // Process pending queries
     integer i = 0;
@@ -446,17 +431,14 @@ apply_settings_delta(string msg) {
         
         if (json_has(changes, [KEY_PUBLIC_ACCESS])) {
             PublicMode = (integer)llJsonGetValue(changes, [KEY_PUBLIC_ACCESS]);
-            logd("Delta: public_mode = " + (string)PublicMode);
         }
         
         if (json_has(changes, [KEY_TPE_MODE])) {
             TpeMode = (integer)llJsonGetValue(changes, [KEY_TPE_MODE]);
-            logd("Delta: tpe_mode = " + (string)TpeMode);
         }
         
         if (json_has(changes, [KEY_OWNER_KEY])) {
             OwnerKey = (key)llJsonGetValue(changes, [KEY_OWNER_KEY]);
-            logd("Delta: owner_key = " + (string)OwnerKey);
             // Enforce exclusivity after owner change
             enforce_role_exclusivity();
         }
@@ -471,7 +453,6 @@ apply_settings_delta(string msg) {
         if (key_name == KEY_OWNER_KEYS) {
             if (llListFindList(OwnerKeys, [elem]) == -1) {
                 OwnerKeys += [elem];
-                logd("Delta: added owner " + elem);
                 // Enforce exclusivity after adding owner
                 enforce_role_exclusivity();
             }
@@ -479,7 +460,6 @@ apply_settings_delta(string msg) {
         else if (key_name == KEY_TRUSTEES) {
             if (llListFindList(TrusteeList, [elem]) == -1) {
                 TrusteeList += [elem];
-                logd("Delta: added trustee " + elem);
                 // Enforce exclusivity after adding trustee
                 enforce_role_exclusivity();
             }
@@ -487,7 +467,6 @@ apply_settings_delta(string msg) {
         else if (key_name == KEY_BLACKLIST) {
             if (llListFindList(Blacklist, [elem]) == -1) {
                 Blacklist += [elem];
-                logd("Delta: added blacklist " + elem);
             }
         }
     }
@@ -504,7 +483,6 @@ apply_settings_delta(string msg) {
                 OwnerKeys = llDeleteSubList(OwnerKeys, idx, idx);
                 idx = llListFindList(OwnerKeys, [elem]);
             }
-            logd("Delta: removed owner " + elem);
         }
         else if (key_name == KEY_TRUSTEES) {
             integer idx = llListFindList(TrusteeList, [elem]);
@@ -512,7 +490,6 @@ apply_settings_delta(string msg) {
                 TrusteeList = llDeleteSubList(TrusteeList, idx, idx);
                 idx = llListFindList(TrusteeList, [elem]);
             }
-            logd("Delta: removed trustee " + elem);
         }
         else if (key_name == KEY_BLACKLIST) {
             integer idx = llListFindList(Blacklist, [elem]);
@@ -520,7 +497,6 @@ apply_settings_delta(string msg) {
                 Blacklist = llDeleteSubList(Blacklist, idx, idx);
                 idx = llListFindList(Blacklist, [elem]);
             }
-            logd("Delta: removed blacklist " + elem);
         }
     }
 }
@@ -541,13 +517,11 @@ handle_acl_query(string msg) {
     if (!SettingsReady) {
         // SECURITY FIX: Limit pending query queue size
         if (llGetListLength(PendingQueries) / PENDING_STRIDE >= MAX_PENDING_QUERIES) {
-            logd("WARNING: Pending query limit reached, discarding oldest");
             PendingQueries = llDeleteSubList(PendingQueries, 0, PENDING_STRIDE - 1);
         }
 
         // Queue this query
         PendingQueries += [av, correlation_id];
-        logd("Queued ACL query for " + llKey2Name(av));
         return;
     }
 
@@ -586,7 +560,6 @@ handle_filter_plugins(string msg) {
     ]);
 
     llMessageLinked(LINK_SET, AUTH_BUS, response, NULL_KEY);
-    logd("Filtered plugins for " + llKey2Name(user) + ": " + (string)llGetListLength(accessible) + "/" + (string)llGetListLength(contexts));
 }
 
 handle_plugin_acl_list_request() {
@@ -602,7 +575,6 @@ default
         PendingQueries = [];
         PluginAclRegistry = [];
 
-        logd("Auth module started (with plugin ACL registry)");
 
         // Request ACL registry repopulation from kernel (P1 security fix)
         string acl_request = llList2Json(JSON_OBJECT, [

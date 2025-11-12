@@ -26,7 +26,6 @@
    - View status: ACL 1+ (Public, Owned, Trustee, Unowned, Owner)
    =============================================================== */
 
-integer DEBUG = FALSE;
 integer KERNEL_LIFECYCLE = 500;
 integer AUTH_BUS = 700;
 integer UI_BUS = 900;
@@ -57,10 +56,7 @@ integer CommandsPage = 0;
 integer COMMANDS_PER_PAGE = 9;
 
 /* ===== HELPERS ===== */
-integer logd(string msg) {
-    if (DEBUG) llOwnerSay("[CHATCMD-UI] " + msg);
-    return FALSE;
-}
+
 
 integer jsonHas(string j, list path) {
     return (llJsonGetValue(j, path) != JSON_INVALID);
@@ -104,7 +100,6 @@ requestAcl(key user) {
         "type", "acl_query",
         "avatar", (string)user
     ]), user);
-    logd("ACL query sent for " + llKey2Name(user));
 }
 
 /* ===== PLUGIN REGISTRATION ===== */
@@ -258,7 +253,6 @@ queryCommands() {
 
 /* ===== BUTTON HANDLERS ===== */
 handleButtonClick(string button) {
-    logd("Button: " + button + " in context: " + MenuContext);
 
     if (MenuContext == "main") {
         if (button == "Enable" || button == "Disable") {
@@ -339,7 +333,6 @@ cleanupSession() {
     MenuContext = "";
     AvailableCommands = [];
     CommandsPage = 0;
-    logd("Session cleaned up");
 }
 
 /* ===== EVENT HANDLERS ===== */
@@ -349,7 +342,6 @@ default
         cleanupSession();
         registerSelf();
         queryState();
-        logd("Chat Commands UI ready (v1.0)");
     }
 
     on_rez(integer start_param) {
@@ -403,7 +395,6 @@ default
                 if (jsonHas(msg, ["private_chan"])) {
                     PrivateChannel = (integer)llJsonGetValue(msg, ["private_chan"]);
                 }
-                logd("State synced");
 
                 if (CurrentUser != NULL_KEY) {
                     if (MenuContext == "main") {
@@ -433,7 +424,6 @@ default
                     }
                 }
 
-                logd("Received " + (string)llGetListLength(AvailableCommands) + " commands");
                 MenuContext = "commands";
                 showCommandsMenu();
                 return;
@@ -455,7 +445,6 @@ default
                     UserAcl = (integer)llJsonGetValue(msg, ["level"]);
                     AclPending = FALSE;
                     MenuContext = "main";
-                    logd("ACL received: " + (string)UserAcl + " for " + llKey2Name(avatar));
                     queryState();
                 }
                 return;
@@ -483,8 +472,6 @@ default
 
                 string timeout_session = llJsonGetValue(msg, ["session_id"]);
                 if (timeout_session != SessionId) return;
-
-                logd("Dialog timeout");
                 cleanupSession();
                 return;
             }

@@ -12,8 +12,8 @@ CHANGES:
 - Offers ACL-gated dialog interface requiring trustee level for hardcore toggles
 --------------------*/
 
-integer DEBUG = FALSE;
-integer PRODUCTION = TRUE;
+integer DEBUG = TRUE;
+integer PRODUCTION = FALSE;
 
 /* -------------------- CONSOLIDATED ABI -------------------- */
 integer KERNEL_LIFECYCLE = 500;
@@ -572,8 +572,8 @@ handle_ground_rez() {
     
     // Update listen state
     update_relay_listen_state();
-    
-    llOwnerSay("[RELAY] Collar rezzed on ground - Relay turned OFF");
+
+    llInstantMessage(llGetOwner(), "Collar rezzed on ground - Relay turned OFF");
 }
 
 /* -------------------- MESSAGE HANDLERS -------------------- */

@@ -12,8 +12,8 @@ CHANGES:
 - Improved target validation and timer lifecycle management for UI messages
 --------------------*/
 
-integer DEBUG = FALSE;
-integer PRODUCTION = TRUE;  // Set FALSE for development
+integer DEBUG = TRUE;
+integer PRODUCTION = FALSE;  // Set FALSE for development
 
 /* -------------------- CONSOLIDATED ABI -------------------- */
 integer KERNEL_LIFECYCLE = 500;

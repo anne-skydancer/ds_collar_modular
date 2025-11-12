@@ -12,8 +12,8 @@ CHANGES:
 - Offers ACL-gated dialog interface requiring trustee level for hardcore toggles
 --------------------*/
 
-integer DEBUG = FALSE;
-integer PRODUCTION = TRUE;
+integer DEBUG = TRUE;
+integer PRODUCTION = FALSE;
 
 /* -------------------- CONSOLIDATED ABI -------------------- */
 integer KERNEL_LIFECYCLE = 500;

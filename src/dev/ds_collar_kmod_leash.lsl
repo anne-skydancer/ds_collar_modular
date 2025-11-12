@@ -12,8 +12,8 @@ CHANGES:
 - Improved holder detection, offsim handling, and auto-reclip resilience
 --------------------*/
 
-integer DEBUG = FALSE;
-integer PRODUCTION = TRUE;  // Set FALSE for development
+integer DEBUG = TRUE;
+integer PRODUCTION = FALSE;  // Set FALSE for development
 integer AUTH_BUS = 700;
 integer SETTINGS_BUS = 800;
 integer UI_BUS = 900;

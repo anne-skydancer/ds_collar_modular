@@ -12,18 +12,13 @@ CHANGES:
 - Provides single-responsibility rendering for easier maintenance
 --------------------*/
 
-integer DEBUG = FALSE;
-integer PRODUCTION = TRUE;  // Set FALSE for development builds
 
 /* -------------------- CONSOLIDATED ABI -------------------- */
 integer UI_BUS = 900;
 integer DIALOG_BUS = 950;
 
 /* -------------------- HELPERS -------------------- */
-integer logd(string msg) {
-    if (DEBUG && !PRODUCTION) llOwnerSay("[MENU] " + msg);
-    return FALSE;
-}
+
 
 integer json_has(string j, list path) {
     return (llJsonGetValue(j, path) != JSON_INVALID);
@@ -43,8 +38,6 @@ integer validate_required_fields(string json_str, list field_names, string funct
     while (i < len) {
         string field = llList2String(field_names, i);
         if (!json_has(json_str, [field])) {
-            if (DEBUG && !PRODUCTION) {
-                logd("ERROR: " + function_name + " missing '" + field + "' field");
             }
             return FALSE;
         }
@@ -197,7 +190,6 @@ render_menu(string msg) {
 
     llMessageLinked(LINK_SET, DIALOG_BUS, dialog_msg, NULL_KEY);
 
-    logd("Rendered " + menu_type + " menu for " + llKey2Name(user) + " (page " +
          (string)(current_page + 1) + "/" + (string)total_pages + ", " +
          (string)llGetListLength(button_data_list) + " buttons)");
 }
@@ -211,7 +203,6 @@ show_message(string msg) {
     string message_text = llJsonGetValue(msg, ["message"]);
 
     llRegionSayTo(user, 0, message_text);
-    logd("Showed message to " + llKey2Name(user) + ": " + message_text);
 }
 
 /* -------------------- EVENTS -------------------- */
@@ -219,7 +210,6 @@ show_message(string msg) {
 default
 {
     state_entry() {
-        logd("Menu rendering module started (v1.0 - UI/Kmod Split)");
     }
 
     link_message(integer sender_num, integer num, string msg, key id) {

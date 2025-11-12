@@ -14,7 +14,6 @@ KNOWN ISSUES: None known
 TODO: None pending
 --------------------*/
 
-integer DEBUG = TRUE;
 
 /* -------------------- EXTERNAL PROTOCOL CHANNELS -------------------- */
 integer COLLAR_ACL_QUERY_CHAN = -8675309;
@@ -67,10 +66,6 @@ key DisplayNameQueryId = NULL_KEY;
 
 /* -------------------- HELPERS -------------------- */
 
-integer logd(string msg) {
-    if (DEBUG) llOwnerSay("[HUD] " + msg);
-    return FALSE;
-}
 
 integer json_has(string json_str, list path) {
     return (llJsonGetValue(json_str, path) != JSON_INVALID);
@@ -115,7 +110,6 @@ add_detected_collar(key avatar_key, key collar_key, string avatar_name) {
     }
     
     DetectedCollars += [avatar_key, collar_key, avatar_name];
-    logd("Detected collar on " + avatar_name);
 }
 
 broadcast_collar_scan(string context) {
@@ -140,8 +134,6 @@ broadcast_collar_scan(string context) {
     ScanningForCollars = TRUE;
     DetectedCollars = [];
     llSetTimerEvent(COLLAR_SCAN_TIME);
-
-    logd("Broadcasting collar scan for " + context + " menu...");
     llOwnerSay("Scanning for nearby collars...");
 }
 
@@ -223,8 +215,6 @@ request_acl_from_collar(key avatar_key) {
     TargetAvatarKey = avatar_key;
     TargetAvatarName = llKey2Name(avatar_key);
     llSetTimerEvent(QUERY_TIMEOUT_SEC);
-    
-    logd("ACL query sent for " + TargetAvatarName);
 }
 
 /* -------------------- MENU TRIGGERING -------------------- */
@@ -235,7 +225,6 @@ trigger_collar_menu() {
         return;
     }
 
-    logd("Triggering collar menu with context: '" + RequestedContext + "' (SOS_CONTEXT='" + SOS_CONTEXT + "', match=" + (string)(RequestedContext == SOS_CONTEXT) + ")");
 
     // Request display name via dataserver
     DisplayNameQueryId = llRequestAgentData(TargetAvatarKey, DATA_NAME);
@@ -281,7 +270,6 @@ default {
         HudWearer = llGetOwner();
         TouchStartTime = 0.0;
         RequestedContext = "";
-        logd("Control HUD initialized with long-touch support. Owner: " + llKey2Name(HudWearer));
         llOwnerSay("Control HUD ready. Touch to scan for collars, long-touch for emergency access.");
     }
     
@@ -317,7 +305,6 @@ default {
 
         // Record touch start time
         TouchStartTime = llGetTime();
-        logd("Touch start recorded");
     }
 
     touch_end(integer num_detected) {
@@ -330,7 +317,6 @@ default {
         float duration = llGetTime() - TouchStartTime;
         TouchStartTime = 0.0;
 
-        logd("Touch duration: " + (string)duration + "s");
 
         cleanup_session();
 
@@ -338,10 +324,8 @@ default {
         string context = ROOT_CONTEXT;
         if (duration >= LONG_TOUCH_THRESHOLD) {
             context = SOS_CONTEXT;
-            logd("Long touch detected - requesting SOS menu");
         }
         else {
-            logd("Short touch detected - requesting root menu");
         }
 
         broadcast_collar_scan(context);
@@ -425,7 +409,6 @@ default {
                 AclLevel = (integer)llJsonGetValue(message, ["level"]);
             }
             
-            logd("ACL result: level=" + (string)AclLevel);
             process_acl_result(AclLevel);
             
             if (CollarListenHandle != 0) {
@@ -443,7 +426,6 @@ default {
 
             // Validate that session state is still valid
             if (TargetCollarKey == NULL_KEY) {
-                logd("Session cleared before dataserver response");
                 return;
             }
 
@@ -456,8 +438,6 @@ default {
                 "avatar", (string)HudWearer,
                 "context", RequestedContext
             ]);
-
-            logd("Sending menu request: " + json_msg);
             llRegionSayTo(TargetCollarKey, COLLAR_MENU_CHAN, json_msg);
 
             cleanup_session();
@@ -466,23 +446,19 @@ default {
 
     timer() {
         if (ScanningForCollars) {
-            logd("Collar scan complete");
             process_scan_results();
         }
         else {
             if (AclPending) {
-                logd("ACL query timeout");
                 llOwnerSay("Connection failed: No response from collar.");
                 cleanup_session();
             }
             else {
                 if (DisplayNamePending) {
-                    logd("Display name query timeout");
                     llOwnerSay("Connection failed: Unable to retrieve name.");
                     cleanup_session();
                 }
                 else {
-                    logd("Dialog timeout");
                     llOwnerSay("Selection dialog timed out.");
                     cleanup_session();
                 }

@@ -59,8 +59,8 @@
    - chatcmd_private_chan: Private channel number (always active)
    =============================================================== */
 
-integer DEBUG = FALSE;
-integer PRODUCTION = TRUE;
+integer DEBUG = TRUE;
+integer PRODUCTION = FALSE;
 
 integer AUTH_BUS = 700;
 integer SETTINGS_BUS = 800;

@@ -13,8 +13,6 @@ CHANGES:
 - Truncation warnings added for numbered button lists
 --------------------*/
 
-integer DEBUG = FALSE;
-integer PRODUCTION = TRUE;  // Set FALSE for development builds
 
 /* -------------------- CONSOLIDATED ABI -------------------- */
 integer KERNEL_LIFECYCLE = 500;
@@ -46,11 +44,7 @@ integer BUTTON_B_LABEL = 2;
 list ButtonConfigs = [];
 
 /* -------------------- HELPERS -------------------- */
-integer logd(string msg) {
-    // SECURITY FIX: Production mode guard
-    if (DEBUG && !PRODUCTION) llOwnerSay("[DIALOGS] " + msg);
-    return FALSE;
-}
+
 
 integer json_has(string j, list path) {
     return (llJsonGetValue(j, path) != JSON_INVALID);
@@ -68,8 +62,6 @@ integer validate_required_fields(string json_str, list field_names, string funct
     while (i < len) {
         string field = llList2String(field_names, i);
         if (!json_has(json_str, [field])) {
-            if (DEBUG && !PRODUCTION) {
-                logd("ERROR: " + function_name + " missing '" + field + "' field");
             }
             return FALSE;
         }
@@ -105,7 +97,6 @@ close_session_at_idx(integer idx) {
     }
     
     string session_id = llList2String(Sessions, idx + SESSION_ID);
-    logd("Closed session: " + session_id);
     
     Sessions = llDeleteSubList(Sessions, idx, idx + SESSION_STRIDE - 1);
 }
@@ -135,8 +126,6 @@ prune_expired_sessions() {
                 "user", (string)user
             ]);
             llMessageLinked(LINK_SET, DIALOG_BUS, timeout_msg, NULL_KEY);
-            
-            logd("Session timeout: " + session_id);
             
             close_session_at_idx(i);
             // Don't increment i, list shifted
@@ -177,7 +166,6 @@ integer get_next_channel() {
     }
     
     // Fallback: use random channel (collision still possible but very unlikely)
-    logd("WARNING: Could not find unused channel after 100 attempts, using random");
     return CHANNEL_BASE - (integer)llFrand(1000000);
 }
 
@@ -201,12 +189,10 @@ register_button_config(string context, string button_a, string button_b) {
     if (idx != -1) {
         // Update existing config
         ButtonConfigs = llListReplaceList(ButtonConfigs, [context, button_a, button_b], idx, idx + BUTTON_CONFIG_STRIDE - 1);
-        logd("Updated button config: " + context + " [" + button_a + "/" + button_b + "]");
     }
     else {
         // Add new config
         ButtonConfigs += [context, button_a, button_b];
-        logd("Registered button config: " + context + " [" + button_a + "/" + button_b + "]");
     }
 }
 
@@ -311,7 +297,6 @@ handle_dialog_open(string msg) {
         }
     }
     else {
-        logd("ERROR: dialog_open missing buttons or button_data");
         return;
     }
 
@@ -342,7 +327,6 @@ handle_dialog_open(string msg) {
     if (llGetListLength(Sessions) / SESSION_STRIDE >= SESSION_MAX) {
         // Close oldest session
         close_session_at_idx(0);
-        logd("Session limit reached, closed oldest");
     }
 
     // Get channel and create listen
@@ -361,7 +345,6 @@ handle_dialog_open(string msg) {
     // Show dialog
     llDialog(user, title + "\n\n" + message, buttons, channel);
 
-    logd("Opened dialog: " + session_id + " for " + llKey2Name(user) + " on channel " + (string)channel);
 }
 
 handle_numbered_list_dialog(string msg, string session_id, key user) {
@@ -390,7 +373,6 @@ handle_numbered_list_dialog(string msg, string session_id, key user) {
     integer original_count = item_count;
     
     if (item_count == 0) {
-        logd("ERROR: numbered_list has no items");
         return;
     }
     
@@ -402,7 +384,6 @@ handle_numbered_list_dialog(string msg, string session_id, key user) {
     if (item_count > max_items) {
         // SECURITY FIX: Warn about truncation
         llOwnerSay("WARNING: Item list truncated to " + (string)max_items + " items (had " + (string)original_count + ")");
-        logd("WARNING: Truncated numbered list (" + (string)original_count + " -> " + (string)max_items + ")");
         item_count = max_items;
     }
     
@@ -423,7 +404,6 @@ handle_numbered_list_dialog(string msg, string session_id, key user) {
     // Enforce session limit
     if (llGetListLength(Sessions) / SESSION_STRIDE >= SESSION_MAX) {
         close_session_at_idx(0);
-        logd("Session limit reached, closed oldest");
     }
     
     // Get channel and create listen
@@ -450,7 +430,6 @@ handle_numbered_list_dialog(string msg, string session_id, key user) {
     // Show dialog
     llDialog(user, title + "\n\n" + body, buttons, channel);
 
-    logd("Opened numbered list: " + session_id + " (" + (string)item_count + " items)");
 }
 
 handle_dialog_close(string msg) {
@@ -468,8 +447,6 @@ default
         Sessions = [];
         NextChannelOffset = 1;
         ButtonConfigs = [];
-
-        logd("Dialog manager started");
 
         // Start timer for session cleanup
         llSetTimerEvent(5.0);
@@ -520,7 +497,6 @@ default
                     ]);
                     llMessageLinked(LINK_SET, DIALOG_BUS, response, NULL_KEY);
 
-                    logd("Button click: " + message + " (context: " + clicked_context + ") from " + llKey2Name(id));
 
                     // Close session after response
                     close_session_at_idx(i);
@@ -561,7 +537,6 @@ default
                 register_button_config(context, button_a, button_b);
             }
             else {
-                logd("ERROR: register_button_config missing required fields");
             }
         }
     }
