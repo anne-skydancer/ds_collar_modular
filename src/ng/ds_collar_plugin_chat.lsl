@@ -27,6 +27,9 @@
    =============================================================== */
 
 integer DEBUG = TRUE;
+
+string SCRIPT_ID = "plugin_chat";
+
 integer KERNEL_LIFECYCLE = 500;
 integer AUTH_BUS = 700;
 integer UI_BUS = 900;
@@ -79,6 +82,33 @@ integer calculateTotalPages() {
     integer total_pages = (total_cmds + COMMANDS_PER_PAGE - 1) / COMMANDS_PER_PAGE;
     if (total_pages == 0) total_pages = 1;
     return total_pages;
+}
+
+/* -------------------- MESSAGE ROUTING -------------------- */
+
+integer is_message_for_me(string msg) {
+    if (llGetSubString(msg, 0, 0) != "{") return FALSE;
+    
+    integer to_pos = llSubStringIndex(msg, "\"to\"");
+    if (to_pos == -1) return TRUE;  // No routing = broadcast
+    
+    string header = llGetSubString(msg, 0, to_pos + 100);
+    
+    if (llSubStringIndex(header, "\"*\"") != -1) return TRUE;
+    if (llSubStringIndex(header, SCRIPT_ID) != -1) return TRUE;
+    if (llSubStringIndex(header, "\"plugin:*\"") != -1) return TRUE;
+    if (llSubStringIndex(header, "plugin:" + PLUGIN_CONTEXT) != -1) return TRUE;
+    
+    return FALSE;
+}
+
+string create_routed_message(string to_id, list fields) {
+    list routed = ["from", SCRIPT_ID, "to", to_id] + fields;
+    return llList2Json(JSON_OBJECT, routed);
+}
+
+string create_broadcast(list fields) {
+    return create_routed_message("*", fields);
 }
 
 /* ===== MENU DISPLAY ===== */
@@ -366,6 +396,9 @@ default
     }
 
     link_message(integer sender, integer num, string msg, key id) {
+        // Early filter: ignore messages not intended for us
+        if (!is_message_for_me(msg)) return;
+        
         if (num == KERNEL_LIFECYCLE) {
             if (!jsonHas(msg, ["type"])) return;
             string msg_type = llJsonGetValue(msg, ["type"]);

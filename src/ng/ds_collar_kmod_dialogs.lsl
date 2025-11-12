@@ -22,6 +22,8 @@ CHANGES:
 integer DEBUG = TRUE;
 integer PRODUCTION = FALSE;  // Set FALSE for development builds
 
+string SCRIPT_ID = "kmod_dialogs";
+
 /* -------------------- CONSOLIDATED ABI -------------------- */
 integer KERNEL_LIFECYCLE = 500;
 integer DIALOG_BUS = 950;
@@ -91,6 +93,32 @@ integer validate_required_fields(string json_str, list field_names, string funct
 
 integer now() {
     return llGetUnixTime();
+}
+
+/* -------------------- MESSAGE ROUTING -------------------- */
+
+integer is_message_for_me(string msg) {
+    if (llGetSubString(msg, 0, 0) != "{") return FALSE;
+    
+    integer to_pos = llSubStringIndex(msg, "\"to\"");
+    if (to_pos == -1) return TRUE;  // No routing = broadcast
+    
+    string header = llGetSubString(msg, 0, to_pos + 100);
+    
+    if (llSubStringIndex(header, "\"*\"") != -1) return TRUE;
+    if (llSubStringIndex(header, SCRIPT_ID) != -1) return TRUE;
+    if (llSubStringIndex(header, "\"kmod:*\"") != -1) return TRUE;
+    
+    return FALSE;
+}
+
+string create_routed_message(string to_id, list fields) {
+    list routed = ["from", SCRIPT_ID, "to", to_id] + fields;
+    return llList2Json(JSON_OBJECT, routed);
+}
+
+string create_broadcast(list fields) {
+    return create_routed_message("*", fields);
 }
 
 /* -------------------- SESSION MANAGEMENT -------------------- */
@@ -179,7 +207,7 @@ prune_expired_sessions() {
                 reason = "idle";
             }
             
-            string timeout_msg = llList2Json(JSON_OBJECT, [
+            string timeout_msg = create_broadcast([
                 "type", "dialog_timeout",
                 "session_id", session_id,
                 "user", (string)user,
@@ -591,7 +619,7 @@ default
                     @found_context;
 
                     // Send response message with context
-                    string response = llList2Json(JSON_OBJECT, [
+                    string response = create_broadcast([
                         "type", "dialog_response",
                         "session_id", session_id,
                         "user", (string)id,
@@ -613,6 +641,9 @@ default
     }
     
     link_message(integer sender, integer num, string msg, key id) {
+        // Early filter: ignore messages not for us
+        if (!is_message_for_me(msg)) return;
+        
         string msg_type = get_msg_type(msg);
         if (msg_type == "") return;
 

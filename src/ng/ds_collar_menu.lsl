@@ -14,6 +14,7 @@ CHANGES:
 
 integer DEBUG = TRUE;
 integer PRODUCTION = FALSE;  // Set FALSE for development builds
+string SCRIPT_ID = "menu";
 
 /* -------------------- CONSOLIDATED ABI -------------------- */
 integer UI_BUS = 900;
@@ -51,6 +52,27 @@ integer validate_required_fields(string json_str, list field_names, string funct
         i += 1;
     }
     return TRUE;
+}
+
+/* -------------------- MESSAGE ROUTING -------------------- */
+
+integer is_message_for_me(string msg) {
+    if (llGetSubString(msg, 0, 0) != "{") return FALSE;
+    integer to_pos = llSubStringIndex(msg, "\"to\"");
+    if (to_pos == -1) return TRUE;
+    string header = llGetSubString(msg, 0, to_pos + 100);
+    if (llSubStringIndex(header, "\"*\"") != -1) return TRUE;
+    if (llSubStringIndex(header, SCRIPT_ID) != -1) return TRUE;
+    return FALSE;
+}
+
+string create_routed_message(string to_id, list fields) {
+    list routed = ["from", SCRIPT_ID, "to", to_id] + fields;
+    return llList2Json(JSON_OBJECT, routed);
+}
+
+string create_broadcast(list fields) {
+    return create_routed_message("*", fields);
 }
 
 /* -------------------- BUTTON LAYOUT -------------------- */
@@ -223,6 +245,8 @@ default
     }
 
     link_message(integer sender_num, integer num, string msg, key id) {
+        if (!is_message_for_me(msg)) return;
+        
         string msg_type = get_msg_type(msg);
         if (msg_type == "") return;
 

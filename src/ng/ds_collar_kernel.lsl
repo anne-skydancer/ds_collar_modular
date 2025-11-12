@@ -15,6 +15,9 @@ CHANGES:
 integer DEBUG = TRUE;
 integer PRODUCTION = FALSE;  // Set FALSE for development builds
 
+/* -------------------- SCRIPT IDENTITY -------------------- */
+string SCRIPT_ID = "ds_collar_kernel";
+
 /* -------------------- CONSOLIDATED ABI -------------------- */
 integer KERNEL_LIFECYCLE = 500;
 integer AUTH_BUS = 700;
@@ -73,6 +76,32 @@ string get_msg_type(string msg) {
     return llJsonGetValue(msg, ["type"]);
 }
 
+/* -------------------- MESSAGE ROUTING -------------------- */
+
+// Fast check if message is intended for this script
+integer is_message_for_me(string msg) {
+    if (llGetSubString(msg, 0, 0) != "{") return FALSE;
+    
+    integer to_pos = llSubStringIndex(msg, "\"to\"");
+    if (to_pos == -1) return TRUE;  // No routing = broadcast
+    
+    string header = llGetSubString(msg, 0, to_pos + 100);
+    
+    if (llSubStringIndex(header, "\"*\"") != -1) return TRUE;
+    if (llSubStringIndex(header, SCRIPT_ID) != -1) return TRUE;
+    if (llSubStringIndex(header, "\"kmod:*\"") != -1) return TRUE;
+    
+    return FALSE;
+}
+
+string create_routed_message(string to_id, list fields) {
+    list routed = ["from", SCRIPT_ID, "to", to_id] + fields;
+    return llList2Json(JSON_OBJECT, routed);
+}
+
+string create_broadcast(list fields) {
+    return create_routed_message("*", fields);
+}
 
 // MEMORY OPTIMIZATION: Compact field validation helper
 integer validate_required_fields(string json_str, list field_names, string function_name) {
@@ -423,7 +452,7 @@ integer discover_plugins() {
 
 // Request all plugins to register (no time window - event-driven)
 broadcast_register_now() {
-    string msg = llList2Json(JSON_OBJECT, [
+    string msg = create_broadcast([
         "type", "register_now"
     ]);
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, msg, NULL_KEY);
@@ -433,7 +462,7 @@ broadcast_register_now() {
 
 // Heartbeat ping to all plugins
 broadcast_ping() {
-    string msg = llList2Json(JSON_OBJECT, [
+    string msg = create_broadcast([
         "type", "ping"
     ]);
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, msg, NULL_KEY);
@@ -471,7 +500,7 @@ broadcast_plugin_list() {
     plugins_array += "]";
 
     // Build final message (no version - UUID tracking handles change detection)
-    string msg = "{\"type\":\"plugin_list\",\"plugins\":" + plugins_array + "}";
+    string msg = "{\"from\":\"" + SCRIPT_ID + "\",\"to\":\"*\",\"type\":\"plugin_list\",\"plugins\":" + plugins_array + "}";
 
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, msg, NULL_KEY);
     logd("Broadcast: plugin_list (" + (string)llGetListLength(plugins) + " plugins)");
@@ -541,17 +570,10 @@ route_field(string msg, string context, string field_name, string route_type, in
 
     string field_value = llJsonGetValue(msg, [field_name]);
 
-    // Build base message with proper encoding for type and context
-    string routed_msg = llList2Json(JSON_OBJECT, [
-        "type", route_type,
-        "context", context
-    ]);
-
-    // Manually splice in field value to preserve JSON structure (arrays/objects)
-    // llList2Json would double-encode the field_value, breaking nested JSON
+    // Build routed message with from/to fields and preserve JSON structure
+    // Manually splice field value to prevent double-encoding nested JSON
     // SAFETY: field_name validated above to contain only safe characters
-    // Remove closing brace, add field, then close
-    routed_msg = llGetSubString(routed_msg, 0, -2) + ",\"" + field_name + "\":" + field_value + "}";
+    string routed_msg = "{\"from\":\"" + SCRIPT_ID + "\",\"to\":\"*\",\"type\":\"" + route_type + "\",\"context\":\"" + context + "\",\"" + field_name + "\":" + field_value + "}";
 
     llMessageLinked(LINK_SET, channel, routed_msg, NULL_KEY);
     logd("Routed " + field_name + " to channel " + (string)channel + ": " + context);
@@ -645,7 +667,7 @@ handle_acl_registry_request() {
         integer min_acl = llList2Integer(PluginRegistry, i + REG_MIN_ACL);
 
         // Send register_acl message for each plugin
-        string auth_msg = llList2Json(JSON_OBJECT, [
+        string auth_msg = create_routed_message("kmod_auth", [
             "type", "register_acl",
             "context", context,
             "min_acl", min_acl
@@ -756,6 +778,9 @@ default
     }
     
     link_message(integer sender, integer num, string msg, key id) {
+        // Early filter: ignore messages not for us
+        if (!is_message_for_me(msg)) return;
+        
         string msg_type = get_msg_type(msg);
         if (msg_type == "") return;
 

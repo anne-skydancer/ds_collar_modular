@@ -15,6 +15,7 @@ TODO: None pending
 --------------------*/
 
 integer DEBUG = TRUE;
+string SCRIPT_ID = "control_hud";
 
 /* -------------------- EXTERNAL PROTOCOL CHANNELS -------------------- */
 integer COLLAR_ACL_QUERY_CHAN = -8675309;
@@ -74,6 +75,27 @@ integer logd(string msg) {
 
 integer json_has(string json_str, list path) {
     return (llJsonGetValue(json_str, path) != JSON_INVALID);
+}
+
+/* -------------------- MESSAGE ROUTING -------------------- */
+
+integer is_message_for_me(string msg) {
+    if (llGetSubString(msg, 0, 0) != "{") return FALSE;
+    integer to_pos = llSubStringIndex(msg, "\"to\"");
+    if (to_pos == -1) return TRUE;
+    string header = llGetSubString(msg, 0, to_pos + 100);
+    if (llSubStringIndex(header, "\"*\"") != -1) return TRUE;
+    if (llSubStringIndex(header, SCRIPT_ID) != -1) return TRUE;
+    return FALSE;
+}
+
+string create_routed_message(string to_id, list fields) {
+    list routed = ["from", SCRIPT_ID, "to", to_id] + fields;
+    return llList2Json(JSON_OBJECT, routed);
+}
+
+string create_broadcast(list fields) {
+    return create_routed_message("*", fields);
 }
 
 /* -------------------- SESSION MANAGEMENT -------------------- */

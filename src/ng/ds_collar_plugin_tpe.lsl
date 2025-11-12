@@ -15,6 +15,7 @@ CHANGES:
 
 integer DEBUG = TRUE;
 integer PRODUCTION = FALSE;
+string SCRIPT_ID = "plugin_tpe";
 
 /* -------------------- CONSOLIDATED ABI -------------------- */
 integer KERNEL_LIFECYCLE = 500;
@@ -69,6 +70,28 @@ integer is_json_arr(string j) {
 
 string gen_session() {
     return (string)llGetKey() + "_" + (string)llGetUnixTime();
+}
+
+/* -------------------- MESSAGE ROUTING -------------------- */
+
+integer is_message_for_me(string msg) {
+    if (llGetSubString(msg, 0, 0) != "{") return FALSE;
+    integer to_pos = llSubStringIndex(msg, "\"to\"");
+    if (to_pos == -1) return TRUE;
+    string header = llGetSubString(msg, 0, to_pos + 100);
+    if (llSubStringIndex(header, "\"*\"") != -1) return TRUE;
+    if (llSubStringIndex(header, SCRIPT_ID) != -1) return TRUE;
+    if (llSubStringIndex(header, "\"plugin:*\"") != -1) return TRUE;
+    return FALSE;
+}
+
+string create_routed_message(string to_id, list fields) {
+    list routed = ["from", SCRIPT_ID, "to", to_id] + fields;
+    return llList2Json(JSON_OBJECT, routed);
+}
+
+string create_broadcast(list fields) {
+    return create_routed_message("*", fields);
 }
 
 cleanup_session() {
@@ -273,23 +296,24 @@ handle_tpe_click(key user, integer acl_level) {
 /* -------------------- SETTINGS CONSUMPTION -------------------- */
 
 apply_settings_sync(string kv_json) {
-    if (json_has(kv_json, [KEY_TPE_MODE])) {
-        TpeModeEnabled = (integer)llJsonGetValue(kv_json, [KEY_TPE_MODE]);
+    // PHASE 2: Read directly from linkset data
+    string val = llLinksetDataRead(KEY_TPE_MODE);
+    if (val != "") {
+        TpeModeEnabled = (integer)val;
         logd("TPE mode from sync: " + (string)TpeModeEnabled);
     }
 }
 
 apply_settings_delta(string msg) {
-    if (!json_has(msg, ["op"])) return;
+    // PHASE 2: Simplified - just re-read affected key from linkset data
+    if (!json_has(msg, ["key"])) return;
     
-    string op = llJsonGetValue(msg, ["op"]);
+    string key_name = llJsonGetValue(msg, ["key"]);
     
-    if (op == "set") {
-        if (!json_has(msg, ["changes"])) return;
-        string changes = llJsonGetValue(msg, ["changes"]);
-        
-        if (json_has(changes, [KEY_TPE_MODE])) {
-            TpeModeEnabled = (integer)llJsonGetValue(changes, [KEY_TPE_MODE]);
+    if (key_name == KEY_TPE_MODE) {
+        string val = llLinksetDataRead(KEY_TPE_MODE);
+        if (val != "") {
+            TpeModeEnabled = (integer)val;
             logd("TPE mode from delta: " + (string)TpeModeEnabled);
         }
     }
@@ -324,6 +348,8 @@ default
     }
     
     link_message(integer sender_num, integer num, string str, key id) {
+        if (!is_message_for_me(str)) return;
+        
         // Skip logging kernel lifecycle messages (too noisy)
         if (num != KERNEL_LIFECYCLE) {
             logd("link_message: num=" + (string)num + " str=" + llGetSubString(str, 0, 100));

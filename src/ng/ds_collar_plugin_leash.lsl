@@ -15,6 +15,7 @@ CHANGES:
 
 integer DEBUG = TRUE;
 integer PRODUCTION = FALSE;
+string SCRIPT_ID = "plugin_leash";
 
 /* -------------------- CONSOLIDATED ABI -------------------- */
 integer KERNEL_LIFECYCLE = 500;
@@ -107,6 +108,28 @@ string generate_session_id() {
 
 integer inAllowedList(integer level, list allowed) {
     return (llListFindList(allowed, [level]) != -1);
+}
+
+/* -------------------- MESSAGE ROUTING -------------------- */
+
+integer is_message_for_me(string msg) {
+    if (llGetSubString(msg, 0, 0) != "{") return FALSE;
+    integer to_pos = llSubStringIndex(msg, "\"to\"");
+    if (to_pos == -1) return TRUE;
+    string header = llGetSubString(msg, 0, to_pos + 100);
+    if (llSubStringIndex(header, "\"*\"") != -1) return TRUE;
+    if (llSubStringIndex(header, SCRIPT_ID) != -1) return TRUE;
+    if (llSubStringIndex(header, "\"plugin:*\"") != -1) return TRUE;
+    return FALSE;
+}
+
+string create_routed_message(string to_id, list fields) {
+    list routed = ["from", SCRIPT_ID, "to", to_id] + fields;
+    return llList2Json(JSON_OBJECT, routed);
+}
+
+string create_broadcast(list fields) {
+    return create_routed_message("*", fields);
 }
 
 /* -------------------- UNIFIED MENU DISPLAY -------------------- */
@@ -917,6 +940,8 @@ default
     }
 
     link_message(integer sender, integer num, string msg, key id) {
+        if (!is_message_for_me(msg)) return;
+        
         if (num == KERNEL_LIFECYCLE) {
             if (!json_has(msg, ["type"])) return;
             string msg_type = llJsonGetValue(msg, ["type"]);

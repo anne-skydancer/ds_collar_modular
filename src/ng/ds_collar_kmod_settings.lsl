@@ -15,6 +15,8 @@ CHANGES:
 integer DEBUG = TRUE;
 integer PRODUCTION = FALSE;  // Set FALSE for development builds
 
+string SCRIPT_ID = "kmod_settings";
+
 /* -------------------- CONSOLIDATED ABI -------------------- */
 integer SETTINGS_BUS = 800;
 
@@ -44,7 +46,7 @@ string SEPARATOR = "=";
 
 /* -------------------- STATE -------------------- */
 key LastOwner = NULL_KEY;
-string KvJson = "{}";
+// PHASE 2: Removed KvJson - now using linkset data directly
 
 key NotecardQuery = NULL_KEY;
 integer NotecardLine = 0;
@@ -52,6 +54,8 @@ integer IsLoadingNotecard = FALSE;
 key NotecardKey = NULL_KEY;  // Track settings notecard changes
 
 integer MaxListLen = 64;
+integer LinksetDataUsed = 0;  // Track linkset data usage
+integer LINKSET_DATA_LIMIT = 131072;  // 128KB limit
 
 /* -------------------- HELPERS -------------------- */
 integer logd(string msg) {
@@ -104,6 +108,32 @@ list list_remove_all(list source_list, string s) {
     return source_list;
 }
 
+/* -------------------- MESSAGE ROUTING -------------------- */
+
+integer is_message_for_me(string msg) {
+    if (llGetSubString(msg, 0, 0) != "{") return FALSE;
+    
+    integer to_pos = llSubStringIndex(msg, "\"to\"");
+    if (to_pos == -1) return TRUE;  // No routing = broadcast
+    
+    string header = llGetSubString(msg, 0, to_pos + 100);
+    
+    if (llSubStringIndex(header, "\"*\"") != -1) return TRUE;
+    if (llSubStringIndex(header, SCRIPT_ID) != -1) return TRUE;
+    if (llSubStringIndex(header, "\"kmod:*\"") != -1) return TRUE;
+    
+    return FALSE;
+}
+
+string create_routed_message(string to_id, list fields) {
+    list routed = ["from", SCRIPT_ID, "to", to_id] + fields;
+    return llList2Json(JSON_OBJECT, routed);
+}
+
+string create_broadcast(list fields) {
+    return create_routed_message("*", fields);
+}
+
 list list_unique(list source_list) {
     list unique_list = [];
     integer i = 0;
@@ -118,11 +148,11 @@ list list_unique(list source_list) {
     return unique_list;
 }
 
-/* -------------------- KV OPERATIONS -------------------- */
+/* -------------------- KV OPERATIONS (PHASE 2: Linkset Data) -------------------- */
 
 string kv_get(string key_name) {
-    string val = llJsonGetValue(KvJson, [key_name]);
-    if (val == JSON_INVALID) return "";
+    string val = llLinksetDataRead(key_name);
+    if (val == "") return "";
     return val;
 }
 
@@ -130,8 +160,14 @@ integer kv_set_scalar(string key_name, string value) {
     string old_val = kv_get(key_name);
     if (old_val == value) return FALSE;
     
-    KvJson = llJsonSetValue(KvJson, [key_name], value);
+    integer result = llLinksetDataWrite(key_name, value);
+    if (result == 0) {
+        logd("ERROR: Failed to write " + key_name + " (linkset data full?)");
+        return FALSE;
+    }
+    
     logd("SET " + key_name + " = " + value);
+    LinksetDataUsed = llLinksetDataCountKeys();
     return TRUE;
 }
 
@@ -140,8 +176,14 @@ integer kv_set_list(string key_name, list values) {
     string old_arr = kv_get(key_name);
     if (old_arr == new_arr) return FALSE;
     
-    KvJson = llJsonSetValue(KvJson, [key_name], new_arr);
+    integer result = llLinksetDataWrite(key_name, new_arr);
+    if (result == 0) {
+        logd("ERROR: Failed to write " + key_name + " (linkset data full?)");
+        return FALSE;
+    }
+    
     logd("SET " + key_name + " count=" + (string)llGetListLength(values));
+    LinksetDataUsed = llLinksetDataCountKeys();
     return TRUE;
 }
 
@@ -329,24 +371,24 @@ integer apply_blacklist_add_guard(string who) {
 
 /* -------------------- BROADCASTING -------------------- */
 
+/* -------------------- PHASE 2: Lightweight Broadcast Notifications -------------------- */
+
 broadcast_full_sync() {
-    string msg = llList2Json(JSON_OBJECT, [
+    // PHASE 2: No data payload - consumers read from linkset data directly
+    string msg = create_broadcast([
         "type", "settings_sync",
-        "kv", KvJson
+        "keys", (string)llLinksetDataCountKeys()  // Just count for diagnostics
     ]);
     llMessageLinked(LINK_SET, SETTINGS_BUS, msg, NULL_KEY);
-    logd("Broadcast: full sync");
+    logd("Broadcast: settings sync notification (" + (string)llLinksetDataCountKeys() + " keys available)");
 }
 
 broadcast_delta_scalar(string key_name, string new_value) {
-    string changes = llList2Json(JSON_OBJECT, [
-        key_name, new_value
-    ]);
-    
-    string msg = llList2Json(JSON_OBJECT, [
+    // PHASE 2: No value payload - consumers read via llLinksetDataRead(key_name)
+    string msg = create_broadcast([
         "type", "settings_delta",
         "op", "set",
-        "changes", changes
+        "key", key_name
     ]);
     
     llMessageLinked(LINK_SET, SETTINGS_BUS, msg, NULL_KEY);
@@ -354,11 +396,11 @@ broadcast_delta_scalar(string key_name, string new_value) {
 }
 
 broadcast_delta_list_add(string key_name, string elem) {
-    string msg = llList2Json(JSON_OBJECT, [
+    // PHASE 2: No elem payload - consumers re-read full list from linkset data
+    string msg = create_broadcast([
         "type", "settings_delta",
         "op", "list_add",
-        "key", key_name,
-        "elem", elem
+        "key", key_name
     ]);
     
     llMessageLinked(LINK_SET, SETTINGS_BUS, msg, NULL_KEY);
@@ -366,11 +408,11 @@ broadcast_delta_list_add(string key_name, string elem) {
 }
 
 broadcast_delta_list_remove(string key_name, string elem) {
-    string msg = llList2Json(JSON_OBJECT, [
+    // PHASE 2: No elem payload - consumers re-read full list from linkset data
+    string msg = create_broadcast([
         "type", "settings_delta",
         "op", "list_remove",
-        "key", key_name,
-        "elem", elem
+        "key", key_name
     ]);
     
     llMessageLinked(LINK_SET, SETTINGS_BUS, msg, NULL_KEY);
@@ -747,6 +789,10 @@ default
     
     link_message(integer sender, integer num, string msg, key id) {
         if (num != SETTINGS_BUS) return;
+        
+        // Early filter: ignore messages not for us
+        if (!is_message_for_me(msg)) return;
+        
         string msg_type = get_msg_type(msg);
         if (msg_type == "") return;
         

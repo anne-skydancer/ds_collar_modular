@@ -15,6 +15,8 @@ CHANGES:
 integer DEBUG = TRUE;
 integer PRODUCTION = FALSE;  // Set FALSE for development builds
 
+string SCRIPT_ID = "kmod_bootstrap";
+
 /* -------------------- CONSOLIDATED ABI -------------------- */
 integer KERNEL_LIFECYCLE = 500;
 integer AUTH_BUS = 700;
@@ -102,6 +104,32 @@ integer now() {
         return 0;
     }
     return unix_time;
+}
+
+/* -------------------- MESSAGE ROUTING -------------------- */
+
+integer is_message_for_me(string msg) {
+    if (llGetSubString(msg, 0, 0) != "{") return FALSE;
+    
+    integer to_pos = llSubStringIndex(msg, "\"to\"");
+    if (to_pos == -1) return TRUE;  // No routing = broadcast
+    
+    string header = llGetSubString(msg, 0, to_pos + 100);
+    
+    if (llSubStringIndex(header, "\"*\"") != -1) return TRUE;
+    if (llSubStringIndex(header, SCRIPT_ID) != -1) return TRUE;
+    if (llSubStringIndex(header, "\"kmod:*\"") != -1) return TRUE;
+    
+    return FALSE;
+}
+
+string create_routed_message(string to_id, list fields) {
+    list routed = ["from", SCRIPT_ID, "to", to_id] + fields;
+    return llList2Json(JSON_OBJECT, routed);
+}
+
+string create_broadcast(list fields) {
+    return create_routed_message("*", fields);
 }
 
 sendIM(string msg) {
@@ -239,10 +267,7 @@ request_settings() {
 }
 
 apply_settings_sync(string msg) {
-    if (!json_has(msg, ["kv"])) return;
-    
-    string kv_json = llJsonGetValue(msg, ["kv"]);
-    
+    // PHASE 2: Read directly from linkset data
     // Reset
     MultiOwnerMode = FALSE;
     OwnerKey = NULL_KEY;
@@ -250,31 +275,24 @@ apply_settings_sync(string msg) {
     OwnerHonorific = "";
     OwnerHonorifics = [];
     
-    // Load
-    if (json_has(kv_json, [KEY_MULTI_OWNER_MODE])) {
-        MultiOwnerMode = (integer)llJsonGetValue(kv_json, [KEY_MULTI_OWNER_MODE]);
+    // Load from linkset data
+    string val_multi = llLinksetDataRead(KEY_MULTI_OWNER_MODE);
+    if (val_multi != "") MultiOwnerMode = (integer)val_multi;
+    
+    string val_owner_key = llLinksetDataRead(KEY_OWNER_KEY);
+    if (val_owner_key != "") OwnerKey = (key)val_owner_key;
+    
+    string val_owner_keys = llLinksetDataRead(KEY_OWNER_KEYS);
+    if (val_owner_keys != "" && llJsonValueType(val_owner_keys, []) == JSON_ARRAY) {
+        OwnerKeys = llJson2List(val_owner_keys);
     }
     
-    if (json_has(kv_json, [KEY_OWNER_KEY])) {
-        OwnerKey = (key)llJsonGetValue(kv_json, [KEY_OWNER_KEY]);
-    }
+    string val_owner_hon = llLinksetDataRead(KEY_OWNER_HON);
+    if (val_owner_hon != "") OwnerHonorific = val_owner_hon;
     
-    if (json_has(kv_json, [KEY_OWNER_KEYS])) {
-        string owner_keys_json = llJsonGetValue(kv_json, [KEY_OWNER_KEYS]);
-        if (llJsonValueType(owner_keys_json, []) == JSON_ARRAY) {
-            OwnerKeys = llJson2List(owner_keys_json);
-        }
-    }
-    
-    if (json_has(kv_json, [KEY_OWNER_HON])) {
-        OwnerHonorific = llJsonGetValue(kv_json, [KEY_OWNER_HON]);
-    }
-    
-    if (json_has(kv_json, [KEY_OWNER_HONS])) {
-        string owner_hons_json = llJsonGetValue(kv_json, [KEY_OWNER_HONS]);
-        if (llJsonValueType(owner_hons_json, []) == JSON_ARRAY) {
-            OwnerHonorifics = llJson2List(owner_hons_json);
-        }
+    string val_owner_hons = llLinksetDataRead(KEY_OWNER_HONS);
+    if (val_owner_hons != "" && llJsonValueType(val_owner_hons, []) == JSON_ARRAY) {
+        OwnerHonorifics = llJson2List(val_owner_hons);
     }
     
     SettingsReceived = TRUE;
@@ -610,6 +628,9 @@ default
     }
     
     link_message(integer sender, integer num, string msg, key id) {
+        // Early filter: ignore messages not for us
+        if (!is_message_for_me(msg)) return;
+        
         string msg_type = get_msg_type(msg);
         if (msg_type == "") return;
         

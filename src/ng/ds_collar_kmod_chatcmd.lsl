@@ -62,6 +62,8 @@
 integer DEBUG = TRUE;
 integer PRODUCTION = FALSE;
 
+string SCRIPT_ID = "kmod_chatcmd";
+
 integer AUTH_BUS = 700;
 integer SETTINGS_BUS = 800;
 integer UI_BUS = 900;
@@ -102,6 +104,32 @@ integer jsonHas(string j, list path) {
 string jsonGet(string j, string k, string default_val) {
     if (jsonHas(j, [k])) return llJsonGetValue(j, [k]);
     return default_val;
+}
+
+/* -------------------- MESSAGE ROUTING -------------------- */
+
+integer is_message_for_me(string msg) {
+    if (llGetSubString(msg, 0, 0) != "{") return FALSE;
+    
+    integer to_pos = llSubStringIndex(msg, "\"to\"");
+    if (to_pos == -1) return TRUE;  // No routing = broadcast
+    
+    string header = llGetSubString(msg, 0, to_pos + 100);
+    
+    if (llSubStringIndex(header, "\"*\"") != -1) return TRUE;
+    if (llSubStringIndex(header, SCRIPT_ID) != -1) return TRUE;
+    if (llSubStringIndex(header, "\"kmod:*\"") != -1) return TRUE;
+    
+    return FALSE;
+}
+
+string create_routed_message(string to_id, list fields) {
+    list routed = ["from", SCRIPT_ID, "to", to_id] + fields;
+    return llList2Json(JSON_OBJECT, routed);
+}
+
+string create_broadcast(list fields) {
+    return create_routed_message("*", fields);
 }
 
 /* ===== COMMAND REGISTRY ===== */
@@ -434,6 +462,9 @@ default
     }
 
     link_message(integer sender, integer num, string msg, key id) {
+        // Early filter: ignore messages not for us
+        if (!is_message_for_me(msg)) return;
+        
         if (!jsonHas(msg, ["type"])) return;
         string msg_type = llJsonGetValue(msg, ["type"]);
 

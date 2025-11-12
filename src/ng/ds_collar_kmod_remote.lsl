@@ -15,6 +15,8 @@ CHANGES:
 integer DEBUG = TRUE;
 integer PRODUCTION = FALSE;  // Set FALSE for development
 
+string SCRIPT_ID = "kmod_remote";
+
 /* -------------------- CONSOLIDATED ABI -------------------- */
 integer KERNEL_LIFECYCLE = 500;
 integer AUTH_BUS = 700;
@@ -74,6 +76,32 @@ integer json_has(string json_str, list path) {
 
 integer now() {
     return llGetUnixTime();
+}
+
+/* -------------------- MESSAGE ROUTING -------------------- */
+
+integer is_message_for_me(string msg) {
+    if (llGetSubString(msg, 0, 0) != "{") return FALSE;
+    
+    integer to_pos = llSubStringIndex(msg, "\"to\"");
+    if (to_pos == -1) return TRUE;  // No routing = broadcast
+    
+    string header = llGetSubString(msg, 0, to_pos + 100);
+    
+    if (llSubStringIndex(header, "\"*\"") != -1) return TRUE;
+    if (llSubStringIndex(header, SCRIPT_ID) != -1) return TRUE;
+    if (llSubStringIndex(header, "\"kmod:*\"") != -1) return TRUE;
+    
+    return FALSE;
+}
+
+string create_routed_message(string to_id, list fields) {
+    list routed = ["from", SCRIPT_ID, "to", to_id] + fields;
+    return llList2Json(JSON_OBJECT, routed);
+}
+
+string create_broadcast(list fields) {
+    return create_routed_message("*", fields);
 }
 
 /* -------------------- RATE LIMITING (per-request-type) -------------------- */
@@ -456,6 +484,9 @@ default {
     }
     
     link_message(integer sender_num, integer num, string str, key id) {
+        // Early filter: ignore messages not for us
+        if (!is_message_for_me(str)) return;
+        
         if (!json_has(str, ["type"])) return;
 
         string msg_type = llJsonGetValue(str, ["type"]);

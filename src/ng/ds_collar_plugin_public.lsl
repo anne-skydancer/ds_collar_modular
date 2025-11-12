@@ -15,6 +15,8 @@ CHANGES:
 integer DEBUG = TRUE;
 integer PRODUCTION = FALSE;
 
+string SCRIPT_ID = "plugin_public";
+
 /* -------------------- CONSOLIDATED ABI -------------------- */
 integer KERNEL_LIFECYCLE = 500;
 integer AUTH_BUS = 700;
@@ -55,6 +57,28 @@ integer json_has(string j, list path) {
     return (llJsonGetValue(j, path) != JSON_INVALID);
 }
 
+/* -------------------- MESSAGE ROUTING -------------------- */
+
+integer is_message_for_me(string msg) {
+    if (llGetSubString(msg, 0, 0) != "{") return FALSE;
+    integer to_pos = llSubStringIndex(msg, "\"to\"");
+    if (to_pos == -1) return TRUE;
+    string header = llGetSubString(msg, 0, to_pos + 100);
+    if (llSubStringIndex(header, "\"*\"") != -1) return TRUE;
+    if (llSubStringIndex(header, SCRIPT_ID) != -1) return TRUE;
+    if (llSubStringIndex(header, "\"plugin:*\"") != -1) return TRUE;
+    return FALSE;
+}
+
+string create_routed_message(string to_id, list fields) {
+    list routed = ["from", SCRIPT_ID, "to", to_id] + fields;
+    return llList2Json(JSON_OBJECT, routed);
+}
+
+string create_broadcast(list fields) {
+    return create_routed_message("*", fields);
+}
+
 /* -------------------- LIFECYCLE MANAGEMENT -------------------- */
 
 register_self() {
@@ -85,15 +109,15 @@ send_pong() {
 /* -------------------- SETTINGS CONSUMPTION -------------------- */
 
 apply_settings_sync(string msg) {
-    if (!json_has(msg, ["kv"])) return;
-    
-    string kv_json = llJsonGetValue(msg, ["kv"]);
-    
+    // PHASE 2: Read directly from linkset data
     integer old_state = PublicModeEnabled;
-    PublicModeEnabled = FALSE;
     
-    if (json_has(kv_json, [KEY_PUBLIC_MODE])) {
-        PublicModeEnabled = (integer)llJsonGetValue(kv_json, [KEY_PUBLIC_MODE]);
+    string val = llLinksetDataRead(KEY_PUBLIC_MODE);
+    if (val != "") {
+        PublicModeEnabled = (integer)val;
+    }
+    else {
+        PublicModeEnabled = FALSE;
     }
     
     logd("Settings sync: public=" + (string)PublicModeEnabled);
@@ -105,23 +129,25 @@ apply_settings_sync(string msg) {
 }
 
 apply_settings_delta(string msg) {
-    if (!json_has(msg, ["op"])) return;
+    // PHASE 2: Simplified - just re-read affected key from linkset data
+    if (!json_has(msg, ["key"])) return;
     
-    string op = llJsonGetValue(msg, ["op"]);
+    string key_name = llJsonGetValue(msg, ["key"]);
     
-    if (op == "set") {
-        if (!json_has(msg, ["changes"])) return;
-        string changes = llJsonGetValue(msg, ["changes"]);
+    if (key_name == KEY_PUBLIC_MODE) {
+        integer old_state = PublicModeEnabled;
+        string val = llLinksetDataRead(KEY_PUBLIC_MODE);
+        if (val != "") {
+            PublicModeEnabled = (integer)val;
+        }
+        else {
+            PublicModeEnabled = FALSE;
+        }
+        logd("Delta: public_mode = " + (string)PublicModeEnabled);
         
-        if (json_has(changes, [KEY_PUBLIC_MODE])) {
-            integer old_state = PublicModeEnabled;
-            PublicModeEnabled = (integer)llJsonGetValue(changes, [KEY_PUBLIC_MODE]);
-            logd("Delta: public_mode = " + (string)PublicModeEnabled);
-            
-            // If state changed, update label
-            if (old_state != PublicModeEnabled) {
-                register_self();
-            }
+        // If state changed, update label
+        if (old_state != PublicModeEnabled) {
+            register_self();
         }
     }
 }
@@ -244,6 +270,8 @@ default {
     }
     
     link_message(integer sender, integer num, string msg, key id) {
+        if (!is_message_for_me(msg)) return;
+        
         /* -------------------- KERNEL LIFECYCLE -------------------- */if (num == KERNEL_LIFECYCLE) {
             if (!json_has(msg, ["type"])) return;
             string msg_type = llJsonGetValue(msg, ["type"]);

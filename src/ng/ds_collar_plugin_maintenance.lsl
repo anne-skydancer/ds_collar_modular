@@ -15,6 +15,8 @@ CHANGES:
 integer DEBUG = TRUE;
 integer PRODUCTION = FALSE;
 
+string SCRIPT_ID = "plugin_maintenance";
+
 /* -------------------- CONSOLIDATED ABI -------------------- */
 integer KERNEL_LIFECYCLE = 500;
 integer AUTH_BUS = 700;
@@ -91,6 +93,48 @@ string generate_session_id() {
     return "maint_" + (string)llGetKey() + "_" + (string)llGetUnixTime();
 }
 
+string build_settings_cache_from_linkset_data() {
+    // PHASE 2: Build JSON object from linkset data on-demand
+    list json_fields = [];
+    integer i = 0;
+    integer len = llGetListLength(ALL_SETTINGS);
+    
+    while (i < len) {
+        string key_name = llList2String(ALL_SETTINGS, i);
+        string val = llLinksetDataRead(key_name);
+        
+        if (val != "") {
+            json_fields += [key_name, val];
+        }
+        
+        i += 1;
+    }
+    
+    return llList2Json(JSON_OBJECT, json_fields);
+}
+
+/* -------------------- MESSAGE ROUTING -------------------- */
+
+integer is_message_for_me(string msg) {
+    if (llGetSubString(msg, 0, 0) != "{") return FALSE;
+    integer to_pos = llSubStringIndex(msg, "\"to\"");
+    if (to_pos == -1) return TRUE;
+    string header = llGetSubString(msg, 0, to_pos + 100);
+    if (llSubStringIndex(header, "\"*\"") != -1) return TRUE;
+    if (llSubStringIndex(header, SCRIPT_ID) != -1) return TRUE;
+    if (llSubStringIndex(header, "\"plugin:*\"") != -1) return TRUE;
+    return FALSE;
+}
+
+string create_routed_message(string to_id, list fields) {
+    list routed = ["from", SCRIPT_ID, "to", to_id] + fields;
+    return llList2Json(JSON_OBJECT, routed);
+}
+
+string create_broadcast(list fields) {
+    return create_routed_message("*", fields);
+}
+
 /* -------------------- LIFECYCLE -------------------- */
 
 register_self() {
@@ -116,23 +160,18 @@ send_pong() {
 /* -------------------- SETTINGS MANAGEMENT -------------------- */
 
 apply_settings_sync(string msg) {
-    if (!json_has(msg, ["kv"])) return;
-    
-    string kv_json = llJsonGetValue(msg, ["kv"]);
-    CachedSettings = kv_json;
+    // PHASE 2: Build cache from linkset data on-demand
+    CachedSettings = build_settings_cache_from_linkset_data();
     SettingsReady = TRUE;
     
-    logd("Settings sync applied");
+    logd("Settings sync applied - built cache from linkset data");
 }
 
 apply_settings_delta(string msg) {
-    // Request full sync to update our display cache
-    string request = llList2Json(JSON_OBJECT, [
-        "type", "settings_get"
-    ]);
-    llMessageLinked(LINK_SET, SETTINGS_BUS, request, NULL_KEY);
+    // PHASE 2: Rebuild cache from linkset data on any change
+    CachedSettings = build_settings_cache_from_linkset_data();
     
-    logd("Settings delta received, requesting full sync");
+    logd("Settings delta received, rebuilt cache from linkset data");
 }
 
 /* -------------------- ACL MANAGEMENT -------------------- */
@@ -562,6 +601,8 @@ default {
     }
     
     link_message(integer sender, integer num, string msg, key id) {
+        if (!is_message_for_me(msg)) return;
+        
         /* -------------------- KERNEL LIFECYCLE -------------------- */if (num == KERNEL_LIFECYCLE) {
             if (!json_has(msg, ["type"])) return;
             string msg_type = llJsonGetValue(msg, ["type"]);

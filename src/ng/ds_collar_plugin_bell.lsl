@@ -14,6 +14,9 @@ CHANGES:
 
 integer DEBUG = TRUE;
 integer PRODUCTION = FALSE;
+
+string SCRIPT_ID = "plugin_bell";
+
 integer KERNEL_LIFECYCLE = 500;
 integer AUTH_BUS = 700;
 integer SETTINGS_BUS = 800;
@@ -59,6 +62,33 @@ integer json_has(string j, list path) {
 
 string generate_session_id() {
     return PLUGIN_CONTEXT + "_" + (string)llGetUnixTime();
+}
+
+/* -------------------- MESSAGE ROUTING -------------------- */
+
+integer is_message_for_me(string msg) {
+    if (llGetSubString(msg, 0, 0) != "{") return FALSE;
+    
+    integer to_pos = llSubStringIndex(msg, "\"to\"");
+    if (to_pos == -1) return TRUE;  // No routing = broadcast
+    
+    string header = llGetSubString(msg, 0, to_pos + 100);
+    
+    if (llSubStringIndex(header, "\"*\"") != -1) return TRUE;
+    if (llSubStringIndex(header, SCRIPT_ID) != -1) return TRUE;
+    if (llSubStringIndex(header, "\"plugin:*\"") != -1) return TRUE;
+    if (llSubStringIndex(header, "plugin:" + PLUGIN_CONTEXT) != -1) return TRUE;
+    
+    return FALSE;
+}
+
+string create_routed_message(string to_id, list fields) {
+    list routed = ["from", SCRIPT_ID, "to", to_id] + fields;
+    return llList2Json(JSON_OBJECT, routed);
+}
+
+string create_broadcast(list fields) {
+    return create_routed_message("*", fields);
 }
 
 set_bell_visibility(integer visible) {
@@ -268,27 +298,29 @@ cleanup_session() {
 
 /* -------------------- SETTINGS HANDLING -------------------- */
 apply_settings_sync(string msg) {
-    if (!json_has(msg, ["kv"])) return;
-    string kv_json = llJsonGetValue(msg, ["kv"]);
-    
-    if (json_has(kv_json, [KEY_BELL_VISIBLE])) {
-        integer new_visible = (integer)llJsonGetValue(kv_json, [KEY_BELL_VISIBLE]);
+    // PHASE 2: Read directly from linkset data
+    string val_visible = llLinksetDataRead(KEY_BELL_VISIBLE);
+    if (val_visible != "") {
+        integer new_visible = (integer)val_visible;
         set_bell_visibility(new_visible);
         logd("Loaded bell_visible=" + (string)new_visible);
     }
     
-    if (json_has(kv_json, [KEY_BELL_SOUND_ENABLED])) {
-        BellSoundEnabled = (integer)llJsonGetValue(kv_json, [KEY_BELL_SOUND_ENABLED]);
+    string val_sound_enabled = llLinksetDataRead(KEY_BELL_SOUND_ENABLED);
+    if (val_sound_enabled != "") {
+        BellSoundEnabled = (integer)val_sound_enabled;
         logd("Loaded bell_sound_enabled=" + (string)BellSoundEnabled);
     }
     
-    if (json_has(kv_json, [KEY_BELL_VOLUME])) {
-        BellVolume = (float)llJsonGetValue(kv_json, [KEY_BELL_VOLUME]);
+    string val_volume = llLinksetDataRead(KEY_BELL_VOLUME);
+    if (val_volume != "") {
+        BellVolume = (float)val_volume;
         logd("Loaded bell_volume=" + (string)BellVolume);
     }
     
-    if (json_has(kv_json, [KEY_BELL_SOUND])) {
-        BellSound = llJsonGetValue(kv_json, [KEY_BELL_SOUND]);
+    string val_sound = llLinksetDataRead(KEY_BELL_SOUND);
+    if (val_sound != "") {
+        BellSound = val_sound;
         logd("Loaded bell_sound=" + BellSound);
     }
     
@@ -296,28 +328,39 @@ apply_settings_sync(string msg) {
 }
 
 apply_settings_delta(string msg) {
-    if (!json_has(msg, ["changes"])) return;
-    string changes = llJsonGetValue(msg, ["changes"]);
+    // PHASE 2: Simplified - just re-read affected key from linkset data
+    if (!json_has(msg, ["key"])) return;
     
-    if (json_has(changes, [KEY_BELL_VISIBLE])) {
-        integer new_visible = (integer)llJsonGetValue(changes, [KEY_BELL_VISIBLE]);
-        set_bell_visibility(new_visible);
-        logd("Delta: bell_visible=" + (string)new_visible);
+    string key_name = llJsonGetValue(msg, ["key"]);
+    
+    if (key_name == KEY_BELL_VISIBLE) {
+        string val = llLinksetDataRead(KEY_BELL_VISIBLE);
+        if (val != "") {
+            integer new_visible = (integer)val;
+            set_bell_visibility(new_visible);
+            logd("Delta: bell_visible=" + (string)new_visible);
+        }
     }
-    
-    if (json_has(changes, [KEY_BELL_SOUND_ENABLED])) {
-        BellSoundEnabled = (integer)llJsonGetValue(changes, [KEY_BELL_SOUND_ENABLED]);
-        logd("Delta: bell_sound_enabled=" + (string)BellSoundEnabled);
+    else if (key_name == KEY_BELL_SOUND_ENABLED) {
+        string val = llLinksetDataRead(KEY_BELL_SOUND_ENABLED);
+        if (val != "") {
+            BellSoundEnabled = (integer)val;
+            logd("Delta: bell_sound_enabled=" + (string)BellSoundEnabled);
+        }
     }
-    
-    if (json_has(changes, [KEY_BELL_VOLUME])) {
-        BellVolume = (float)llJsonGetValue(changes, [KEY_BELL_VOLUME]);
-        logd("Delta: bell_volume=" + (string)BellVolume);
+    else if (key_name == KEY_BELL_VOLUME) {
+        string val = llLinksetDataRead(KEY_BELL_VOLUME);
+        if (val != "") {
+            BellVolume = (float)val;
+            logd("Delta: bell_volume=" + (string)BellVolume);
+        }
     }
-    
-    if (json_has(changes, [KEY_BELL_SOUND])) {
-        BellSound = llJsonGetValue(changes, [KEY_BELL_SOUND]);
-        logd("Delta: bell_sound=" + BellSound);
+    else if (key_name == KEY_BELL_SOUND) {
+        string val = llLinksetDataRead(KEY_BELL_SOUND);
+        if (val != "") {
+            BellSound = val;
+            logd("Delta: bell_sound=" + BellSound);
+        }
     }
 }
 
@@ -362,6 +405,9 @@ default {
     }
     
     link_message(integer sender, integer num, string msg, key id) {
+        // Early filter: ignore messages not intended for us
+        if (!is_message_for_me(msg)) return;
+        
         /* -------------------- KERNEL LIFECYCLE -------------------- */if (num == KERNEL_LIFECYCLE) {
             if (!json_has(msg, ["type"])) return;
             string msg_type = llJsonGetValue(msg, ["type"]);

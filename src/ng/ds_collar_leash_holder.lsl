@@ -14,6 +14,7 @@ TODO: None pending
 
 /* -------------------- CONSTANTS -------------------- */
 integer DEBUG = TRUE;
+string SCRIPT_ID = "leash_holder";
 integer LEASH_HOLDER_CHAN = -192837465;
 
 /* -------------------- STATE -------------------- */
@@ -64,6 +65,27 @@ integer openListen() {
     if (gListen) llListenRemove(gListen);
     gListen = llListen(LEASH_HOLDER_CHAN, "", NULL_KEY, "");
     return TRUE;
+}
+
+/* -------------------- MESSAGE ROUTING -------------------- */
+
+integer is_message_for_me(string msg) {
+    if (llGetSubString(msg, 0, 0) != "{") return FALSE;
+    integer to_pos = llSubStringIndex(msg, "\"to\"");
+    if (to_pos == -1) return TRUE;
+    string header = llGetSubString(msg, 0, to_pos + 100);
+    if (llSubStringIndex(header, "\"*\"") != -1) return TRUE;
+    if (llSubStringIndex(header, SCRIPT_ID) != -1) return TRUE;
+    return FALSE;
+}
+
+string create_routed_message(string to_id, list fields) {
+    list routed = ["from", SCRIPT_ID, "to", to_id] + fields;
+    return llList2Json(JSON_OBJECT, routed);
+}
+
+string create_broadcast(list fields) {
+    return create_routed_message("*", fields);
 }
 
 default {

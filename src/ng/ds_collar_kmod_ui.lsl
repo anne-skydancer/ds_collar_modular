@@ -15,6 +15,8 @@ CHANGES:
 integer DEBUG = TRUE;
 integer PRODUCTION = FALSE;  // Set FALSE for development builds
 
+string SCRIPT_ID = "kmod_ui";
+
 /* -------------------- CONSOLIDATED ABI -------------------- */
 integer KERNEL_LIFECYCLE = 500;
 integer AUTH_BUS = 700;
@@ -110,6 +112,32 @@ string generate_session_id(key user) {
     return "ui_" + (string)user + "_" + (string)llGetUnixTime();
 }
 
+/* -------------------- MESSAGE ROUTING -------------------- */
+
+integer is_message_for_me(string msg) {
+    if (llGetSubString(msg, 0, 0) != "{") return FALSE;
+    
+    integer to_pos = llSubStringIndex(msg, "\"to\"");
+    if (to_pos == -1) return TRUE;  // No routing = broadcast
+    
+    string header = llGetSubString(msg, 0, to_pos + 100);
+    
+    if (llSubStringIndex(header, "\"*\"") != -1) return TRUE;
+    if (llSubStringIndex(header, SCRIPT_ID) != -1) return TRUE;
+    if (llSubStringIndex(header, "\"kmod:*\"") != -1) return TRUE;
+    
+    return FALSE;
+}
+
+string create_routed_message(string to_id, list fields) {
+    list routed = ["from", SCRIPT_ID, "to", to_id] + fields;
+    return llList2Json(JSON_OBJECT, routed);
+}
+
+string create_broadcast(list fields) {
+    return create_routed_message("*", fields);
+}
+
 /* -------------------- PLUGIN STATE MANAGEMENT -------------------- */
 
 integer find_plugin_state_idx(string context) {
@@ -197,7 +225,7 @@ cleanup_session(key user) {
 
     // BUGFIX: Close dialog before cleaning up session
     string session_id = llList2String(Sessions, idx + SESSION_ID);
-    string close_msg = llList2Json(JSON_OBJECT, [
+    string close_msg = create_routed_message("kmod_dialogs", [
         "type", "dialog_close",
         "session_id", session_id
     ]);
@@ -332,7 +360,7 @@ apply_plugin_list(string plugins_json) {
     logd("Plugin list updated: " + (string)(llGetListLength(AllPlugins) / PLUGIN_STRIDE) + " plugins");
 
     // Request ACL data from auth module
-    string request = llList2Json(JSON_OBJECT, ["type", "plugin_acl_list_request"]);
+    string request = create_routed_message("kmod_auth", ["type", "plugin_acl_list_request"]);
     llMessageLinked(LINK_SET, AUTH_BUS, request, NULL_KEY);
 }
 
@@ -384,7 +412,7 @@ apply_plugin_acl_list(string acl_json) {
 /* -------------------- MENU RENDERING (delegated to ds_collar_menu.lsl) -------------------- */
 
 send_message(key user, string message_text) {
-    string msg = llList2Json(JSON_OBJECT, [
+    string msg = create_routed_message("ds_collar_menu", [
         "type", "show_message",
         "user", (string)user,
         "message", message_text
@@ -472,7 +500,7 @@ send_render_menu(key user, string menu_type) {
     // for UI consistency. This is intentional and not open to modification.
     integer has_nav = 1;
 
-    string msg = llList2Json(JSON_OBJECT, [
+    string msg = create_routed_message("ds_collar_menu", [
         "type", "render_menu",
         "user", (string)user,
         "session_id", session_id,
@@ -552,7 +580,7 @@ handle_button_click(key user, string button, string context) {
                     return;
                 }
 
-                string msg = llList2Json(JSON_OBJECT, [
+                string msg = create_routed_message("plugin:" + context, [
                     "type", "start",
                     "context", context,
                     "user", (string)user
@@ -624,7 +652,7 @@ handle_plugin_list(string msg) {
         integer i = 0;
         while (i < llGetListLength(Sessions)) {
             string session_id = llList2String(Sessions, i + SESSION_ID);
-            string close_msg = llList2Json(JSON_OBJECT, [
+            string close_msg = create_routed_message("kmod_dialogs", [
                 "type", "dialog_close",
                 "session_id", session_id
             ]);
@@ -684,7 +712,7 @@ start_root_session(key user_key) {
 
     PendingAcl += [user_key, ROOT_CONTEXT];
 
-    string acl_query = llList2Json(JSON_OBJECT, [
+    string acl_query = create_routed_message("kmod_auth", [
         "type", "acl_query",
         "avatar", (string)user_key
     ]);
@@ -699,7 +727,7 @@ start_sos_session(key user_key) {
 
     PendingAcl += [user_key, SOS_CONTEXT];
 
-    string acl_query = llList2Json(JSON_OBJECT, [
+    string acl_query = create_routed_message("kmod_auth", [
         "type", "acl_query",
         "avatar", (string)user_key
     ]);
@@ -825,7 +853,7 @@ default
         logd("UI module started (v4.0 - UI/Kmod split - logic only)");
 
         // Request plugin list (kernel defers response during active registration)
-        string request = llList2Json(JSON_OBJECT, [
+        string request = create_routed_message("ds_collar_kernel", [
             "type", "plugin_list_request"
         ]);
         llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, request, NULL_KEY);
@@ -917,6 +945,9 @@ default
     }
 
     link_message(integer sender, integer num, string msg, key id) {
+        // Early filter: ignore messages not for us
+        if (!is_message_for_me(msg)) return;
+        
         string msg_type = get_msg_type(msg);
         if (msg_type == "") return;
 
