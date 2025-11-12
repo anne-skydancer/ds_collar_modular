@@ -17,3 +17,8 @@ Thumbs.db
 *.o
 *.a
 *.so
+
+# LSL Compiler outputs
+*.cil
+*.out
+*.lsl.pp

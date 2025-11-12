@@ -266,6 +266,8 @@ integer registry_upsert(string context, string label, string script, integer min
             idx + REG_LABEL,
             idx + REG_MIN_ACL);
 
+        // Note: uuid_changed tracked but not logged to reduce spam
+
         return uuid_changed;
     }
 }
