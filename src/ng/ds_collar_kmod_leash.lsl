@@ -29,14 +29,6 @@ integer LEASH_CHAN_DS = -192837465;
 
 string PLUGIN_CONTEXT = "core_leash";
 
-// ACL definitions for leash operations
-list ALLOWED_ACL_GRAB = [1, 3, 4, 5];     // Public, Trustee, Unowned, Owner
-list ALLOWED_ACL_SETTINGS = [3, 4, 5];    // Trustee, Unowned, Owner
-list ALLOWED_ACL_PASS = [3, 4, 5];        // Trustee, Unowned, Owner (plus current leasher)
-list ALLOWED_ACL_OFFER = [2];             // Owned wearer only (when not currently leashed)
-list ALLOWED_ACL_COFFLE = [3, 5];         // Trustee, Owner only
-list ALLOWED_ACL_POST = [1, 3, 5];        // Public, Trustee, Owner
-
 // Leash mode constants
 integer MODE_AVATAR = 0;  // Standard leash to avatar
 integer MODE_COFFLE = 1;  // Collar-to-collar leashpoint connection
@@ -121,9 +113,6 @@ string jsonGet(string j, string k, string default_val) {
     if (jsonHas(j, [k])) return llJsonGetValue(j, [k]);
     return default_val;
 }
-integer now() {
-    return llGetUnixTime();
-}
 
 /* -------------------- MESSAGE ROUTING -------------------- */
 
@@ -140,23 +129,6 @@ integer is_message_for_me(string msg) {
     if (llSubStringIndex(header, "\"kmod:*\"") != -1) return TRUE;
     
     return FALSE;
-}
-
-string create_routed_message(string to_id, list fields) {
-    list routed = ["from", SCRIPT_ID, "to", to_id] + fields;
-    return llList2Json(JSON_OBJECT, routed);
-}
-
-string create_broadcast(list fields) {
-    return create_routed_message("*", fields);
-}
-
-integer inAllowedList(integer level, list allowed) {
-    return (llListFindList(allowed, [level]) != -1);
-}
-denyAccess(key user, string reason, string action, integer acl) {
-    llRegionSayTo(user, 0, "Access denied: " + reason);
-    logd(action + " denied for ACL " + (string)acl + " - " + reason);
 }
 
 /* -------------------- PROTOCOL MESSAGE HELPERS - State-based delta pattern -------------------- */
@@ -197,21 +169,9 @@ setParticlesState(integer active, key target) {
     llMessageLinked(LINK_SET, UI_BUS, msg, NULL_KEY);
 }
 
-updateParticlesTarget(key target) {
-    llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
-        "type", "particles_update",
-        "target", (string)target
-    ]), NULL_KEY);
-}
 
-/* -------------------- OFFER PROTOCOL -------------------- */
-sendOfferPending(key target, key originator) {
-    llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
-        "type", "offer_pending",
-        "target", (string)target,
-        "originator", (string)originator
-    ]), NULL_KEY);
-}
+
+
 
 /* -------------------- STATE MANAGEMENT HELPERS -------------------- */
 
@@ -275,13 +235,7 @@ notifyLeashAction(key actor, string action_msg, string owner_details) {
     logd(action_msg);
 }
 
-// For multi-party notifications (like pass)
-notifyLeashTransfer(key from_user, key to_user, string action) {
-    llRegionSayTo(from_user, 0, "Leash " + action + " to " + llKey2Name(to_user));
-    llRegionSayTo(to_user, 0, "Leash received from " + llKey2Name(from_user));
-    llOwnerSay("Leash " + action + " to " + llKey2Name(to_user) + " by " + llKey2Name(from_user));
-    logd(action + " to " + llKey2Name(to_user) + " by " + llKey2Name(from_user));
-}
+
 
 /* -------------------- ACL VERIFICATION SYSTEM (NEW) -------------------- */
 requestAclForAction(key user, string action, key pass_target) {
@@ -305,119 +259,95 @@ handleAclResult(string msg) {
     key avatar = (key)llJsonGetValue(msg, ["avatar"]);
     if (avatar != PendingActionUser) return;
     
-    integer acl_level = (integer)llJsonGetValue(msg, ["level"]);
+    integer acl = (integer)llJsonGetValue(msg, ["level"]);
     AclPending = FALSE;
+    integer authorized = FALSE;
     
-    logd("ACL result: " + (string)acl_level + " for " + PendingAction);
-    
-    // Execute pending action with ACL verification
-
-    // Special case: release (current leasher OR level 2+ can release)
+    // Special: release (leasher OR acl>=2)
     if (PendingAction == "release") {
-        if (PendingActionUser == Leasher || acl_level >= 2) {
+        if (PendingActionUser == Leasher || acl >= 2) {
             releaseLeashInternal(PendingActionUser);
-        } else {
-            denyAccess(PendingActionUser, "only leasher or authorized users can release", "release", acl_level);
+            authorized = TRUE;
         }
     }
-    // Special case: pass (current leasher OR level 3+ can pass, then verify target)
+    // Special: pass (leasher OR acl>=3, then verify target)
     else if (PendingAction == "pass") {
-        if (PendingActionUser == Leasher || inAllowedList(acl_level, ALLOWED_ACL_PASS)) {
+        if (PendingActionUser == Leasher || acl >= 3) {
             requestAclForPassTarget(PendingPassTarget);
-            return;  // Don't clear pending state yet
-        } else {
-            denyAccess(PendingActionUser, "insufficient permissions to pass leash", "pass", acl_level);
+            return;
         }
     }
-    // Special case: offer (ACL 2 only, when NOT currently leashed, then verify target)
+    // Special: offer (acl==2 when not leashed, then verify target)
     else if (PendingAction == "offer") {
-        if (inAllowedList(acl_level, ALLOWED_ACL_OFFER) && !Leashed) {
+        if (acl == 2 && !Leashed) {
             PendingIsOffer = TRUE;
             requestAclForPassTarget(PendingPassTarget);
-            return;  // Don't clear pending state yet
-        } else if (Leashed) {
-            llRegionSayTo(PendingActionUser, 0, "Cannot offer leash: already leashed.");
-            logd("Offer denied: already leashed");
-        } else {
-            denyAccess(PendingActionUser, "insufficient permissions to offer leash", "offer", acl_level);
+            return;
+        }
+        else if (Leashed) {
+            llRegionSayTo(PendingActionUser, 0, "Cannot offer: already leashed");
         }
     }
-    // Special case: pass_target_check (verifying the target's ACL for pass/offer)
+    // Special: pass_target_check (verify target ACL for pass/offer)
     else if (PendingAction == "pass_target_check") {
-        // This is the target verification for pass/offer action
-        // Target must be level 1+ (public or higher) to receive leash
-        key target = (key)llJsonGetValue(msg, ["avatar"]);
-
-        logd("Target ACL check: " + llKey2Name(target) + " has ACL " + (string)acl_level + ", IsOfferMode=" + (string)PendingIsOffer);
-
-        if (acl_level >= 1) {
-            // Offer sends message to plugin for dialog, pass directly transfers
+        if (acl >= 1) {
             if (PendingIsOffer) {
-                // Send offer_pending to plugin - plugin will handle dialog
-                sendOfferPending(PendingPassTarget, PendingPassOriginalUser);
-                logd("Offer pending sent to plugin: target=" + llKey2Name(PendingPassTarget) + ", originator=" + llKey2Name(PendingPassOriginalUser));
+                llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
+                    "type", "offer_pending",
+                    "target", (string)PendingPassTarget,
+                    "originator", (string)PendingPassOriginalUser
+                ]), NULL_KEY);
             }
             else {
                 passLeashInternal(PendingPassTarget);
             }
-        } else {
-            // Send error to ORIGINAL passer/offerer, not target
-            string action_name;
-            if (PendingIsOffer) {
-                action_name = "offer";
-            }
-            else {
-                action_name = "pass";
-            }
-            llRegionSayTo(PendingPassOriginalUser, 0, "Cannot " + action_name + " leash: target has insufficient permissions.");
-            logd(action_name + " denied: target ACL " + (string)acl_level + " too low");
+            authorized = TRUE;
         }
-
-        // Clear pass-specific state
+        else {
+            llRegionSayTo(PendingPassOriginalUser, 0, "Target lacks permission");
+        }
         PendingPassOriginalUser = NULL_KEY;
         PendingIsOffer = FALSE;
     }
-    // Standard ACL pattern for simple actions
-    else {
-        list allowed_acl;
-        integer authorized = FALSE;
-
-        if (PendingAction == "grab") {
-            allowed_acl = ALLOWED_ACL_GRAB;
-            authorized = inAllowedList(acl_level, allowed_acl);
-            if (authorized) grabLeashInternal(PendingActionUser);
+    // Standard ACL checks
+    else if (PendingAction == "grab") {
+        if (acl >= 1) {
+            grabLeashInternal(PendingActionUser);
+            authorized = TRUE;
         }
-        else if (PendingAction == "coffle") {
-            allowed_acl = ALLOWED_ACL_COFFLE;
-            authorized = inAllowedList(acl_level, allowed_acl);
-            if (authorized) coffleLeashInternal(PendingActionUser, PendingPassTarget);
+    }
+    else if (PendingAction == "coffle") {
+        if (acl == 3 || acl == 5) {
+            coffleLeashInternal(PendingActionUser, PendingPassTarget);
+            authorized = TRUE;
         }
-        else if (PendingAction == "post") {
-            allowed_acl = ALLOWED_ACL_POST;
-            authorized = inAllowedList(acl_level, allowed_acl);
-            if (authorized) postLeashInternal(PendingActionUser, PendingPassTarget);
+    }
+    else if (PendingAction == "post") {
+        if (acl == 1 || acl == 3 || acl == 5) {
+            postLeashInternal(PendingActionUser, PendingPassTarget);
+            authorized = TRUE;
         }
-        else if (PendingAction == "set_length") {
-            allowed_acl = ALLOWED_ACL_SETTINGS;
-            authorized = inAllowedList(acl_level, allowed_acl);
-            if (authorized) setLengthInternal((integer)((string)PendingPassTarget));
+    }
+    else if (PendingAction == "set_length") {
+        if (acl >= 3) {
+            setLengthInternal((integer)((string)PendingPassTarget));
+            authorized = TRUE;
         }
-        else if (PendingAction == "toggle_turn") {
-            allowed_acl = ALLOWED_ACL_SETTINGS;
-            authorized = inAllowedList(acl_level, allowed_acl);
-            if (authorized) toggleTurnInternal();
-        }
-
-        if (!authorized) {
-            denyAccess(PendingActionUser, "insufficient permissions", PendingAction, acl_level);
+    }
+    else if (PendingAction == "toggle_turn") {
+        if (acl >= 3) {
+            toggleTurnInternal();
+            authorized = TRUE;
         }
     }
     
-    // Clear pending state
+    if (!authorized) {
+        llRegionSayTo(PendingActionUser, 0, "Access denied");
+    }
+    
     PendingActionUser = NULL_KEY;
     PendingAction = "";
     PendingPassTarget = NULL_KEY;
-    PendingIsOffer = FALSE;
 }
 
 requestAclForPassTarget(key target) {
@@ -444,10 +374,10 @@ beginHolderHandshake(key user) {
     // Improved randomness for session ID using multiple entropy sources
     integer key_entropy = (integer)("0x" + llGetSubString((string)llGetOwner(), 0, 7));
     HolderSession = (integer)(llFrand(999999.0) +
-                              (now() % 1000000) +
+                              (llGetUnixTime() % 1000000) +
                               (key_entropy % 1000));
     HolderState = HOLDER_STATE_DS_PHASE;
-    HolderPhaseStart = now();
+    HolderPhaseStart = llGetUnixTime();
 
     // Phase 1: DS native only
     if (HolderListen == 0) {
@@ -510,14 +440,14 @@ handleHolderResponseOc(key holder_prim, string msg) {
 advanceHolderStateMachine() {
     if (HolderState == HOLDER_STATE_IDLE || HolderState == HOLDER_STATE_COMPLETE) return;
     
-    float elapsed = (float)(now() - HolderPhaseStart);
+    float elapsed = (float)(llGetUnixTime() - HolderPhaseStart);
     
     if (HolderState == HOLDER_STATE_DS_PHASE) {
         if (elapsed >= DS_PHASE_DURATION) {
             // Transition to OC phase
             logd("Holder handshake Phase 2 (OC, 2s)");
             HolderState = HOLDER_STATE_OC_PHASE;
-            HolderPhaseStart = now();
+            HolderPhaseStart = llGetUnixTime();
             if (HolderListen != 0) {
                 llListenRemove(HolderListen);
                 HolderListen = 0;
@@ -552,7 +482,7 @@ advanceHolderStateMachine() {
 checkLeasherPresence() {
     if (!Leashed || Leasher == NULL_KEY) return;
     
-    integer now_time = now();
+    integer now_time = llGetUnixTime();
     
     // Y2038 protection
     if (now_time < 0 || OffsimStartTime < 0) {
@@ -603,7 +533,7 @@ autoReleaseOffsim() {
 }
 
 checkAutoReclip() {
-    if (ReclipScheduled == 0 || now() < ReclipScheduled) return;
+    if (ReclipScheduled == 0 || llGetUnixTime() < ReclipScheduled) return;
     
     if (ReclipAttempts >= MAX_RECLIP_ATTEMPTS) {
         logd("Max reclip attempts reached, giving up");
@@ -620,7 +550,7 @@ checkAutoReclip() {
         requestAclForAction(LastLeasher, "grab", NULL_KEY);
         
         ReclipAttempts = ReclipAttempts + 1;
-        ReclipScheduled = now() + 2;
+        ReclipScheduled = llGetUnixTime() + 2;
     }
 }
 
@@ -745,7 +675,9 @@ passLeashInternal(key new_leasher) {
     AuthorizedLmController = new_leasher;
     setLockmeisterState(TRUE, new_leasher);
 
-    notifyLeashTransfer(old_leasher, new_leasher, "passed");
+    llRegionSayTo(old_leasher, 0, "Leash passed to " + llKey2Name(new_leasher));
+    llRegionSayTo(new_leasher, 0, "Leash received from " + llKey2Name(old_leasher));
+    llOwnerSay("Leash passed to " + llKey2Name(new_leasher) + " by " + llKey2Name(old_leasher));
     broadcastState();
 }
 
@@ -919,7 +851,10 @@ followTick() {
             list details = llGetObjectDetails(HolderTarget, [OBJECT_POS]);
             if (llGetListLength(details) == 0) {
                 HolderTarget = NULL_KEY;
-                updateParticlesTarget(Leasher);
+                llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
+                    "type", "particles_update",
+                    "target", (string)Leasher
+                ]), NULL_KEY);
                 return;
             }
             target_pos = llList2Vector(details, 0);
@@ -1036,7 +971,7 @@ default
                 // Yank only works for current leasher (with rate limiting)
                 if (action == "yank") {
                     if (user == Leasher) {
-                        integer now_time = now();
+                        integer now_time = llGetUnixTime();
                         if ((now_time - LastYankTime) < YANK_COOLDOWN) {
                             integer wait_time = (integer)(YANK_COOLDOWN - (now_time - LastYankTime));
                             llRegionSayTo(user, 0, "Yank on cooldown. Wait " + (string)wait_time + "s.");
