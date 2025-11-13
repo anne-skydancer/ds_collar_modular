@@ -347,6 +347,22 @@
             "related": ".xml"
           }
         }
+      },
+      "LSLTestHarness/1.0.0": {
+        "type": "project",
+        "framework": ".NETCoreApp,Version=v8.0",
+        "dependencies": {
+          "Microsoft.NET.Test.Sdk": "17.8.0",
+          "NUnit": "4.0.1",
+          "NUnit3TestAdapter": "4.5.0",
+          "Newtonsoft.Json": "13.0.3"
+        },
+        "compile": {
+          "bin/placeholder/LSLTestHarness.dll": {}
+        },
+        "runtime": {
+          "bin/placeholder/LSLTestHarness.dll": {}
+        }
       }
     }
   },
@@ -728,14 +744,19 @@
         "useSharedDesignerContext.txt",
         "version.txt"
       ]
+    },
+    "LSLTestHarness/1.0.0": {
+      "type": "project",
+      "path": "LSLTestHarness.csproj",
+      "msbuildProject": "LSLTestHarness.csproj"
     }
   },
   "projectFileDependencyGroups": {
     "net8.0": [
+      "LSLTestHarness >= 1.0.0",
       "Microsoft.NET.Test.Sdk >= 17.8.0",
       "NUnit >= 4.0.1",
-      "NUnit3TestAdapter >= 4.5.0",
-      "Newtonsoft.Json >= 13.0.3"
+      "NUnit3TestAdapter >= 4.5.0"
     ]
   },
   "packageFolders": {
@@ -744,9 +765,9 @@
   "project": {
     "version": "1.0.0",
     "restore": {
-      "projectUniqueName": "C:\\Users\\annes\\OneDrive\\Documents\\GitHub\\ds_collar_modular\\test_harness\\LSLTestHarness.csproj",
-      "projectName": "LSLTestHarness",
-      "projectPath": "C:\\Users\\annes\\OneDrive\\Documents\\GitHub\\ds_collar_modular\\test_harness\\LSLTestHarness.csproj",
+      "projectUniqueName": "C:\\Users\\annes\\OneDrive\\Documents\\GitHub\\ds_collar_modular\\test_harness\\DSCollarTests.csproj",
+      "projectName": "DSCollarTests",
+      "projectPath": "C:\\Users\\annes\\OneDrive\\Documents\\GitHub\\ds_collar_modular\\test_harness\\DSCollarTests.csproj",
       "packagesPath": "C:\\Users\\annes\\.nuget\\packages\\",
       "outputPath": "C:\\Users\\annes\\OneDrive\\Documents\\GitHub\\ds_collar_modular\\test_harness\\obj\\",
       "projectStyle": "PackageReference",
@@ -762,7 +783,11 @@
       "frameworks": {
         "net8.0": {
           "targetAlias": "net8.0",
-          "projectReferences": {}
+          "projectReferences": {
+            "C:\\Users\\annes\\OneDrive\\Documents\\GitHub\\ds_collar_modular\\test_harness\\LSLTestHarness.csproj": {
+              "projectPath": "C:\\Users\\annes\\OneDrive\\Documents\\GitHub\\ds_collar_modular\\test_harness\\LSLTestHarness.csproj"
+            }
+          }
         }
       },
       "warningProperties": {
@@ -792,10 +817,6 @@
           "NUnit3TestAdapter": {
             "target": "Package",
             "version": "[4.5.0, )"
-          },
-          "Newtonsoft.Json": {
-            "target": "Package",
-            "version": "[13.0.3, )"
           }
         },
         "imports": [

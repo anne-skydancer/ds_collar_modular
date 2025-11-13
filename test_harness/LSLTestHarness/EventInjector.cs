@@ -83,13 +83,13 @@ public class EventInjector
                     channel = -1 * (1000000 + new Random().Next(999999));
                 }
 
-                Console.WriteLine($"[EventInjector] SimulateDialogModule calling llDialog: avatar={avatar}, buttons={string.Join(",", buttonList)}");
+                TestLogger.D($"[EventInjector] SimulateDialogModule calling llDialog: avatar={avatar}, buttons={string.Join(",", buttonList)}");
                 _api.llDialog(avatar, message, Newtonsoft.Json.JsonConvert.SerializeObject(buttonList), channel);
             }
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[EventInjector] SimulateDialogModule error: {ex.Message}");
+            TestLogger.D($"[EventInjector] SimulateDialogModule error: {ex.Message}");
         }
     }
     
@@ -106,7 +106,7 @@ public class EventInjector
                     var json = Newtonsoft.Json.Linq.JObject.Parse(linkMsg.Msg);
                     if (json["type"]?.ToString() == "dialog_open")
                     {
-                        Console.WriteLine($"[EventInjector] ProcessPendingDialogMessages found dialog_open message");
+                        TestLogger.D($"[EventInjector] ProcessPendingDialogMessages found dialog_open message");
                         SimulateDialogModule(linkMsg.Msg);
                     }
                 }
@@ -174,16 +174,16 @@ public class EventInjector
 
     private void SimulateLinkMessageRouting(string handlerCode, int sender, int num, string msg, string id)
     {
-        Console.WriteLine($"[EventInjector] SimulateLinkMessageRouting called - channel={num}, msg={msg}");
+        TestLogger.D($"[EventInjector] SimulateLinkMessageRouting called - channel={num}, msg={msg}");
         
         // Parse JSON message
         string msgType = ParseJsonField(msg, "type");
-        Console.WriteLine($"[EventInjector] Parsed msgType={msgType}");
+        TestLogger.D($"[EventInjector] Parsed msgType={msgType}");
         
         // Kernel lifecycle (channel 500) and auth (channel 700) are NEVER routed - always processed
         if (num == 500 || num == 700)
         {
-            Console.WriteLine($"[EventInjector] Unrouted channel - bypassing routing checks");
+            TestLogger.D($"[EventInjector] Unrouted channel - bypassing routing checks");
             SimulateMessageProcessing(handlerCode, msgType, msg, num);
             return;
         }
@@ -193,7 +193,7 @@ public class EventInjector
         // they reach the script's dialog handling logic.
         if (num == 950 && msgType == "dialog_response")
         {
-            Console.WriteLine("[EventInjector] Dialog response - bypassing routing checks");
+            TestLogger.D("[EventInjector] Dialog response - bypassing routing checks");
             SimulateMessageProcessing(handlerCode, msgType, msg, num);
             return;
         }
@@ -205,7 +205,7 @@ public class EventInjector
 
         // Check for routing mode in script
         string routingMode = ExtractConstant(handlerCode, "ROUTING_MODE") ?? "STRICT";
-        Console.WriteLine($"[EventInjector] routingMode={routingMode}");
+        TestLogger.D($"[EventInjector] routingMode={routingMode}");
 
         bool shouldProcess = false;
 
@@ -240,17 +240,17 @@ public class EventInjector
         // Pattern 1: Kernel lifecycle (channel 500)
         if (channel == 500)
         {
-            Console.WriteLine($"[EventInjector] Channel 500, msgType={msgType}, _adapter={(_adapter != null ? "EXISTS" : "NULL")}");
+            TestLogger.D($"[EventInjector] Channel 500, msgType={msgType}, _adapter={(_adapter != null ? "EXISTS" : "NULL")}");
             if (msgType == "register_now" && _adapter != null)
             {
                 // Execute register_self() function
-                Console.WriteLine("[EventInjector] Calling _adapter.ExecuteFunction(register_self)");
+                TestLogger.D("[EventInjector] Calling _adapter.ExecuteFunction(register_self)");
                 _adapter.ExecuteFunction("register_self");
             }
             else if (msgType == "ping" && _adapter != null)
             {
                 // Execute send_pong() function
-                Console.WriteLine("[EventInjector] Calling _adapter.ExecuteFunction(send_pong)");
+                TestLogger.D("[EventInjector] Calling _adapter.ExecuteFunction(send_pong)");
                 _adapter.ExecuteFunction("send_pong");
             }
         }
@@ -307,46 +307,15 @@ public class EventInjector
                 try
                 {
                     var all = _api.GetLinkMessages();
-                    Console.WriteLine($"[EventInjector] After ACL handler link messages count={all.Count}");
+                    TestLogger.D($"[EventInjector] After ACL handler link messages count={all.Count}");
                     foreach (var lm in all)
                     {
-                        Console.WriteLine($"[EventInjector] LINKMSG: num={lm.Num} msg={lm.Msg}");
+                        TestLogger.D($"[EventInjector] LINKMSG: num={lm.Num} msg={lm.Msg}");
                     }
                 }
-                catch (Exception ex) { Console.WriteLine("[EventInjector] Error dumping link messages: " + ex.Message); }
+                catch (Exception ex) { TestLogger.D("[EventInjector] Error dumping link messages: " + ex.Message); }
 
                 ProcessPendingDialogMessages();
-
-                // FALLBACK: if no dialog_open was produced by script, and ACL level meets plugin min,
-                // call show_main_menu() directly so tests that expect a dialog will receive it.
-                try
-                {
-                    var sent = _api.GetLinkMessages();
-                    bool hasDialogOpen = sent.Any(m => m.Num == 950 && m.Msg.Contains("\"type\":\"dialog_open\""));
-                    if (!hasDialogOpen)
-                    {
-                        // Determine ACL level from previously set execution context or message
-                        var levelStr = "0";
-                        if (_api.GetLinkMessages().Count > 0) { /* noop - keep existing */ }
-                        // Try to read the last-set execution context key 'acl_level' via adapter runtime globals (if available)
-                        // We don't have direct access to adapter here, so attempt to parse level from the original msg previously passed
-                        // As a simple heuristic, if the ACL message had level >= PLUGIN_MIN_ACL, trigger menu
-                        int levelVal = 5; // default to high privilege for tests
-                        int minAcl = 3;
-                        try { var minVal = ExtractConstant(handlerCode, "PLUGIN_MIN_ACL"); if (minVal != null) int.TryParse(minVal, out minAcl); } catch { }
-                        try { int.TryParse(ParseJsonField(msg, "level"), out levelVal); } catch { }
-                        if (levelVal >= minAcl)
-                        {
-                            Console.WriteLine("[EventInjector] Fallback: invoking show_main_menu() due to ACL grant");
-                            _adapter.ExecuteFunction("show_main_menu");
-                            ProcessPendingDialogMessages();
-                        }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine("[EventInjector] Fallback show_main_menu error: " + ex.Message);
-                }
             }
         }
         
