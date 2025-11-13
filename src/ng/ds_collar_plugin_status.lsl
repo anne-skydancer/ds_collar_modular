@@ -12,10 +12,6 @@ CHANGES:
 - Supports multi-owner mode by tracking ordered owner sets
 --------------------*/
 
-integer DEBUG = TRUE;
-integer PRODUCTION = FALSE;
-string SCRIPT_ID = "plugin_status";
-
 /* -------------------- CONSOLIDATED ABI -------------------- */
 integer KERNEL_LIFECYCLE = 500;
 integer AUTH_BUS = 700;
@@ -27,6 +23,7 @@ integer DIALOG_BUS = 950;
 string PLUGIN_CONTEXT = "core_status";
 string PLUGIN_LABEL = "Status";
 integer PLUGIN_MIN_ACL = 1;  // Public can view
+string SCRIPT_ID = "plugin_status";
 string ROOT_CONTEXT = "core_root";
 
 /* -------------------- SETTINGS KEYS -------------------- */
@@ -70,6 +67,9 @@ key CurrentUser = NULL_KEY;
 string SessionId = "";
 
 /* -------------------- HELPERS -------------------- */
+
+integer DEBUG = TRUE;
+
 integer logd(string msg) {
     if (DEBUG) llOwnerSay("[STATUS] " + msg);
     return FALSE;
@@ -87,22 +87,17 @@ string generate_session_id() {
     return PLUGIN_CONTEXT + "_" + (string)llGetUnixTime();
 }
 
-/* -------------------- MESSAGE ROUTING -------------------- */
+/* -------------------- ROUTING HELPERS -------------------- */
 
 integer is_message_for_me(string msg) {
-    if (llGetSubString(msg, 0, 0) != "{") return FALSE;
-    integer to_pos = llSubStringIndex(msg, "\"to\"");
-    if (to_pos == -1) return TRUE;
-    string header = llGetSubString(msg, 0, to_pos + 100);
-    if (llSubStringIndex(header, "\"*\"") != -1) return TRUE;
-    if (llSubStringIndex(header, SCRIPT_ID) != -1) return TRUE;
-    if (llSubStringIndex(header, "\"plugin:*\"") != -1) return TRUE;
-    return FALSE;
+    if (!json_has(msg, ["to"])) return FALSE;  // STRICT: No "to" field = reject
+    string to = llJsonGetValue(msg, ["to"]);
+    if (to == SCRIPT_ID) return TRUE;  // STRICT: Accept ONLY exact SCRIPT_ID match
+    return FALSE;  // STRICT: Reject everything else (broadcasts, wildcards, variants)
 }
 
 string create_routed_message(string to_id, list fields) {
-    list routed = ["from", SCRIPT_ID, "to", to_id] + fields;
-    return llList2Json(JSON_OBJECT, routed);
+    return llList2Json(JSON_OBJECT, ["from", SCRIPT_ID, "to", to_id] + fields);
 }
 
 string create_broadcast(list fields) {
@@ -120,7 +115,6 @@ register_self() {
         "script", llGetScriptName()
     ]);
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, msg, NULL_KEY);
-    logd("Registered with kernel");
 }
 
 send_pong() {
@@ -154,10 +148,14 @@ apply_settings_sync(string msg) {
     
     // Load values from linkset data
     string val_multi = llLinksetDataRead(KEY_MULTI_OWNER_MODE);
-    if (val_multi != "") MultiOwnerMode = (integer)val_multi;
+    if (val_multi != "") {
+        MultiOwnerMode = (integer)val_multi;
+    }
     
     string val_owner_key = llLinksetDataRead(KEY_OWNER_KEY);
-    if (val_owner_key != "") OwnerKey = (key)val_owner_key;
+    if (val_owner_key != "") {
+        OwnerKey = (key)val_owner_key;
+    }
     
     string val_owner_keys = llLinksetDataRead(KEY_OWNER_KEYS);
     if (val_owner_keys != "" && is_json_arr(val_owner_keys)) {
@@ -188,15 +186,19 @@ apply_settings_sync(string msg) {
     }
     
     string val_public = llLinksetDataRead(KEY_PUBLIC_ACCESS);
-    if (val_public != "") PublicAccess = (integer)val_public;
+    if (val_public != "") {
+        PublicAccess = (integer)val_public;
+    }
     
     string val_locked = llLinksetDataRead(KEY_LOCKED);
-    if (val_locked != "") Locked = (integer)val_locked;
+    if (val_locked != "") {
+        Locked = (integer)val_locked;
+    }
     
     string val_tpe = llLinksetDataRead(KEY_TPE_MODE);
-    if (val_tpe != "") TpeMode = (integer)val_tpe;
-    
-    logd("Settings sync applied");
+    if (val_tpe != "") {
+        TpeMode = (integer)val_tpe;
+    }
     
     // Check if we need to refresh owner names
     integer needs_refresh = FALSE;
@@ -308,14 +310,12 @@ request_owner_names() {
             }
         }
         
-        logd("Requested " + (string)count + " display names");
     }
     else {
         if (OwnerKey != NULL_KEY) {
             OwnerDisplay = "";
             OwnerDisplayQuery = llRequestDisplayName(OwnerKey);
             OwnerLegacyQuery = llRequestAgentData(OwnerKey, DATA_NAME);
-            logd("Requested owner display name");
         }
         else {
             OwnerDisplay = "";
@@ -469,7 +469,6 @@ show_status_menu() {
     ]);
     
     llMessageLinked(LINK_SET, DIALOG_BUS, msg, NULL_KEY);
-    logd("Status menu shown");
 }
 
 /* -------------------- BUTTON HANDLING -------------------- */
@@ -482,13 +481,12 @@ handle_button_click(string button) {
     }
     
     // Unknown button - shouldn't happen
-    logd("Unhandled button: " + button);
 }
 
 /* -------------------- UI NAVIGATION -------------------- */
 
 ui_return_root() {
-    string msg = llList2Json(JSON_OBJECT, [
+    string msg = create_routed_message("kmod_ui", [
         "type", "return",
         "user", (string)CurrentUser
     ]);
@@ -500,7 +498,6 @@ ui_return_root() {
 cleanup_session() {
     CurrentUser = NULL_KEY;
     SessionId = "";
-    logd("Session cleaned up");
 }
 
 /* -------------------- EVENTS -------------------- */
@@ -517,8 +514,6 @@ default {
         OwnerNameQueries = [];
         
         register_self();
-        
-        logd("Ready");
     }
     
     on_rez(integer start_param) {
@@ -532,6 +527,7 @@ default {
     }
     
     link_message(integer sender, integer num, string msg, key id) {
+        // ROUTING FILTER: Reject messages not addressed to us
         if (!is_message_for_me(msg)) return;
         
         /* -------------------- KERNEL LIFECYCLE -------------------- */if (num == KERNEL_LIFECYCLE) {
@@ -611,7 +607,6 @@ default {
                 if (llJsonGetValue(msg, ["session_id"]) != SessionId) return;
                 
                 cleanup_session();
-                logd("Dialog timeout");
                 return;
             }
             
@@ -626,7 +621,6 @@ default {
             if (idx != -1) {
                 if (idx < llGetListLength(OwnerDisplayNames)) {
                     OwnerDisplayNames = llListReplaceList(OwnerDisplayNames, [data], idx, idx);
-                    logd("Received display name: " + data);
                 }
             }
         }
@@ -634,12 +628,10 @@ default {
         else {
             if (query_id == OwnerDisplayQuery) {
                 OwnerDisplay = data;
-                logd("Owner display name resolved: " + data);
             }
             else if (query_id == OwnerLegacyQuery) {
                 if (OwnerDisplay == "") {
                     OwnerDisplay = data;
-                    logd("Owner legacy name resolved: " + data);
                 }
             }
         }

@@ -93,19 +93,10 @@ integer inAllowedList(integer level, list allowed) {
 /* -------------------- MESSAGE ROUTING -------------------- */
 
 integer is_message_for_me(string msg) {
-    if (llGetSubString(msg, 0, 0) != "{") return FALSE;
-    
-    integer to_pos = llSubStringIndex(msg, "\"to\"");
-    if (to_pos == -1) return TRUE;
-    
-    string header = llGetSubString(msg, 0, to_pos + 100);
-    
-    if (llSubStringIndex(header, "\"*\"") != -1) return TRUE;
-    if (llSubStringIndex(header, SCRIPT_ID) != -1) return TRUE;
-    if (llSubStringIndex(header, "\"plugin:*\"") != -1) return TRUE;
-    if (llSubStringIndex(header, "plugin:" + PLUGIN_CONTEXT) != -1) return TRUE;
-    
-    return FALSE;
+    if (!json_has(msg, ["to"])) return FALSE;  // STRICT: No "to" field = reject
+    string to = llJsonGetValue(msg, ["to"]);
+    if (to == SCRIPT_ID) return TRUE;  // STRICT: Accept ONLY exact SCRIPT_ID match
+    return FALSE;  // STRICT: Reject everything else (broadcasts, wildcards, variants)
 }
 
 string create_routed_message(string to_id, list fields) {
@@ -840,7 +831,7 @@ handleButtonClick(string button) {
 
 /* -------------------- NAVIGATION -------------------- */
 returnToRoot() {
-    llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
+    llMessageLinked(LINK_SET, UI_BUS, create_routed_message("kmod_ui", [
         "type", "return",
         "user", (string)CurrentUser
     ]), NULL_KEY);
