@@ -424,7 +424,6 @@ apply_settings_sync(string msg) {
     // PERFORMANCE FIX: No longer queue pending queries - we respond immediately with safe defaults
     // Active sessions will get correct ACL when they navigate/interact
 }
-}
 
 apply_settings_delta(string msg) {
     if (!json_has(msg, ["op"])) return;
@@ -537,8 +536,11 @@ handle_acl_query(string msg) {
     send_acl_result(av, correlation_id);
     
     if (DEBUG && !PRODUCTION) {
-        llOwnerSay("[AUTH] T+" + (string)llGetTime() + "s ACL result sent" + 
-                   (SettingsReady ? "" : " (safe defaults)"));
+        string suffix = "";
+        if (!SettingsReady) {
+            suffix = " (safe defaults)";
+        }
+        llOwnerSay("[AUTH] T+" + (string)llGetTime() + "s ACL result sent" + suffix);
     }
 }
 
