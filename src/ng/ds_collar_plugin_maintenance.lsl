@@ -505,44 +505,34 @@ handle_dialog_response(string msg) {
         return;
     }
     
-    // Admin actions (ACL check)
+    // Admin actions - ACL already validated at session creation
     if (button == "View Settings") {
-        if (llListFindList(ALLOWED_ACL_FULL, [CurrentUserAcl]) != -1) {
-            do_view_settings();
-            show_main_menu();
-        }
+        do_view_settings();
+        show_main_menu();
         return;
     }
     
     if (button == "Access List") {
-        if (llListFindList(ALLOWED_ACL_FULL, [CurrentUserAcl]) != -1) {
-            do_display_access_list();
-            show_main_menu();
-        }
+        do_display_access_list();
+        show_main_menu();
         return;
     }
     
     if (button == "Reload Settings") {
-        if (llListFindList(ALLOWED_ACL_FULL, [CurrentUserAcl]) != -1) {
-            do_reload_settings();
-            show_main_menu();
-        }
+        do_reload_settings();
+        show_main_menu();
         return;
     }
     
     if (button == "Clear Leash") {
-        if (llListFindList(ALLOWED_ACL_FULL, [CurrentUserAcl]) != -1) {
-            do_clear_leash();
-            show_main_menu();
-        }
+        do_clear_leash();
+        show_main_menu();
         return;
     }
     
     if (button == "Reload Collar") {
-        if (llListFindList(ALLOWED_ACL_FULL, [CurrentUserAcl]) != -1) {
-            do_reload_collar();
-            show_main_menu();
-        }
+        do_reload_collar();
+        show_main_menu();
         return;
     }
     

@@ -379,13 +379,6 @@ handle_dialog_response(string msg) {
     string button = llJsonGetValue(msg, ["button"]);
     logd("Button pressed: " + button + " in context: " + MenuContext);
     
-    // Re-validate ACL
-    if (!in_allowed_levels(CurrentUserAcl)) {
-        llRegionSayTo(CurrentUser, 0, "Access denied.");
-        return_to_root();
-        return;
-    }
-    
     // Handle Back button
     if (button == BTN_BACK) {
         if (MenuContext == "main") {

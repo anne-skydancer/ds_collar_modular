@@ -65,7 +65,7 @@ integer logd(string msg) {
     return FALSE;
 }
 
-integer jsonHas(string j, list path) {
+integer json_has(string j, list path) {
     return (llJsonGetValue(j, path) != JSON_INVALID);
 }
 
@@ -391,7 +391,7 @@ default
         if (!is_message_for_me(msg)) return;
         
         if (num == KERNEL_LIFECYCLE) {
-            if (!jsonHas(msg, ["type"])) return;
+            if (!json_has(msg, ["type"])) return;
             string msg_type = llJsonGetValue(msg, ["type"]);
 
             if (msg_type == "register_now") {
@@ -406,11 +406,11 @@ default
         }
 
         if (num == UI_BUS) {
-            if (!jsonHas(msg, ["type"])) return;
+            if (!json_has(msg, ["type"])) return;
             string msg_type = llJsonGetValue(msg, ["type"]);
 
             if (msg_type == "start") {
-                if (!jsonHas(msg, ["context"])) return;
+                if (!json_has(msg, ["context"])) return;
                 if (llJsonGetValue(msg, ["context"]) != PLUGIN_CONTEXT) return;
                 CurrentUser = id;
                 requestAcl(id);
@@ -418,13 +418,13 @@ default
             }
 
             if (msg_type == "chatcmd_state") {
-                if (jsonHas(msg, ["enabled"])) {
+                if (json_has(msg, ["enabled"])) {
                     Enabled = (integer)llJsonGetValue(msg, ["enabled"]);
                 }
-                if (jsonHas(msg, ["prefix"])) {
+                if (json_has(msg, ["prefix"])) {
                     CommandPrefix = llJsonGetValue(msg, ["prefix"]);
                 }
-                if (jsonHas(msg, ["private_chan"])) {
+                if (json_has(msg, ["private_chan"])) {
                     PrivateChannel = (integer)llJsonGetValue(msg, ["private_chan"]);
                 }
                 logd("State synced");
@@ -444,7 +444,7 @@ default
                 if (id != CurrentUser) return;
 
                 AvailableCommands = [];
-                if (jsonHas(msg, ["commands"]) && jsonHas(msg, ["count"])) {
+                if (json_has(msg, ["commands"]) && json_has(msg, ["count"])) {
                     string commands_json = llJsonGetValue(msg, ["commands"]);
                     integer num_commands = (integer)llJsonGetValue(msg, ["count"]);
 
@@ -465,17 +465,17 @@ default
         }
 
         if (num == AUTH_BUS) {
-            if (!jsonHas(msg, ["type"])) return;
+            if (!json_has(msg, ["type"])) return;
             string msg_type = llJsonGetValue(msg, ["type"]);
 
             if (msg_type == "acl_result") {
                 if (!AclPending) return;
-                if (!jsonHas(msg, ["avatar"])) return;
+                if (!json_has(msg, ["avatar"])) return;
 
                 key avatar = (key)llJsonGetValue(msg, ["avatar"]);
                 if (avatar != CurrentUser) return;
 
-                if (jsonHas(msg, ["level"])) {
+                if (json_has(msg, ["level"])) {
                     UserAcl = (integer)llJsonGetValue(msg, ["level"]);
                     AclPending = FALSE;
                     MenuContext = "main";
@@ -488,11 +488,11 @@ default
         }
 
         if (num == DIALOG_BUS) {
-            if (!jsonHas(msg, ["type"])) return;
+            if (!json_has(msg, ["type"])) return;
             string msg_type = llJsonGetValue(msg, ["type"]);
 
             if (msg_type == "dialog_response") {
-                if (!jsonHas(msg, ["session_id"]) || !jsonHas(msg, ["button"])) return;
+                if (!json_has(msg, ["session_id"]) || !json_has(msg, ["button"])) return;
 
                 string response_session = llJsonGetValue(msg, ["session_id"]);
                 if (response_session != SessionId) return;
@@ -503,7 +503,7 @@ default
             }
 
             if (msg_type == "dialog_timeout") {
-                if (!jsonHas(msg, ["session_id"])) return;
+                if (!json_has(msg, ["session_id"])) return;
 
                 string timeout_session = llJsonGetValue(msg, ["session_id"]);
                 if (timeout_session != SessionId) return;
@@ -555,3 +555,4 @@ default
         }
     }
 }
+

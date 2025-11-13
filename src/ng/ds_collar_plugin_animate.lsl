@@ -495,13 +495,6 @@ default {
                 
                 if (user != CurrentUser) return;
                 
-                // Re-validate ACL
-                if (UserAcl < PLUGIN_MIN_ACL) {
-                    llRegionSayTo(user, 0, "Access denied.");
-                    cleanup_session();
-                    return;
-                }
-                
                 handle_button_click(button);
                 return;
             }
