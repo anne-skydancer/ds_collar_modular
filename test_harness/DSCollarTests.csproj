@@ -19,4 +19,10 @@
     <ProjectReference Include="LSLTestHarness.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Exclude OpenSim source directories from compilation -->
+    <Compile Remove="extract\**\*.cs" />
+    <Compile Remove="opensim_source\**\*.cs" />
+  </ItemGroup>
+
 </Project>

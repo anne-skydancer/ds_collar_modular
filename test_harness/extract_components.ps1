@@ -1,4 +1,4 @@
-# PowerShell script to extract required OpenSimulator components for LSL test harness
+﻿# PowerShell script to extract required OpenSimulator components for LSL test harness
 # Run this from the test_harness directory
 
 $ErrorActionPreference = "Stop"
@@ -152,10 +152,10 @@ foreach ($file in $filesToCopy) {
     
     if (Test-Path $sourcePath) {
         Copy-Item -Path $sourcePath -Destination $destPath -Force
-        Write-Host "    ✓ $([System.IO.Path]::GetFileName($destPath))" -ForegroundColor Green
+        Write-Host "    âœ“ $([System.IO.Path]::GetFileName($destPath))" -ForegroundColor Green
         $copiedCount++
     } else {
-        Write-Host "    ✗ NOT FOUND: $([System.IO.Path]::GetFileName($sourcePath))" -ForegroundColor Red
+        Write-Host "    âœ— NOT FOUND: $([System.IO.Path]::GetFileName($sourcePath))" -ForegroundColor Red
         $skippedCount++
     }
 }  # End foreach

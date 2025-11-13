@@ -11,6 +11,7 @@ public class LSLTestHarness
 {
     private readonly MockLSLApi _api;
     private readonly EventInjector _eventInjector;
+    private readonly LSLSyntaxValidator _validator;
     private string? _scriptCode;
     private bool _isLoaded;
 
@@ -18,6 +19,7 @@ public class LSLTestHarness
     {
         _api = new MockLSLApi();
         _eventInjector = new EventInjector(_api);
+        _validator = new LSLSyntaxValidator();
         _isLoaded = false;
     }
 
@@ -30,7 +32,18 @@ public class LSLTestHarness
         if (string.IsNullOrWhiteSpace(lslCode))
             throw new ArgumentException("Script code cannot be empty", nameof(lslCode));
 
+        // Validate LSL syntax
+        if (!_validator.Validate(lslCode))
+        {
+            var errorReport = _validator.GetErrorReport();
+            throw new InvalidOperationException(
+                $"LSL syntax validation failed:\n{errorReport}");
+        }
+
         _scriptCode = lslCode;
+        
+        // Initialize YEngine adapter with script
+        _eventInjector.SetScript(lslCode);
         
         // Parse script to extract context and verify basic structure
         if (!lslCode.Contains("default"))

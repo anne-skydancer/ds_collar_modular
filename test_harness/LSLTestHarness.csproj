@@ -19,8 +19,9 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- Include extracted OpenSim components if they exist -->
-    <Compile Include="extract\**\*.cs" Condition="Exists('extract')" />
+    <!-- Exclude OpenSim source directories from compilation -->
+    <Compile Remove="extract\**\*.cs" />
+    <Compile Remove="opensim_source\**\*.cs" />
   </ItemGroup>
 
 </Project>
