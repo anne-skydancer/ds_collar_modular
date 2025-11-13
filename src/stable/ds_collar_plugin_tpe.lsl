@@ -1,4 +1,3 @@
-
 /*--------------------
 PLUGIN: ds_collar_plugin_tpe.lsl
 VERSION: 1.00

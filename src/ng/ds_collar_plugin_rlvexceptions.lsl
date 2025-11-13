@@ -148,13 +148,15 @@ reconcile_all() {
 /* -------------------- LIFECYCLE -------------------- */
 
 register_self() {
-    llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
+    string msg = create_routed_message("ds_collar_kernel", [
         "type", "register",
         "context", PLUGIN_CONTEXT,
         "label", PLUGIN_LABEL,
         "min_acl", PLUGIN_MIN_ACL,
         "script", llGetScriptName()
-    ]), NULL_KEY);
+    ]);
+    llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, msg, NULL_KEY);
+    logd("register_self() -> sent registration to kernel");
 }
 
 send_pong() {
@@ -230,7 +232,24 @@ persist_setting(string setting_key, integer value) {
         "key", setting_key,
         "value", (string)value
     ]), NULL_KEY);
+    // Apply the change locally immediately so RLV state is updated
+    if (setting_key == KEY_EX_OWNER_TP) {
+        ExOwnerTp = value;
+    }
+    else if (setting_key == KEY_EX_OWNER_IM) {
+        ExOwnerIm = value;
+    }
+    else if (setting_key == KEY_EX_TRUSTEE_TP) {
+        ExTrusteeTp = value;
+    }
+    else if (setting_key == KEY_EX_TRUSTEE_IM) {
+        ExTrusteeIm = value;
+    }
+
+    // Reconcile RLV exceptions immediately so the change takes effect
+    reconcile_all();
 }
+
 
 /* -------------------- ACL -------------------- */
 
