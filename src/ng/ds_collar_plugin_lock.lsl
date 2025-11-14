@@ -12,9 +12,6 @@ CHANGES:
 - Plays configurable toggle sound when state changes
 --------------------*/
 
-integer DEBUG = TRUE;
-integer PRODUCTION = FALSE;
-string SCRIPT_ID = "plugin_lock";
 
 /* -------------------- CONSOLIDATED ABI -------------------- */
 integer KERNEL_LIFECYCLE = 500;
@@ -44,10 +41,7 @@ string PRIM_UNLOCKED = "unlocked";
 integer Locked = FALSE;
 
 /* -------------------- HELPERS -------------------- */
-integer logd(string msg) {
-    if (DEBUG) llOwnerSay("[LOCK] " + msg);
-    return FALSE;
-}
+
 
 integer json_has(string json_data, list path) {
     return (llJsonGetValue(json_data, path) != JSON_INVALID);
@@ -55,24 +49,6 @@ integer json_has(string json_data, list path) {
 
 play_toggle_sound() {
     llTriggerSound(SOUND_TOGGLE, SOUND_VOLUME);
-}
-
-/* -------------------- MESSAGE ROUTING -------------------- */
-
-integer is_message_for_me(string msg) {
-    if (!json_has(msg, ["to"])) return FALSE;  // STRICT: No "to" field = reject
-    string to = llJsonGetValue(msg, ["to"]);
-    if (to == SCRIPT_ID) return TRUE;  // STRICT: Accept ONLY exact SCRIPT_ID match
-    return FALSE;  // STRICT: Reject everything else (broadcasts, wildcards, variants)
-}
-
-string create_routed_message(string to_id, list fields) {
-    list routed = ["from", SCRIPT_ID, "to", to_id] + fields;
-    return llList2Json(JSON_OBJECT, routed);
-}
-
-string create_broadcast(list fields) {
-    return create_routed_message("*", fields);
 }
 
 /* -------------------- LIFECYCLE MANAGEMENT -------------------- */
@@ -92,7 +68,6 @@ register_self() {
         "script", llGetScriptName()
     ]);
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, msg, NULL_KEY);
-    logd("Registered as: " + current_label);
 }
 
 send_pong() {
@@ -106,56 +81,52 @@ send_pong() {
 /* -------------------- SETTINGS CONSUMPTION -------------------- */
 
 apply_settings_sync(string msg) {
-    // PHASE 2: Read directly from linkset data
-    integer old_locked = Locked;
+    if (!json_has(msg, ["kv"])) return;
     
-    string val = llLinksetDataRead(KEY_LOCKED);
-    if (val != "") {
-        Locked = (integer)val;
-    }
-    else {
-        Locked = FALSE;
+    string kv_json = llJsonGetValue(msg, ["kv"]);
+    
+    integer old_locked = Locked;
+    Locked = FALSE;
+    
+    if (json_has(kv_json, [KEY_LOCKED])) {
+        Locked = (integer)llJsonGetValue(kv_json, [KEY_LOCKED]);
     }
     
     if (old_locked != Locked) {
         apply_lock_state();
     }
     
-    logd("Settings sync: locked=" + (string)Locked);
 }
 
 apply_settings_delta(string msg) {
-    // PHASE 2: Simplified - just re-read affected key from linkset data
-    if (!json_has(msg, ["key"])) return;
+    if (!json_has(msg, ["op"])) return;
     
-    string key_name = llJsonGetValue(msg, ["key"]);
+    string op = llJsonGetValue(msg, ["op"]);
     
-    if (key_name == KEY_LOCKED) {
-        integer old_locked = Locked;
-        string val = llLinksetDataRead(KEY_LOCKED);
-        if (val != "") {
-            Locked = (integer)val;
-        }
-        else {
-            Locked = FALSE;
-        }
+    if (op == "set") {
+        if (!json_has(msg, ["changes"])) return;
+        string changes = llJsonGetValue(msg, ["changes"]);
         
-        if (old_locked != Locked) {
-            apply_lock_state();
-            // Only update label, don't return to menu (no active user in delta context)
-            string new_label = PLUGIN_LABEL_UNLOCKED;
-            if (Locked) {
-                new_label = PLUGIN_LABEL_LOCKED;
+        if (json_has(changes, [KEY_LOCKED])) {
+            integer old_locked = Locked;
+            Locked = (integer)llJsonGetValue(changes, [KEY_LOCKED]);
+            
+            if (old_locked != Locked) {
+                apply_lock_state();
+                // Only update label, don't return to menu (no active user in delta context)
+                string new_label = PLUGIN_LABEL_UNLOCKED;
+                if (Locked) {
+                    new_label = PLUGIN_LABEL_LOCKED;
+                }
+                string msg = llList2Json(JSON_OBJECT, [
+                    "type", "update_label",
+                    "context", PLUGIN_CONTEXT,
+                    "label", new_label
+                ]);
+                llMessageLinked(LINK_SET, UI_BUS, msg, NULL_KEY);
             }
-            string update_msg = llList2Json(JSON_OBJECT, [
-                "type", "update_label",
-                "context", PLUGIN_CONTEXT,
-                "label", new_label
-            ]);
-            llMessageLinked(LINK_SET, UI_BUS, update_msg, NULL_KEY);
+            
         }
-        
-        logd("Delta: locked=" + (string)Locked);
     }
 }
 
@@ -179,13 +150,11 @@ apply_lock_state() {
         // Lock collar - prevent detach
         llOwnerSay("@detach=n");
         show_locked_prim();
-        logd("Applied lock state: LOCKED");
     }
     else {
         // Unlock collar - allow detach
         llOwnerSay("@detach=y");
         show_unlocked_prim();
-        logd("Applied lock state: UNLOCKED");
     }
 }
 
@@ -240,13 +209,11 @@ update_ui_label_and_return(key user) {
     llMessageLinked(LINK_SET, UI_BUS, msg, NULL_KEY);
     
     // Return user to root menu to see the updated button
-    msg = create_routed_message("kmod_ui", [
+    msg = llList2Json(JSON_OBJECT, [
         "type", "return",
         "user", (string)user
     ]);
     llMessageLinked(LINK_SET, UI_BUS, msg, NULL_KEY);
-    
-    logd("Updated UI label to: " + new_label + " and returning to root");
 }
 
 /* -------------------- DIRECT TOGGLE ACTION -------------------- */
@@ -313,7 +280,6 @@ default {
         Locked = FALSE;
         register_self();
         apply_lock_state();
-        logd("Ready");
     }
     
     on_rez(integer start_param) {
@@ -327,8 +293,6 @@ default {
     }
     
     link_message(integer sender, integer num, string msg, key id) {
-        if (!is_message_for_me(msg)) return;
-        
         /* -------------------- KERNEL LIFECYCLE -------------------- */if (num == KERNEL_LIFECYCLE) {
             if (!json_has(msg, ["type"])) return;
             string msg_type = llJsonGetValue(msg, ["type"]);

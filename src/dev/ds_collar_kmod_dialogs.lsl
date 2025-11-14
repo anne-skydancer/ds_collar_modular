@@ -1,7 +1,8 @@
+
 /*--------------------
 MODULE: ds_collar_kmod_dialogs.lsl
 VERSION: 1.00
-REVISION: 22
+REVISION: 21
 PURPOSE: Centralized dialog management for shared listener handling
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
@@ -10,11 +11,8 @@ CHANGES:
 - Channel collision detection mitigates negative channel reuse conflicts
 - Owner change handling resets listeners for safe transfers
 - Truncation warnings added for numbered button lists
-- PERFORMANCE: Optimized button_data parsing for strided list format
 --------------------*/
 
-integer DEBUG = TRUE;
-integer PRODUCTION = FALSE;  // Set FALSE for development builds
 
 /* -------------------- CONSOLIDATED ABI -------------------- */
 integer KERNEL_LIFECYCLE = 500;
@@ -46,11 +44,7 @@ integer BUTTON_B_LABEL = 2;
 list ButtonConfigs = [];
 
 /* -------------------- HELPERS -------------------- */
-integer logd(string msg) {
-    // SECURITY FIX: Production mode guard
-    if (DEBUG && !PRODUCTION) llOwnerSay("[DIALOGS] " + msg);
-    return FALSE;
-}
+
 
 integer json_has(string j, list path) {
     return (llJsonGetValue(j, path) != JSON_INVALID);
@@ -68,9 +62,6 @@ integer validate_required_fields(string json_str, list field_names, string funct
     while (i < len) {
         string field = llList2String(field_names, i);
         if (!json_has(json_str, [field])) {
-            if (DEBUG && !PRODUCTION) {
-                logd("ERROR: " + function_name + " missing '" + field + "' field");
-            }
             return FALSE;
         }
         i += 1;
@@ -105,7 +96,6 @@ close_session_at_idx(integer idx) {
     }
     
     string session_id = llList2String(Sessions, idx + SESSION_ID);
-    logd("Closed session: " + session_id);
     
     Sessions = llDeleteSubList(Sessions, idx, idx + SESSION_STRIDE - 1);
 }
@@ -135,8 +125,6 @@ prune_expired_sessions() {
                 "user", (string)user
             ]);
             llMessageLinked(LINK_SET, DIALOG_BUS, timeout_msg, NULL_KEY);
-            
-            logd("Session timeout: " + session_id);
             
             close_session_at_idx(i);
             // Don't increment i, list shifted
@@ -177,7 +165,6 @@ integer get_next_channel() {
     }
     
     // Fallback: use random channel (collision still possible but very unlikely)
-    logd("WARNING: Could not find unused channel after 100 attempts, using random");
     return CHANNEL_BASE - (integer)llFrand(1000000);
 }
 
@@ -201,12 +188,10 @@ register_button_config(string context, string button_a, string button_b) {
     if (idx != -1) {
         // Update existing config
         ButtonConfigs = llListReplaceList(ButtonConfigs, [context, button_a, button_b], idx, idx + BUTTON_CONFIG_STRIDE - 1);
-        logd("Updated button config: " + context + " [" + button_a + "/" + button_b + "]");
     }
     else {
         // Add new config
         ButtonConfigs += [context, button_a, button_b];
-        logd("Registered button config: " + context + " [" + button_a + "/" + button_b + "]");
     }
 }
 
@@ -229,8 +214,6 @@ string get_button_label(string context, integer button_state) {
 /* -------------------- DIALOG DISPLAY -------------------- */
 
 handle_dialog_open(string msg) {
-    if (DEBUG && !PRODUCTION) llOwnerSay("[DIALOG] T+" + (string)llGetTime() + "s dialog_open received");
-
     if (!validate_required_fields(msg, ["session_id", "user"], "handle_dialog_open")) {
         return;
     }
@@ -244,41 +227,64 @@ handle_dialog_open(string msg) {
         return;
     }
 
-    // PERFORMANCE: button_data now arrives as strided list [label, context, state, label, context, state, ...]
-    // Dialog resolves toggle button labels using state + button configs
+    // Standard dialog - check for button_data (new format) or buttons (old format)
     list buttons = [];
-    list button_map = [];  // Maps button_text -> context (STRIDE=2)
+    list button_map = [];  // Maps button_text -> context
 
     if (json_has(msg, ["button_data"])) {
-        // New optimized format: strided list [label, context, state, ...] (STRIDE=3)
+        // New format: button_data contains mixed array of strings and objects
         string button_data_json = llJsonGetValue(msg, ["button_data"]);
-        list button_triplets = llJson2List(button_data_json);
-        
-        // Extract labels for llDialog, resolve toggle buttons, build context map
+        list button_data_list = llJson2List(button_data_json);
+
+        // Resolve button labels from config+state and build mapping
         integer i = 0;
-        integer len = llGetListLength(button_triplets);
+        integer len = llGetListLength(button_data_list);
         while (i < len) {
-            string label = llList2String(button_triplets, i);
-            string context = llList2String(button_triplets, i + 1);
-            integer button_state = (integer)llList2String(button_triplets, i + 2);
-            
-            // Check if this button has a toggle config
-            string final_label = label;
-            if (context != "") {  // Skip navigation buttons (empty context)
+            string item = llList2String(button_data_list, i);
+            string button_text = "";
+            string button_context = "";
+
+            // Plugin buttons: JSON objects with context+label+state (routable to plugins)
+            if (llJsonValueType(item, []) == JSON_OBJECT &&
+                json_has(item, ["context"]) && json_has(item, ["label"]) && json_has(item, ["state"])) {
+
+                string context = llJsonGetValue(item, ["context"]);
+                string label = llJsonGetValue(item, ["label"]);
+                integer button_state = (integer)llJsonGetValue(item, ["state"]);
+
+                // Check if there's a button config for this context (for toggle buttons)
                 integer config_idx = find_button_config_idx(context);
+
                 if (config_idx != -1) {
-                    // Toggle button: resolve label based on state
-                    final_label = get_button_label(context, button_state);
+                    // Toggle button: use registered config to resolve label
+                    button_text = get_button_label(context, button_state);
                 }
+                else {
+                    // Regular plugin: use label field directly
+                    button_text = label;
+                }
+
+                button_context = context;  // Plugin buttons route to context
             }
-            
-            buttons += [final_label];
-            button_map += [final_label, context];
-            i += 3;  // Stride of 3
+            else {
+                // Navigation buttons or other non-routable buttons
+                // Extract label from JSON object if available, otherwise use string as-is
+                if (llJsonValueType(item, []) == JSON_OBJECT && json_has(item, ["label"])) {
+                    button_text = llJsonGetValue(item, ["label"]);
+                }
+                else {
+                    button_text = item;
+                }
+                // button_context remains empty (no routing)
+            }
+
+            buttons += [button_text];
+            button_map += [button_text, button_context];
+            i++;
         }
     }
     else if (json_has(msg, ["buttons"])) {
-        // Old format fallback: buttons is array of strings
+        // Old format: buttons is array of strings
         string buttons_json = llJsonGetValue(msg, ["buttons"]);
         buttons = llJson2List(buttons_json);
 
@@ -290,7 +296,6 @@ handle_dialog_open(string msg) {
         }
     }
     else {
-        logd("ERROR: dialog_open missing buttons or button_data");
         return;
     }
 
@@ -321,7 +326,6 @@ handle_dialog_open(string msg) {
     if (llGetListLength(Sessions) / SESSION_STRIDE >= SESSION_MAX) {
         // Close oldest session
         close_session_at_idx(0);
-        logd("Session limit reached, closed oldest");
     }
 
     // Get channel and create listen
@@ -340,7 +344,6 @@ handle_dialog_open(string msg) {
     // Show dialog
     llDialog(user, title + "\n\n" + message, buttons, channel);
 
-    if (DEBUG && !PRODUCTION) llOwnerSay("[DIALOG] T+" + (string)llGetTime() + "s llDialog() called - DONE");
 }
 
 handle_numbered_list_dialog(string msg, string session_id, key user) {
@@ -369,7 +372,6 @@ handle_numbered_list_dialog(string msg, string session_id, key user) {
     integer original_count = item_count;
     
     if (item_count == 0) {
-        logd("ERROR: numbered_list has no items");
         return;
     }
     
@@ -381,7 +383,6 @@ handle_numbered_list_dialog(string msg, string session_id, key user) {
     if (item_count > max_items) {
         // SECURITY FIX: Warn about truncation
         llOwnerSay("WARNING: Item list truncated to " + (string)max_items + " items (had " + (string)original_count + ")");
-        logd("WARNING: Truncated numbered list (" + (string)original_count + " -> " + (string)max_items + ")");
         item_count = max_items;
     }
     
@@ -402,7 +403,6 @@ handle_numbered_list_dialog(string msg, string session_id, key user) {
     // Enforce session limit
     if (llGetListLength(Sessions) / SESSION_STRIDE >= SESSION_MAX) {
         close_session_at_idx(0);
-        logd("Session limit reached, closed oldest");
     }
     
     // Get channel and create listen
@@ -429,7 +429,6 @@ handle_numbered_list_dialog(string msg, string session_id, key user) {
     // Show dialog
     llDialog(user, title + "\n\n" + body, buttons, channel);
 
-    logd("Opened numbered list: " + session_id + " (" + (string)item_count + " items)");
 }
 
 handle_dialog_close(string msg) {
@@ -447,8 +446,6 @@ default
         Sessions = [];
         NextChannelOffset = 1;
         ButtonConfigs = [];
-
-        logd("Dialog manager started");
 
         // Start timer for session cleanup
         llSetTimerEvent(5.0);
@@ -499,7 +496,6 @@ default
                     ]);
                     llMessageLinked(LINK_SET, DIALOG_BUS, response, NULL_KEY);
 
-                    logd("Button click: " + message + " (context: " + clicked_context + ") from " + llKey2Name(id));
 
                     // Close session after response
                     close_session_at_idx(i);
@@ -540,7 +536,6 @@ default
                 register_button_config(context, button_a, button_b);
             }
             else {
-                logd("ERROR: register_button_config missing required fields");
             }
         }
     }
@@ -552,4 +547,3 @@ default
         }
     }
 }
-

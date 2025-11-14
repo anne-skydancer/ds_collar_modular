@@ -12,8 +12,6 @@ CHANGES:
 - Presents ACL-gated dialog workflow for managing exception sets
 --------------------*/
 
-integer DEBUG = TRUE;
-integer PRODUCTION = FALSE;
 
 /* -------------------- ABI CHANNELS -------------------- */
 integer KERNEL_LIFECYCLE = 500;
@@ -55,9 +53,6 @@ string MenuContext;
 
 /* -------------------- HELPERS -------------------- */
 
-logd(string msg) {
-    if (DEBUG) llOwnerSay("[" + PLUGIN_LABEL + "] " + msg);
-}
 
 integer json_has(string j, list path) {
     return (llJsonGetValue(j, path) != JSON_INVALID);
@@ -96,7 +91,6 @@ apply_im_exception(key k, integer allow) {
 }
 
 reconcile_all() {
-    logd("Reconciling RLV exceptions");
     
     // Owner exceptions
     if (MultiOwnerMode) {
@@ -198,8 +192,6 @@ apply_settings_sync(string msg) {
     
     // Apply RLV commands
     reconcile_all();
-    
-    logd("Settings applied");
 }
 
 apply_settings_delta(string msg) {
@@ -236,7 +228,6 @@ apply_settings_delta(string msg) {
             if (old_owner != NULL_KEY && old_owner != OwnerKey) {
                 apply_tp_exception(old_owner, FALSE);
                 apply_im_exception(old_owner, FALSE);
-                logd("Cleared exceptions for removed owner: " + (string)old_owner);
             }
             
             // Apply to new owner
@@ -253,7 +244,6 @@ apply_settings_delta(string msg) {
         if (key_name == KEY_OWNER_KEYS) {
             if (llListFindList(OwnerKeys, [elem]) == -1) {
                 OwnerKeys += [elem];
-                logd("Added owner: " + elem);
                 
                 // Apply exceptions to new owner
                 key k = (key)elem;
@@ -264,7 +254,6 @@ apply_settings_delta(string msg) {
         else if (key_name == KEY_TRUSTEES) {
             if (llListFindList(TrusteeKeys, [elem]) == -1) {
                 TrusteeKeys += [elem];
-                logd("Added trustee: " + elem);
                 
                 // Apply exceptions to new trustee
                 key k = (key)elem;
@@ -287,7 +276,6 @@ apply_settings_delta(string msg) {
                 key k = (key)elem;
                 apply_tp_exception(k, FALSE);
                 apply_im_exception(k, FALSE);
-                logd("Cleared exceptions for removed owner: " + elem);
                 
                 // Remove from list
                 OwnerKeys = llDeleteSubList(OwnerKeys, idx, idx);
@@ -300,7 +288,6 @@ apply_settings_delta(string msg) {
                 key k = (key)elem;
                 apply_tp_exception(k, FALSE);
                 apply_im_exception(k, FALSE);
-                logd("Cleared exceptions for removed trustee: " + elem);
                 
                 // Remove from list
                 TrusteeKeys = llDeleteSubList(TrusteeKeys, idx, idx);

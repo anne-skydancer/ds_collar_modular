@@ -12,10 +12,6 @@ CHANGES:
 - Tracks last played animation to manage start/stop transitions cleanly
 --------------------*/
 
-integer DEBUG = TRUE;
-integer PRODUCTION = FALSE;
-
-string SCRIPT_ID = "plugin_animate";
 
 /* -------------------- CONSOLIDATED ABI -------------------- */
 integer KERNEL_LIFECYCLE = 500;
@@ -49,10 +45,7 @@ string LastPlayedAnim = "";
 integer HasPermission = FALSE;
 
 /* -------------------- HELPERS -------------------- */
-integer logd(string msg) {
-    if (DEBUG) llOwnerSay("[ANIMATE] " + msg);
-    return FALSE;
-}
+
 
 integer json_has(string j, list path) {
     return (llJsonGetValue(j, path) != JSON_INVALID);
@@ -60,24 +53,6 @@ integer json_has(string j, list path) {
 
 string generate_session_id() {
     return PLUGIN_CONTEXT + "_" + (string)llGetUnixTime();
-}
-
-/* -------------------- MESSAGE ROUTING -------------------- */
-
-integer is_message_for_me(string msg) {
-    if (!json_has(msg, ["to"])) return FALSE;  // STRICT: No "to" field = reject
-    string to = llJsonGetValue(msg, ["to"]);
-    if (to == SCRIPT_ID) return TRUE;  // STRICT: Accept ONLY exact SCRIPT_ID match
-    return FALSE;  // STRICT: Reject everything else (broadcasts, wildcards, variants)
-}
-
-string create_routed_message(string to_id, list fields) {
-    list routed = ["from", SCRIPT_ID, "to", to_id] + fields;
-    return llList2Json(JSON_OBJECT, routed);
-}
-
-string create_broadcast(list fields) {
-    return create_routed_message("*", fields);
 }
 
 /* -------------------- ANIMATION INVENTORY MANAGEMENT -------------------- */
@@ -94,7 +69,6 @@ refresh_animation_list() {
         }
     }
     
-    logd("Found " + (string)llGetListLength(AnimationList) + " animations");
 }
 
 /* -------------------- ANIMATION CONTROL -------------------- */
@@ -103,17 +77,14 @@ ensure_permissions() {
     key owner = llGetOwner();
     if (llGetPermissions() & PERMISSION_TRIGGER_ANIMATION) {
         HasPermission = TRUE;
-        logd("Already have animation permission");
     }
     else {
         llRequestPermissions(owner, PERMISSION_TRIGGER_ANIMATION);
-        logd("Requesting animation permission");
     }
 }
 
 start_animation(string anim_name) {
     if (!HasPermission) {
-        logd("No permission to trigger animations");
         llRegionSayTo(CurrentUser, 0, "No animation permission granted.");
         return;
     }
@@ -121,18 +92,15 @@ start_animation(string anim_name) {
     // Stop last animation if there was one
     if (LastPlayedAnim != "") {
         llStopAnimation(LastPlayedAnim);
-        logd("Stopped: " + LastPlayedAnim);
     }
     
     // Start new animation
     if (llGetInventoryType(anim_name) == INVENTORY_ANIMATION) {
         llStartAnimation(anim_name);
         LastPlayedAnim = anim_name;
-        logd("Started: " + anim_name);
         llRegionSayTo(CurrentUser, 0, "Playing: " + anim_name);
     }
     else {
-        logd("Animation not found: " + anim_name);
         llRegionSayTo(CurrentUser, 0, "Animation not found: " + anim_name);
     }
 }
@@ -140,7 +108,6 @@ start_animation(string anim_name) {
 stop_all_animations() {
     if (LastPlayedAnim != "") {
         llStopAnimation(LastPlayedAnim);
-        logd("Stopped: " + LastPlayedAnim);
         LastPlayedAnim = "";
         llRegionSayTo(CurrentUser, 0, "Animation stopped.");
     }
@@ -160,7 +127,6 @@ register_self() {
         "script", llGetScriptName()
     ]);
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, msg, NULL_KEY);
-    logd("Registered with kernel");
 }
 
 send_pong() {
@@ -293,7 +259,6 @@ show_animation_menu(integer page) {
     ]);
     
     llMessageLinked(LINK_SET, DIALOG_BUS, msg, NULL_KEY);
-    logd("Showing page " + (string)(page + 1) + " of " + (string)(max_page + 1));
 }
 
 /* -------------------- BUTTON HANDLING -------------------- */
@@ -357,7 +322,7 @@ handle_button_click(string button) {
 /* -------------------- UI NAVIGATION -------------------- */
 
 ui_return_root() {
-    string msg = create_routed_message("kmod_ui", [
+    string msg = llList2Json(JSON_OBJECT, [
         "type", "return",
         "user", (string)CurrentUser
     ]);
@@ -372,7 +337,6 @@ cleanup_session() {
     AclPending = FALSE;
     SessionId = "";
     CurrentPage = 0;
-    logd("Session cleaned up");
 }
 
 /* -------------------- EVENTS -------------------- */
@@ -383,7 +347,6 @@ default {
         refresh_animation_list();
         ensure_permissions();
         register_self();
-        logd("Ready with " + (string)llGetListLength(AnimationList) + " animations");
     }
     
     on_rez(integer start_param) {
@@ -420,14 +383,10 @@ default {
     run_time_permissions(integer perm) {
         if (perm & PERMISSION_TRIGGER_ANIMATION) {
             HasPermission = TRUE;
-            logd("Animation permission granted");
         }
     }
     
     link_message(integer sender, integer num, string msg, key id) {
-        // Early filter: ignore messages not intended for us
-        if (!is_message_for_me(msg)) return;
-        
         /* -------------------- KERNEL LIFECYCLE -------------------- */if (num == KERNEL_LIFECYCLE) {
             if (!json_has(msg, ["type"])) return;
             string msg_type = llJsonGetValue(msg, ["type"]);
@@ -495,6 +454,13 @@ default {
                 
                 if (user != CurrentUser) return;
                 
+                // Re-validate ACL
+                if (UserAcl < PLUGIN_MIN_ACL) {
+                    llRegionSayTo(user, 0, "Access denied.");
+                    cleanup_session();
+                    return;
+                }
+                
                 handle_button_click(button);
                 return;
             }
@@ -504,7 +470,6 @@ default {
                 if (llJsonGetValue(msg, ["session_id"]) != SessionId) return;
                 
                 cleanup_session();
-                logd("Dialog timeout");
                 return;
             }
             

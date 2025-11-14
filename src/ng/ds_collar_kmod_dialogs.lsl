@@ -1,17 +1,11 @@
+
 /*--------------------
 MODULE: ds_collar_kmod_dialogs.lsl
 VERSION: 1.00
-REVISION: 23
+REVISION: 21
 PURPOSE: Centralized dialog management for shared listener handling
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
-- PERFORMANCE: Added activity-based timeout tracking (Phase 2)
-  * Idle timeout increased from 60s → 120s (gives users more time to read menus)
-  * Absolute max timeout 600s prevents indefinite open dialogs
-  * Timeout reason tracking ("idle" vs "absolute_max") for diagnostics
-- PERFORMANCE: Added dialog_extend message handler (Phase 3 infrastructure)
-  * Can extend timeout without recreating listener (prepared for Phase 4)
-  * Currently dialog sessions close after each button click (ephemeral)
 - Centralized dialog sessions remove per-plugin listen management
 - Dedicated dialog bus coordinates all open and timeout events
 - Channel collision detection mitigates negative channel reuse conflicts
@@ -19,10 +13,6 @@ CHANGES:
 - Truncation warnings added for numbered button lists
 --------------------*/
 
-integer DEBUG = TRUE;
-integer PRODUCTION = FALSE;  // Set FALSE for development builds
-
-string SCRIPT_ID = "kmod_dialogs";
 
 /* -------------------- CONSOLIDATED ABI -------------------- */
 integer KERNEL_LIFECYCLE = 500;
@@ -32,19 +22,14 @@ integer DIALOG_BUS = 950;
 integer CHANNEL_BASE = -8000000;
 integer SESSION_MAX = 10;  // Maximum concurrent sessions
 
-// PERFORMANCE: Activity-based timeout constants (Phase 2)
-integer SESSION_IDLE_TIMEOUT = 120;   // 2 minutes of inactivity closes dialog
-integer SESSION_ABSOLUTE_MAX = 600;   // 10 minutes absolute max lifetime
-
-/* Session list stride: [session_id, user_key, channel, listen_handle, timeout_unix, button_map, last_activity_unix] */
-integer SESSION_STRIDE = 7;
+/* Session list stride: [session_id, user_key, channel, listen_handle, timeout_unix, button_map] */
+integer SESSION_STRIDE = 6;
 integer SESSION_ID = 0;
 integer SESSION_USER = 1;
 integer SESSION_CHANNEL = 2;
 integer SESSION_LISTEN = 3;
 integer SESSION_TIMEOUT = 4;
 integer SESSION_BUTTON_MAP = 5;  // List of [button_text, context] pairs
-integer SESSION_LAST_ACTIVITY = 6;  // Last interaction timestamp for idle detection
 
 /* -------------------- STATE -------------------- */
 list Sessions = [];
@@ -59,11 +44,7 @@ integer BUTTON_B_LABEL = 2;
 list ButtonConfigs = [];
 
 /* -------------------- HELPERS -------------------- */
-integer logd(string msg) {
-    // SECURITY FIX: Production mode guard
-    if (DEBUG && !PRODUCTION) llOwnerSay("[DIALOGS] " + msg);
-    return FALSE;
-}
+
 
 integer json_has(string j, list path) {
     return (llJsonGetValue(j, path) != JSON_INVALID);
@@ -81,9 +62,6 @@ integer validate_required_fields(string json_str, list field_names, string funct
     while (i < len) {
         string field = llList2String(field_names, i);
         if (!json_has(json_str, [field])) {
-            if (DEBUG && !PRODUCTION) {
-                logd("ERROR: " + function_name + " missing '" + field + "' field");
-            }
             return FALSE;
         }
         i += 1;
@@ -95,61 +73,7 @@ integer now() {
     return llGetUnixTime();
 }
 
-/* -------------------- MESSAGE ROUTING -------------------- */
-
-integer is_message_for_me(string msg) {
-    if (llGetSubString(msg, 0, 0) != "{") return FALSE;
-    
-    integer to_pos = llSubStringIndex(msg, "\"to\"");
-    if (to_pos == -1) return TRUE;  // No routing = broadcast
-    
-    string header = llGetSubString(msg, 0, to_pos + 100);
-    
-    if (llSubStringIndex(header, "\"*\"") != -1) return TRUE;
-    if (llSubStringIndex(header, SCRIPT_ID) != -1) return TRUE;
-    if (llSubStringIndex(header, "\"kmod:*\"") != -1) return TRUE;
-    
-    return FALSE;
-}
-
-string create_routed_message(string to_id, list fields) {
-    list routed = ["from", SCRIPT_ID, "to", to_id] + fields;
-    return llList2Json(JSON_OBJECT, routed);
-}
-
-string create_broadcast(list fields) {
-    return create_routed_message("*", fields);
-}
-
 /* -------------------- SESSION MANAGEMENT -------------------- */
-
-// PERFORMANCE: Activity tracking helper (Phase 2)
-update_session_activity(integer session_idx) {
-    if (session_idx < 0) return;
-    
-    integer now_unix = now();
-    integer creation_time = llList2Integer(Sessions, session_idx + SESSION_LAST_ACTIVITY);
-    integer age = now_unix - creation_time;
-    
-    // Extend timeout if still within absolute max
-    integer new_timeout;
-    if (age < SESSION_ABSOLUTE_MAX) {
-        new_timeout = now_unix + SESSION_IDLE_TIMEOUT;
-        // Cap at absolute max
-        integer absolute_deadline = creation_time + SESSION_ABSOLUTE_MAX;
-        if (new_timeout > absolute_deadline) {
-            new_timeout = absolute_deadline;
-        }
-    }
-    else {
-        // Exceeded absolute max, force expiry
-        new_timeout = now_unix - 1;
-    }
-    
-    Sessions = llListReplaceList(Sessions, [new_timeout, now_unix], 
-        session_idx + SESSION_TIMEOUT, 
-        session_idx + SESSION_LAST_ACTIVITY);
-}
 
 integer find_session_idx(string session_id) {
     integer i = 0;
@@ -172,7 +96,6 @@ close_session_at_idx(integer idx) {
     }
     
     string session_id = llList2String(Sessions, idx + SESSION_ID);
-    logd("Closed session: " + session_id);
     
     Sessions = llDeleteSubList(Sessions, idx, idx + SESSION_STRIDE - 1);
 }
@@ -192,30 +115,16 @@ prune_expired_sessions() {
         integer timeout = llList2Integer(Sessions, i + SESSION_TIMEOUT);
         
         if (timeout > 0 && now_unix >= timeout) {
-            // Session expired (idle or absolute max)
+            // Session expired, send timeout message
             string session_id = llList2String(Sessions, i + SESSION_ID);
             key user = llList2Key(Sessions, i + SESSION_USER);
             
-            // PERFORMANCE: Determine expiry reason (Phase 2)
-            integer last_activity = llList2Integer(Sessions, i + SESSION_LAST_ACTIVITY);
-            integer age = now_unix - last_activity;
-            string reason;
-            if (age >= SESSION_ABSOLUTE_MAX) {
-                reason = "absolute_max";
-            }
-            else {
-                reason = "idle";
-            }
-            
-            string timeout_msg = create_broadcast([
+            string timeout_msg = llList2Json(JSON_OBJECT, [
                 "type", "dialog_timeout",
                 "session_id", session_id,
-                "user", (string)user,
-                "reason", reason
+                "user", (string)user
             ]);
             llMessageLinked(LINK_SET, DIALOG_BUS, timeout_msg, NULL_KEY);
-            
-            logd("Session timeout (" + reason + "): " + session_id);
             
             close_session_at_idx(i);
             // Don't increment i, list shifted
@@ -256,7 +165,6 @@ integer get_next_channel() {
     }
     
     // Fallback: use random channel (collision still possible but very unlikely)
-    logd("WARNING: Could not find unused channel after 100 attempts, using random");
     return CHANNEL_BASE - (integer)llFrand(1000000);
 }
 
@@ -280,12 +188,10 @@ register_button_config(string context, string button_a, string button_b) {
     if (idx != -1) {
         // Update existing config
         ButtonConfigs = llListReplaceList(ButtonConfigs, [context, button_a, button_b], idx, idx + BUTTON_CONFIG_STRIDE - 1);
-        logd("Updated button config: " + context + " [" + button_a + "/" + button_b + "]");
     }
     else {
         // Add new config
         ButtonConfigs += [context, button_a, button_b];
-        logd("Registered button config: " + context + " [" + button_a + "/" + button_b + "]");
     }
 }
 
@@ -390,7 +296,6 @@ handle_dialog_open(string msg) {
         }
     }
     else {
-        logd("ERROR: dialog_open missing buttons or button_data");
         return;
     }
 
@@ -421,7 +326,6 @@ handle_dialog_open(string msg) {
     if (llGetListLength(Sessions) / SESSION_STRIDE >= SESSION_MAX) {
         // Close oldest session
         close_session_at_idx(0);
-        logd("Session limit reached, closed oldest");
     }
 
     // Get channel and create listen
@@ -429,20 +333,17 @@ handle_dialog_open(string msg) {
     integer listen_handle = llListen(channel, "", user, "");
 
     // Calculate timeout timestamp
-    integer now_unix = now();
     integer timeout_unix = 0;
     if (timeout > 0) {
-        timeout_unix = now_unix + timeout;
+        timeout_unix = now() + timeout;
     }
 
-    // PERFORMANCE: Initialize last_activity for idle tracking (Phase 2)
     // Add to sessions (serialize button_map as JSON to maintain SESSION_STRIDE)
-    Sessions += [session_id, user, channel, listen_handle, timeout_unix, llList2Json(JSON_ARRAY, button_map), now_unix];
+    Sessions += [session_id, user, channel, listen_handle, timeout_unix, llList2Json(JSON_ARRAY, button_map)];
 
     // Show dialog
     llDialog(user, title + "\n\n" + message, buttons, channel);
 
-    logd("Opened dialog: " + session_id + " for " + llKey2Name(user) + " on channel " + (string)channel);
 }
 
 handle_numbered_list_dialog(string msg, string session_id, key user) {
@@ -471,7 +372,6 @@ handle_numbered_list_dialog(string msg, string session_id, key user) {
     integer original_count = item_count;
     
     if (item_count == 0) {
-        logd("ERROR: numbered_list has no items");
         return;
     }
     
@@ -483,7 +383,6 @@ handle_numbered_list_dialog(string msg, string session_id, key user) {
     if (item_count > max_items) {
         // SECURITY FIX: Warn about truncation
         llOwnerSay("WARNING: Item list truncated to " + (string)max_items + " items (had " + (string)original_count + ")");
-        logd("WARNING: Truncated numbered list (" + (string)original_count + " -> " + (string)max_items + ")");
         item_count = max_items;
     }
     
@@ -504,7 +403,6 @@ handle_numbered_list_dialog(string msg, string session_id, key user) {
     // Enforce session limit
     if (llGetListLength(Sessions) / SESSION_STRIDE >= SESSION_MAX) {
         close_session_at_idx(0);
-        logd("Session limit reached, closed oldest");
     }
     
     // Get channel and create listen
@@ -512,10 +410,9 @@ handle_numbered_list_dialog(string msg, string session_id, key user) {
     integer listen_handle = llListen(channel, "", user, "");
     
     // Calculate timeout timestamp
-    integer now_unix = now();
     integer timeout_unix = 0;
     if (timeout > 0) {
-        timeout_unix = now_unix + timeout;
+        timeout_unix = now() + timeout;
     }
 
     // Build button_map for numbered list (buttons have no context)
@@ -526,39 +423,12 @@ handle_numbered_list_dialog(string msg, string session_id, key user) {
         j++;
     }
 
-    // PERFORMANCE: Initialize last_activity for idle tracking (Phase 2)
     // Add to sessions (serialize button_map as JSON to maintain SESSION_STRIDE)
-    Sessions += [session_id, user, channel, listen_handle, timeout_unix, llList2Json(JSON_ARRAY, button_map), now_unix];
+    Sessions += [session_id, user, channel, listen_handle, timeout_unix, llList2Json(JSON_ARRAY, button_map)];
 
     // Show dialog
     llDialog(user, title + "\n\n" + body, buttons, channel);
 
-    logd("Opened numbered list: " + session_id + " (" + (string)item_count + " items)");
-}
-
-// PERFORMANCE: Extend dialog timeout without recreating session
-handle_dialog_extend(string msg) {
-    if (!validate_required_fields(msg, ["session_id"], "handle_dialog_extend")) return;
-    
-    string session_id = llJsonGetValue(msg, ["session_id"]);
-    integer session_idx = find_session_idx(session_id);
-    
-    if (session_idx == -1) {
-        logd("Cannot extend non-existent session: " + session_id);
-        return;
-    }
-    
-    integer timeout_extension = 60;  // Default 60s
-    if (json_has(msg, ["timeout"])) {
-        timeout_extension = (integer)llJsonGetValue(msg, ["timeout"]);
-    }
-    
-    integer new_timeout = now() + timeout_extension;
-    Sessions = llListReplaceList(Sessions, [new_timeout], 
-        session_idx + SESSION_TIMEOUT, 
-        session_idx + SESSION_TIMEOUT);
-    
-    logd("Extended timeout for session: " + session_id + " (+" + (string)timeout_extension + "s)");
 }
 
 handle_dialog_close(string msg) {
@@ -576,8 +446,6 @@ default
         Sessions = [];
         NextChannelOffset = 1;
         ButtonConfigs = [];
-
-        logd("Dialog manager started");
 
         // Start timer for session cleanup
         llSetTimerEvent(5.0);
@@ -619,7 +487,7 @@ default
                     @found_context;
 
                     // Send response message with context
-                    string response = create_broadcast([
+                    string response = llList2Json(JSON_OBJECT, [
                         "type", "dialog_response",
                         "session_id", session_id,
                         "user", (string)id,
@@ -628,9 +496,8 @@ default
                     ]);
                     llMessageLinked(LINK_SET, DIALOG_BUS, response, NULL_KEY);
 
-                    logd("Button click: " + message + " (context: " + clicked_context + ") from " + llKey2Name(id));
 
-                    // Close session after response (ephemeral per-dialog session)
+                    // Close session after response
                     close_session_at_idx(i);
                     return;
                 }
@@ -641,9 +508,6 @@ default
     }
     
     link_message(integer sender, integer num, string msg, key id) {
-        // Early filter: ignore messages not for us
-        if (!is_message_for_me(msg)) return;
-        
         string msg_type = get_msg_type(msg);
         if (msg_type == "") return;
 
@@ -661,9 +525,6 @@ default
         if (msg_type == "dialog_open") {
             handle_dialog_open(msg);
         }
-        else if (msg_type == "dialog_extend") {
-            handle_dialog_extend(msg);
-        }
         else if (msg_type == "dialog_close") {
             handle_dialog_close(msg);
         }
@@ -675,7 +536,6 @@ default
                 register_button_config(context, button_a, button_b);
             }
             else {
-                logd("ERROR: register_button_config missing required fields");
             }
         }
     }
@@ -687,4 +547,3 @@ default
         }
     }
 }
-

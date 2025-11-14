@@ -12,10 +12,6 @@ CHANGES:
 - Presents ACL-gated dialog workflow for managing exception sets
 --------------------*/
 
-integer DEBUG = TRUE;
-integer PRODUCTION = FALSE;
-
-string SCRIPT_ID = "plugin_rlvexceptions";
 
 /* -------------------- ABI CHANNELS -------------------- */
 integer KERNEL_LIFECYCLE = 500;
@@ -57,9 +53,6 @@ string MenuContext;
 
 /* -------------------- HELPERS -------------------- */
 
-logd(string msg) {
-    if (DEBUG) llOwnerSay("[" + PLUGIN_LABEL + "] " + msg);
-}
 
 integer json_has(string j, list path) {
     return (llJsonGetValue(j, path) != JSON_INVALID);
@@ -67,24 +60,6 @@ integer json_has(string j, list path) {
 
 string gen_session() {
     return PLUGIN_CONTEXT + "_" + (string)llGetUnixTime();
-}
-
-/* -------------------- MESSAGE ROUTING -------------------- */
-
-integer is_message_for_me(string msg) {
-    if (!json_has(msg, ["to"])) return FALSE;  // STRICT: No "to" field = reject
-    string to = llJsonGetValue(msg, ["to"]);
-    if (to == SCRIPT_ID) return TRUE;  // STRICT: Accept ONLY exact SCRIPT_ID match
-    return FALSE;  // STRICT: Reject everything else (broadcasts, wildcards, variants)
-}
-
-string create_routed_message(string to_id, list fields) {
-    list routed = ["from", SCRIPT_ID, "to", to_id] + fields;
-    return llList2Json(JSON_OBJECT, routed);
-}
-
-string create_broadcast(list fields) {
-    return create_routed_message("*", fields);
 }
 
 /* -------------------- RLV COMMANDS -------------------- */
@@ -116,7 +91,6 @@ apply_im_exception(key k, integer allow) {
 }
 
 reconcile_all() {
-    logd("Reconciling RLV exceptions");
     
     // Owner exceptions
     if (MultiOwnerMode) {
@@ -148,15 +122,13 @@ reconcile_all() {
 /* -------------------- LIFECYCLE -------------------- */
 
 register_self() {
-    string msg = create_routed_message("ds_collar_kernel", [
+    llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
         "type", "register",
         "context", PLUGIN_CONTEXT,
         "label", PLUGIN_LABEL,
         "min_acl", PLUGIN_MIN_ACL,
         "script", llGetScriptName()
-    ]);
-    llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, msg, NULL_KEY);
-    logd("register_self() -> sent registration to kernel");
+    ]), NULL_KEY);
 }
 
 send_pong() {
@@ -169,7 +141,9 @@ send_pong() {
 /* -------------------- SETTINGS -------------------- */
 
 apply_settings_sync(string msg) {
-    // PHASE 2: Read directly from linkset data
+    if (!json_has(msg, ["kv"])) return;
+    string kv = llJsonGetValue(msg, ["kv"]);
+    
     // Reset defaults
     ExOwnerTp = TRUE;
     ExOwnerIm = TRUE;
@@ -181,49 +155,145 @@ apply_settings_sync(string msg) {
     MultiOwnerMode = FALSE;
     
     // Load exception settings
-    string val_owner_tp = llLinksetDataRead(KEY_EX_OWNER_TP);
-    if (val_owner_tp != "") ExOwnerTp = (integer)val_owner_tp;
-    
-    string val_owner_im = llLinksetDataRead(KEY_EX_OWNER_IM);
-    if (val_owner_im != "") ExOwnerIm = (integer)val_owner_im;
-    
-    string val_trustee_tp = llLinksetDataRead(KEY_EX_TRUSTEE_TP);
-    if (val_trustee_tp != "") ExTrusteeTp = (integer)val_trustee_tp;
-    
-    string val_trustee_im = llLinksetDataRead(KEY_EX_TRUSTEE_IM);
-    if (val_trustee_im != "") ExTrusteeIm = (integer)val_trustee_im;
+    if (json_has(kv, [KEY_EX_OWNER_TP])) {
+        ExOwnerTp = (integer)llJsonGetValue(kv, [KEY_EX_OWNER_TP]);
+    }
+    if (json_has(kv, [KEY_EX_OWNER_IM])) {
+        ExOwnerIm = (integer)llJsonGetValue(kv, [KEY_EX_OWNER_IM]);
+    }
+    if (json_has(kv, [KEY_EX_TRUSTEE_TP])) {
+        ExTrusteeTp = (integer)llJsonGetValue(kv, [KEY_EX_TRUSTEE_TP]);
+    }
+    if (json_has(kv, [KEY_EX_TRUSTEE_IM])) {
+        ExTrusteeIm = (integer)llJsonGetValue(kv, [KEY_EX_TRUSTEE_IM]);
+    }
     
     // Load owner/trustee lists
-    string val_multi = llLinksetDataRead(KEY_MULTI_OWNER_MODE);
-    if (val_multi != "") MultiOwnerMode = (integer)val_multi;
+    if (json_has(kv, [KEY_MULTI_OWNER_MODE])) {
+        MultiOwnerMode = (integer)llJsonGetValue(kv, [KEY_MULTI_OWNER_MODE]);
+    }
     
     if (MultiOwnerMode) {
-        string val_owner_keys = llLinksetDataRead(KEY_OWNER_KEYS);
-        if (val_owner_keys != "" && llGetSubString(val_owner_keys, 0, 0) == "[") {
-            OwnerKeys = llJson2List(val_owner_keys);
+        if (json_has(kv, [KEY_OWNER_KEYS])) {
+            string arr = llJsonGetValue(kv, [KEY_OWNER_KEYS]);
+            if (llGetSubString(arr, 0, 0) == "[") OwnerKeys = llJson2List(arr);
         }
     }
     else {
-        string val_owner_key = llLinksetDataRead(KEY_OWNER_KEY);
-        if (val_owner_key != "") OwnerKey = (key)val_owner_key;
+        if (json_has(kv, [KEY_OWNER_KEY])) {
+            OwnerKey = (key)llJsonGetValue(kv, [KEY_OWNER_KEY]);
+        }
     }
     
-    string val_trustees = llLinksetDataRead(KEY_TRUSTEES);
-    if (val_trustees != "" && llGetSubString(val_trustees, 0, 0) == "[") {
-        TrusteeKeys = llJson2List(val_trustees);
+    if (json_has(kv, [KEY_TRUSTEES])) {
+        string arr = llJsonGetValue(kv, [KEY_TRUSTEES]);
+        if (llGetSubString(arr, 0, 0) == "[") TrusteeKeys = llJson2List(arr);
     }
     
     // Apply RLV commands
     reconcile_all();
-    
-    logd("Settings applied");
 }
 
 apply_settings_delta(string msg) {
-    // PHASE 2: Simplified - just re-sync all settings (safe and correct)
-    // This RLV plugin needs full state refresh anyway to reconcile exceptions
-    apply_settings_sync(msg);
-    logd("Delta applied via full sync");
+    if (!json_has(msg, ["op"])) return;
+    string op = llJsonGetValue(msg, ["op"]);
+    
+    if (op == "set") {
+        if (!json_has(msg, ["changes"])) return;
+        string changes = llJsonGetValue(msg, ["changes"]);
+        
+        if (json_has(changes, [KEY_EX_OWNER_TP])) {
+            ExOwnerTp = (integer)llJsonGetValue(changes, [KEY_EX_OWNER_TP]);
+            reconcile_all();
+        }
+        if (json_has(changes, [KEY_EX_OWNER_IM])) {
+            ExOwnerIm = (integer)llJsonGetValue(changes, [KEY_EX_OWNER_IM]);
+            reconcile_all();
+        }
+        if (json_has(changes, [KEY_EX_TRUSTEE_TP])) {
+            ExTrusteeTp = (integer)llJsonGetValue(changes, [KEY_EX_TRUSTEE_TP]);
+            reconcile_all();
+        }
+        if (json_has(changes, [KEY_EX_TRUSTEE_IM])) {
+            ExTrusteeIm = (integer)llJsonGetValue(changes, [KEY_EX_TRUSTEE_IM]);
+            reconcile_all();
+        }
+        
+        // Handle owner_key changes (single owner mode)
+        if (json_has(changes, [KEY_OWNER_KEY])) {
+            key old_owner = OwnerKey;
+            OwnerKey = (key)llJsonGetValue(changes, [KEY_OWNER_KEY]);
+            
+            // Clear exceptions from old owner if it changed
+            if (old_owner != NULL_KEY && old_owner != OwnerKey) {
+                apply_tp_exception(old_owner, FALSE);
+                apply_im_exception(old_owner, FALSE);
+            }
+            
+            // Apply to new owner
+            reconcile_all();
+        }
+    }
+    else if (op == "list_add") {
+        if (!json_has(msg, ["key"])) return;
+        if (!json_has(msg, ["elem"])) return;
+        
+        string key_name = llJsonGetValue(msg, ["key"]);
+        string elem = llJsonGetValue(msg, ["elem"]);
+        
+        if (key_name == KEY_OWNER_KEYS) {
+            if (llListFindList(OwnerKeys, [elem]) == -1) {
+                OwnerKeys += [elem];
+                
+                // Apply exceptions to new owner
+                key k = (key)elem;
+                apply_tp_exception(k, ExOwnerTp);
+                apply_im_exception(k, ExOwnerIm);
+            }
+        }
+        else if (key_name == KEY_TRUSTEES) {
+            if (llListFindList(TrusteeKeys, [elem]) == -1) {
+                TrusteeKeys += [elem];
+                
+                // Apply exceptions to new trustee
+                key k = (key)elem;
+                apply_tp_exception(k, ExTrusteeTp);
+                apply_im_exception(k, ExTrusteeIm);
+            }
+        }
+    }
+    else if (op == "list_remove") {
+        if (!json_has(msg, ["key"])) return;
+        if (!json_has(msg, ["elem"])) return;
+        
+        string key_name = llJsonGetValue(msg, ["key"]);
+        string elem = llJsonGetValue(msg, ["elem"]);
+        
+        if (key_name == KEY_OWNER_KEYS) {
+            integer idx = llListFindList(OwnerKeys, [elem]);
+            if (idx != -1) {
+                // CRITICAL: Clear exceptions BEFORE removing from list
+                key k = (key)elem;
+                apply_tp_exception(k, FALSE);
+                apply_im_exception(k, FALSE);
+                
+                // Remove from list
+                OwnerKeys = llDeleteSubList(OwnerKeys, idx, idx);
+            }
+        }
+        else if (key_name == KEY_TRUSTEES) {
+            integer idx = llListFindList(TrusteeKeys, [elem]);
+            if (idx != -1) {
+                // CRITICAL: Clear exceptions BEFORE removing from list
+                key k = (key)elem;
+                apply_tp_exception(k, FALSE);
+                apply_im_exception(k, FALSE);
+                
+                // Remove from list
+                TrusteeKeys = llDeleteSubList(TrusteeKeys, idx, idx);
+            }
+        }
+    }
 }
 
 persist_setting(string setting_key, integer value) {
@@ -232,24 +302,7 @@ persist_setting(string setting_key, integer value) {
         "key", setting_key,
         "value", (string)value
     ]), NULL_KEY);
-    // Apply the change locally immediately so RLV state is updated
-    if (setting_key == KEY_EX_OWNER_TP) {
-        ExOwnerTp = value;
-    }
-    else if (setting_key == KEY_EX_OWNER_IM) {
-        ExOwnerIm = value;
-    }
-    else if (setting_key == KEY_EX_TRUSTEE_TP) {
-        ExTrusteeTp = value;
-    }
-    else if (setting_key == KEY_EX_TRUSTEE_IM) {
-        ExTrusteeIm = value;
-    }
-
-    // Reconcile RLV exceptions immediately so the change takes effect
-    reconcile_all();
 }
-
 
 /* -------------------- ACL -------------------- */
 
@@ -373,7 +426,7 @@ show_toggle(string role, string exception_type, string setting_key, integer curr
 handle_button(string btn) {
     if (btn == "Back") {
         if (MenuContext == "main") {
-            llMessageLinked(LINK_SET, UI_BUS, create_routed_message("kmod_ui", [
+            llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
                 "type", "return", "user", (string)CurrentUser
             ]), NULL_KEY);
             cleanup();
@@ -476,8 +529,6 @@ default {
     }
     
     link_message(integer sender, integer num, string msg, key id) {
-        if (!is_message_for_me(msg)) return;
-        
         if (!json_has(msg, ["type"])) return;
         string type = llJsonGetValue(msg, ["type"]);
         

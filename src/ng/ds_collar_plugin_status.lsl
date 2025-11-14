@@ -12,6 +12,7 @@ CHANGES:
 - Supports multi-owner mode by tracking ordered owner sets
 --------------------*/
 
+
 /* -------------------- CONSOLIDATED ABI -------------------- */
 integer KERNEL_LIFECYCLE = 500;
 integer AUTH_BUS = 700;
@@ -23,7 +24,6 @@ integer DIALOG_BUS = 950;
 string PLUGIN_CONTEXT = "core_status";
 string PLUGIN_LABEL = "Status";
 integer PLUGIN_MIN_ACL = 1;  // Public can view
-string SCRIPT_ID = "plugin_status";
 string ROOT_CONTEXT = "core_root";
 
 /* -------------------- SETTINGS KEYS -------------------- */
@@ -68,12 +68,6 @@ string SessionId = "";
 
 /* -------------------- HELPERS -------------------- */
 
-integer DEBUG = TRUE;
-
-integer logd(string msg) {
-    if (DEBUG) llOwnerSay("[STATUS] " + msg);
-    return FALSE;
-}
 
 integer json_has(string j, list path) {
     return (llJsonGetValue(j, path) != JSON_INVALID);
@@ -85,23 +79,6 @@ integer is_json_arr(string s) {
 
 string generate_session_id() {
     return PLUGIN_CONTEXT + "_" + (string)llGetUnixTime();
-}
-
-/* -------------------- ROUTING HELPERS -------------------- */
-
-integer is_message_for_me(string msg) {
-    if (!json_has(msg, ["to"])) return FALSE;  // STRICT: No "to" field = reject
-    string to = llJsonGetValue(msg, ["to"]);
-    if (to == SCRIPT_ID) return TRUE;  // STRICT: Accept ONLY exact SCRIPT_ID match
-    return FALSE;  // STRICT: Reject everything else (broadcasts, wildcards, variants)
-}
-
-string create_routed_message(string to_id, list fields) {
-    return llList2Json(JSON_OBJECT, ["from", SCRIPT_ID, "to", to_id] + fields);
-}
-
-string create_broadcast(list fields) {
-    return create_routed_message("*", fields);
 }
 
 /* -------------------- LIFECYCLE MANAGEMENT -------------------- */
@@ -128,7 +105,10 @@ send_pong() {
 /* -------------------- SETTINGS CONSUMPTION -------------------- */
 
 apply_settings_sync(string msg) {
-    // PHASE 2: Read directly from linkset data
+    if (!json_has(msg, ["kv"])) return;
+    
+    string kv_json = llJsonGetValue(msg, ["kv"]);
+    
     integer previous_mode = MultiOwnerMode;
     key previous_owner = OwnerKey;
     list previous_owners = OwnerKeys;
@@ -146,58 +126,65 @@ apply_settings_sync(string msg) {
     Locked = FALSE;
     TpeMode = FALSE;
     
-    // Load values from linkset data
-    string val_multi = llLinksetDataRead(KEY_MULTI_OWNER_MODE);
-    if (val_multi != "") {
-        MultiOwnerMode = (integer)val_multi;
+    // Load values
+    if (json_has(kv_json, [KEY_MULTI_OWNER_MODE])) {
+        MultiOwnerMode = (integer)llJsonGetValue(kv_json, [KEY_MULTI_OWNER_MODE]);
     }
     
-    string val_owner_key = llLinksetDataRead(KEY_OWNER_KEY);
-    if (val_owner_key != "") {
-        OwnerKey = (key)val_owner_key;
+    if (json_has(kv_json, [KEY_OWNER_KEY])) {
+        string owner_str = llJsonGetValue(kv_json, [KEY_OWNER_KEY]);
+        OwnerKey = (key)owner_str;
     }
     
-    string val_owner_keys = llLinksetDataRead(KEY_OWNER_KEYS);
-    if (val_owner_keys != "" && is_json_arr(val_owner_keys)) {
-        OwnerKeys = llJson2List(val_owner_keys);
+    if (json_has(kv_json, [KEY_OWNER_KEYS])) {
+        string owner_keys_json = llJsonGetValue(kv_json, [KEY_OWNER_KEYS]);
+        if (is_json_arr(owner_keys_json)) {
+            OwnerKeys = llJson2List(owner_keys_json);
+        }
     }
     
-    string val_owner_hon = llLinksetDataRead(KEY_OWNER_HON);
-    if (val_owner_hon != "") OwnerHonorific = val_owner_hon;
-    
-    string val_owner_hons = llLinksetDataRead(KEY_OWNER_HONS);
-    if (val_owner_hons != "" && is_json_arr(val_owner_hons)) {
-        OwnerHonorifics = llJson2List(val_owner_hons);
+    if (json_has(kv_json, [KEY_OWNER_HON])) {
+        OwnerHonorific = llJsonGetValue(kv_json, [KEY_OWNER_HON]);
     }
     
-    string val_trustees = llLinksetDataRead(KEY_TRUSTEES);
-    if (val_trustees != "" && is_json_arr(val_trustees)) {
-        TrusteeKeys = llJson2List(val_trustees);
+    if (json_has(kv_json, [KEY_OWNER_HONS])) {
+        string hon_json = llJsonGetValue(kv_json, [KEY_OWNER_HONS]);
+        if (is_json_arr(hon_json)) {
+            OwnerHonorifics = llJson2List(hon_json);
+        }
     }
     
-    string val_trustee_hons = llLinksetDataRead(KEY_TRUSTEE_HONS);
-    if (val_trustee_hons != "" && is_json_arr(val_trustee_hons)) {
-        TrusteeHonorifics = llJson2List(val_trustee_hons);
+    if (json_has(kv_json, [KEY_TRUSTEES])) {
+        string trustees_json = llJsonGetValue(kv_json, [KEY_TRUSTEES]);
+        if (is_json_arr(trustees_json)) {
+            TrusteeKeys = llJson2List(trustees_json);
+        }
     }
     
-    string val_blacklist = llLinksetDataRead(KEY_BLACKLIST);
-    if (val_blacklist != "" && is_json_arr(val_blacklist)) {
-        BlacklistKeys = llJson2List(val_blacklist);
+    if (json_has(kv_json, [KEY_TRUSTEE_HONS])) {
+        string hon_json = llJsonGetValue(kv_json, [KEY_TRUSTEE_HONS]);
+        if (is_json_arr(hon_json)) {
+            TrusteeHonorifics = llJson2List(hon_json);
+        }
     }
     
-    string val_public = llLinksetDataRead(KEY_PUBLIC_ACCESS);
-    if (val_public != "") {
-        PublicAccess = (integer)val_public;
+    if (json_has(kv_json, [KEY_BLACKLIST])) {
+        string blacklist_json = llJsonGetValue(kv_json, [KEY_BLACKLIST]);
+        if (is_json_arr(blacklist_json)) {
+            BlacklistKeys = llJson2List(blacklist_json);
+        }
     }
     
-    string val_locked = llLinksetDataRead(KEY_LOCKED);
-    if (val_locked != "") {
-        Locked = (integer)val_locked;
+    if (json_has(kv_json, [KEY_PUBLIC_ACCESS])) {
+        PublicAccess = (integer)llJsonGetValue(kv_json, [KEY_PUBLIC_ACCESS]);
     }
     
-    string val_tpe = llLinksetDataRead(KEY_TPE_MODE);
-    if (val_tpe != "") {
-        TpeMode = (integer)val_tpe;
+    if (json_has(kv_json, [KEY_LOCKED])) {
+        Locked = (integer)llJsonGetValue(kv_json, [KEY_LOCKED]);
+    }
+    
+    if (json_has(kv_json, [KEY_TPE_MODE])) {
+        TpeMode = (integer)llJsonGetValue(kv_json, [KEY_TPE_MODE]);
     }
     
     // Check if we need to refresh owner names
@@ -223,72 +210,54 @@ apply_settings_sync(string msg) {
 }
 
 apply_settings_delta(string msg) {
-    // PHASE 2: Simplified - just re-read affected key from linkset data
-    if (!json_has(msg, ["key"])) return;
+    if (!json_has(msg, ["op"])) return;
     
-    string key_name = llJsonGetValue(msg, ["key"]);
-    integer needs_refresh = FALSE;
+    string op = llJsonGetValue(msg, ["op"]);
     
-    if (key_name == KEY_MULTI_OWNER_MODE) {
-        string val = llLinksetDataRead(KEY_MULTI_OWNER_MODE);
-        if (val != "") MultiOwnerMode = (integer)val;
-        needs_refresh = TRUE;
-    }
-    else if (key_name == KEY_OWNER_KEY) {
-        string val = llLinksetDataRead(KEY_OWNER_KEY);
-        if (val != "") OwnerKey = (key)val;
-        needs_refresh = TRUE;
-    }
-    else if (key_name == KEY_OWNER_HON) {
-        string val = llLinksetDataRead(KEY_OWNER_HON);
-        if (val != "") OwnerHonorific = val;
-    }
-    else if (key_name == KEY_OWNER_KEYS) {
-        string val = llLinksetDataRead(KEY_OWNER_KEYS);
-        if (val != "" && is_json_arr(val)) {
-            OwnerKeys = llJson2List(val);
+    if (op == "set") {
+        if (!json_has(msg, ["changes"])) return;
+        string changes = llJsonGetValue(msg, ["changes"]);
+        
+        integer needs_refresh = FALSE;
+        
+        if (json_has(changes, [KEY_MULTI_OWNER_MODE])) {
+            MultiOwnerMode = (integer)llJsonGetValue(changes, [KEY_MULTI_OWNER_MODE]);
             needs_refresh = TRUE;
         }
-    }
-    else if (key_name == KEY_OWNER_HONS) {
-        string val = llLinksetDataRead(KEY_OWNER_HONS);
-        if (val != "" && is_json_arr(val)) {
-            OwnerHonorifics = llJson2List(val);
+        
+        if (json_has(changes, [KEY_OWNER_KEY])) {
+            OwnerKey = (key)llJsonGetValue(changes, [KEY_OWNER_KEY]);
+            needs_refresh = TRUE;
+        }
+        
+        if (json_has(changes, [KEY_OWNER_HON])) {
+            OwnerHonorific = llJsonGetValue(changes, [KEY_OWNER_HON]);
+        }
+        
+        if (json_has(changes, [KEY_PUBLIC_ACCESS])) {
+            PublicAccess = (integer)llJsonGetValue(changes, [KEY_PUBLIC_ACCESS]);
+        }
+        
+        if (json_has(changes, [KEY_LOCKED])) {
+            Locked = (integer)llJsonGetValue(changes, [KEY_LOCKED]);
+        }
+        
+        if (json_has(changes, [KEY_TPE_MODE])) {
+            TpeMode = (integer)llJsonGetValue(changes, [KEY_TPE_MODE]);
+        }
+        
+        if (needs_refresh) {
+            request_owner_names();
         }
     }
-    else if (key_name == KEY_TRUSTEES) {
-        string val = llLinksetDataRead(KEY_TRUSTEES);
-        if (val != "" && is_json_arr(val)) {
-            TrusteeKeys = llJson2List(val);
+    else if (op == "list_add" || op == "list_remove") {
+        if (!json_has(msg, ["key"])) return;
+        string list_key = llJsonGetValue(msg, ["key"]);
+        
+        if (list_key == KEY_OWNER_KEYS || list_key == KEY_TRUSTEES || 
+            list_key == KEY_OWNER_HONS || list_key == KEY_TRUSTEE_HONS) {
+            // Request full sync to refresh lists
         }
-    }
-    else if (key_name == KEY_TRUSTEE_HONS) {
-        string val = llLinksetDataRead(KEY_TRUSTEE_HONS);
-        if (val != "" && is_json_arr(val)) {
-            TrusteeHonorifics = llJson2List(val);
-        }
-    }
-    else if (key_name == KEY_BLACKLIST) {
-        string val = llLinksetDataRead(KEY_BLACKLIST);
-        if (val != "" && is_json_arr(val)) {
-            BlacklistKeys = llJson2List(val);
-        }
-    }
-    else if (key_name == KEY_PUBLIC_ACCESS) {
-        string val = llLinksetDataRead(KEY_PUBLIC_ACCESS);
-        if (val != "") PublicAccess = (integer)val;
-    }
-    else if (key_name == KEY_LOCKED) {
-        string val = llLinksetDataRead(KEY_LOCKED);
-        if (val != "") Locked = (integer)val;
-    }
-    else if (key_name == KEY_TPE_MODE) {
-        string val = llLinksetDataRead(KEY_TPE_MODE);
-        if (val != "") TpeMode = (integer)val;
-    }
-    
-    if (needs_refresh) {
-        request_owner_names();
     }
 }
 
@@ -486,7 +455,7 @@ handle_button_click(string button) {
 /* -------------------- UI NAVIGATION -------------------- */
 
 ui_return_root() {
-    string msg = create_routed_message("kmod_ui", [
+    string msg = llList2Json(JSON_OBJECT, [
         "type", "return",
         "user", (string)CurrentUser
     ]);
@@ -527,9 +496,6 @@ default {
     }
     
     link_message(integer sender, integer num, string msg, key id) {
-        // ROUTING FILTER: Reject messages not addressed to us
-        if (!is_message_for_me(msg)) return;
-        
         /* -------------------- KERNEL LIFECYCLE -------------------- */if (num == KERNEL_LIFECYCLE) {
             if (!json_has(msg, ["type"])) return;
             string msg_type = llJsonGetValue(msg, ["type"]);

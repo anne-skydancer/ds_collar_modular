@@ -12,10 +12,6 @@ CHANGES:
 - Enforces ACL tiers separating view and administrative functions
 --------------------*/
 
-integer DEBUG = TRUE;
-integer PRODUCTION = FALSE;
-
-string SCRIPT_ID = "plugin_maintenance";
 
 /* -------------------- CONSOLIDATED ABI -------------------- */
 integer KERNEL_LIFECYCLE = 500;
@@ -76,10 +72,7 @@ integer CurrentUserAcl = -999;
 string SessionId = "";
 
 /* -------------------- HELPERS -------------------- */
-integer logd(string msg) {
-    if (DEBUG) llOwnerSay("[MAINT] " + msg);
-    return FALSE;
-}
+
 
 integer json_has(string j, list path) {
     return (llJsonGetValue(j, path) != JSON_INVALID);
@@ -93,44 +86,6 @@ string generate_session_id() {
     return "maint_" + (string)llGetKey() + "_" + (string)llGetUnixTime();
 }
 
-string build_settings_cache_from_linkset_data() {
-    // PHASE 2: Build JSON object from linkset data on-demand
-    list json_fields = [];
-    integer i = 0;
-    integer len = llGetListLength(ALL_SETTINGS);
-    
-    while (i < len) {
-        string key_name = llList2String(ALL_SETTINGS, i);
-        string val = llLinksetDataRead(key_name);
-        
-        if (val != "") {
-            json_fields += [key_name, val];
-        }
-        
-        i += 1;
-    }
-    
-    return llList2Json(JSON_OBJECT, json_fields);
-}
-
-/* -------------------- MESSAGE ROUTING -------------------- */
-
-integer is_message_for_me(string msg) {
-    if (!json_has(msg, ["to"])) return FALSE;  // STRICT: No "to" field = reject
-    string to = llJsonGetValue(msg, ["to"]);
-    if (to == SCRIPT_ID) return TRUE;  // STRICT: Accept ONLY exact SCRIPT_ID match
-    return FALSE;  // STRICT: Reject everything else (broadcasts, wildcards, variants)
-}
-
-string create_routed_message(string to_id, list fields) {
-    list routed = ["from", SCRIPT_ID, "to", to_id] + fields;
-    return llList2Json(JSON_OBJECT, routed);
-}
-
-string create_broadcast(list fields) {
-    return create_routed_message("*", fields);
-}
-
 /* -------------------- LIFECYCLE -------------------- */
 
 register_self() {
@@ -142,7 +97,6 @@ register_self() {
         "script", llGetScriptName()
     ]);
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, msg, NULL_KEY);
-    logd("Registered");
 }
 
 send_pong() {
@@ -156,18 +110,19 @@ send_pong() {
 /* -------------------- SETTINGS MANAGEMENT -------------------- */
 
 apply_settings_sync(string msg) {
-    // PHASE 2: Build cache from linkset data on-demand
-    CachedSettings = build_settings_cache_from_linkset_data();
-    SettingsReady = TRUE;
+    if (!json_has(msg, ["kv"])) return;
     
-    logd("Settings sync applied - built cache from linkset data");
+    string kv_json = llJsonGetValue(msg, ["kv"]);
+    CachedSettings = kv_json;
+    SettingsReady = TRUE;
 }
 
 apply_settings_delta(string msg) {
-    // PHASE 2: Rebuild cache from linkset data on any change
-    CachedSettings = build_settings_cache_from_linkset_data();
-    
-    logd("Settings delta received, rebuilt cache from linkset data");
+    // Request full sync to update our display cache
+    string request = llList2Json(JSON_OBJECT, [
+        "type", "settings_get"
+    ]);
+    llMessageLinked(LINK_SET, SETTINGS_BUS, request, NULL_KEY);
 }
 
 /* -------------------- ACL MANAGEMENT -------------------- */
@@ -178,7 +133,6 @@ request_acl(key user_key) {
         "avatar", (string)user_key
     ]);
     llMessageLinked(LINK_SET, AUTH_BUS, msg, NULL_KEY);
-    logd("Requested ACL for " + llKey2Name(user_key));
 }
 
 handle_acl_result(string msg) {
@@ -197,7 +151,6 @@ handle_acl_result(string msg) {
         return;
     }
     
-    logd("ACL result: " + (string)level + " for " + llKey2Name(avatar));
     show_main_menu();
 }
 
@@ -239,7 +192,6 @@ show_main_menu() {
     ]);
     
     llMessageLinked(LINK_SET, DIALOG_BUS, msg, NULL_KEY);
-    logd("Showing menu to " + llKey2Name(CurrentUser));
 }
 
 /* -------------------- ACTIONS -------------------- */
@@ -270,7 +222,6 @@ do_view_settings() {
     }
     
     llRegionSayTo(CurrentUser, 0, output);
-    logd("Displayed settings to " + llKey2Name(CurrentUser));
 }
 
 do_display_access_list() {
@@ -388,7 +339,6 @@ do_display_access_list() {
     }
     
     llRegionSayTo(CurrentUser, 0, output);
-    logd("Displayed access list to " + llKey2Name(CurrentUser));
 }
 
 do_reload_settings() {
@@ -398,7 +348,6 @@ do_reload_settings() {
     llMessageLinked(LINK_SET, SETTINGS_BUS, msg, NULL_KEY);
     
     llRegionSayTo(CurrentUser, 0, "Settings reload requested.");
-    logd("Settings reload requested by " + llKey2Name(CurrentUser));
 }
 
 do_clear_leash() {
@@ -410,7 +359,6 @@ do_clear_leash() {
     llMessageLinked(LINK_SET, UI_BUS, msg, CurrentUser);
 
     llRegionSayTo(CurrentUser, 0, "Leash cleared.");
-    logd("Leash cleared by " + llKey2Name(CurrentUser));
 }
 
 do_reload_collar() {
@@ -422,37 +370,32 @@ do_reload_collar() {
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, msg, NULL_KEY);
 
     llRegionSayTo(CurrentUser, 0, "Collar reload initiated.");
-    logd("Collar reload requested by " + llKey2Name(CurrentUser));
 }
 
 do_give_hud() {
     if (llGetInventoryType(HUD_ITEM) != INVENTORY_OBJECT) {
         llRegionSayTo(CurrentUser, 0, "HUD not found in inventory.");
-        logd("HUD not found: " + HUD_ITEM);
     }
     else {
         llGiveInventory(CurrentUser, HUD_ITEM);
         llRegionSayTo(CurrentUser, 0, "HUD sent.");
-        logd("HUD given to " + llKey2Name(CurrentUser));
     }
 }
 
 do_give_manual() {
     if (llGetInventoryType(MANUAL_NOTECARD) != INVENTORY_NOTECARD) {
         llRegionSayTo(CurrentUser, 0, "Manual not found in inventory.");
-        logd("Manual not found: " + MANUAL_NOTECARD);
     }
     else {
         llGiveInventory(CurrentUser, MANUAL_NOTECARD);
         llRegionSayTo(CurrentUser, 0, "Manual sent.");
-        logd("Manual given to " + llKey2Name(CurrentUser));
     }
 }
 
 /* -------------------- NAVIGATION -------------------- */
 
 return_to_root() {
-    string msg = create_routed_message("kmod_ui", [
+    string msg = llList2Json(JSON_OBJECT, [
         "type", "return",
         "user", (string)CurrentUser
     ]);
@@ -484,7 +427,6 @@ cleanup_session() {
     CurrentUser = NULL_KEY;
     CurrentUserAcl = -999;
     SessionId = "";
-    logd("Session cleaned up");
 }
 
 /* -------------------- DIALOG HANDLERS -------------------- */
@@ -497,7 +439,6 @@ handle_dialog_response(string msg) {
     if (session != SessionId) return;
     
     string button = llJsonGetValue(msg, ["button"]);
-    logd("Button pressed: " + button);
     
     // Navigation
     if (button == "Back") {
@@ -505,34 +446,44 @@ handle_dialog_response(string msg) {
         return;
     }
     
-    // Admin actions - ACL already validated at session creation
+    // Admin actions (ACL check)
     if (button == "View Settings") {
-        do_view_settings();
-        show_main_menu();
+        if (llListFindList(ALLOWED_ACL_FULL, [CurrentUserAcl]) != -1) {
+            do_view_settings();
+            show_main_menu();
+        }
         return;
     }
     
     if (button == "Access List") {
-        do_display_access_list();
-        show_main_menu();
+        if (llListFindList(ALLOWED_ACL_FULL, [CurrentUserAcl]) != -1) {
+            do_display_access_list();
+            show_main_menu();
+        }
         return;
     }
     
     if (button == "Reload Settings") {
-        do_reload_settings();
-        show_main_menu();
+        if (llListFindList(ALLOWED_ACL_FULL, [CurrentUserAcl]) != -1) {
+            do_reload_settings();
+            show_main_menu();
+        }
         return;
     }
     
     if (button == "Clear Leash") {
-        do_clear_leash();
-        show_main_menu();
+        if (llListFindList(ALLOWED_ACL_FULL, [CurrentUserAcl]) != -1) {
+            do_clear_leash();
+            show_main_menu();
+        }
         return;
     }
     
     if (button == "Reload Collar") {
-        do_reload_collar();
-        show_main_menu();
+        if (llListFindList(ALLOWED_ACL_FULL, [CurrentUserAcl]) != -1) {
+            do_reload_collar();
+            show_main_menu();
+        }
         return;
     }
     
@@ -557,7 +508,6 @@ handle_dialog_timeout(string msg) {
     if (session != SessionId) return;
     
     cleanup_session();
-    logd("Dialog timeout");
 }
 
 /* -------------------- EVENTS -------------------- */
@@ -572,8 +522,6 @@ default {
             "type", "settings_get"
         ]);
         llMessageLinked(LINK_SET, SETTINGS_BUS, msg, NULL_KEY);
-        
-        logd("Ready");
     }
     
     on_rez(integer start_param) {
@@ -587,8 +535,6 @@ default {
     }
     
     link_message(integer sender, integer num, string msg, key id) {
-        if (!is_message_for_me(msg)) return;
-        
         /* -------------------- KERNEL LIFECYCLE -------------------- */if (num == KERNEL_LIFECYCLE) {
             if (!json_has(msg, ["type"])) return;
             string msg_type = llJsonGetValue(msg, ["type"]);
@@ -689,7 +635,6 @@ default {
                         CurrentUser = NULL_KEY;
                         CurrentUserAcl = -999;
                         SessionId = "";
-                        logd("Dialog closed externally");
                     }
                 }
                 return;

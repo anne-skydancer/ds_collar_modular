@@ -12,8 +12,6 @@ CHANGES:
 - Consolidated settings channel handling for consistent module access
 --------------------*/
 
-integer DEBUG = TRUE;
-integer PRODUCTION = FALSE;  // Set FALSE for development builds
 
 /* -------------------- CONSOLIDATED ABI -------------------- */
 integer SETTINGS_BUS = 800;
@@ -54,11 +52,7 @@ key NotecardKey = NULL_KEY;  // Track settings notecard changes
 integer MaxListLen = 64;
 
 /* -------------------- HELPERS -------------------- */
-integer logd(string msg) {
-    // SECURITY FIX: Production mode guard
-    if (DEBUG && !PRODUCTION) llOwnerSay("[SETTINGS] " + msg);
-    return FALSE;
-}
+
 
 integer json_has(string j, list path) {
     return (llJsonGetValue(j, path) != JSON_INVALID);
@@ -75,9 +69,6 @@ integer validate_required_fields(string json_str, list field_names, string funct
     while (i < len) {
         string field = llList2String(field_names, i);
         if (!json_has(json_str, [field])) {
-            if (DEBUG && !PRODUCTION) {
-                logd("ERROR: " + function_name + " missing '" + field + "' field");
-            }
             return FALSE;
         }
         i += 1;
@@ -131,7 +122,6 @@ integer kv_set_scalar(string key_name, string value) {
     if (old_val == value) return FALSE;
     
     KvJson = llJsonSetValue(KvJson, [key_name], value);
-    logd("SET " + key_name + " = " + value);
     return TRUE;
 }
 
@@ -141,7 +131,6 @@ integer kv_set_list(string key_name, list values) {
     if (old_arr == new_arr) return FALSE;
     
     KvJson = llJsonSetValue(KvJson, [key_name], new_arr);
-    logd("SET " + key_name + " count=" + (string)llGetListLength(values));
     return TRUE;
 }
 
@@ -226,7 +215,6 @@ integer apply_owner_set_guard(string who) {
     // CRITICAL: Prevent self-ownership
     if ((key)who == wearer) {
         llOwnerSay("ERROR: Cannot add wearer as owner (role separation required)");
-        logd("CRITICAL: Blocked attempt to add wearer as owner");
         return FALSE;
     }
 
@@ -239,7 +227,6 @@ integer apply_owner_set_guard(string who) {
             trustees = list_remove_all(trustees, who);
             if (kv_set_list(KEY_TRUSTEES, trustees)) {
                 broadcast_delta_list_remove(KEY_TRUSTEES, who);
-                logd("BROADCAST: Removed " + who + " from trustees (owner promotion)");
             }
         }
     }
@@ -253,7 +240,6 @@ integer apply_owner_set_guard(string who) {
             blacklist = list_remove_all(blacklist, who);
             if (kv_set_list(KEY_BLACKLIST, blacklist)) {
                 broadcast_delta_list_remove(KEY_BLACKLIST, who);
-                logd("BROADCAST: Removed " + who + " from blacklist (owner promotion)");
             }
         }
     }
@@ -265,7 +251,6 @@ integer apply_owner_set_guard(string who) {
 integer apply_trustee_add_guard(string who) {
     // SECURITY FIX: Can't add owner as trustee (check both modes)
     if (is_owner(who)) {
-        logd("WARNING: Cannot add owner as trustee");
         return FALSE;
     }
 
@@ -278,7 +263,6 @@ integer apply_trustee_add_guard(string who) {
             blacklist = list_remove_all(blacklist, who);
             if (kv_set_list(KEY_BLACKLIST, blacklist)) {
                 broadcast_delta_list_remove(KEY_BLACKLIST, who);
-                logd("BROADCAST: Removed " + who + " from blacklist (trustee promotion)");
             }
         }
     }
@@ -297,7 +281,6 @@ integer apply_blacklist_add_guard(string who) {
             trustees = list_remove_all(trustees, who);
             if (kv_set_list(KEY_TRUSTEES, trustees)) {
                 broadcast_delta_list_remove(KEY_TRUSTEES, who);
-                logd("BROADCAST: Removed " + who + " from trustees (blacklisted)");
             }
         }
     }
@@ -307,7 +290,6 @@ integer apply_blacklist_add_guard(string who) {
     if (cur_owner != "" && cur_owner == who) {
         if (kv_set_scalar(KEY_OWNER_KEY, (string)NULL_KEY)) {
             broadcast_delta_scalar(KEY_OWNER_KEY, (string)NULL_KEY);
-            logd("BROADCAST: Cleared single owner (was blacklisted)");
         }
     }
 
@@ -319,7 +301,6 @@ integer apply_blacklist_add_guard(string who) {
             // Only process if actually present
             if (kv_list_remove_all(KEY_OWNER_KEYS, who)) {
                 broadcast_delta_list_remove(KEY_OWNER_KEYS, who);
-                logd("BROADCAST: Removed " + who + " from multi-owner list (blacklisted)");
             }
         }
     }
@@ -335,7 +316,6 @@ broadcast_full_sync() {
         "kv", KvJson
     ]);
     llMessageLinked(LINK_SET, SETTINGS_BUS, msg, NULL_KEY);
-    logd("Broadcast: full sync");
 }
 
 broadcast_delta_scalar(string key_name, string new_value) {
@@ -350,7 +330,6 @@ broadcast_delta_scalar(string key_name, string new_value) {
     ]);
     
     llMessageLinked(LINK_SET, SETTINGS_BUS, msg, NULL_KEY);
-    logd("Broadcast: delta set " + key_name);
 }
 
 broadcast_delta_list_add(string key_name, string elem) {
@@ -362,7 +341,6 @@ broadcast_delta_list_add(string key_name, string elem) {
     ]);
     
     llMessageLinked(LINK_SET, SETTINGS_BUS, msg, NULL_KEY);
-    logd("Broadcast: delta list_add " + key_name);
 }
 
 broadcast_delta_list_remove(string key_name, string elem) {
@@ -374,7 +352,6 @@ broadcast_delta_list_remove(string key_name, string elem) {
     ]);
     
     llMessageLinked(LINK_SET, SETTINGS_BUS, msg, NULL_KEY);
-    logd("Broadcast: delta list_remove " + key_name);
 }
 
 /* -------------------- KEY VALIDATION -------------------- */
@@ -417,7 +394,6 @@ parse_notecard_line(string line) {
     
     integer sep_pos = llSubStringIndex(line, SEPARATOR);
     if (sep_pos == -1) {
-        logd("Invalid line (no separator): " + line);
         return;
     }
     
@@ -425,7 +401,6 @@ parse_notecard_line(string line) {
     string value = llStringTrim(llGetSubString(line, sep_pos + 1, -1), STRING_TRIM);
     
     if (!is_allowed_key(key_name)) {
-        logd("Unknown key ignored: " + key_name);
         return;
     }
     
@@ -440,7 +415,6 @@ parse_notecard_line(string line) {
         if (llGetListLength(parsed_list) > MaxListLen) {
             parsed_list = llList2List(parsed_list, 0, MaxListLen - 1);
             llOwnerSay("WARNING: " + key_name + " list truncated to " + (string)MaxListLen + " entries");
-            logd("WARNING: Truncated " + key_name + " to MaxListLen");
         }
         
         // Apply guards for special lists
@@ -489,7 +463,6 @@ parse_notecard_line(string line) {
                 if (!has_external_owner()) {
                     llOwnerSay("ERROR: Cannot enable TPE via notecard - requires external owner");
                     llOwnerSay("HINT: Set owner_key or owner_keys BEFORE tpe_mode in notecard");
-                    logd("CRITICAL: Blocked TPE enable from notecard (no external owner)");
                     return;  // Don't set TPE
                 }
             }
@@ -507,11 +480,8 @@ parse_notecard_line(string line) {
 
 integer start_notecard_reading() {
     if (llGetInventoryType(NOTECARD_NAME) != INVENTORY_NOTECARD) {
-        logd("Notecard '" + NOTECARD_NAME + "' not found");
         return FALSE;
     }
-    
-    logd("Loading notecard: " + NOTECARD_NAME);
     IsLoadingNotecard = TRUE;
     NotecardLine = 0;
     NotecardQuery = llGetNotecardLine(NOTECARD_NAME, NotecardLine);
@@ -530,7 +500,6 @@ handle_set(string msg) {
     string key_name = llJsonGetValue(msg, ["key"]);
     if (!is_allowed_key(key_name)) return;
     if (is_notecard_only_key(key_name)) {
-        logd("Blocked: " + key_name + " is notecard-only");
         return;
     }
     
@@ -594,7 +563,6 @@ handle_set(string msg) {
             if ((integer)value == 1) {
                 if (!has_external_owner()) {
                     llOwnerSay("ERROR: Cannot enable TPE - requires external owner");
-                    logd("CRITICAL: Blocked TPE enable (no external owner)");
                     return;  // Don't set TPE
                 }
             }
@@ -623,7 +591,6 @@ handle_list_add(string msg) {
     
     if (!is_allowed_key(key_name)) return;
     if (is_notecard_only_key(key_name)) {
-        logd("Blocked: " + key_name + " is notecard-only");
         return;
     }
     
@@ -716,12 +683,10 @@ default
             if (current_notecard_key != NotecardKey) {
                 // Notecard was deleted -> reset to defaults
                 if (current_notecard_key == NULL_KEY) {
-                    logd("Settings notecard deleted, resetting to defaults");
                     llResetScript();
                 }
                 else {
                     // Notecard edited or re-added -> reload and overlay
-                    logd("Settings notecard changed, reloading settings");
                     NotecardKey = current_notecard_key;
                     start_notecard_reading();
                 }
@@ -740,7 +705,6 @@ default
         }
         else {
             IsLoadingNotecard = FALSE;
-            logd("Notecard loading complete");
             broadcast_full_sync();
         }
     }

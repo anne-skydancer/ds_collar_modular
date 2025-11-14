@@ -1,7 +1,7 @@
 /*--------------------
 MODULE: ds_collar_kmod_ui.lsl
 VERSION: 1.00
-REVISION: 42
+REVISION: 40
 PURPOSE: Session management, ACL filtering, and plugin list orchestration
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
@@ -10,12 +10,8 @@ CHANGES:
 - Enforced touch range validation and blacklist checks during session start
 - Revalidated ACL levels on session return with time-based expiry
 - Guarded debug logging for production and handled owner change resets
-- PERFORMANCE: Pre-sort AllPlugins at registration, eliminate sort from hot path
-- PERFORMANCE: Pre-compute llDialog layout, use strided list encoding (30-50ms faster)
 --------------------*/
 
-integer DEBUG = TRUE;
-integer PRODUCTION = FALSE;  // Set FALSE for development builds
 
 /* -------------------- CONSOLIDATED ABI -------------------- */
 integer KERNEL_LIFECYCLE = 500;
@@ -76,11 +72,7 @@ list TouchData = [];
 list PluginStates = [];  // Stores toggle button states [context, state]
 
 /* -------------------- HELPERS -------------------- */
-integer logd(string msg) {
-    // SECURITY FIX: Production mode guard
-    if (DEBUG && !PRODUCTION) llOwnerSay("[UI] " + msg);
-    return FALSE;
-}
+
 
 integer json_has(string j, list path) {
     return (llJsonGetValue(j, path) != JSON_INVALID);
@@ -98,9 +90,6 @@ integer validate_required_fields(string json_str, list field_names, string funct
     while (i < len) {
         string field = llList2String(field_names, i);
         if (!json_has(json_str, [field])) {
-            if (DEBUG && !PRODUCTION) {
-                logd("ERROR: " + function_name + " missing '" + field + "' field");
-            }
             return FALSE;
         }
         i += 1;
@@ -139,9 +128,11 @@ set_plugin_state(string context, integer button_state) {
     integer idx = find_plugin_state_idx(context);
 
     if (idx != -1) {
+        // Update existing state
         PluginStates = llListReplaceList(PluginStates, [button_state], idx + PLUGIN_STATE_VALUE, idx + PLUGIN_STATE_VALUE);
     }
     else {
+        // Add new state
         PluginStates += [context, button_state];
     }
 }
@@ -219,6 +210,7 @@ cleanup_session(key user) {
     }
 
     Sessions = llDeleteSubList(Sessions, idx, idx + SESSION_STRIDE - 1);
+
 }
 
 create_session(key user, integer acl, integer is_blacklisted, string context_filter) {
@@ -263,12 +255,16 @@ create_session(key user, integer acl, integer is_blacklisted, string context_fil
         i += PLUGIN_STRIDE;
     }
 
-    // Filtered list is already alphabetical (AllPlugins is pre-sorted)
-    // No sorting needed here - filtering preserves order
+    // Sort filtered plugins alphabetically by label (field index 1)
+    integer plugin_count = llGetListLength(filtered) / PLUGIN_STRIDE;
+    if (plugin_count > 1) {
+        filtered = llListSortStrided(filtered, PLUGIN_STRIDE, PLUGIN_LABEL, TRUE);
+    }
 
     integer filtered_start = llGetListLength(FilteredPluginsData);
     FilteredPluginsData += filtered;
 
+    // SECURITY FIX: Add timestamp to session
     string session_id = generate_session_id(user);
     integer created_time = llGetUnixTime();
     Sessions += [user, acl, is_blacklisted, 0, 0, session_id, filtered_start, created_time, context_filter];
@@ -288,7 +284,6 @@ apply_plugin_list(string plugins_json) {
         count += 1;
     }
     
-    logd("Array length: " + (string)count);
     
     integer i = 0;
     while (i < count) {
@@ -311,22 +306,23 @@ apply_plugin_list(string plugins_json) {
         i += 1;
     }
 
-    integer plugin_count = llGetListLength(AllPlugins) / PLUGIN_STRIDE;
-    if (plugin_count > 1) {
-        AllPlugins = llListSortStrided(AllPlugins, PLUGIN_STRIDE, PLUGIN_LABEL, TRUE);
-    }
 
+    // Request ACL data from auth module
     string request = llList2Json(JSON_OBJECT, ["type", "plugin_acl_list_request"]);
     llMessageLinked(LINK_SET, AUTH_BUS, request, NULL_KEY);
 }
 
 apply_plugin_acl_list(string acl_json) {
-    if (llJsonValueType(acl_json, []) != JSON_ARRAY) return;
+
+    if (llJsonValueType(acl_json, []) != JSON_ARRAY) {
+        return;
+    }
 
     integer count = 0;
     while (llJsonValueType(acl_json, [count]) != JSON_INVALID) {
         count += 1;
     }
+
 
     integer i = 0;
     while (i < count) {
@@ -354,8 +350,6 @@ apply_plugin_acl_list(string acl_json) {
 
         i += 1;
     }
-
-    logd("Plugin ACL data updated");
 }
 
 /* -------------------- MENU RENDERING (delegated to ds_collar_menu.lsl) -------------------- */
@@ -370,13 +364,8 @@ send_message(key user, string message_text) {
 }
 
 send_render_menu(key user, string menu_type) {
-    if (DEBUG && !PRODUCTION) {
-        llOwnerSay("[UI] T+" + (string)llGetTime() + "s send_render_menu START");
-    }
-
     integer session_idx = find_session_idx(user);
     if (session_idx == -1) {
-        logd("ERROR: No session for " + llKey2Name(user));
         return;
     }
 
@@ -420,58 +409,39 @@ send_render_menu(key user, string menu_type) {
     // Batch update for performance (SESSION_PAGE=3, SESSION_TOTAL_PAGES=4 are consecutive)
     Sessions = llListReplaceList(Sessions, [current_page, total_pages], session_idx + SESSION_PAGE, session_idx + SESSION_TOTAL_PAGES);
 
-    // PERFORMANCE: Build buttons in final llDialog order (bottom-up layout)
-    // Format: [label, context, state, ...] stride=3, nav buttons prepended
-    
+    // Build button data with context and state
+    list button_data = [];
     integer start_idx = current_page * MAX_FUNC_BTNS * PLUGIN_STRIDE;
     integer end_idx = start_idx + (MAX_FUNC_BTNS * PLUGIN_STRIDE);
-    if (end_idx > llGetListLength(filtered)) end_idx = llGetListLength(filtered);
-    
-    list page_buttons = llList2List(filtered, start_idx, end_idx - 1);
-    integer page_count = llGetListLength(page_buttons) / PLUGIN_STRIDE;
-    
-    // Build in reverse row order for llDialog bottom-up display
-    list button_triplets = [];
-    integer partial = page_count % 3;
-    integer complete_rows = page_count / 3;
-    
-    // Complete rows (reversed)
-    integer row = complete_rows;
-    while (row > 0) {
-        row--;
-        integer base = (partial + row * 3) * PLUGIN_STRIDE;
-        integer col = 0;
-        while (col < 3) {
-            integer idx = base + col * PLUGIN_STRIDE;
-            button_triplets += [
-                llList2String(page_buttons, idx + PLUGIN_LABEL),
-                llList2String(page_buttons, idx + PLUGIN_CONTEXT),
-                get_plugin_state(llList2String(page_buttons, idx + PLUGIN_CONTEXT))
-            ];
-            col++;
-        }
+    if (end_idx > llGetListLength(filtered)) {
+        end_idx = llGetListLength(filtered);
     }
-    
-    // Partial row (top of dialog)
-    if (partial > 0) {
-        integer i = 0;
-        while (i < partial) {
-            integer idx = i * PLUGIN_STRIDE;
-            button_triplets += [
-                llList2String(page_buttons, idx + PLUGIN_LABEL),
-                llList2String(page_buttons, idx + PLUGIN_CONTEXT),
-                get_plugin_state(llList2String(page_buttons, idx + PLUGIN_CONTEXT))
-            ];
-            i++;
-        }
+
+    integer i = start_idx;
+    while (i < end_idx) {
+        string context = llList2String(filtered, i + PLUGIN_CONTEXT);
+        string label = llList2String(filtered, i + PLUGIN_LABEL);
+        integer button_state = get_plugin_state(context);
+
+        // Create button data object with context, label, and state
+        string btn_obj = llList2Json(JSON_OBJECT, [
+            "context", context,
+            "label", label,
+            "state", button_state
+        ]);
+        button_data += [btn_obj];
+        i += PLUGIN_STRIDE;
     }
-    
-    // Nav buttons at front (bottom row in dialog)
-    list final_buttons = ["<<", "", "0", ">>", "", "0", "Close", "", "0"] + button_triplets;
-    
-    string buttons_json = llList2Json(JSON_ARRAY, final_buttons);
+
+    string buttons_json = llList2Json(JSON_ARRAY, button_data);
     string session_id = llList2String(Sessions, session_idx + SESSION_ID);
-    
+
+    // DESIGN DECISION: Navigation row is ALWAYS present (DO NOT CHANGE)
+    // Rationale: Provides consistent UI layout and muscle memory for users
+    // regardless of plugin count. Single-page menus still show <<, >>, Close
+    // for UI consistency. This is intentional and not open to modification.
+    integer has_nav = 1;
+
     string msg = llList2Json(JSON_OBJECT, [
         "type", "render_menu",
         "user", (string)user,
@@ -479,14 +449,11 @@ send_render_menu(key user, string menu_type) {
         "menu_type", menu_type,
         "page", current_page,
         "total_pages", total_pages,
-        "buttons", buttons_json
+        "buttons", buttons_json,
+        "has_nav", has_nav
     ]);
 
     llMessageLinked(LINK_SET, UI_BUS, msg, NULL_KEY);
-
-    if (DEBUG && !PRODUCTION) {
-        llOwnerSay("[UI] T+" + (string)llGetTime() + "s Sent to Menu module");
-    }
 }
 
 /* -------------------- BUTTON HANDLING -------------------- */
@@ -494,7 +461,6 @@ send_render_menu(key user, string menu_type) {
 handle_button_click(key user, string button, string context) {
     integer session_idx = find_session_idx(user);
     if (session_idx == -1) {
-        logd("ERROR: No session for button click from " + llKey2Name(user));
         return;
     }
 
@@ -555,17 +521,12 @@ handle_button_click(key user, string button, string context) {
                 ]);
 
                 llMessageLinked(LINK_SET, UI_BUS, msg, user);
-                logd("Starting plugin: " + context + " for " + llKey2Name(user));
                 return;
             }
             i += PLUGIN_STRIDE;
         }
-
-        logd("WARNING: No plugin found for context: " + context);
         return;
     }
-
-    logd("WARNING: Button click with no context: " + button);
 }
 
 /* -------------------- PLUGIN LABEL UPDATE -------------------- */
@@ -578,7 +539,6 @@ update_plugin_label(string context, string new_label) {
         string all_context = llList2String(AllPlugins, i + PLUGIN_CONTEXT);
         if (all_context == context) {
             AllPlugins = llListReplaceList(AllPlugins, [new_label], i + PLUGIN_LABEL, i + PLUGIN_LABEL);
-            logd("Updated label for " + context + " to: " + new_label);
             
             integer j = 0;
             while (j < llGetListLength(FilteredPluginsData)) {
@@ -593,17 +553,13 @@ update_plugin_label(string context, string new_label) {
         
         i += PLUGIN_STRIDE;
     }
-    
-    logd("WARNING: Plugin " + context + " not found for label update");
 }
 
 /* -------------------- MESSAGE HANDLERS -------------------- */
 
 handle_plugin_list(string msg) {
-    logd("handle_plugin_list called");
 
     if (!json_has(msg, ["plugins"])) {
-        logd("ERROR: No 'plugins' field in message!");
         return;
     }
 
@@ -614,7 +570,6 @@ handle_plugin_list(string msg) {
     // Kernel only broadcasts when UUID changes detected, so this is always meaningful
     if (llGetListLength(Sessions) > 0) {
         integer session_count = llGetListLength(Sessions) / SESSION_STRIDE;
-        logd("Plugin list updated - invalidating " + (string)session_count + " sessions");
 
         // BUGFIX: Close all dialogs before clearing sessions
         integer i = 0;
@@ -637,10 +592,6 @@ handle_plugin_list(string msg) {
 handle_acl_result(string msg) {
     if (!validate_required_fields(msg, ["avatar", "level", "is_blacklisted"], "handle_acl_result")) return;
 
-    if (DEBUG && !PRODUCTION) {
-        llOwnerSay("[UI] T+" + (string)llGetTime() + "s ACL result received");
-    }
-
     key avatar = (key)llJsonGetValue(msg, ["avatar"]);
     integer level = (integer)llJsonGetValue(msg, ["level"]);
     integer is_blacklisted = (integer)llJsonGetValue(msg, ["is_blacklisted"]);
@@ -651,16 +602,8 @@ handle_acl_result(string msg) {
     string requested_context = llList2String(PendingAcl, idx + PENDING_ACL_CONTEXT);
     PendingAcl = llDeleteSubList(PendingAcl, idx, idx + PENDING_ACL_STRIDE - 1);
 
-    if (DEBUG && !PRODUCTION) {
-        llOwnerSay("[UI] T+" + (string)llGetTime() + "s Creating session");
-    }
 
     create_session(avatar, level, is_blacklisted, requested_context);
-    
-    if (DEBUG && !PRODUCTION) {
-        llOwnerSay("[UI] T+" + (string)llGetTime() + "s Sending render_menu");
-    }
-    
     send_render_menu(avatar, requested_context);
 }
 
@@ -684,9 +627,6 @@ handle_start(string msg, key user_key) {
 }
 
 start_root_session(key user_key) {
-    if (DEBUG && !PRODUCTION) {
-        llOwnerSay("[UI] T+" + (string)llGetTime() + "s start_root_session()");
-    }
 
     integer idx = llListFindList(PendingAcl, [user_key]);
     if (idx != -1 && idx % PENDING_ACL_STRIDE == PENDING_ACL_AVATAR) return;
@@ -697,16 +637,10 @@ start_root_session(key user_key) {
         "type", "acl_query",
         "avatar", (string)user_key
     ]);
-    
-    if (DEBUG && !PRODUCTION) {
-        llOwnerSay("[UI] T+" + (string)llGetTime() + "s Sending acl_query");
-    }
-    
     llMessageLinked(LINK_SET, AUTH_BUS, acl_query, NULL_KEY);
 }
 
 start_sos_session(key user_key) {
-    logd("SOS session start request from " + llKey2Name(user_key));
 
     integer idx = llListFindList(PendingAcl, [user_key]);
     if (idx != -1 && idx % PENDING_ACL_STRIDE == PENDING_ACL_AVATAR) return;
@@ -725,7 +659,6 @@ handle_return(string msg) {
 
     key user_key = (key)llJsonGetValue(msg, ["user"]);
 
-    logd("Return requested for " + llKey2Name(user_key));
 
     // SECURITY FIX: Check session age and re-validate if stale
     integer session_idx = find_session_idx(user_key);
@@ -734,7 +667,6 @@ handle_return(string msg) {
         integer age = llGetUnixTime() - created_time;
 
         if (age > SESSION_MAX_AGE) {
-            logd("Session too old (" + (string)age + "s), re-validating ACL");
             string session_context = llList2String(Sessions, session_idx + SESSION_CONTEXT);
             cleanup_session(user_key);
 
@@ -782,7 +714,6 @@ handle_plugin_acl_list(string msg) {
     // Invalidate all sessions when ACL data changes
     // Sessions need to be recreated with updated ACL requirements
     if (llGetListLength(Sessions) > 0) {
-        logd("Plugin ACL data updated - invalidating " + (string)(llGetListLength(Sessions) / SESSION_STRIDE) + " sessions");
         Sessions = [];
         FilteredPluginsData = [];
         PendingAcl = [];
@@ -807,8 +738,6 @@ handle_dialog_response(string msg) {
         handle_button_click(user, button, context);
         return;
     }
-
-    logd("ERROR: Session not found for response: " + session_id);
 }
 
 handle_dialog_timeout(string msg) {
@@ -819,7 +748,6 @@ handle_dialog_timeout(string msg) {
 
     integer idx = llListFindList(Sessions, [session_id]);
     if (idx != -1 && idx % SESSION_STRIDE == SESSION_ID) {
-        logd("Dialog timeout for " + llKey2Name(user));
         cleanup_session(user);
     }
 }
@@ -836,7 +764,6 @@ default
         TouchData = [];
         PluginStates = [];
 
-        logd("UI module started (v4.0 - UI/Kmod split - logic only)");
 
         // Request plugin list (kernel defers response during active registration)
         string request = llList2Json(JSON_OBJECT, [
@@ -853,7 +780,6 @@ default
 
             // SECURITY FIX: Reject invalid touches
             if (touch_pos == ZERO_VECTOR) {
-                logd("WARNING: Invalid touch position from " + llKey2Name(toucher));
                 i += 1;
                 jump next_touch;
             }
@@ -861,7 +787,6 @@ default
             // Validate touch distance
             float distance = llVecDist(touch_pos, llGetPos());
             if (distance > TOUCH_RANGE_M) {
-                logd("WARNING: Touch outside range (" + (string)distance + "m) from " + llKey2Name(toucher));
                 i += 1;
                 jump next_touch;
             }
@@ -882,7 +807,6 @@ default
             TouchData += [toucher, llGetTime()];
 
             @recorded;
-            logd("Touch start from " + llKey2Name(toucher));
 
             @next_touch;
             i += 1;
@@ -892,7 +816,6 @@ default
     touch_end(integer num_detected) {
         key wearer = llGetOwner();
         integer i = 0;
-        float touch_time = llGetTime();  // DIAGNOSTIC: High-resolution timestamp
 
         while (i < num_detected) {
             key toucher = llDetectedKey(i);
@@ -907,9 +830,6 @@ default
 
                     TouchData = llDeleteSubList(TouchData, j, j + TOUCH_DATA_STRIDE - 1);
 
-                    if (DEBUG && !PRODUCTION) {
-                        llOwnerSay("[UI] ========== TOUCH END T=0.000s ==========");
-                    }
 
                     if (duration >= LONG_TOUCH_THRESHOLD && toucher == wearer) {
                         start_sos_session(toucher);
@@ -917,7 +837,6 @@ default
                     else {
                         // Provide feedback if non-wearer attempted long-touch (SOS is wearer-only)
                         if (duration >= LONG_TOUCH_THRESHOLD && toucher != wearer) {
-                            logd("Non-wearer " + llKey2Name(toucher) + " performed long touch; SOS is wearer-only");
                             send_message(toucher, "Long-touch SOS is only available to the wearer.");
                         }
                         start_root_session(toucher);
@@ -938,7 +857,6 @@ default
         if (msg_type == "") return;
 
         if (msg_type != "ping" && msg_type != "pong" && msg_type != "register" && msg_type != "register_now") {
-            logd("Received message: channel=" + (string)num + " type=" + msg_type);
         }
 
         /* -------------------- KERNEL LIFECYCLE -------------------- */

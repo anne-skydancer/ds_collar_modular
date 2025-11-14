@@ -12,19 +12,13 @@ CHANGES:
 - Provides single-responsibility rendering for easier maintenance
 --------------------*/
 
-integer DEBUG = TRUE;
-integer PRODUCTION = FALSE;  // Set FALSE for development builds
-string SCRIPT_ID = "menu";
 
 /* -------------------- CONSOLIDATED ABI -------------------- */
 integer UI_BUS = 900;
 integer DIALOG_BUS = 950;
 
 /* -------------------- HELPERS -------------------- */
-integer logd(string msg) {
-    if (DEBUG && !PRODUCTION) llOwnerSay("[MENU] " + msg);
-    return FALSE;
-}
+
 
 integer json_has(string j, list path) {
     return (llJsonGetValue(j, path) != JSON_INVALID);
@@ -44,35 +38,11 @@ integer validate_required_fields(string json_str, list field_names, string funct
     while (i < len) {
         string field = llList2String(field_names, i);
         if (!json_has(json_str, [field])) {
-            if (DEBUG && !PRODUCTION) {
-                logd("ERROR: " + function_name + " missing '" + field + "' field");
-            }
             return FALSE;
         }
         i += 1;
     }
     return TRUE;
-}
-
-/* -------------------- MESSAGE ROUTING -------------------- */
-
-integer is_message_for_me(string msg) {
-    if (llGetSubString(msg, 0, 0) != "{") return FALSE;
-    integer to_pos = llSubStringIndex(msg, "\"to\"");
-    if (to_pos == -1) return TRUE;
-    string header = llGetSubString(msg, 0, to_pos + 100);
-    if (llSubStringIndex(header, "\"*\"") != -1) return TRUE;
-    if (llSubStringIndex(header, SCRIPT_ID) != -1) return TRUE;
-    return FALSE;
-}
-
-string create_routed_message(string to_id, list fields) {
-    list routed = ["from", SCRIPT_ID, "to", to_id] + fields;
-    return llList2Json(JSON_OBJECT, routed);
-}
-
-string create_broadcast(list fields) {
-    return create_routed_message("*", fields);
 }
 
 /* -------------------- BUTTON LAYOUT -------------------- */
@@ -218,10 +188,6 @@ render_menu(string msg) {
     ]);
 
     llMessageLinked(LINK_SET, DIALOG_BUS, dialog_msg, NULL_KEY);
-
-    logd("Rendered " + menu_type + " menu for " + llKey2Name(user) + " (page " +
-         (string)(current_page + 1) + "/" + (string)total_pages + ", " +
-         (string)llGetListLength(button_data_list) + " buttons)");
 }
 
 show_message(string msg) {
@@ -233,7 +199,6 @@ show_message(string msg) {
     string message_text = llJsonGetValue(msg, ["message"]);
 
     llRegionSayTo(user, 0, message_text);
-    logd("Showed message to " + llKey2Name(user) + ": " + message_text);
 }
 
 /* -------------------- EVENTS -------------------- */
@@ -241,12 +206,9 @@ show_message(string msg) {
 default
 {
     state_entry() {
-        logd("Menu rendering module started (v1.0 - UI/Kmod Split)");
     }
 
     link_message(integer sender_num, integer num, string msg, key id) {
-        if (!is_message_for_me(msg)) return;
-        
         string msg_type = get_msg_type(msg);
         if (msg_type == "") return;
 

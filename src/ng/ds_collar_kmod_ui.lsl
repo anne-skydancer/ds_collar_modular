@@ -12,10 +12,6 @@ CHANGES:
 - Guarded debug logging for production and handled owner change resets
 --------------------*/
 
-integer DEBUG = TRUE;
-integer PRODUCTION = FALSE;  // Set FALSE for development builds
-
-string SCRIPT_ID = "kmod_ui";
 
 /* -------------------- CONSOLIDATED ABI -------------------- */
 integer KERNEL_LIFECYCLE = 500;
@@ -76,11 +72,7 @@ list TouchData = [];
 list PluginStates = [];  // Stores toggle button states [context, state]
 
 /* -------------------- HELPERS -------------------- */
-integer logd(string msg) {
-    // SECURITY FIX: Production mode guard
-    if (DEBUG && !PRODUCTION) llOwnerSay("[UI] " + msg);
-    return FALSE;
-}
+
 
 integer json_has(string j, list path) {
     return (llJsonGetValue(j, path) != JSON_INVALID);
@@ -98,9 +90,6 @@ integer validate_required_fields(string json_str, list field_names, string funct
     while (i < len) {
         string field = llList2String(field_names, i);
         if (!json_has(json_str, [field])) {
-            if (DEBUG && !PRODUCTION) {
-                logd("ERROR: " + function_name + " missing '" + field + "' field");
-            }
             return FALSE;
         }
         i += 1;
@@ -112,31 +101,6 @@ string generate_session_id(key user) {
     return "ui_" + (string)user + "_" + (string)llGetUnixTime();
 }
 
-/* -------------------- MESSAGE ROUTING -------------------- */
-
-integer is_message_for_me(string msg) {
-    if (llGetSubString(msg, 0, 0) != "{") return FALSE;
-    
-    integer to_pos = llSubStringIndex(msg, "\"to\"");
-    if (to_pos == -1) return TRUE;  // No routing = broadcast
-    
-    string header = llGetSubString(msg, 0, to_pos + 100);
-    
-    if (llSubStringIndex(header, "\"*\"") != -1) return TRUE;
-    if (llSubStringIndex(header, SCRIPT_ID) != -1) return TRUE;
-    if (llSubStringIndex(header, "\"kmod:*\"") != -1) return TRUE;
-    
-    return FALSE;
-}
-
-string create_routed_message(string to_id, list fields) {
-    list routed = ["from", SCRIPT_ID, "to", to_id] + fields;
-    return llList2Json(JSON_OBJECT, routed);
-}
-
-string create_broadcast(list fields) {
-    return create_routed_message("*", fields);
-}
 
 /* -------------------- PLUGIN STATE MANAGEMENT -------------------- */
 
@@ -166,12 +130,10 @@ set_plugin_state(string context, integer button_state) {
     if (idx != -1) {
         // Update existing state
         PluginStates = llListReplaceList(PluginStates, [button_state], idx + PLUGIN_STATE_VALUE, idx + PLUGIN_STATE_VALUE);
-        logd("Updated state for " + context + ": " + (string)button_state);
     }
     else {
         // Add new state
         PluginStates += [context, button_state];
-        logd("Registered state for " + context + ": " + (string)button_state);
     }
 }
 
@@ -225,7 +187,7 @@ cleanup_session(key user) {
 
     // BUGFIX: Close dialog before cleaning up session
     string session_id = llList2String(Sessions, idx + SESSION_ID);
-    string close_msg = create_routed_message("kmod_dialogs", [
+    string close_msg = llList2Json(JSON_OBJECT, [
         "type", "dialog_close",
         "session_id", session_id
     ]);
@@ -249,19 +211,16 @@ cleanup_session(key user) {
 
     Sessions = llDeleteSubList(Sessions, idx, idx + SESSION_STRIDE - 1);
 
-    logd("Session cleaned up for " + llKey2Name(user));
 }
 
 create_session(key user, integer acl, integer is_blacklisted, string context_filter) {
     integer existing_idx = find_session_idx(user);
     if (existing_idx != -1) {
-        logd("Session already exists for " + llKey2Name(user) + ", updating");
         cleanup_session(user);
     }
 
     if (llGetListLength(Sessions) / SESSION_STRIDE >= MAX_SESSIONS) {
         key oldest_user = llList2Key(Sessions, 0 + SESSION_USER);
-        logd("Session limit reached, removing oldest: " + llKey2Name(oldest_user));
         cleanup_session(oldest_user);
     }
 
@@ -309,23 +268,14 @@ create_session(key user, integer acl, integer is_blacklisted, string context_fil
     string session_id = generate_session_id(user);
     integer created_time = llGetUnixTime();
     Sessions += [user, acl, is_blacklisted, 0, 0, session_id, filtered_start, created_time, context_filter];
-
-    // MEMORY OPTIMIZATION: Only build debug string if actually debugging
-    if (DEBUG && !PRODUCTION) {
-        logd("Created " + context_filter + " session for " + llKey2Name(user) + " (ACL=" + (string)acl + ", blacklisted=" + (string)is_blacklisted + ", " +
-             (string)plugin_count + " plugins)");
-    }
 }
 
 /* -------------------- PLUGIN LIST MANAGEMENT -------------------- */
 
 apply_plugin_list(string plugins_json) {
     AllPlugins = [];
-    
-    logd("apply_plugin_list called with: " + plugins_json);
 
     if (llJsonValueType(plugins_json, []) != JSON_ARRAY) {
-        logd("ERROR: Not a JSON array!");
         return;
     }
     
@@ -334,7 +284,6 @@ apply_plugin_list(string plugins_json) {
         count += 1;
     }
     
-    logd("Array length: " + (string)count);
     
     integer i = 0;
     while (i < count) {
@@ -357,18 +306,15 @@ apply_plugin_list(string plugins_json) {
         i += 1;
     }
 
-    logd("Plugin list updated: " + (string)(llGetListLength(AllPlugins) / PLUGIN_STRIDE) + " plugins");
 
     // Request ACL data from auth module
-    string request = create_routed_message("kmod_auth", ["type", "plugin_acl_list_request"]);
+    string request = llList2Json(JSON_OBJECT, ["type", "plugin_acl_list_request"]);
     llMessageLinked(LINK_SET, AUTH_BUS, request, NULL_KEY);
 }
 
 apply_plugin_acl_list(string acl_json) {
-    logd("apply_plugin_acl_list called");
 
     if (llJsonValueType(acl_json, []) != JSON_ARRAY) {
-        logd("ERROR: Not a JSON array!");
         return;
     }
 
@@ -377,7 +323,6 @@ apply_plugin_acl_list(string acl_json) {
         count += 1;
     }
 
-    logd("ACL array length: " + (string)count);
 
     integer i = 0;
     while (i < count) {
@@ -405,14 +350,12 @@ apply_plugin_acl_list(string acl_json) {
 
         i += 1;
     }
-
-    logd("Plugin ACL data updated");
 }
 
 /* -------------------- MENU RENDERING (delegated to ds_collar_menu.lsl) -------------------- */
 
 send_message(key user, string message_text) {
-    string msg = create_routed_message("ds_collar_menu", [
+    string msg = llList2Json(JSON_OBJECT, [
         "type", "show_message",
         "user", (string)user,
         "message", message_text
@@ -423,7 +366,6 @@ send_message(key user, string message_text) {
 send_render_menu(key user, string menu_type) {
     integer session_idx = find_session_idx(user);
     if (session_idx == -1) {
-        logd("ERROR: No session for " + llKey2Name(user));
         return;
     }
 
@@ -500,7 +442,7 @@ send_render_menu(key user, string menu_type) {
     // for UI consistency. This is intentional and not open to modification.
     integer has_nav = 1;
 
-    string msg = create_routed_message("ds_collar_menu", [
+    string msg = llList2Json(JSON_OBJECT, [
         "type", "render_menu",
         "user", (string)user,
         "session_id", session_id,
@@ -512,13 +454,6 @@ send_render_menu(key user, string menu_type) {
     ]);
 
     llMessageLinked(LINK_SET, UI_BUS, msg, NULL_KEY);
-
-    // MEMORY OPTIMIZATION: Only build debug string if actually debugging
-    if (DEBUG && !PRODUCTION) {
-        logd("Sent render request for " + menu_type + " menu to " + llKey2Name(user) + " (page " +
-             (string)(current_page + 1) + "/" + (string)total_pages + ", " +
-             (string)llGetListLength(button_data) + " buttons)");
-    }
 }
 
 /* -------------------- BUTTON HANDLING -------------------- */
@@ -526,7 +461,6 @@ send_render_menu(key user, string menu_type) {
 handle_button_click(key user, string button, string context) {
     integer session_idx = find_session_idx(user);
     if (session_idx == -1) {
-        logd("ERROR: No session for button click from " + llKey2Name(user));
         return;
     }
 
@@ -580,24 +514,19 @@ handle_button_click(key user, string button, string context) {
                     return;
                 }
 
-                string msg = create_routed_message("plugin:" + context, [
+                string msg = llList2Json(JSON_OBJECT, [
                     "type", "start",
                     "context", context,
                     "user", (string)user
                 ]);
 
                 llMessageLinked(LINK_SET, UI_BUS, msg, user);
-                logd("Starting plugin: " + context + " for " + llKey2Name(user));
                 return;
             }
             i += PLUGIN_STRIDE;
         }
-
-        logd("WARNING: No plugin found for context: " + context);
         return;
     }
-
-    logd("WARNING: Button click with no context: " + button);
 }
 
 /* -------------------- PLUGIN LABEL UPDATE -------------------- */
@@ -610,7 +539,6 @@ update_plugin_label(string context, string new_label) {
         string all_context = llList2String(AllPlugins, i + PLUGIN_CONTEXT);
         if (all_context == context) {
             AllPlugins = llListReplaceList(AllPlugins, [new_label], i + PLUGIN_LABEL, i + PLUGIN_LABEL);
-            logd("Updated label for " + context + " to: " + new_label);
             
             integer j = 0;
             while (j < llGetListLength(FilteredPluginsData)) {
@@ -625,17 +553,13 @@ update_plugin_label(string context, string new_label) {
         
         i += PLUGIN_STRIDE;
     }
-    
-    logd("WARNING: Plugin " + context + " not found for label update");
 }
 
 /* -------------------- MESSAGE HANDLERS -------------------- */
 
 handle_plugin_list(string msg) {
-    logd("handle_plugin_list called");
 
     if (!json_has(msg, ["plugins"])) {
-        logd("ERROR: No 'plugins' field in message!");
         return;
     }
 
@@ -646,13 +570,12 @@ handle_plugin_list(string msg) {
     // Kernel only broadcasts when UUID changes detected, so this is always meaningful
     if (llGetListLength(Sessions) > 0) {
         integer session_count = llGetListLength(Sessions) / SESSION_STRIDE;
-        logd("Plugin list updated - invalidating " + (string)session_count + " sessions");
 
         // BUGFIX: Close all dialogs before clearing sessions
         integer i = 0;
         while (i < llGetListLength(Sessions)) {
             string session_id = llList2String(Sessions, i + SESSION_ID);
-            string close_msg = create_routed_message("kmod_dialogs", [
+            string close_msg = llList2Json(JSON_OBJECT, [
                 "type", "dialog_close",
                 "session_id", session_id
             ]);
@@ -679,7 +602,6 @@ handle_acl_result(string msg) {
     string requested_context = llList2String(PendingAcl, idx + PENDING_ACL_CONTEXT);
     PendingAcl = llDeleteSubList(PendingAcl, idx, idx + PENDING_ACL_STRIDE - 1);
 
-    logd("ACL result: " + (string)level + " (blacklisted=" + (string)is_blacklisted + ") for " + llKey2Name(avatar) + " (context: " + requested_context + ")");
 
     create_session(avatar, level, is_blacklisted, requested_context);
     send_render_menu(avatar, requested_context);
@@ -705,14 +627,13 @@ handle_start(string msg, key user_key) {
 }
 
 start_root_session(key user_key) {
-    logd("Root session start request from " + llKey2Name(user_key));
 
     integer idx = llListFindList(PendingAcl, [user_key]);
     if (idx != -1 && idx % PENDING_ACL_STRIDE == PENDING_ACL_AVATAR) return;
 
     PendingAcl += [user_key, ROOT_CONTEXT];
 
-    string acl_query = create_routed_message("kmod_auth", [
+    string acl_query = llList2Json(JSON_OBJECT, [
         "type", "acl_query",
         "avatar", (string)user_key
     ]);
@@ -720,14 +641,13 @@ start_root_session(key user_key) {
 }
 
 start_sos_session(key user_key) {
-    logd("SOS session start request from " + llKey2Name(user_key));
 
     integer idx = llListFindList(PendingAcl, [user_key]);
     if (idx != -1 && idx % PENDING_ACL_STRIDE == PENDING_ACL_AVATAR) return;
 
     PendingAcl += [user_key, SOS_CONTEXT];
 
-    string acl_query = create_routed_message("kmod_auth", [
+    string acl_query = llList2Json(JSON_OBJECT, [
         "type", "acl_query",
         "avatar", (string)user_key
     ]);
@@ -739,7 +659,6 @@ handle_return(string msg) {
 
     key user_key = (key)llJsonGetValue(msg, ["user"]);
 
-    logd("Return requested for " + llKey2Name(user_key));
 
     // SECURITY FIX: Check session age and re-validate if stale
     integer session_idx = find_session_idx(user_key);
@@ -748,7 +667,6 @@ handle_return(string msg) {
         integer age = llGetUnixTime() - created_time;
 
         if (age > SESSION_MAX_AGE) {
-            logd("Session too old (" + (string)age + "s), re-validating ACL");
             string session_context = llList2String(Sessions, session_idx + SESSION_CONTEXT);
             cleanup_session(user_key);
 
@@ -796,7 +714,6 @@ handle_plugin_acl_list(string msg) {
     // Invalidate all sessions when ACL data changes
     // Sessions need to be recreated with updated ACL requirements
     if (llGetListLength(Sessions) > 0) {
-        logd("Plugin ACL data updated - invalidating " + (string)(llGetListLength(Sessions) / SESSION_STRIDE) + " sessions");
         Sessions = [];
         FilteredPluginsData = [];
         PendingAcl = [];
@@ -821,8 +738,6 @@ handle_dialog_response(string msg) {
         handle_button_click(user, button, context);
         return;
     }
-
-    logd("ERROR: Session not found for response: " + session_id);
 }
 
 handle_dialog_timeout(string msg) {
@@ -833,7 +748,6 @@ handle_dialog_timeout(string msg) {
 
     integer idx = llListFindList(Sessions, [session_id]);
     if (idx != -1 && idx % SESSION_STRIDE == SESSION_ID) {
-        logd("Dialog timeout for " + llKey2Name(user));
         cleanup_session(user);
     }
 }
@@ -850,10 +764,9 @@ default
         TouchData = [];
         PluginStates = [];
 
-        logd("UI module started (v4.0 - UI/Kmod split - logic only)");
 
         // Request plugin list (kernel defers response during active registration)
-        string request = create_routed_message("ds_collar_kernel", [
+        string request = llList2Json(JSON_OBJECT, [
             "type", "plugin_list_request"
         ]);
         llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, request, NULL_KEY);
@@ -867,7 +780,6 @@ default
 
             // SECURITY FIX: Reject invalid touches
             if (touch_pos == ZERO_VECTOR) {
-                logd("WARNING: Invalid touch position from " + llKey2Name(toucher));
                 i += 1;
                 jump next_touch;
             }
@@ -875,7 +787,6 @@ default
             // Validate touch distance
             float distance = llVecDist(touch_pos, llGetPos());
             if (distance > TOUCH_RANGE_M) {
-                logd("WARNING: Touch outside range (" + (string)distance + "m) from " + llKey2Name(toucher));
                 i += 1;
                 jump next_touch;
             }
@@ -896,7 +807,6 @@ default
             TouchData += [toucher, llGetTime()];
 
             @recorded;
-            logd("Touch start from " + llKey2Name(toucher));
 
             @next_touch;
             i += 1;
@@ -920,7 +830,6 @@ default
 
                     TouchData = llDeleteSubList(TouchData, j, j + TOUCH_DATA_STRIDE - 1);
 
-                    logd("Touch end from " + llKey2Name(toucher) + " (duration: " + (string)duration + "s)");
 
                     if (duration >= LONG_TOUCH_THRESHOLD && toucher == wearer) {
                         start_sos_session(toucher);
@@ -928,7 +837,6 @@ default
                     else {
                         // Provide feedback if non-wearer attempted long-touch (SOS is wearer-only)
                         if (duration >= LONG_TOUCH_THRESHOLD && toucher != wearer) {
-                            logd("Non-wearer " + llKey2Name(toucher) + " performed long touch; SOS is wearer-only");
                             send_message(toucher, "Long-touch SOS is only available to the wearer.");
                         }
                         start_root_session(toucher);
@@ -945,14 +853,10 @@ default
     }
 
     link_message(integer sender, integer num, string msg, key id) {
-        // Early filter: ignore messages not for us
-        if (!is_message_for_me(msg)) return;
-        
         string msg_type = get_msg_type(msg);
         if (msg_type == "") return;
 
         if (msg_type != "ping" && msg_type != "pong" && msg_type != "register" && msg_type != "register_now") {
-            logd("Received message: channel=" + (string)num + " type=" + msg_type);
         }
 
         /* -------------------- KERNEL LIFECYCLE -------------------- */

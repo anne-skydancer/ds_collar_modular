@@ -12,10 +12,6 @@ CHANGES:
 - Integrates with kernel registration and heartbeat protocols
 --------------------*/
 
-integer DEBUG = TRUE;
-integer PRODUCTION = FALSE;
-
-string SCRIPT_ID = "plugin_blacklist";
 
 /* -------------------- CONSOLIDATED ABI -------------------- */
 integer KERNEL_LIFECYCLE = 500;
@@ -66,10 +62,7 @@ string MenuContext = "";  // "main", "add_scan", "add_pick", "remove"
 list CandidateKeys = [];
 
 /* -------------------- HELPERS -------------------- */
-integer logd(string msg) {
-    if (DEBUG) llOwnerSay("[BLACKLIST] " + msg);
-    return FALSE;
-}
+
 
 integer json_has(string j, list path) {
     return (llJsonGetValue(j, path) != JSON_INVALID);
@@ -97,24 +90,6 @@ list blacklist_names() {
     return out;
 }
 
-/* -------------------- MESSAGE ROUTING -------------------- */
-
-integer is_message_for_me(string msg) {
-    if (!json_has(msg, ["to"])) return FALSE;  // STRICT: No "to" field = reject
-    string to = llJsonGetValue(msg, ["to"]);
-    if (to == SCRIPT_ID) return TRUE;  // STRICT: Accept ONLY exact SCRIPT_ID match
-    return FALSE;  // STRICT: Reject everything else (broadcasts, wildcards, variants)
-}
-
-string create_routed_message(string to_id, list fields) {
-    list routed = ["from", SCRIPT_ID, "to", to_id] + fields;
-    return llList2Json(JSON_OBJECT, routed);
-}
-
-string create_broadcast(list fields) {
-    return create_routed_message("*", fields);
-}
-
 /* -------------------- LIFECYCLE -------------------- */
 
 register_self() {
@@ -126,7 +101,6 @@ register_self() {
         "script", llGetScriptName()
     ]);
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, msg, NULL_KEY);
-    logd("Registered");
 }
 
 send_pong() {
@@ -140,27 +114,55 @@ send_pong() {
 /* -------------------- SETTINGS MANAGEMENT -------------------- */
 
 apply_settings_sync(string msg) {
-    // PHASE 2: Read directly from linkset data
-    string val = llLinksetDataRead(KEY_BLACKLIST);
-    parse_blacklist_value(val);
+    if (!json_has(msg, ["kv"])) return;
+    
+    string kv_json = llJsonGetValue(msg, ["kv"]);
+    apply_blacklist_payload(kv_json);
 }
 
 apply_settings_delta(string msg) {
-    // PHASE 2: Simplified - just re-read affected key from linkset data
-    if (!json_has(msg, ["key"])) return;
+    if (!json_has(msg, ["op"])) return;
     
-    string key_name = llJsonGetValue(msg, ["key"]);
+    string op = llJsonGetValue(msg, ["op"]);
     
-    if (key_name == KEY_BLACKLIST) {
-        string val = llLinksetDataRead(KEY_BLACKLIST);
-        parse_blacklist_value(val);
-        logd("Delta: blacklist updated");
+    if (op == "set") {
+        if (!json_has(msg, ["changes"])) return;
+        string changes = llJsonGetValue(msg, ["changes"]);
+        
+        if (json_has(changes, [KEY_BLACKLIST])) {
+            string new_value = llJsonGetValue(changes, [KEY_BLACKLIST]);
+            parse_blacklist_value(new_value);
+        }
+    }
+    else if (op == "list_add") {
+        if (!json_has(msg, ["key"])) return;
+        if (!json_has(msg, ["elem"])) return;
+        
+        string setting_key = llJsonGetValue(msg, ["key"]);
+        if (setting_key == KEY_BLACKLIST) {
+            string elem = llJsonGetValue(msg, ["elem"]);
+            if (llListFindList(Blacklist, [elem]) == -1) {
+                Blacklist += [elem];
+            }
+        }
+    }
+    else if (op == "list_remove") {
+        if (!json_has(msg, ["key"])) return;
+        if (!json_has(msg, ["elem"])) return;
+        
+        string setting_key = llJsonGetValue(msg, ["key"]);
+        if (setting_key == KEY_BLACKLIST) {
+            string elem = llJsonGetValue(msg, ["elem"]);
+            integer idx = llListFindList(Blacklist, [elem]);
+            if (idx != -1) {
+                Blacklist = llDeleteSubList(Blacklist, idx, idx);
+            }
+        }
     }
 }
 
 apply_blacklist_payload(string kv_json) {
     if (!json_has(kv_json, [KEY_BLACKLIST])) {
-        logd("No blacklist key in settings");
         Blacklist = [];
         return;
     }
@@ -172,7 +174,6 @@ apply_blacklist_payload(string kv_json) {
 parse_blacklist_value(string raw) {
     if (raw == JSON_INVALID || raw == "[]" || raw == "" || raw == " ") {
         Blacklist = [];
-        logd("Blacklist cleared");
         return;
     }
     
@@ -189,7 +190,6 @@ parse_blacklist_value(string raw) {
             val = llJsonGetValue(raw, [i]);
         }
         Blacklist = updated;
-        logd("Loaded blacklist (JSON): " + (string)llGetListLength(Blacklist) + " entries");
         return;
     }
     
@@ -206,7 +206,6 @@ parse_blacklist_value(string raw) {
         j += 1;
     }
     Blacklist = updated;
-    logd("Loaded blacklist (CSV): " + (string)llGetListLength(Blacklist) + " entries");
 }
 
 persist_blacklist() {
@@ -216,7 +215,6 @@ persist_blacklist() {
         "values", llList2Json(JSON_ARRAY, Blacklist)
     ]);
     llMessageLinked(LINK_SET, SETTINGS_BUS, msg, NULL_KEY);
-    logd("Persisted blacklist: " + (string)llGetListLength(Blacklist) + " entries");
 }
 
 /* -------------------- ACL MANAGEMENT -------------------- */
@@ -227,7 +225,6 @@ request_acl(key user_key) {
         "avatar", (string)user_key
     ]);
     llMessageLinked(LINK_SET, AUTH_BUS, msg, NULL_KEY);
-    logd("Requested ACL for " + llKey2Name(user_key));
 }
 
 handle_acl_result(string msg) {
@@ -247,7 +244,6 @@ handle_acl_result(string msg) {
         return;
     }
     
-    logd("ACL result: " + (string)level + " for " + llKey2Name(avatar));
     show_main_menu();
 }
 
@@ -278,7 +274,6 @@ show_main_menu() {
     ]);
     
     llMessageLinked(LINK_SET, DIALOG_BUS, msg, NULL_KEY);
-    logd("Showing main menu");
 }
 
 show_remove_menu() {
@@ -305,7 +300,6 @@ show_remove_menu() {
     ]);
     
     llMessageLinked(LINK_SET, DIALOG_BUS, msg, NULL_KEY);
-    logd("Showing remove menu");
 }
 
 show_add_candidates() {
@@ -342,13 +336,12 @@ show_add_candidates() {
     ]);
     
     llMessageLinked(LINK_SET, DIALOG_BUS, msg, NULL_KEY);
-    logd("Showing add candidates menu");
 }
 
 /* -------------------- NAVIGATION -------------------- */
 
 return_to_root() {
-    string msg = create_routed_message("kmod_ui", [
+    string msg = llList2Json(JSON_OBJECT, [
         "type", "return",
         "user", (string)CurrentUser
     ]);
@@ -364,7 +357,6 @@ cleanup_session() {
     SessionId = "";
     MenuContext = "";
     CandidateKeys = [];
-    logd("Session cleaned up");
 }
 
 /* -------------------- DIALOG HANDLERS -------------------- */
@@ -377,7 +369,13 @@ handle_dialog_response(string msg) {
     if (session != SessionId) return;
     
     string button = llJsonGetValue(msg, ["button"]);
-    logd("Button pressed: " + button + " in context: " + MenuContext);
+    
+    // Re-validate ACL
+    if (!in_allowed_levels(CurrentUserAcl)) {
+        llRegionSayTo(CurrentUser, 0, "Access denied.");
+        return_to_root();
+        return;
+    }
     
     // Handle Back button
     if (button == BTN_BACK) {
@@ -394,7 +392,6 @@ handle_dialog_response(string msg) {
         if (button == BTN_ADD) {
             MenuContext = "add_scan";
             CandidateKeys = [];
-            logd("Starting sensor scan");
             llSensor("", NULL_KEY, AGENT, BLACKLIST_RADIUS, PI);
             return;
         }
@@ -433,7 +430,6 @@ handle_dialog_response(string msg) {
     }
     
     // Unknown context - return to main
-    logd("Unknown menu context: " + MenuContext);
     show_main_menu();
 }
 
@@ -442,8 +438,6 @@ handle_dialog_timeout(string msg) {
     
     string session = llJsonGetValue(msg, ["session_id"]);
     if (session != SessionId) return;
-    
-    logd("Dialog timeout");
     cleanup_session();
 }
 
@@ -459,8 +453,6 @@ default {
             "type", "settings_get"
         ]);
         llMessageLinked(LINK_SET, SETTINGS_BUS, msg, NULL_KEY);
-        
-        logd("Ready");
     }
     
     on_rez(integer start_param) {
@@ -474,9 +466,6 @@ default {
     }
     
     link_message(integer sender, integer num, string msg, key id) {
-        // Early filter: ignore messages not intended for us
-        if (!is_message_for_me(msg)) return;
-        
         if (!json_has(msg, ["type"])) return;
         
         string msg_type = llJsonGetValue(msg, ["type"]);

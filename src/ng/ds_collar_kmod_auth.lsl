@@ -12,10 +12,6 @@ CHANGES:
 - Guarded debug logging for safer production deployments
 --------------------*/
 
-integer DEBUG = TRUE;
-integer PRODUCTION = FALSE;  // Set FALSE for development builds
-
-string SCRIPT_ID = "kmod_auth";
 
 /* -------------------- CONSOLIDATED ABI -------------------- */
 integer KERNEL_LIFECYCLE = 500;
@@ -61,10 +57,7 @@ integer PLUGIN_ACL_CONTEXT = 0;
 integer PLUGIN_ACL_MIN_ACL = 1;
 
 /* -------------------- HELPERS -------------------- */
-integer logd(string msg) {
-    if (DEBUG && !PRODUCTION) llOwnerSay("[AUTH] " + msg);
-    return FALSE;
-}
+
 
 integer json_has(string j, list path) {
     return (llJsonGetValue(j, path) != JSON_INVALID);
@@ -76,32 +69,6 @@ integer is_json_arr(string s) {
 
 integer list_has_key(list search_list, key k) {
     return (llListFindList(search_list, [(string)k]) != -1);
-}
-
-/* -------------------- MESSAGE ROUTING -------------------- */
-
-integer is_message_for_me(string msg) {
-    if (llGetSubString(msg, 0, 0) != "{") return FALSE;
-    
-    integer to_pos = llSubStringIndex(msg, "\"to\"");
-    if (to_pos == -1) return TRUE;  // No routing = broadcast
-    
-    string header = llGetSubString(msg, 0, to_pos + 100);
-    
-    if (llSubStringIndex(header, "\"*\"") != -1) return TRUE;
-    if (llSubStringIndex(header, SCRIPT_ID) != -1) return TRUE;
-    if (llSubStringIndex(header, "\"kmod:*\"") != -1) return TRUE;
-    
-    return FALSE;
-}
-
-string create_routed_message(string to_id, list fields) {
-    list routed = ["from", SCRIPT_ID, "to", to_id] + fields;
-    return llList2Json(JSON_OBJECT, routed);
-}
-
-string create_broadcast(list fields) {
-    return create_routed_message("*", fields);
 }
 
 /* -------------------- OWNER CHECKING -------------------- */
@@ -166,7 +133,6 @@ register_plugin_acl(string context, integer min_acl) {
             // Update existing
             PluginAclRegistry = llListReplaceList(PluginAclRegistry, [min_acl],
                 i + PLUGIN_ACL_MIN_ACL, i + PLUGIN_ACL_MIN_ACL);
-            logd("Updated plugin ACL: " + context + " requires " + (string)min_acl);
             return;
         }
         i += PLUGIN_ACL_STRIDE;
@@ -174,7 +140,6 @@ register_plugin_acl(string context, integer min_acl) {
 
     // Add new entry
     PluginAclRegistry += [context, min_acl];
-    logd("Registered plugin ACL: " + context + " requires " + (string)min_acl);
 }
 
 // Broadcast plugin ACL list to UI
@@ -207,10 +172,9 @@ broadcast_plugin_acl_list() {
     }
     acl_array += "]";
 
-    // Manual outer object construction with routing
-    string msg = "{\"from\":\"" + SCRIPT_ID + "\",\"to\":\"*\",\"type\":\"plugin_acl_list\",\"acl_data\":" + acl_array + "}";
+    // Manual outer object construction for same reason
+    string msg = "{\"type\":\"plugin_acl_list\",\"acl_data\":" + acl_array + "}";
     llMessageLinked(LINK_SET, AUTH_BUS, msg, NULL_KEY);
-    logd("Broadcast plugin ACL list: " + (string)llGetListLength(acl_data) + " entries");
 }
 
 // Check if user can access a specific plugin
@@ -309,7 +273,7 @@ send_acl_result(key av, string correlation_id) {
     }
     
     // Build response
-    string msg = create_broadcast([
+    string msg = llList2Json(JSON_OBJECT, [
         "type", "acl_result",
         "avatar", (string)av,
         "level", level,
@@ -330,7 +294,6 @@ send_acl_result(key av, string correlation_id) {
     }
     
     llMessageLinked(LINK_SET, AUTH_BUS, msg, NULL_KEY);
-    logd("ACL result: " + llKey2Name(av) + " = " + (string)level);
 }
 
 /* -------------------- ROLE EXCLUSIVITY VALIDATION -------------------- */
@@ -348,14 +311,12 @@ enforce_role_exclusivity() {
             integer idx = llListFindList(TrusteeList, [owner]);
             if (idx != -1) {
                 TrusteeList = llDeleteSubList(TrusteeList, idx, idx);
-                logd("WARNING: Removed " + owner + " from trustees (is owner)");
             }
             
             // Remove from blacklist
             idx = llListFindList(Blacklist, [owner]);
             if (idx != -1) {
                 Blacklist = llDeleteSubList(Blacklist, idx, idx);
-                logd("WARNING: Removed " + owner + " from blacklist (is owner)");
             }
         }
     }
@@ -367,14 +328,12 @@ enforce_role_exclusivity() {
             integer idx = llListFindList(TrusteeList, [owner]);
             if (idx != -1) {
                 TrusteeList = llDeleteSubList(TrusteeList, idx, idx);
-                logd("WARNING: Removed " + owner + " from trustees (is owner)");
             }
             
             // Remove from blacklist
             idx = llListFindList(Blacklist, [owner]);
             if (idx != -1) {
                 Blacklist = llDeleteSubList(Blacklist, idx, idx);
-                logd("WARNING: Removed " + owner + " from blacklist (is owner)");
             }
         }
     }
@@ -386,15 +345,16 @@ enforce_role_exclusivity() {
         integer idx = llListFindList(Blacklist, [trustee]);
         if (idx != -1) {
             Blacklist = llDeleteSubList(Blacklist, idx, idx);
-            logd("WARNING: Removed " + trustee + " from blacklist (is trustee)");
         }
     }
 }
 
-/* -------------------- SETTINGS CONSUMPTION (PHASE 2: Linkset Data) -------------------- */
+/* -------------------- SETTINGS CONSUMPTION -------------------- */
 
 apply_settings_sync(string msg) {
-    // PHASE 2: No "kv" payload - read directly from linkset data
+    if (!json_has(msg, ["kv"])) return;
+    
+    string kv_json = llJsonGetValue(msg, ["kv"]);
     
     // Reset to defaults
     MultiOwnerMode = FALSE;
@@ -405,47 +365,48 @@ apply_settings_sync(string msg) {
     PublicMode = FALSE;
     TpeMode = FALSE;
     
-    // Load values from linkset data
-    string val = llLinksetDataRead(KEY_MULTI_OWNER_MODE);
-    if (val != "") {
-        MultiOwnerMode = (integer)val;
+    // Load values
+    if (json_has(kv_json, [KEY_MULTI_OWNER_MODE])) {
+        MultiOwnerMode = (integer)llJsonGetValue(kv_json, [KEY_MULTI_OWNER_MODE]);
     }
     
-    val = llLinksetDataRead(KEY_OWNER_KEY);
-    if (val != "") {
-        OwnerKey = (key)val;
+    if (json_has(kv_json, [KEY_OWNER_KEY])) {
+        OwnerKey = (key)llJsonGetValue(kv_json, [KEY_OWNER_KEY]);
     }
     
-    val = llLinksetDataRead(KEY_OWNER_KEYS);
-    if (val != "" && is_json_arr(val)) {
-        OwnerKeys = llJson2List(val);
+    if (json_has(kv_json, [KEY_OWNER_KEYS])) {
+        string owner_keys_json = llJsonGetValue(kv_json, [KEY_OWNER_KEYS]);
+        if (is_json_arr(owner_keys_json)) {
+            OwnerKeys = llJson2List(owner_keys_json);
+        }
     }
     
-    val = llLinksetDataRead(KEY_TRUSTEES);
-    if (val != "" && is_json_arr(val)) {
-        TrusteeList = llJson2List(val);
+    if (json_has(kv_json, [KEY_TRUSTEES])) {
+        string trustees_json = llJsonGetValue(kv_json, [KEY_TRUSTEES]);
+        if (is_json_arr(trustees_json)) {
+            TrusteeList = llJson2List(trustees_json);
+        }
     }
     
-    val = llLinksetDataRead(KEY_BLACKLIST);
-    if (val != "" && is_json_arr(val)) {
-        Blacklist = llJson2List(val);
+    if (json_has(kv_json, [KEY_BLACKLIST])) {
+        string blacklist_json = llJsonGetValue(kv_json, [KEY_BLACKLIST]);
+        if (is_json_arr(blacklist_json)) {
+            Blacklist = llJson2List(blacklist_json);
+        }
     }
     
-    val = llLinksetDataRead(KEY_PUBLIC_ACCESS);
-    if (val != "") {
-        PublicMode = (integer)val;
+    if (json_has(kv_json, [KEY_PUBLIC_ACCESS])) {
+        PublicMode = (integer)llJsonGetValue(kv_json, [KEY_PUBLIC_ACCESS]);
     }
     
-    val = llLinksetDataRead(KEY_TPE_MODE);
-    if (val != "") {
-        TpeMode = (integer)val;
+    if (json_has(kv_json, [KEY_TPE_MODE])) {
+        TpeMode = (integer)llJsonGetValue(kv_json, [KEY_TPE_MODE]);
     }
     
     // SECURITY FIX: Enforce role exclusivity after loading
     enforce_role_exclusivity();
     
     SettingsReady = TRUE;
-    logd("Settings sync applied (multi_owner=" + (string)MultiOwnerMode + ")");
     
     // Process pending queries
     integer i = 0;
@@ -460,44 +421,82 @@ apply_settings_sync(string msg) {
 }
 
 apply_settings_delta(string msg) {
-    // PHASE 2: Simplified - just re-read affected keys from linkset data
-    if (!json_has(msg, ["key"])) return;
+    if (!json_has(msg, ["op"])) return;
     
-    string key_name = llJsonGetValue(msg, ["key"]);
-    string val = llLinksetDataRead(key_name);
+    string op = llJsonGetValue(msg, ["op"]);
     
-    // Update cached values based on which key changed
-    if (key_name == KEY_PUBLIC_ACCESS) {
-        PublicMode = (integer)val;
-        logd("Delta: public_mode = " + (string)PublicMode);
-    }
-    else if (key_name == KEY_TPE_MODE) {
-        TpeMode = (integer)val;
-        logd("Delta: tpe_mode = " + (string)TpeMode);
-    }
-    else if (key_name == KEY_OWNER_KEY) {
-        OwnerKey = (key)val;
-        logd("Delta: owner_key = " + (string)OwnerKey);
-        enforce_role_exclusivity();
-    }
-    else if (key_name == KEY_OWNER_KEYS) {
-        if (val != "" && is_json_arr(val)) {
-            OwnerKeys = llJson2List(val);
-            logd("Delta: owner_keys updated");
+    if (op == "set") {
+        if (!json_has(msg, ["changes"])) return;
+        string changes = llJsonGetValue(msg, ["changes"]);
+        
+        if (json_has(changes, [KEY_PUBLIC_ACCESS])) {
+            PublicMode = (integer)llJsonGetValue(changes, [KEY_PUBLIC_ACCESS]);
+        }
+        
+        if (json_has(changes, [KEY_TPE_MODE])) {
+            TpeMode = (integer)llJsonGetValue(changes, [KEY_TPE_MODE]);
+        }
+        
+        if (json_has(changes, [KEY_OWNER_KEY])) {
+            OwnerKey = (key)llJsonGetValue(changes, [KEY_OWNER_KEY]);
+            // Enforce exclusivity after owner change
             enforce_role_exclusivity();
         }
     }
-    else if (key_name == KEY_TRUSTEES) {
-        if (val != "" && is_json_arr(val)) {
-            TrusteeList = llJson2List(val);
-            logd("Delta: trustees updated");
-            enforce_role_exclusivity();
+    else if (op == "list_add") {
+        if (!json_has(msg, ["key"])) return;
+        if (!json_has(msg, ["elem"])) return;
+        
+        string key_name = llJsonGetValue(msg, ["key"]);
+        string elem = llJsonGetValue(msg, ["elem"]);
+        
+        if (key_name == KEY_OWNER_KEYS) {
+            if (llListFindList(OwnerKeys, [elem]) == -1) {
+                OwnerKeys += [elem];
+                // Enforce exclusivity after adding owner
+                enforce_role_exclusivity();
+            }
+        }
+        else if (key_name == KEY_TRUSTEES) {
+            if (llListFindList(TrusteeList, [elem]) == -1) {
+                TrusteeList += [elem];
+                // Enforce exclusivity after adding trustee
+                enforce_role_exclusivity();
+            }
+        }
+        else if (key_name == KEY_BLACKLIST) {
+            if (llListFindList(Blacklist, [elem]) == -1) {
+                Blacklist += [elem];
+            }
         }
     }
-    else if (key_name == KEY_BLACKLIST) {
-        if (val != "" && is_json_arr(val)) {
-            Blacklist = llJson2List(val);
-            logd("Delta: blacklist updated");
+    else if (op == "list_remove") {
+        if (!json_has(msg, ["key"])) return;
+        if (!json_has(msg, ["elem"])) return;
+        
+        string key_name = llJsonGetValue(msg, ["key"]);
+        string elem = llJsonGetValue(msg, ["elem"]);
+        
+        if (key_name == KEY_OWNER_KEYS) {
+            integer idx = llListFindList(OwnerKeys, [elem]);
+            while (idx != -1) {
+                OwnerKeys = llDeleteSubList(OwnerKeys, idx, idx);
+                idx = llListFindList(OwnerKeys, [elem]);
+            }
+        }
+        else if (key_name == KEY_TRUSTEES) {
+            integer idx = llListFindList(TrusteeList, [elem]);
+            while (idx != -1) {
+                TrusteeList = llDeleteSubList(TrusteeList, idx, idx);
+                idx = llListFindList(TrusteeList, [elem]);
+            }
+        }
+        else if (key_name == KEY_BLACKLIST) {
+            integer idx = llListFindList(Blacklist, [elem]);
+            while (idx != -1) {
+                Blacklist = llDeleteSubList(Blacklist, idx, idx);
+                idx = llListFindList(Blacklist, [elem]);
+            }
         }
     }
 }
@@ -518,17 +517,14 @@ handle_acl_query(string msg) {
     if (!SettingsReady) {
         // SECURITY FIX: Limit pending query queue size
         if (llGetListLength(PendingQueries) / PENDING_STRIDE >= MAX_PENDING_QUERIES) {
-            logd("WARNING: Pending query limit reached, discarding oldest");
             PendingQueries = llDeleteSubList(PendingQueries, 0, PENDING_STRIDE - 1);
         }
 
         // Queue this query
         PendingQueries += [av, correlation_id];
-        logd("Queued ACL query for " + llKey2Name(av));
         return;
     }
 
-    // Compute and send result
     send_acl_result(av, correlation_id);
 }
 
@@ -557,14 +553,13 @@ handle_filter_plugins(string msg) {
 
     // Build response
     string accessible_json = llList2Json(JSON_ARRAY, accessible);
-    string response = create_broadcast([
+    string response = llList2Json(JSON_OBJECT, [
         "type", "filtered_plugins",
         "user", (string)user,
         "contexts", accessible_json
     ]);
 
     llMessageLinked(LINK_SET, AUTH_BUS, response, NULL_KEY);
-    logd("Filtered plugins for " + llKey2Name(user) + ": " + (string)llGetListLength(accessible) + "/" + (string)llGetListLength(contexts));
 }
 
 handle_plugin_acl_list_request() {
@@ -580,25 +575,21 @@ default
         PendingQueries = [];
         PluginAclRegistry = [];
 
-        logd("Auth module started (with plugin ACL registry)");
 
         // Request ACL registry repopulation from kernel (P1 security fix)
-        string acl_request = create_routed_message("ds_collar_kernel", [
+        string acl_request = llList2Json(JSON_OBJECT, [
             "type", "acl_registry_request"
         ]);
         llMessageLinked(LINK_SET, AUTH_BUS, acl_request, NULL_KEY);
 
         // Request settings
-        string request = create_routed_message("kmod_settings", [
+        string request = llList2Json(JSON_OBJECT, [
             "type", "settings_get"
         ]);
         llMessageLinked(LINK_SET, SETTINGS_BUS, request, NULL_KEY);
     }
     
     link_message(integer sender, integer num, string msg, key id) {
-        // Early filter: ignore messages not for us
-        if (!is_message_for_me(msg)) return;
-        
         if (!json_has(msg, ["type"])) return;
 
         string msg_type = llJsonGetValue(msg, ["type"]);

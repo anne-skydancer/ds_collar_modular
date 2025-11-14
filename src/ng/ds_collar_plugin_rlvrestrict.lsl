@@ -12,9 +12,6 @@ CHANGES:
 - Enforces maximum restriction count and cleans up session context on exit
 --------------------*/
 
-integer DEBUG = TRUE;
-integer PRODUCTION = FALSE;
-string SCRIPT_ID = "plugin_rlvrestrict";
 
 /* -------------------- CHANNELS (v2 Consolidated Architecture) -------------------- */
 
@@ -74,32 +71,8 @@ integer json_has(string json_str, list path) {
     return (llJsonGetValue(json_str, path) != JSON_INVALID);
 }
 
-logd(string msg) {
-    if (DEBUG) {
-        llOwnerSay("[RLVRESTRICT] " + msg);
-    }
-}
-
 string generate_session_id() {
     return llGetScriptName() + "_" + (string)llGetKey() + "_" + (string)llGetUnixTime();
-}
-
-/* -------------------- MESSAGE ROUTING -------------------- */
-
-integer is_message_for_me(string msg) {
-    if (!json_has(msg, ["to"])) return FALSE;  // STRICT: No "to" field = reject
-    string to = llJsonGetValue(msg, ["to"]);
-    if (to == SCRIPT_ID) return TRUE;  // STRICT: Accept ONLY exact SCRIPT_ID match
-    return FALSE;  // STRICT: Reject everything else (broadcasts, wildcards, variants)
-}
-
-string create_routed_message(string to_id, list fields) {
-    list routed = ["from", SCRIPT_ID, "to", to_id] + fields;
-    return llList2Json(JSON_OBJECT, routed);
-}
-
-string create_broadcast(list fields) {
-    return create_routed_message("*", fields);
 }
 
 /* -------------------- LIFECYCLE -------------------- */
@@ -112,8 +85,6 @@ register_self() {
         "min_acl", PLUGIN_MIN_ACL,
         "script", llGetScriptName()
     ]), NULL_KEY);
-    
-    logd("Registered with kernel");
 }
 
 send_pong() {
@@ -149,68 +120,72 @@ persist_restrictions() {
         "key", KEY_RESTRICTIONS,
         "value", csv
     ]), NULL_KEY);
-    
-    logd("Persisted restrictions: " + csv);
 }
 
 apply_settings_sync(string msg) {
-    // PHASE 2: Read directly from linkset data
-    string csv = llLinksetDataRead(KEY_RESTRICTIONS);
+    if (!json_has(msg, ["kv"])) return;
     
-    if (csv != "") {
-        Restrictions = llParseString2List(csv, [","], []);
-        logd("Loaded " + (string)llGetListLength(Restrictions) + " restrictions from settings");
+    string kv = llJsonGetValue(msg, ["kv"]);
+    
+    if (json_has(kv, [KEY_RESTRICTIONS])) {
+        string csv = llJsonGetValue(kv, [KEY_RESTRICTIONS]);
         
-        // Reapply all restrictions
-        integer i = 0;
-        integer count = llGetListLength(Restrictions);
-        while (i < count) {
-            string restr_cmd = llList2String(Restrictions, i);
-            llOwnerSay(restr_cmd + "=y");
-            i = i + 1;
-        }
-    }
-    else {
-        Restrictions = [];
-        logd("No restrictions loaded");
-    }
-}
-
-apply_settings_delta(string msg) {
-    // PHASE 2: Simplified - just re-read affected key from linkset data
-    if (!json_has(msg, ["key"])) return;
-    
-    string key_name = llJsonGetValue(msg, ["key"]);
-    
-    if (key_name == KEY_RESTRICTIONS) {
-        // Clear all current restrictions
-        integer i = 0;
-        integer count = llGetListLength(Restrictions);
-        while (i < count) {
-            string restr_cmd = llList2String(Restrictions, i);
-            llOwnerSay("@clear=" + llGetSubString(restr_cmd, 1, -1));
-            i = i + 1;
-        }
-        
-        // Load new list from linkset data
-        string csv = llLinksetDataRead(KEY_RESTRICTIONS);
         if (csv != "") {
             Restrictions = llParseString2List(csv, [","], []);
+            
+            // Reapply all restrictions
+            integer i = 0;
+            integer count = llGetListLength(Restrictions);
+            while (i < count) {
+                string restr_cmd = llList2String(Restrictions, i);
+                llOwnerSay(restr_cmd + "=y");
+                i = i + 1;
+            }
         }
         else {
             Restrictions = [];
         }
+    }
+}
+
+apply_settings_delta(string msg) {
+    if (!json_has(msg, ["op"])) return;
+    
+    string op = llJsonGetValue(msg, ["op"]);
+    
+    if (op == "set") {
+        if (!json_has(msg, ["changes"])) return;
+        string changes = llJsonGetValue(msg, ["changes"]);
         
-        // Apply new restrictions
-        i = 0;
-        count = llGetListLength(Restrictions);
-        while (i < count) {
-            string restr_cmd = llList2String(Restrictions, i);
-            llOwnerSay(restr_cmd + "=y");
-            i = i + 1;
+        if (json_has(changes, [KEY_RESTRICTIONS])) {
+            string csv = llJsonGetValue(changes, [KEY_RESTRICTIONS]);
+            
+            // Clear all current restrictions
+            integer i = 0;
+            integer count = llGetListLength(Restrictions);
+            while (i < count) {
+                string restr_cmd = llList2String(Restrictions, i);
+                llOwnerSay("@clear=" + llGetSubString(restr_cmd, 1, -1));
+                i = i + 1;
+            }
+            
+            // Load new list
+            if (csv != "") {
+                Restrictions = llParseString2List(csv, [","], []);
+            }
+            else {
+                Restrictions = [];
+            }
+            
+            // Apply new restrictions
+            i = 0;
+            count = llGetListLength(Restrictions);
+            while (i < count) {
+                string restr_cmd = llList2String(Restrictions, i);
+                llOwnerSay(restr_cmd + "=y");
+                i = i + 1;
+            }
         }
-        
-        logd("Delta: restrictions updated");
     }
 }
 
@@ -254,7 +229,6 @@ toggle_restriction(string restr_cmd) {
         // Remove restriction
         Restrictions = llDeleteSubList(Restrictions, idx, idx);
         llOwnerSay("@clear=" + llGetSubString(restr_cmd, 1, -1));
-        logd("Removed restriction: " + restr_cmd);
     }
     else {
         // Add restriction
@@ -265,7 +239,6 @@ toggle_restriction(string restr_cmd) {
         
         Restrictions += [restr_cmd];
         llOwnerSay(restr_cmd + "=y");
-        logd("Added restriction: " + restr_cmd);
     }
     
     persist_restrictions();
@@ -282,7 +255,6 @@ remove_all_restrictions() {
     
     Restrictions = [];
     persist_restrictions();
-    logd("All restrictions removed via safeword");
 }
 
 /* -------------------- CATEGORY HELPERS -------------------- */
@@ -320,7 +292,7 @@ string label_to_command(string btn_label, list cat_cmds, list cat_labels) {
 /* -------------------- UI NAVIGATION -------------------- */
 
 return_to_root() {
-    llMessageLinked(LINK_SET, UI_BUS, create_routed_message("kmod_ui", [
+    llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
         "type", "return",
         "context", PLUGIN_CONTEXT,
         "user", (string)CurrentUser
@@ -527,8 +499,6 @@ default
         llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
             "type", "settings_get"
         ]), NULL_KEY);
-        
-        logd("Plugin initialized");
     }
     
     on_rez(integer param) {
@@ -542,8 +512,6 @@ default
     }
     
     link_message(integer sender, integer num, string msg, key id) {
-        if (!is_message_for_me(msg)) return;
-        
         if (!json_has(msg, ["type"])) return;
         
         string type = llJsonGetValue(msg, ["type"]);

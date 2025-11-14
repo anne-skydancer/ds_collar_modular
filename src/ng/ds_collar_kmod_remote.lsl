@@ -12,10 +12,6 @@ CHANGES:
 - Standardized external channel handling for HUD discovery and response
 --------------------*/
 
-integer DEBUG = TRUE;
-integer PRODUCTION = FALSE;  // Set FALSE for development
-
-string SCRIPT_ID = "kmod_remote";
 
 /* -------------------- CONSOLIDATED ABI -------------------- */
 integer KERNEL_LIFECYCLE = 500;
@@ -65,10 +61,7 @@ integer REQUEST_TYPE_ACL_QUERY = 2;
 integer REQUEST_TYPE_MENU = 3;
 
 /* -------------------- HELPERS -------------------- */
-integer logd(string msg) {
-    if (DEBUG && !PRODUCTION) llOwnerSay("[REMOTE] " + msg);
-    return FALSE;
-}
+
 
 integer json_has(string json_str, list path) {
     return (llJsonGetValue(json_str, path) != JSON_INVALID);
@@ -76,32 +69,6 @@ integer json_has(string json_str, list path) {
 
 integer now() {
     return llGetUnixTime();
-}
-
-/* -------------------- MESSAGE ROUTING -------------------- */
-
-integer is_message_for_me(string msg) {
-    if (llGetSubString(msg, 0, 0) != "{") return FALSE;
-    
-    integer to_pos = llSubStringIndex(msg, "\"to\"");
-    if (to_pos == -1) return TRUE;  // No routing = broadcast
-    
-    string header = llGetSubString(msg, 0, to_pos + 100);
-    
-    if (llSubStringIndex(header, "\"*\"") != -1) return TRUE;
-    if (llSubStringIndex(header, SCRIPT_ID) != -1) return TRUE;
-    if (llSubStringIndex(header, "\"kmod:*\"") != -1) return TRUE;
-    
-    return FALSE;
-}
-
-string create_routed_message(string to_id, list fields) {
-    list routed = ["from", SCRIPT_ID, "to", to_id] + fields;
-    return llList2Json(JSON_OBJECT, routed);
-}
-
-string create_broadcast(list fields) {
-    return create_routed_message("*", fields);
 }
 
 /* -------------------- RATE LIMITING (per-request-type) -------------------- */
@@ -118,7 +85,6 @@ integer check_rate_limit(key requester, integer request_type, string request_nam
 
             integer last_request = llList2Integer(RateLimitTimestamps, idx + RATE_LIMIT_TIME);
             if ((now_time - last_request) < REQUEST_COOLDOWN) {
-                logd("Rate limit (" + request_name + "): " + llKey2Name(requester) + " requested too soon");
                 return FALSE;
             }
 
@@ -150,7 +116,6 @@ prune_expired_queries(integer now_time) {
         integer timestamp = llList2Integer(QueryTimestamps, idx + 1);
         
         if ((now_time - timestamp) > QUERY_TIMEOUT) {
-            logd("Pruning expired query for " + llKey2Name(hud_wearer));
             
             // Remove from both lists
             integer query_idx = find_pending_query(hud_wearer);
@@ -186,7 +151,6 @@ add_pending_query(key hud_wearer, key hud_object) {
                 QueryTimestamps = llListReplaceList(QueryTimestamps, [now_time], ts_idx + 1, ts_idx + 1);
             }
             
-            logd("Updated pending query for " + llKey2Name(hud_wearer));
             return;
         }
         idx += QUERY_STRIDE;
@@ -197,7 +161,6 @@ add_pending_query(key hud_wearer, key hud_object) {
     
     // Check limit
     if (llGetListLength(PendingQueries) >= (MAX_PENDING_QUERIES * QUERY_STRIDE)) {
-        logd("WARNING: Max pending queries reached, dropping oldest");
         // Remove oldest (FIFO)
         key oldest = llList2Key(PendingQueries, 0);
         PendingQueries = llDeleteSubList(PendingQueries, 0, QUERY_STRIDE - 1);
@@ -212,7 +175,6 @@ add_pending_query(key hud_wearer, key hud_object) {
     // Add new query
     PendingQueries += [hud_wearer, hud_object];
     QueryTimestamps += [hud_wearer, now_time];
-    logd("Added pending query for " + llKey2Name(hud_wearer));
 }
 
 integer find_pending_query(key hud_wearer) {
@@ -233,7 +195,6 @@ remove_pending_query(key hud_wearer) {
     if (idx == -1) return;
     
     PendingQueries = llDeleteSubList(PendingQueries, idx, idx + QUERY_STRIDE - 1);
-    logd("Removed pending query for " + llKey2Name(hud_wearer));
 }
 
 /* -------------------- INTERNAL ACL COMMUNICATION -------------------- */
@@ -246,7 +207,6 @@ request_internal_acl(key avatar_key) {
     ]);
     
     llMessageLinked(LINK_SET, AUTH_BUS, msg, NULL_KEY);
-    logd("Requested internal ACL for " + llKey2Name(avatar_key));
 }
 
 send_external_acl_response(key hud_wearer, integer level) {
@@ -259,7 +219,6 @@ send_external_acl_response(key hud_wearer, integer level) {
     
     // Send response on region channel - HUD will filter by collar owner
     llRegionSay(EXTERNAL_ACL_REPLY_CHAN, msg);
-    logd("Sent ACL response: hud_wearer=" + llKey2Name(hud_wearer) + ", level=" + (string)level);
 }
 
 /* -------------------- MENU TRIGGERING -------------------- */
@@ -274,7 +233,6 @@ trigger_menu_for_external_user(key user_key, string context) {
     // Pass the external user's key as the id parameter
     llMessageLinked(LINK_SET, UI_BUS, msg, user_key);
 
-    logd("Triggered " + context + " menu for external user: " + llKey2Name(user_key));
 }
 
 /* -------------------- EXTERNAL PROTOCOL HANDLERS -------------------- */
@@ -282,7 +240,6 @@ trigger_menu_for_external_user(key user_key, string context) {
 handle_collar_scan(string message) {
     // Extract HUD wearer key
     if (!json_has(message, ["hud_wearer"])) {
-        logd("collar_scan missing hud_wearer field");
         return;
     }
 
@@ -295,7 +252,6 @@ handle_collar_scan(string message) {
     // Check distance to HUD wearer
     list agent_data = llGetObjectDetails(hud_wearer, [OBJECT_POS]);
     if (llGetListLength(agent_data) == 0) {
-        logd("Could not get position for HUD wearer");
         return;
     }
     
@@ -305,11 +261,9 @@ handle_collar_scan(string message) {
     
     // Only respond if within range
     if (distance > MAX_DETECTION_RANGE) {
-        logd("HUD wearer " + llKey2Name(hud_wearer) + " is " + (string)((integer)distance) + "m away (max: " + (string)((integer)MAX_DETECTION_RANGE) + "m) - ignoring");
         return;
     }
     
-    logd("HUD wearer " + llKey2Name(hud_wearer) + " is " + (string)((integer)distance) + "m away - responding to scan");
     
     string response = llList2Json(JSON_OBJECT, [
         "type", "collar_scan_response",
@@ -338,11 +292,9 @@ handle_acl_query_external(string message) {
     
     // Check if this query is for OUR collar (target matches our owner)
     if (target_avatar != CollarOwner) {
-        logd("Ignoring query - target " + llKey2Name(target_avatar) + " != our owner " + llKey2Name(CollarOwner));
         return;
     }
     
-    logd("Received ACL query from " + llKey2Name(hud_wearer) + " for our collar");
     
     // Store pending query
     add_pending_query(hud_wearer, hud_object);
@@ -364,7 +316,6 @@ handle_menu_request_external(string message) {
         context = llJsonGetValue(message, ["context"]);
     }
 
-    logd("Received menu request - context='" + context + "' (length=" + (string)llStringLength(context) + "), SOS_CONTEXT='" + SOS_CONTEXT + "', match=" + (string)(context == SOS_CONTEXT));
 
     // SECURITY: Rate limit check
     if (!check_rate_limit(hud_wearer, REQUEST_TYPE_MENU, "menu")) return;
@@ -372,7 +323,6 @@ handle_menu_request_external(string message) {
     // SECURITY: Check range
     list agent_data = llGetObjectDetails(hud_wearer, [OBJECT_POS]);
     if (llGetListLength(agent_data) == 0) {
-        logd("Cannot verify HUD wearer position for menu request");
         return;
     }
 
@@ -380,14 +330,8 @@ handle_menu_request_external(string message) {
     float distance = llVecDist(hud_wearer_pos, llGetPos());
 
     if (distance > MAX_DETECTION_RANGE) {
-        logd("Menu request from " + llKey2Name(hud_wearer) +
-             " ignored - " + (string)((integer)distance) + "m away (max: " +
-             (string)((integer)MAX_DETECTION_RANGE) + "m)");
         return;
     }
-
-    logd("Received " + context + " menu request from " + llKey2Name(hud_wearer) +
-         " at " + (string)((integer)distance) + "m");
 
     // Check if already pending for this user
     integer i = 0;
@@ -429,10 +373,6 @@ default {
         
         // Start timer for periodic query pruning
         llSetTimerEvent(60.0);  // Check every 60 seconds
-        
-        logd("Remote module initialized");
-        logd("Listening on channel " + (string)EXTERNAL_ACL_QUERY_CHAN + " for ACL queries");
-        logd("Listening on channel " + (string)EXTERNAL_MENU_CHAN + " for menu requests");
     }
     
     on_rez(integer start_param) {
@@ -484,9 +424,6 @@ default {
     }
     
     link_message(integer sender_num, integer num, string str, key id) {
-        // Early filter: ignore messages not for us
-        if (!is_message_for_me(str)) return;
-        
         if (!json_has(str, ["type"])) return;
 
         string msg_type = llJsonGetValue(str, ["type"]);
@@ -532,9 +469,6 @@ default {
             @found_menu_request;
             // This is a menu request ACL check
 
-            logd("Menu request ACL check: avatar_key=" + (string)avatar_key + ", requested_context=" + requested_context + ", ACL level=" + (string)level);
-            logd("Collar owner: " + (string)llGetOwner() + " (" + llKey2Name(llGetOwner()) + ")");
-            logd("Requester: " + (string)avatar_key + " (" + llKey2Name(avatar_key) + ")");
 
             // TPE MODE EMERGENCY ACCESS: Allow wearer to access SOS menu even with ACL 0
             integer is_wearer = (avatar_key == llGetOwner());
@@ -547,17 +481,13 @@ default {
                 string final_context = requested_context;
                 if (requested_context == SOS_CONTEXT && !is_wearer) {
                     final_context = ROOT_CONTEXT;
-                    logd("SOS context request from non-wearer " + llKey2Name(avatar_key) + " downgraded to root");
                     llRegionSayTo(avatar_key, 0, "Only the collar wearer can access the SOS menu. Showing main menu instead.");
                 }
                 else if (requested_context == SOS_CONTEXT) {
-                    logd("SOS context request from WEARER " + llKey2Name(avatar_key) + " - keeping SOS context");
                 }
 
                 trigger_menu_for_external_user(avatar_key, final_context);
-                logd("Menu request approved for " + llKey2Name(avatar_key) + " (ACL " + (string)level + ", context: " + final_context + ")");
             } else {
-                logd("Menu request denied for " + llKey2Name(avatar_key) + " (ACL " + (string)level + ")");
             }
             return;
 

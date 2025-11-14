@@ -12,8 +12,6 @@ CHANGES:
 - Tracks last played animation to manage start/stop transitions cleanly
 --------------------*/
 
-integer DEBUG = TRUE;
-integer PRODUCTION = FALSE;
 
 /* -------------------- CONSOLIDATED ABI -------------------- */
 integer KERNEL_LIFECYCLE = 500;
@@ -47,10 +45,7 @@ string LastPlayedAnim = "";
 integer HasPermission = FALSE;
 
 /* -------------------- HELPERS -------------------- */
-integer logd(string msg) {
-    if (DEBUG) llOwnerSay("[ANIMATE] " + msg);
-    return FALSE;
-}
+
 
 integer json_has(string j, list path) {
     return (llJsonGetValue(j, path) != JSON_INVALID);
@@ -74,7 +69,6 @@ refresh_animation_list() {
         }
     }
     
-    logd("Found " + (string)llGetListLength(AnimationList) + " animations");
 }
 
 /* -------------------- ANIMATION CONTROL -------------------- */
@@ -83,17 +77,14 @@ ensure_permissions() {
     key owner = llGetOwner();
     if (llGetPermissions() & PERMISSION_TRIGGER_ANIMATION) {
         HasPermission = TRUE;
-        logd("Already have animation permission");
     }
     else {
         llRequestPermissions(owner, PERMISSION_TRIGGER_ANIMATION);
-        logd("Requesting animation permission");
     }
 }
 
 start_animation(string anim_name) {
     if (!HasPermission) {
-        logd("No permission to trigger animations");
         llRegionSayTo(CurrentUser, 0, "No animation permission granted.");
         return;
     }
@@ -101,18 +92,15 @@ start_animation(string anim_name) {
     // Stop last animation if there was one
     if (LastPlayedAnim != "") {
         llStopAnimation(LastPlayedAnim);
-        logd("Stopped: " + LastPlayedAnim);
     }
     
     // Start new animation
     if (llGetInventoryType(anim_name) == INVENTORY_ANIMATION) {
         llStartAnimation(anim_name);
         LastPlayedAnim = anim_name;
-        logd("Started: " + anim_name);
         llRegionSayTo(CurrentUser, 0, "Playing: " + anim_name);
     }
     else {
-        logd("Animation not found: " + anim_name);
         llRegionSayTo(CurrentUser, 0, "Animation not found: " + anim_name);
     }
 }
@@ -120,7 +108,6 @@ start_animation(string anim_name) {
 stop_all_animations() {
     if (LastPlayedAnim != "") {
         llStopAnimation(LastPlayedAnim);
-        logd("Stopped: " + LastPlayedAnim);
         LastPlayedAnim = "";
         llRegionSayTo(CurrentUser, 0, "Animation stopped.");
     }
@@ -140,7 +127,6 @@ register_self() {
         "script", llGetScriptName()
     ]);
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, msg, NULL_KEY);
-    logd("Registered with kernel");
 }
 
 send_pong() {
@@ -273,7 +259,6 @@ show_animation_menu(integer page) {
     ]);
     
     llMessageLinked(LINK_SET, DIALOG_BUS, msg, NULL_KEY);
-    logd("Showing page " + (string)(page + 1) + " of " + (string)(max_page + 1));
 }
 
 /* -------------------- BUTTON HANDLING -------------------- */
@@ -352,7 +337,6 @@ cleanup_session() {
     AclPending = FALSE;
     SessionId = "";
     CurrentPage = 0;
-    logd("Session cleaned up");
 }
 
 /* -------------------- EVENTS -------------------- */
@@ -363,7 +347,6 @@ default {
         refresh_animation_list();
         ensure_permissions();
         register_self();
-        logd("Ready with " + (string)llGetListLength(AnimationList) + " animations");
     }
     
     on_rez(integer start_param) {
@@ -400,7 +383,6 @@ default {
     run_time_permissions(integer perm) {
         if (perm & PERMISSION_TRIGGER_ANIMATION) {
             HasPermission = TRUE;
-            logd("Animation permission granted");
         }
     }
     
@@ -488,7 +470,6 @@ default {
                 if (llJsonGetValue(msg, ["session_id"]) != SessionId) return;
                 
                 cleanup_session();
-                logd("Dialog timeout");
                 return;
             }
             

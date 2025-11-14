@@ -1,15 +1,10 @@
-
 /*--------------------
 PLUGIN: ds_collar_plugin_leash.lsl
 VERSION: 1.00
-REVISION: 23
+REVISION: 21
 PURPOSE: User interface and configuration for the leashing system
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
-- REVISION 23: Harmonized with ng routing system: Added SCRIPT_ID, is_message_for_me(),
-  create_routed_message(), create_broadcast() for proper message routing.
-- REVISION 22: Stack-heap collision fix for ng branch: Started from stable Rev 21,
-  added DEBUG/PRODUCTION flags with 4 inline debug statements at critical points.
 - REVISION 21: Stack-heap collision fix: Removed unused functions (ROOT_CONTEXT,
   get_msg_type, validate_required_fields, registerSelf, sendPong). 993→968 lines.
 - Added coffle and post modes with ACL-restricted access controls
@@ -19,10 +14,6 @@ CHANGES:
 - Routed leash actions and state synchronization through kernel messages
 --------------------*/
 
-integer DEBUG = TRUE;
-integer PRODUCTION = FALSE;
-
-string SCRIPT_ID = "plugin_leash";
 
 /* -------------------- CONSOLIDATED ABI -------------------- */
 integer KERNEL_LIFECYCLE = 500;
@@ -88,24 +79,6 @@ string generate_session_id() {
 
 integer inAllowedList(integer level, list allowed) {
     return (llListFindList(allowed, [level]) != -1);
-}
-
-/* -------------------- MESSAGE ROUTING -------------------- */
-
-integer is_message_for_me(string msg) {
-    if (!json_has(msg, ["to"])) return FALSE;  // STRICT: No "to" field = reject
-    string to = llJsonGetValue(msg, ["to"]);
-    if (to == SCRIPT_ID) return TRUE;  // STRICT: Accept ONLY exact SCRIPT_ID match
-    return FALSE;  // STRICT: Reject everything else (broadcasts, wildcards, variants)
-}
-
-string create_routed_message(string to_id, list fields) {
-    list routed = ["from", SCRIPT_ID, "to", to_id] + fields;
-    return llList2Json(JSON_OBJECT, routed);
-}
-
-string create_broadcast(list fields) {
-    return create_routed_message("*", fields);
 }
 
 /* -------------------- UNIFIED MENU DISPLAY -------------------- */
@@ -629,7 +602,6 @@ handleChatCommand(string msg, key user) {
 
 /* -------------------- BUTTON HANDLERS -------------------- */
 handleButtonClick(string button) {
-    if (DEBUG && !PRODUCTION) llOwnerSay("[" + PLUGIN_CONTEXT + "] Button: " + button + " (context: " + MenuContext + ")");
     
     if (MenuContext == "main") {
         if (button == "Clip") {
@@ -831,7 +803,7 @@ handleButtonClick(string button) {
 
 /* -------------------- NAVIGATION -------------------- */
 returnToRoot() {
-    llMessageLinked(LINK_SET, UI_BUS, create_routed_message("kmod_ui", [
+    llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
         "type", "return",
         "user", (string)CurrentUser
     ]), NULL_KEY);
@@ -873,7 +845,6 @@ default
         register_self();
         register_chat_commands();
         queryState();
-        if (DEBUG && !PRODUCTION) llOwnerSay("[" + PLUGIN_CONTEXT + "] Plugin ready");
     }
     
     on_rez(integer start_param) {
@@ -895,8 +866,6 @@ default
     }
 
     link_message(integer sender, integer num, string msg, key id) {
-        if (!is_message_for_me(msg)) return;
-        
         if (num == KERNEL_LIFECYCLE) {
             if (!json_has(msg, ["type"])) return;
             string msg_type = llJsonGetValue(msg, ["type"]);
@@ -991,7 +960,6 @@ default
                 if (json_has(msg, ["level"])) {
                     UserAcl = (integer)llJsonGetValue(msg, ["level"]);
                     AclPending = FALSE;
-                    if (DEBUG && !PRODUCTION) llOwnerSay("[" + PLUGIN_CONTEXT + "] ACL " + (string)UserAcl + " for " + llKey2Name(avatar));
                     scheduleStateQuery("main");
                 }
                 return;
@@ -1076,7 +1044,6 @@ default
             return;
         }
 
-        if (DEBUG && !PRODUCTION) llOwnerSay("[" + PLUGIN_CONTEXT + "] Sensor: " + (string)(llGetListLength(SensorCandidates)/2) + " objects for " + SensorMode);
         // Display the menu (starts at page 0)
         displayObjectMenu();
     }

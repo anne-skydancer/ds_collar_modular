@@ -12,10 +12,6 @@ CHANGES:
 - Returns control to root context after state changes
 --------------------*/
 
-integer DEBUG = TRUE;
-integer PRODUCTION = FALSE;
-
-string SCRIPT_ID = "plugin_public";
 
 /* -------------------- CONSOLIDATED ABI -------------------- */
 integer KERNEL_LIFECYCLE = 500;
@@ -48,31 +44,10 @@ string KEY_PUBLIC_MODE = "public_mode";
 integer PublicModeEnabled = FALSE;
 
 /* -------------------- HELPERS -------------------- */
-integer logd(string msg) {
-    if (DEBUG) llOwnerSay("[PUBLIC] " + msg);
-    return FALSE;
-}
+
 
 integer json_has(string j, list path) {
     return (llJsonGetValue(j, path) != JSON_INVALID);
-}
-
-/* -------------------- MESSAGE ROUTING -------------------- */
-
-integer is_message_for_me(string msg) {
-    if (!json_has(msg, ["to"])) return FALSE;  // STRICT: No "to" field = reject
-    string to = llJsonGetValue(msg, ["to"]);
-    if (to == SCRIPT_ID) return TRUE;  // STRICT: Accept ONLY exact SCRIPT_ID match
-    return FALSE;  // STRICT: Reject everything else (broadcasts, wildcards, variants)
-}
-
-string create_routed_message(string to_id, list fields) {
-    list routed = ["from", SCRIPT_ID, "to", to_id] + fields;
-    return llList2Json(JSON_OBJECT, routed);
-}
-
-string create_broadcast(list fields) {
-    return create_routed_message("*", fields);
 }
 
 /* -------------------- LIFECYCLE MANAGEMENT -------------------- */
@@ -91,7 +66,6 @@ register_self() {
         "script", llGetScriptName()
     ]);
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, msg, NULL_KEY);
-    logd("Registered with kernel as: " + label);
 }
 
 send_pong() {
@@ -105,18 +79,17 @@ send_pong() {
 /* -------------------- SETTINGS CONSUMPTION -------------------- */
 
 apply_settings_sync(string msg) {
-    // PHASE 2: Read directly from linkset data
+    if (!json_has(msg, ["kv"])) return;
+    
+    string kv_json = llJsonGetValue(msg, ["kv"]);
+    
     integer old_state = PublicModeEnabled;
+    PublicModeEnabled = FALSE;
     
-    string val = llLinksetDataRead(KEY_PUBLIC_MODE);
-    if (val != "") {
-        PublicModeEnabled = (integer)val;
-    }
-    else {
-        PublicModeEnabled = FALSE;
+    if (json_has(kv_json, [KEY_PUBLIC_MODE])) {
+        PublicModeEnabled = (integer)llJsonGetValue(kv_json, [KEY_PUBLIC_MODE]);
     }
     
-    logd("Settings sync: public=" + (string)PublicModeEnabled);
     
     // If state changed, update label
     if (old_state != PublicModeEnabled) {
@@ -125,25 +98,22 @@ apply_settings_sync(string msg) {
 }
 
 apply_settings_delta(string msg) {
-    // PHASE 2: Simplified - just re-read affected key from linkset data
-    if (!json_has(msg, ["key"])) return;
+    if (!json_has(msg, ["op"])) return;
     
-    string key_name = llJsonGetValue(msg, ["key"]);
+    string op = llJsonGetValue(msg, ["op"]);
     
-    if (key_name == KEY_PUBLIC_MODE) {
-        integer old_state = PublicModeEnabled;
-        string val = llLinksetDataRead(KEY_PUBLIC_MODE);
-        if (val != "") {
-            PublicModeEnabled = (integer)val;
-        }
-        else {
-            PublicModeEnabled = FALSE;
-        }
-        logd("Delta: public_mode = " + (string)PublicModeEnabled);
+    if (op == "set") {
+        if (!json_has(msg, ["changes"])) return;
+        string changes = llJsonGetValue(msg, ["changes"]);
         
-        // If state changed, update label
-        if (old_state != PublicModeEnabled) {
-            register_self();
+        if (json_has(changes, [KEY_PUBLIC_MODE])) {
+            integer old_state = PublicModeEnabled;
+            PublicModeEnabled = (integer)llJsonGetValue(changes, [KEY_PUBLIC_MODE]);
+            
+            // If state changed, update label
+            if (old_state != PublicModeEnabled) {
+                register_self();
+            }
         }
     }
 }
@@ -159,7 +129,6 @@ persist_public_mode(integer new_value) {
         "value", (string)new_value
     ]);
     llMessageLinked(LINK_SET, SETTINGS_BUS, msg, NULL_KEY);
-    logd("Persisting public_mode=" + (string)new_value);
 }
 
 /* -------------------- UI LABEL UPDATE -------------------- */
@@ -178,13 +147,11 @@ update_ui_label_and_return(key user) {
     llMessageLinked(LINK_SET, UI_BUS, msg, NULL_KEY);
     
     // Return user to root menu
-    msg = create_routed_message("kmod_ui", [
+    msg = llList2Json(JSON_OBJECT, [
         "type", "return",
         "user", (string)user
     ]);
     llMessageLinked(LINK_SET, UI_BUS, msg, NULL_KEY);
-    
-    logd("Updated UI label to: " + new_label + " and returning to root");
 }
 
 /* -------------------- DIRECT TOGGLE ACTION -------------------- */
@@ -251,8 +218,6 @@ default {
             "type", "settings_get"
         ]);
         llMessageLinked(LINK_SET, SETTINGS_BUS, msg, NULL_KEY);
-        
-        logd("Ready");
     }
     
     on_rez(integer start_param) {
@@ -266,8 +231,6 @@ default {
     }
     
     link_message(integer sender, integer num, string msg, key id) {
-        if (!is_message_for_me(msg)) return;
-        
         /* -------------------- KERNEL LIFECYCLE -------------------- */if (num == KERNEL_LIFECYCLE) {
             if (!json_has(msg, ["type"])) return;
             string msg_type = llJsonGetValue(msg, ["type"]);

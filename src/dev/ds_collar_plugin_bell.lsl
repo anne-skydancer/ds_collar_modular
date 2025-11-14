@@ -12,8 +12,6 @@ CHANGES:
 - Prevented premature resets by deferring defaults until settings load
 --------------------*/
 
-integer DEBUG = TRUE;
-integer PRODUCTION = FALSE;
 integer KERNEL_LIFECYCLE = 500;
 integer AUTH_BUS = 700;
 integer SETTINGS_BUS = 800;
@@ -48,10 +46,7 @@ string SessionId = "";
 string MenuContext = "";
 
 /* -------------------- HELPERS -------------------- */
-integer logd(string msg) {
-    if (DEBUG) llOwnerSay("[BELL] " + msg);
-    return FALSE;
-}
+
 
 integer json_has(string j, list path) {
     return (llJsonGetValue(j, path) != JSON_INVALID);
@@ -78,12 +73,10 @@ set_bell_visibility(integer visible) {
         if (llToLower(prim_name) == "bell") {
             llSetLinkAlpha(i, alpha, ALL_SIDES);
             found = TRUE;
-            logd("Found bell prim at link " + (string)i + ", setting alpha to " + (string)alpha);
         }
     }
     
     if (!found) {
-        logd("WARNING: Bell prim not found!");
     }
     
     BellVisible = visible;
@@ -99,7 +92,6 @@ play_jingle() {
     }
     
     llTriggerSound(BellSound, BellVolume);
-    logd("Jingle played at volume " + (string)BellVolume);
 }
 
 /* -------------------- UNIFIED MENU DISPLAY -------------------- */
@@ -125,7 +117,6 @@ request_acl(key user) {
         "type", "acl_query",
         "avatar", (string)user
     ]), user);
-    logd("ACL query sent for " + llKey2Name(user));
 }
 
 /* -------------------- PLUGIN REGISTRATION -------------------- */
@@ -188,7 +179,6 @@ persist_bell_setting(string setting_key, string value) {
 
 /* -------------------- BUTTON HANDLER -------------------- */
 handle_button_click(string button) {
-    logd("Button: " + button + " in context: " + MenuContext);
     
     if (MenuContext == "main") {
         if (button == "Back") {
@@ -263,7 +253,6 @@ cleanup_session() {
     AclPending = FALSE;
     SessionId = "";
     MenuContext = "";
-    logd("Session cleaned up");
 }
 
 /* -------------------- SETTINGS HANDLING -------------------- */
@@ -274,25 +263,19 @@ apply_settings_sync(string msg) {
     if (json_has(kv_json, [KEY_BELL_VISIBLE])) {
         integer new_visible = (integer)llJsonGetValue(kv_json, [KEY_BELL_VISIBLE]);
         set_bell_visibility(new_visible);
-        logd("Loaded bell_visible=" + (string)new_visible);
     }
     
     if (json_has(kv_json, [KEY_BELL_SOUND_ENABLED])) {
         BellSoundEnabled = (integer)llJsonGetValue(kv_json, [KEY_BELL_SOUND_ENABLED]);
-        logd("Loaded bell_sound_enabled=" + (string)BellSoundEnabled);
     }
     
     if (json_has(kv_json, [KEY_BELL_VOLUME])) {
         BellVolume = (float)llJsonGetValue(kv_json, [KEY_BELL_VOLUME]);
-        logd("Loaded bell_volume=" + (string)BellVolume);
     }
     
     if (json_has(kv_json, [KEY_BELL_SOUND])) {
         BellSound = llJsonGetValue(kv_json, [KEY_BELL_SOUND]);
-        logd("Loaded bell_sound=" + BellSound);
     }
-    
-    logd("Settings sync applied");
 }
 
 apply_settings_delta(string msg) {
@@ -302,22 +285,18 @@ apply_settings_delta(string msg) {
     if (json_has(changes, [KEY_BELL_VISIBLE])) {
         integer new_visible = (integer)llJsonGetValue(changes, [KEY_BELL_VISIBLE]);
         set_bell_visibility(new_visible);
-        logd("Delta: bell_visible=" + (string)new_visible);
     }
     
     if (json_has(changes, [KEY_BELL_SOUND_ENABLED])) {
         BellSoundEnabled = (integer)llJsonGetValue(changes, [KEY_BELL_SOUND_ENABLED]);
-        logd("Delta: bell_sound_enabled=" + (string)BellSoundEnabled);
     }
     
     if (json_has(changes, [KEY_BELL_VOLUME])) {
         BellVolume = (float)llJsonGetValue(changes, [KEY_BELL_VOLUME]);
-        logd("Delta: bell_volume=" + (string)BellVolume);
     }
     
     if (json_has(changes, [KEY_BELL_SOUND])) {
         BellSound = llJsonGetValue(changes, [KEY_BELL_SOUND]);
-        logd("Delta: bell_sound=" + BellSound);
     }
 }
 
@@ -338,14 +317,11 @@ default {
         llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
             "type", "settings_get"
         ]), NULL_KEY);
-        
-        logd("Bell plugin initialized - requested settings");
     }
     
     on_rez(integer start_param) {
         // Don't reset script on attach/detach
         // This preserves state, but settings sync will restore saved state anyway
-        logd("Attached - state preserved");
     }
     
     changed(integer change) {
@@ -434,7 +410,6 @@ default {
                     }
                     
                     show_main_menu();
-                    logd("ACL received: " + (string)UserAcl);
                 }
                 return;
             }
@@ -460,8 +435,6 @@ default {
                 if (!json_has(msg, ["session_id"])) return;
                 string timeout_session = llJsonGetValue(msg, ["session_id"]);
                 if (timeout_session != SessionId) return;
-                
-                logd("Dialog timeout");
                 cleanup_session();
                 return;
             }
@@ -473,7 +446,6 @@ default {
     moving_start() {
         if (!IsMoving) {
             IsMoving = TRUE;
-            logd("Movement started");
             
             // Play first jingle immediately
             if (BellVisible && BellSoundEnabled) {
@@ -488,7 +460,6 @@ default {
     moving_end() {
         if (IsMoving) {
             IsMoving = FALSE;
-            logd("Movement stopped");
             
             // Stop the timer
             llSetTimerEvent(0.0);

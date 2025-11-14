@@ -12,8 +12,6 @@ CHANGES:
 - Integrates with kernel registration and heartbeat protocols
 --------------------*/
 
-integer DEBUG = TRUE;
-integer PRODUCTION = FALSE;
 
 /* -------------------- CONSOLIDATED ABI -------------------- */
 integer KERNEL_LIFECYCLE = 500;
@@ -64,10 +62,7 @@ string MenuContext = "";  // "main", "add_scan", "add_pick", "remove"
 list CandidateKeys = [];
 
 /* -------------------- HELPERS -------------------- */
-integer logd(string msg) {
-    if (DEBUG) llOwnerSay("[BLACKLIST] " + msg);
-    return FALSE;
-}
+
 
 integer json_has(string j, list path) {
     return (llJsonGetValue(j, path) != JSON_INVALID);
@@ -106,7 +101,6 @@ register_self() {
         "script", llGetScriptName()
     ]);
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, msg, NULL_KEY);
-    logd("Registered");
 }
 
 send_pong() {
@@ -138,7 +132,6 @@ apply_settings_delta(string msg) {
         if (json_has(changes, [KEY_BLACKLIST])) {
             string new_value = llJsonGetValue(changes, [KEY_BLACKLIST]);
             parse_blacklist_value(new_value);
-            logd("Delta set applied");
         }
     }
     else if (op == "list_add") {
@@ -150,7 +143,6 @@ apply_settings_delta(string msg) {
             string elem = llJsonGetValue(msg, ["elem"]);
             if (llListFindList(Blacklist, [elem]) == -1) {
                 Blacklist += [elem];
-                logd("Delta list_add: " + elem);
             }
         }
     }
@@ -164,7 +156,6 @@ apply_settings_delta(string msg) {
             integer idx = llListFindList(Blacklist, [elem]);
             if (idx != -1) {
                 Blacklist = llDeleteSubList(Blacklist, idx, idx);
-                logd("Delta list_remove: " + elem);
             }
         }
     }
@@ -172,7 +163,6 @@ apply_settings_delta(string msg) {
 
 apply_blacklist_payload(string kv_json) {
     if (!json_has(kv_json, [KEY_BLACKLIST])) {
-        logd("No blacklist key in settings");
         Blacklist = [];
         return;
     }
@@ -184,7 +174,6 @@ apply_blacklist_payload(string kv_json) {
 parse_blacklist_value(string raw) {
     if (raw == JSON_INVALID || raw == "[]" || raw == "" || raw == " ") {
         Blacklist = [];
-        logd("Blacklist cleared");
         return;
     }
     
@@ -201,7 +190,6 @@ parse_blacklist_value(string raw) {
             val = llJsonGetValue(raw, [i]);
         }
         Blacklist = updated;
-        logd("Loaded blacklist (JSON): " + (string)llGetListLength(Blacklist) + " entries");
         return;
     }
     
@@ -218,7 +206,6 @@ parse_blacklist_value(string raw) {
         j += 1;
     }
     Blacklist = updated;
-    logd("Loaded blacklist (CSV): " + (string)llGetListLength(Blacklist) + " entries");
 }
 
 persist_blacklist() {
@@ -228,7 +215,6 @@ persist_blacklist() {
         "values", llList2Json(JSON_ARRAY, Blacklist)
     ]);
     llMessageLinked(LINK_SET, SETTINGS_BUS, msg, NULL_KEY);
-    logd("Persisted blacklist: " + (string)llGetListLength(Blacklist) + " entries");
 }
 
 /* -------------------- ACL MANAGEMENT -------------------- */
@@ -239,7 +225,6 @@ request_acl(key user_key) {
         "avatar", (string)user_key
     ]);
     llMessageLinked(LINK_SET, AUTH_BUS, msg, NULL_KEY);
-    logd("Requested ACL for " + llKey2Name(user_key));
 }
 
 handle_acl_result(string msg) {
@@ -259,7 +244,6 @@ handle_acl_result(string msg) {
         return;
     }
     
-    logd("ACL result: " + (string)level + " for " + llKey2Name(avatar));
     show_main_menu();
 }
 
@@ -290,7 +274,6 @@ show_main_menu() {
     ]);
     
     llMessageLinked(LINK_SET, DIALOG_BUS, msg, NULL_KEY);
-    logd("Showing main menu");
 }
 
 show_remove_menu() {
@@ -317,7 +300,6 @@ show_remove_menu() {
     ]);
     
     llMessageLinked(LINK_SET, DIALOG_BUS, msg, NULL_KEY);
-    logd("Showing remove menu");
 }
 
 show_add_candidates() {
@@ -354,7 +336,6 @@ show_add_candidates() {
     ]);
     
     llMessageLinked(LINK_SET, DIALOG_BUS, msg, NULL_KEY);
-    logd("Showing add candidates menu");
 }
 
 /* -------------------- NAVIGATION -------------------- */
@@ -376,7 +357,6 @@ cleanup_session() {
     SessionId = "";
     MenuContext = "";
     CandidateKeys = [];
-    logd("Session cleaned up");
 }
 
 /* -------------------- DIALOG HANDLERS -------------------- */
@@ -389,7 +369,6 @@ handle_dialog_response(string msg) {
     if (session != SessionId) return;
     
     string button = llJsonGetValue(msg, ["button"]);
-    logd("Button pressed: " + button + " in context: " + MenuContext);
     
     // Re-validate ACL
     if (!in_allowed_levels(CurrentUserAcl)) {
@@ -413,7 +392,6 @@ handle_dialog_response(string msg) {
         if (button == BTN_ADD) {
             MenuContext = "add_scan";
             CandidateKeys = [];
-            logd("Starting sensor scan");
             llSensor("", NULL_KEY, AGENT, BLACKLIST_RADIUS, PI);
             return;
         }
@@ -452,7 +430,6 @@ handle_dialog_response(string msg) {
     }
     
     // Unknown context - return to main
-    logd("Unknown menu context: " + MenuContext);
     show_main_menu();
 }
 
@@ -461,8 +438,6 @@ handle_dialog_timeout(string msg) {
     
     string session = llJsonGetValue(msg, ["session_id"]);
     if (session != SessionId) return;
-    
-    logd("Dialog timeout");
     cleanup_session();
 }
 
@@ -478,8 +453,6 @@ default {
             "type", "settings_get"
         ]);
         llMessageLinked(LINK_SET, SETTINGS_BUS, msg, NULL_KEY);
-        
-        logd("Ready");
     }
     
     on_rez(integer start_param) {

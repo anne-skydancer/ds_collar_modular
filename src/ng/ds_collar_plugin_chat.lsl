@@ -26,10 +26,6 @@
    - View status: ACL 1+ (Public, Owned, Trustee, Unowned, Owner)
    =============================================================== */
 
-integer DEBUG = TRUE;
-
-string SCRIPT_ID = "plugin_chat";
-
 integer KERNEL_LIFECYCLE = 500;
 integer AUTH_BUS = 700;
 integer UI_BUS = 900;
@@ -60,12 +56,9 @@ integer CommandsPage = 0;
 integer COMMANDS_PER_PAGE = 9;
 
 /* ===== HELPERS ===== */
-integer logd(string msg) {
-    if (DEBUG) llOwnerSay("[CHATCMD-UI] " + msg);
-    return FALSE;
-}
 
-integer json_has(string j, list path) {
+
+integer jsonHas(string j, list path) {
     return (llJsonGetValue(j, path) != JSON_INVALID);
 }
 
@@ -82,24 +75,6 @@ integer calculateTotalPages() {
     integer total_pages = (total_cmds + COMMANDS_PER_PAGE - 1) / COMMANDS_PER_PAGE;
     if (total_pages == 0) total_pages = 1;
     return total_pages;
-}
-
-/* -------------------- MESSAGE ROUTING -------------------- */
-
-integer is_message_for_me(string msg) {
-    if (!json_has(msg, ["to"])) return FALSE;  // STRICT: No "to" field = reject
-    string to = llJsonGetValue(msg, ["to"]);
-    if (to == SCRIPT_ID) return TRUE;  // STRICT: Accept ONLY exact SCRIPT_ID match
-    return FALSE;  // STRICT: Reject everything else (broadcasts, wildcards, variants)
-}
-
-string create_routed_message(string to_id, list fields) {
-    list routed = ["from", SCRIPT_ID, "to", to_id] + fields;
-    return llList2Json(JSON_OBJECT, routed);
-}
-
-string create_broadcast(list fields) {
-    return create_routed_message("*", fields);
 }
 
 /* ===== MENU DISPLAY ===== */
@@ -125,7 +100,6 @@ requestAcl(key user) {
         "type", "acl_query",
         "avatar", (string)user
     ]), user);
-    logd("ACL query sent for " + llKey2Name(user));
 }
 
 /* ===== PLUGIN REGISTRATION ===== */
@@ -279,7 +253,6 @@ queryCommands() {
 
 /* ===== BUTTON HANDLERS ===== */
 handleButtonClick(string button) {
-    logd("Button: " + button + " in context: " + MenuContext);
 
     if (MenuContext == "main") {
         if (button == "Enable" || button == "Disable") {
@@ -341,7 +314,7 @@ handleButtonClick(string button) {
 
 /* ===== NAVIGATION ===== */
 returnToRoot() {
-    llMessageLinked(LINK_SET, UI_BUS, create_routed_message("kmod_ui", [
+    llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
         "type", "return",
         "user", (string)CurrentUser
     ]), NULL_KEY);
@@ -360,7 +333,6 @@ cleanupSession() {
     MenuContext = "";
     AvailableCommands = [];
     CommandsPage = 0;
-    logd("Session cleaned up");
 }
 
 /* ===== EVENT HANDLERS ===== */
@@ -370,7 +342,6 @@ default
         cleanupSession();
         registerSelf();
         queryState();
-        logd("Chat Commands UI ready (v1.0)");
     }
 
     on_rez(integer start_param) {
@@ -387,11 +358,8 @@ default
     }
 
     link_message(integer sender, integer num, string msg, key id) {
-        // Early filter: ignore messages not intended for us
-        if (!is_message_for_me(msg)) return;
-        
         if (num == KERNEL_LIFECYCLE) {
-            if (!json_has(msg, ["type"])) return;
+            if (!jsonHas(msg, ["type"])) return;
             string msg_type = llJsonGetValue(msg, ["type"]);
 
             if (msg_type == "register_now") {
@@ -406,11 +374,11 @@ default
         }
 
         if (num == UI_BUS) {
-            if (!json_has(msg, ["type"])) return;
+            if (!jsonHas(msg, ["type"])) return;
             string msg_type = llJsonGetValue(msg, ["type"]);
 
             if (msg_type == "start") {
-                if (!json_has(msg, ["context"])) return;
+                if (!jsonHas(msg, ["context"])) return;
                 if (llJsonGetValue(msg, ["context"]) != PLUGIN_CONTEXT) return;
                 CurrentUser = id;
                 requestAcl(id);
@@ -418,16 +386,15 @@ default
             }
 
             if (msg_type == "chatcmd_state") {
-                if (json_has(msg, ["enabled"])) {
+                if (jsonHas(msg, ["enabled"])) {
                     Enabled = (integer)llJsonGetValue(msg, ["enabled"]);
                 }
-                if (json_has(msg, ["prefix"])) {
+                if (jsonHas(msg, ["prefix"])) {
                     CommandPrefix = llJsonGetValue(msg, ["prefix"]);
                 }
-                if (json_has(msg, ["private_chan"])) {
+                if (jsonHas(msg, ["private_chan"])) {
                     PrivateChannel = (integer)llJsonGetValue(msg, ["private_chan"]);
                 }
-                logd("State synced");
 
                 if (CurrentUser != NULL_KEY) {
                     if (MenuContext == "main") {
@@ -444,7 +411,7 @@ default
                 if (id != CurrentUser) return;
 
                 AvailableCommands = [];
-                if (json_has(msg, ["commands"]) && json_has(msg, ["count"])) {
+                if (jsonHas(msg, ["commands"]) && jsonHas(msg, ["count"])) {
                     string commands_json = llJsonGetValue(msg, ["commands"]);
                     integer num_commands = (integer)llJsonGetValue(msg, ["count"]);
 
@@ -457,7 +424,6 @@ default
                     }
                 }
 
-                logd("Received " + (string)llGetListLength(AvailableCommands) + " commands");
                 MenuContext = "commands";
                 showCommandsMenu();
                 return;
@@ -465,21 +431,20 @@ default
         }
 
         if (num == AUTH_BUS) {
-            if (!json_has(msg, ["type"])) return;
+            if (!jsonHas(msg, ["type"])) return;
             string msg_type = llJsonGetValue(msg, ["type"]);
 
             if (msg_type == "acl_result") {
                 if (!AclPending) return;
-                if (!json_has(msg, ["avatar"])) return;
+                if (!jsonHas(msg, ["avatar"])) return;
 
                 key avatar = (key)llJsonGetValue(msg, ["avatar"]);
                 if (avatar != CurrentUser) return;
 
-                if (json_has(msg, ["level"])) {
+                if (jsonHas(msg, ["level"])) {
                     UserAcl = (integer)llJsonGetValue(msg, ["level"]);
                     AclPending = FALSE;
                     MenuContext = "main";
-                    logd("ACL received: " + (string)UserAcl + " for " + llKey2Name(avatar));
                     queryState();
                 }
                 return;
@@ -488,11 +453,11 @@ default
         }
 
         if (num == DIALOG_BUS) {
-            if (!json_has(msg, ["type"])) return;
+            if (!jsonHas(msg, ["type"])) return;
             string msg_type = llJsonGetValue(msg, ["type"]);
 
             if (msg_type == "dialog_response") {
-                if (!json_has(msg, ["session_id"]) || !json_has(msg, ["button"])) return;
+                if (!jsonHas(msg, ["session_id"]) || !jsonHas(msg, ["button"])) return;
 
                 string response_session = llJsonGetValue(msg, ["session_id"]);
                 if (response_session != SessionId) return;
@@ -503,12 +468,10 @@ default
             }
 
             if (msg_type == "dialog_timeout") {
-                if (!json_has(msg, ["session_id"])) return;
+                if (!jsonHas(msg, ["session_id"])) return;
 
                 string timeout_session = llJsonGetValue(msg, ["session_id"]);
                 if (timeout_session != SessionId) return;
-
-                logd("Dialog timeout");
                 cleanupSession();
                 return;
             }
@@ -555,4 +518,3 @@ default
         }
     }
 }
-

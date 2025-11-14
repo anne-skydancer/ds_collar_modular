@@ -12,9 +12,6 @@ CHANGES:
 - Automatically returns control to root menu after handling SOS request
 --------------------*/
 
-integer DEBUG = TRUE;
-integer PRODUCTION = FALSE;
-string SCRIPT_ID = "plugin_sos";
 
 /* -------------------- CONSOLIDATED ABI -------------------- */
 integer KERNEL_LIFECYCLE = 500;
@@ -34,10 +31,7 @@ integer AclPending = FALSE;
 string SessionId = "";
 
 /* -------------------- HELPERS -------------------- */
-integer logd(string msg) {
-    if (DEBUG) llOwnerSay("[SOS] " + msg);
-    return FALSE;
-}
+
 
 integer json_has(string j, list path) {
     return (llJsonGetValue(j, path) != JSON_INVALID);
@@ -45,24 +39,6 @@ integer json_has(string j, list path) {
 
 string generate_session_id() {
     return PLUGIN_CONTEXT + "_" + (string)llGetUnixTime();
-}
-
-/* -------------------- MESSAGE ROUTING -------------------- */
-
-integer is_message_for_me(string msg) {
-    if (!json_has(msg, ["to"])) return FALSE;  // STRICT: No "to" field = reject
-    string to = llJsonGetValue(msg, ["to"]);
-    if (to == SCRIPT_ID) return TRUE;  // STRICT: Accept ONLY exact SCRIPT_ID match
-    return FALSE;  // STRICT: Reject everything else (broadcasts, wildcards, variants)
-}
-
-string create_routed_message(string to_id, list fields) {
-    list routed = ["from", SCRIPT_ID, "to", to_id] + fields;
-    return llList2Json(JSON_OBJECT, routed);
-}
-
-string create_broadcast(list fields) {
-    return create_routed_message("*", fields);
 }
 
 /* -------------------- PLUGIN REGISTRATION -------------------- */
@@ -74,8 +50,6 @@ register_self() {
         "min_acl", PLUGIN_MIN_ACL,
         "script", llGetScriptName()
     ]), NULL_KEY);
-
-    logd("SOS plugin registered");
 }
 
 send_pong() {
@@ -93,7 +67,6 @@ request_acl(key user) {
         "avatar", (string)user
     ]), user);
 
-    logd("ACL query sent for " + llKey2Name(user));
 }
 
 /* -------------------- MENU DISPLAY -------------------- */
@@ -121,7 +94,6 @@ show_sos_menu() {
         "timeout", 60
     ]), NULL_KEY);
 
-    logd("Showing SOS menu to " + llKey2Name(CurrentUser));
 }
 
 /* -------------------- EMERGENCY ACTIONS -------------------- */
@@ -132,7 +104,6 @@ action_unleash() {
     ]), CurrentUser);
 
     llRegionSayTo(CurrentUser, 0, "[SOS] Leash released.");
-    logd("Emergency leash release triggered by " + llKey2Name(CurrentUser));
 }
 
 action_clear_rlv() {
@@ -145,7 +116,6 @@ action_clear_rlv() {
     llOwnerSay("@clear");
 
     llRegionSayTo(CurrentUser, 0, "[SOS] All RLV restrictions cleared.");
-    logd("Emergency RLV clear triggered by " + llKey2Name(CurrentUser));
 }
 
 action_clear_relay() {
@@ -155,12 +125,10 @@ action_clear_relay() {
     ]), CurrentUser);
 
     llRegionSayTo(CurrentUser, 0, "[SOS] All relay restrictions cleared.");
-    logd("Emergency relay clear triggered by " + llKey2Name(CurrentUser));
 }
 
 /* -------------------- BUTTON HANDLER -------------------- */
 handle_button_click(string button) {
-    logd("Button clicked: " + button);
 
     if (button == "Back") {
         return_to_root();
@@ -188,7 +156,7 @@ handle_button_click(string button) {
 
 /* -------------------- NAVIGATION -------------------- */
 return_to_root() {
-    llMessageLinked(LINK_SET, UI_BUS, create_routed_message("kmod_ui", [
+    llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
         "type", "return",
         "user", (string)CurrentUser
     ]), NULL_KEY);
@@ -201,8 +169,6 @@ cleanup_session() {
     UserAcl = -999;
     AclPending = FALSE;
     SessionId = "";
-
-    logd("Session cleaned up");
 }
 
 /* -------------------- EVENT HANDLERS -------------------- */
@@ -210,13 +176,10 @@ default {
     state_entry() {
         cleanup_session();
         register_self();
-
-        logd("SOS Emergency plugin initialized");
     }
 
     on_rez(integer start_param) {
         // Preserve state on attach/detach
-        logd("Rezzed - state preserved");
     }
 
     changed(integer change_mask) {
@@ -226,8 +189,6 @@ default {
     }
 
     link_message(integer sender, integer num, string msg, key id) {
-        if (!is_message_for_me(msg)) return;
-        
         if (!json_has(msg, ["type"])) return;
 
         string msg_type = llJsonGetValue(msg, ["type"]);
@@ -294,7 +255,6 @@ default {
                     }
 
                     show_sos_menu();
-                    logd("SOS menu shown - ACL: " + (string)UserAcl);
                 }
                 return;
             }
@@ -320,8 +280,6 @@ default {
 
                 string timeout_session = llJsonGetValue(msg, ["session_id"]);
                 if (timeout_session != SessionId) return;
-
-                logd("Dialog timeout");
                 cleanup_session();
                 return;
             }

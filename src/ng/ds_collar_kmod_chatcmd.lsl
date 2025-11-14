@@ -59,10 +59,6 @@
    - chatcmd_private_chan: Private channel number (always active)
    =============================================================== */
 
-integer DEBUG = TRUE;
-integer PRODUCTION = FALSE;
-
-string SCRIPT_ID = "kmod_chatcmd";
 
 integer AUTH_BUS = 700;
 integer SETTINGS_BUS = 800;
@@ -92,10 +88,7 @@ list PendingArgs = [];
 integer AclPending = FALSE;
 
 /* ===== HELPERS ===== */
-integer logd(string msg) {
-    if (DEBUG && !PRODUCTION) llOwnerSay("[CHATCMD-KMOD] " + msg);
-    return FALSE;
-}
+
 
 integer jsonHas(string j, list path) {
     return (llJsonGetValue(j, path) != JSON_INVALID);
@@ -106,32 +99,6 @@ string jsonGet(string j, string k, string default_val) {
     return default_val;
 }
 
-/* -------------------- MESSAGE ROUTING -------------------- */
-
-integer is_message_for_me(string msg) {
-    if (llGetSubString(msg, 0, 0) != "{") return FALSE;
-    
-    integer to_pos = llSubStringIndex(msg, "\"to\"");
-    if (to_pos == -1) return TRUE;  // No routing = broadcast
-    
-    string header = llGetSubString(msg, 0, to_pos + 100);
-    
-    if (llSubStringIndex(header, "\"*\"") != -1) return TRUE;
-    if (llSubStringIndex(header, SCRIPT_ID) != -1) return TRUE;
-    if (llSubStringIndex(header, "\"kmod:*\"") != -1) return TRUE;
-    
-    return FALSE;
-}
-
-string create_routed_message(string to_id, list fields) {
-    list routed = ["from", SCRIPT_ID, "to", to_id] + fields;
-    return llList2Json(JSON_OBJECT, routed);
-}
-
-string create_broadcast(list fields) {
-    return create_routed_message("*", fields);
-}
-
 /* ===== COMMAND REGISTRY ===== */
 registerCommand(string command_name, string plugin_context) {
     string cmd_lower = llToLower(command_name);
@@ -139,11 +106,9 @@ registerCommand(string command_name, string plugin_context) {
     integer idx = llListFindList(CommandRegistry, [cmd_lower]);
     if (idx != -1) {
         CommandRegistry = llListReplaceList(CommandRegistry, [plugin_context], idx + 1, idx + 1);
-        logd("Updated command: " + cmd_lower + " -> " + plugin_context);
     }
     else {
         CommandRegistry += [cmd_lower, plugin_context];
-        logd("Registered command: " + cmd_lower + " -> " + plugin_context);
     }
 }
 
@@ -163,13 +128,11 @@ setupListeners() {
     // Public listener (channel 0) is toggleable via Enabled flag
     if (Enabled) {
         ListenPublic = llListen(0, "", NULL_KEY, "");
-        logd("Listening on channel 0 (public)");
     }
 
     // Private listener is always active (channel is configurable)
     if (PrivateChannel != 0) {
         ListenPrivate = llListen(PrivateChannel, "", NULL_KEY, "");
-        logd("Listening on channel " + (string)PrivateChannel + " (private)");
     }
 }
 
@@ -182,7 +145,6 @@ closeListeners() {
         llListenRemove(ListenPrivate);
         ListenPrivate = 0;
     }
-    logd("Listeners closed");
 }
 
 /* ===== SETTINGS PERSISTENCE ===== */
@@ -230,7 +192,6 @@ applySettingsSync(string msg) {
     }
 
     setupListeners();
-    logd("Settings loaded: enabled=" + (string)Enabled + " prefix=" + CommandPrefix + " chan=" + (string)PrivateChannel);
 }
 
 applySettingsDelta(string msg) {
@@ -296,7 +257,6 @@ integer parseCommand(string msg_text, key speaker) {
         "avatar", (string)speaker
     ]), speaker);
 
-    logd("Command: " + command_name + " by " + llKey2Name(speaker) + " -> " + plugin_context);
     return TRUE;
 }
 
@@ -311,7 +271,6 @@ handleAclResult(string msg) {
     integer acl_level = (integer)llJsonGetValue(msg, ["level"]);
     AclPending = FALSE;
 
-    logd("ACL result: " + (string)acl_level + " for " + PendingCommand);
 
     string plugin_context = findPluginForCommand(PendingCommand);
     if (plugin_context == "") {
@@ -330,7 +289,6 @@ handleAclResult(string msg) {
         "context", plugin_context
     ]), PendingCommandUser);
 
-    logd("Routed: " + PendingCommand + " -> " + plugin_context + " (ACL " + (string)acl_level + ")");
 
     PendingCommandUser = NULL_KEY;
     PendingCommand = "";
@@ -356,7 +314,6 @@ sendCommandList(key user) {
         "count", (string)llGetListLength(command_list)
     ]), user);
 
-    logd("Sent command list: " + (string)llGetListLength(command_list) + " commands");
 }
 
 /* ===== CONFIGURATION INTERFACE ===== */
@@ -375,7 +332,6 @@ handleChatCmdAction(string msg, key user) {
         persistEnabled(Enabled);
         setupListeners();
         broadcastState();
-        logd("Enabled toggled: " + (string)Enabled);
     }
     else if (action == "set_prefix") {
         string new_prefix = jsonGet(msg, "prefix", "!");
@@ -388,7 +344,6 @@ handleChatCmdAction(string msg, key user) {
         persistPrefix(CommandPrefix);
         broadcastState();
         llRegionSayTo(user, 0, "Command prefix set to: " + CommandPrefix);
-        logd("Prefix changed to: " + CommandPrefix);
     }
     else if (action == "set_private_chan") {
         integer new_chan = (integer)jsonGet(msg, "channel", "1");
@@ -404,7 +359,6 @@ handleChatCmdAction(string msg, key user) {
         setupListeners();
         broadcastState();
         llRegionSayTo(user, 0, "Private channel set to: " + (string)PrivateChannel);
-        logd("Private channel changed to: " + (string)PrivateChannel);
     }
 }
 
@@ -429,7 +383,6 @@ handleChatCmdRegister(string msg) {
         i = i + 1;
     }
 
-    logd("Registered " + (string)num_commands + " commands for " + plugin_context);
 }
 
 /* ===== EVENT HANDLERS ===== */
@@ -449,8 +402,6 @@ default
 
         integer used = llGetUsedMemory();
         integer free_mem = llGetFreeMemory();
-        logd(("Chat command kmod ready (v1.0) - Memory: " + (string)used + " used, " + (string)free_mem + " free"));
-        logd("Chat command kmod ready");
     }
 
     on_rez(integer start_param) {
@@ -462,9 +413,6 @@ default
     }
 
     link_message(integer sender, integer num, string msg, key id) {
-        // Early filter: ignore messages not for us
-        if (!is_message_for_me(msg)) return;
-        
         if (!jsonHas(msg, ["type"])) return;
         string msg_type = llJsonGetValue(msg, ["type"]);
 

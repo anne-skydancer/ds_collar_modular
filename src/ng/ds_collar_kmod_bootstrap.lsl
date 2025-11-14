@@ -12,10 +12,6 @@ CHANGES:
 - Startup workflow delivers IM status updates during initialization
 --------------------*/
 
-integer DEBUG = TRUE;
-integer PRODUCTION = FALSE;  // Set FALSE for development builds
-
-string SCRIPT_ID = "kmod_bootstrap";
 
 /* -------------------- CONSOLIDATED ABI -------------------- */
 integer KERNEL_LIFECYCLE = 500;
@@ -82,10 +78,7 @@ integer NAME_REQUEST_STRIDE = 1;
 integer NextNameRequestTime = 0;  // Timestamp when next request can be sent
 
 /* -------------------- HELPERS -------------------- */
-integer logd(string msg) {
-    if (DEBUG && !PRODUCTION) llOwnerSay("[BOOTSTRAP] " + msg);
-    return FALSE;
-}
+
 
 integer json_has(string j, list path) {
     return (llJsonGetValue(j, path) != JSON_INVALID);
@@ -104,32 +97,6 @@ integer now() {
         return 0;
     }
     return unix_time;
-}
-
-/* -------------------- MESSAGE ROUTING -------------------- */
-
-integer is_message_for_me(string msg) {
-    if (llGetSubString(msg, 0, 0) != "{") return FALSE;
-    
-    integer to_pos = llSubStringIndex(msg, "\"to\"");
-    if (to_pos == -1) return TRUE;  // No routing = broadcast
-    
-    string header = llGetSubString(msg, 0, to_pos + 100);
-    
-    if (llSubStringIndex(header, "\"*\"") != -1) return TRUE;
-    if (llSubStringIndex(header, SCRIPT_ID) != -1) return TRUE;
-    if (llSubStringIndex(header, "\"kmod:*\"") != -1) return TRUE;
-    
-    return FALSE;
-}
-
-string create_routed_message(string to_id, list fields) {
-    list routed = ["from", SCRIPT_ID, "to", to_id] + fields;
-    return llList2Json(JSON_OBJECT, routed);
-}
-
-string create_broadcast(list fields) {
-    return create_routed_message("*", fields);
 }
 
 sendIM(string msg) {
@@ -157,7 +124,6 @@ integer check_owner_changed() {
     if (current_owner == NULL_KEY) return FALSE;
 
     if (LastOwner != NULL_KEY && current_owner != LastOwner) {
-        logd("Owner changed: " + (string)LastOwner + " -> " + (string)current_owner);
         LastOwner = current_owner;
         llResetScript();
         return TRUE;
@@ -176,7 +142,6 @@ addProbeChannel(integer ch) {
     integer handle = llListen(ch, "", NULL_KEY, "");  // Accept from anyone (NULL_KEY important!)
     RlvChannels += [ch];
     RlvListenHandles += [handle];
-    logd("RLV probe channel added: " + (string)ch);
 }
 
 clearProbeChannels() {
@@ -199,12 +164,10 @@ sendRlvQueries() {
         llOwnerSay("@versionnew=" + (string)ch);
         i += 1;
     }
-    logd("RLV @versionnew sent (attempt " + (string)(RlvRetryCount + 1) + ")");
 }
 
 start_rlv_probe() {
     if (RlvProbing) {
-        logd("RLV probe already active");
         return;
     }
     
@@ -213,7 +176,6 @@ start_rlv_probe() {
         RlvReady = TRUE;
         RlvActive = FALSE;
         RlvVersion = "";
-        logd("Not attached, skipping RLV detection");
         return;
     }
     
@@ -237,7 +199,6 @@ start_rlv_probe() {
     RlvProbeDeadline = now() + RLV_PROBE_TIMEOUT_SEC;
     RlvNextRetry = now() + RLV_INITIAL_DELAY_SEC;  // Initial delay before first probe
     
-    logd("RLV probe started on " + (string)llGetListLength(RlvChannels) + " channels");
     sendIM("Detecting RLV...");
 }
 
@@ -247,11 +208,9 @@ stop_rlv_probe() {
     RlvReady = TRUE;
     
     if (RlvActive) {
-        logd("RLV detected: " + RlvVersion);
         sendIM("RLV: " + RlvVersion);
     }
     else {
-        logd("RLV not detected");
         sendIM("RLV: Not detected");
     }
 }
@@ -263,11 +222,13 @@ request_settings() {
         "type", "settings_get"
     ]);
     llMessageLinked(LINK_SET, SETTINGS_BUS, msg, NULL_KEY);
-    logd("Requested settings");
 }
 
 apply_settings_sync(string msg) {
-    // PHASE 2: Read directly from linkset data
+    if (!json_has(msg, ["kv"])) return;
+    
+    string kv_json = llJsonGetValue(msg, ["kv"]);
+    
     // Reset
     MultiOwnerMode = FALSE;
     OwnerKey = NULL_KEY;
@@ -275,28 +236,34 @@ apply_settings_sync(string msg) {
     OwnerHonorific = "";
     OwnerHonorifics = [];
     
-    // Load from linkset data
-    string val_multi = llLinksetDataRead(KEY_MULTI_OWNER_MODE);
-    if (val_multi != "") MultiOwnerMode = (integer)val_multi;
-    
-    string val_owner_key = llLinksetDataRead(KEY_OWNER_KEY);
-    if (val_owner_key != "") OwnerKey = (key)val_owner_key;
-    
-    string val_owner_keys = llLinksetDataRead(KEY_OWNER_KEYS);
-    if (val_owner_keys != "" && llJsonValueType(val_owner_keys, []) == JSON_ARRAY) {
-        OwnerKeys = llJson2List(val_owner_keys);
+    // Load
+    if (json_has(kv_json, [KEY_MULTI_OWNER_MODE])) {
+        MultiOwnerMode = (integer)llJsonGetValue(kv_json, [KEY_MULTI_OWNER_MODE]);
     }
     
-    string val_owner_hon = llLinksetDataRead(KEY_OWNER_HON);
-    if (val_owner_hon != "") OwnerHonorific = val_owner_hon;
+    if (json_has(kv_json, [KEY_OWNER_KEY])) {
+        OwnerKey = (key)llJsonGetValue(kv_json, [KEY_OWNER_KEY]);
+    }
     
-    string val_owner_hons = llLinksetDataRead(KEY_OWNER_HONS);
-    if (val_owner_hons != "" && llJsonValueType(val_owner_hons, []) == JSON_ARRAY) {
-        OwnerHonorifics = llJson2List(val_owner_hons);
+    if (json_has(kv_json, [KEY_OWNER_KEYS])) {
+        string owner_keys_json = llJsonGetValue(kv_json, [KEY_OWNER_KEYS]);
+        if (llJsonValueType(owner_keys_json, []) == JSON_ARRAY) {
+            OwnerKeys = llJson2List(owner_keys_json);
+        }
+    }
+    
+    if (json_has(kv_json, [KEY_OWNER_HON])) {
+        OwnerHonorific = llJsonGetValue(kv_json, [KEY_OWNER_HON]);
+    }
+    
+    if (json_has(kv_json, [KEY_OWNER_HONS])) {
+        string owner_hons_json = llJsonGetValue(kv_json, [KEY_OWNER_HONS]);
+        if (llJsonValueType(owner_hons_json, []) == JSON_ARRAY) {
+            OwnerHonorifics = llJson2List(owner_hons_json);
+        }
     }
     
     SettingsReceived = TRUE;
-    logd("Settings received");
     
     // Start name resolution
     start_name_resolution();
@@ -340,7 +307,6 @@ process_next_name_request() {
             }
         }
 
-        logd("Requested display name (queued)");
 
         // Schedule next request (cast needed: NAME_REQUEST_INTERVAL_SEC is float)
         integer next_time = current_time + (integer)NAME_REQUEST_INTERVAL_SEC;
@@ -383,14 +349,12 @@ start_name_resolution() {
             }
             i += 1;
         }
-        logd("Queued " + (string)llGetListLength(PendingNameRequests) + " name requests");
     }
     else {
         // Single owner: queue one request
         if (OwnerKey != NULL_KEY) {
             PendingNameRequests += [OwnerKey];
             OwnerDisplayNames += ["(loading...)"];
-            logd("Queued owner name request");
         }
     }
 
@@ -424,7 +388,6 @@ handle_dataserver_name(key query_id, string name) {
             
             if (owner_idx != -1 && owner_idx < llGetListLength(OwnerDisplayNames)) {
                 OwnerDisplayNames = llListReplaceList(OwnerDisplayNames, [name], owner_idx, owner_idx);
-                logd("Resolved name: " + name);
             }
             
             // Remove this query
@@ -432,7 +395,6 @@ handle_dataserver_name(key query_id, string name) {
             
             // Check if all names resolved
             if (llGetListLength(OwnerNameQueries) == 0) {
-                logd("All owner names resolved");
                 check_bootstrap_complete();
             }
             
@@ -453,7 +415,6 @@ check_bootstrap_complete() {
         llGetListLength(OwnerNameQueries) == 0 &&
         llGetListLength(PendingNameRequests) == 0) {
         BootstrapComplete = TRUE;
-        logd("Bootstrap complete");
 
         // Announce final status
         announce_status();
@@ -532,8 +493,6 @@ default
         NameResolutionDeadline = 0;
         PendingNameRequests = [];
         NextNameRequestTime = 0;
-
-        logd("Bootstrap started");
         sendIM("DS Collar starting up. Please wait...");
 
         // Start RLV detection
@@ -576,7 +535,6 @@ default
 
             // Check for timeout
             if (RlvProbeDeadline > 0 && current_time >= RlvProbeDeadline) {
-                logd("RLV probe timed out");
                 stop_rlv_probe();
                 check_bootstrap_complete();
             }
@@ -590,7 +548,6 @@ default
         // Check name resolution timeout
         if ((llGetListLength(OwnerNameQueries) > 0 || llGetListLength(PendingNameRequests) > 0) &&
             NameResolutionDeadline > 0 && current_time >= NameResolutionDeadline) {
-            logd("Name resolution timed out, proceeding with fallback names");
             OwnerNameQueries = []; // Clear pending queries
             PendingNameRequests = []; // Clear pending requests
             check_bootstrap_complete();
@@ -615,7 +572,6 @@ default
         // Any reply means RLV is active
         RlvActive = TRUE;
         RlvVersion = llStringTrim(message, STRING_TRIM);
-        logd("RLV reply on channel " + (string)channel + " from " + (string)id + ": " + RlvVersion);
         
         // Stop probing immediately
         stop_rlv_probe();
@@ -628,9 +584,6 @@ default
     }
     
     link_message(integer sender, integer num, string msg, key id) {
-        // Early filter: ignore messages not for us
-        if (!is_message_for_me(msg)) return;
-        
         string msg_type = get_msg_type(msg);
         if (msg_type == "") return;
         
@@ -646,19 +599,16 @@ default
             if (msg_type == "soft_reset" || msg_type == "soft_reset_all") {
                 // SECURITY FIX (v2.3 - MEDIUM-023): Validate sender authorization
                 if (!json_has(msg, ["from"])) {
-                    logd("SECURITY: Rejected soft_reset without 'from' field");
                     return;
                 }
                 
                 string from = llJsonGetValue(msg, ["from"]);
                 
                 if (!is_authorized_reset_sender(from)) {
-                    logd("SECURITY: Rejected soft_reset from unauthorized sender: " + from);
                     return;
                 }
                 
                 // Authorized - proceed with reset
-                logd("Accepting soft_reset from: " + from);
                 llResetScript();
             }
         }

@@ -12,8 +12,6 @@ CHANGES:
 - Plays configurable toggle sound when state changes
 --------------------*/
 
-integer DEBUG = TRUE;
-integer PRODUCTION = FALSE;
 
 /* -------------------- CONSOLIDATED ABI -------------------- */
 integer KERNEL_LIFECYCLE = 500;
@@ -43,10 +41,7 @@ string PRIM_UNLOCKED = "unlocked";
 integer Locked = FALSE;
 
 /* -------------------- HELPERS -------------------- */
-integer logd(string msg) {
-    if (DEBUG) llOwnerSay("[LOCK] " + msg);
-    return FALSE;
-}
+
 
 integer json_has(string json_data, list path) {
     return (llJsonGetValue(json_data, path) != JSON_INVALID);
@@ -73,7 +68,6 @@ register_self() {
         "script", llGetScriptName()
     ]);
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, msg, NULL_KEY);
-    logd("Registered as: " + current_label);
 }
 
 send_pong() {
@@ -102,7 +96,6 @@ apply_settings_sync(string msg) {
         apply_lock_state();
     }
     
-    logd("Settings sync: locked=" + (string)Locked);
 }
 
 apply_settings_delta(string msg) {
@@ -133,7 +126,6 @@ apply_settings_delta(string msg) {
                 llMessageLinked(LINK_SET, UI_BUS, msg, NULL_KEY);
             }
             
-            logd("Delta: locked=" + (string)Locked);
         }
     }
 }
@@ -158,13 +150,11 @@ apply_lock_state() {
         // Lock collar - prevent detach
         llOwnerSay("@detach=n");
         show_locked_prim();
-        logd("Applied lock state: LOCKED");
     }
     else {
         // Unlock collar - allow detach
         llOwnerSay("@detach=y");
         show_unlocked_prim();
-        logd("Applied lock state: UNLOCKED");
     }
 }
 
@@ -224,8 +214,6 @@ update_ui_label_and_return(key user) {
         "user", (string)user
     ]);
     llMessageLinked(LINK_SET, UI_BUS, msg, NULL_KEY);
-    
-    logd("Updated UI label to: " + new_label + " and returning to root");
 }
 
 /* -------------------- DIRECT TOGGLE ACTION -------------------- */
@@ -292,7 +280,6 @@ default {
         Locked = FALSE;
         register_self();
         apply_lock_state();
-        logd("Ready");
     }
     
     on_rez(integer start_param) {

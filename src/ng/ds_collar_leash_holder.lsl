@@ -13,15 +13,12 @@ TODO: None pending
 --------------------*/
 
 /* -------------------- CONSTANTS -------------------- */
-integer DEBUG = TRUE;
-string SCRIPT_ID = "leash_holder";
 integer LEASH_HOLDER_CHAN = -192837465;
 
 /* -------------------- STATE -------------------- */
 integer gListen = 0;
 
 /* -------------------- HELPERS -------------------- */
-integer logd(string s) { if (DEBUG) llOwnerSay("[HOLDER] " + s); return TRUE; }
 
 key primByName(string wantLower) {
     integer n = llGetNumberOfPrims();
@@ -67,31 +64,9 @@ integer openListen() {
     return TRUE;
 }
 
-/* -------------------- MESSAGE ROUTING -------------------- */
-
-integer is_message_for_me(string msg) {
-    if (llGetSubString(msg, 0, 0) != "{") return FALSE;
-    integer to_pos = llSubStringIndex(msg, "\"to\"");
-    if (to_pos == -1) return TRUE;
-    string header = llGetSubString(msg, 0, to_pos + 100);
-    if (llSubStringIndex(header, "\"*\"") != -1) return TRUE;
-    if (llSubStringIndex(header, SCRIPT_ID) != -1) return TRUE;
-    return FALSE;
-}
-
-string create_routed_message(string to_id, list fields) {
-    list routed = ["from", SCRIPT_ID, "to", to_id] + fields;
-    return llList2Json(JSON_OBJECT, routed);
-}
-
-string create_broadcast(list fields) {
-    return create_routed_message("*", fields);
-}
-
 default {
     state_entry() {
         openListen();
-        logd("listening on " + (string)LEASH_HOLDER_CHAN);
     }
 
     on_rez(integer p) {
@@ -102,13 +77,6 @@ default {
         if (c & (CHANGED_OWNER | CHANGED_REGION | CHANGED_REGION_START | CHANGED_TELEPORT)) {
             openListen();
         }
-    }
-
-    // Optional: quick debug — touch to print chosen prim key
-    touch_start(integer n) {
-        if (!DEBUG) return;
-        key k = leashPrimKey();
-        llOwnerSay("LeashPoint = " + (string)k);
     }
 
     listen(integer ch, string name, key src, string msg) {
@@ -130,6 +98,5 @@ default {
         reply = llJsonSetValue(reply, ["session"], (string)session);
 
         llRegionSayTo(collar, LEASH_HOLDER_CHAN, reply);
-        logd("sent target " + (string)targetPrim + " → " + (string)collar + " (sess " + (string)session + ")");
     }
 }

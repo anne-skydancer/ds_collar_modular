@@ -12,10 +12,6 @@ CHANGES:
 - Offers ACL-gated dialog interface requiring trustee level for hardcore toggles
 --------------------*/
 
-integer DEBUG = TRUE;
-integer PRODUCTION = FALSE;
-
-string SCRIPT_ID = "plugin_rlvrelay";
 
 /* -------------------- CONSOLIDATED ABI -------------------- */
 integer KERNEL_LIFECYCLE = 500;
@@ -79,10 +75,7 @@ string SessionId = "";
 integer ObjectListPage = 0;
 
 /* -------------------- HELPERS -------------------- */
-integer logd(string msg) {
-    if (DEBUG) llOwnerSay("[RELAY] " + msg);
-    return FALSE;
-}
+
 
 integer json_has(string j, list path) {
     return (llJsonGetValue(j, path) != JSON_INVALID);
@@ -101,24 +94,6 @@ string truncate_name(string name, integer max_len) {
     return llGetSubString(name, 0, max_len - 4) + "...";
 }
 
-/* -------------------- MESSAGE ROUTING -------------------- */
-
-integer is_message_for_me(string msg) {
-    if (!json_has(msg, ["to"])) return FALSE;  // STRICT: No "to" field = reject
-    string to = llJsonGetValue(msg, ["to"]);
-    if (to == SCRIPT_ID) return TRUE;  // STRICT: Accept ONLY exact SCRIPT_ID match
-    return FALSE;  // STRICT: Reject everything else (broadcasts, wildcards, variants)
-}
-
-string create_routed_message(string to_id, list fields) {
-    list routed = ["from", SCRIPT_ID, "to", to_id] + fields;
-    return llList2Json(JSON_OBJECT, routed);
-}
-
-string create_broadcast(list fields) {
-    return create_routed_message("*", fields);
-}
-
 /* -------------------- LIFECYCLE MANAGEMENT -------------------- */
 
 register_self() {
@@ -130,7 +105,6 @@ register_self() {
         "script", llGetScriptName()
     ]);
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, msg, NULL_KEY);
-    logd("Registered with kernel");
 }
 
 send_pong() {
@@ -147,14 +121,12 @@ start_relay_listen() {
     if (RelayListenHandle) return;  // Already listening
     
     RelayListenHandle = llListen(RELAY_CHANNEL, "", NULL_KEY, "");
-    logd("Relay channel listener started");
 }
 
 stop_relay_listen() {
     if (RelayListenHandle) {
         llListenRemove(RelayListenHandle);
         RelayListenHandle = 0;
-        logd("Relay channel listener stopped");
     }
 }
 
@@ -184,13 +156,11 @@ integer add_relay(key obj, string obj_name, integer chan) {
     
     // Check max relays
     if (llGetListLength(Relays) >= (MAX_RELAYS * 4)) {
-        logd("Max relays reached. Ignoring " + obj_name);
         return FALSE;
     }
     
     // Add new relay
     Relays += [obj, obj_name, chan, ""];
-    logd("Added relay: " + obj_name);
     return TRUE;
 }
 
@@ -198,7 +168,6 @@ integer remove_relay(key obj) {
     integer idx = relay_idx(obj);
     if (idx != -1) {
         Relays = llDeleteSubList(Relays, idx, idx + 3);
-        logd("Removed relay: " + (string)obj);
         return TRUE;
     }
     return FALSE;
@@ -238,60 +207,50 @@ safeword_clear_all() {
         i = i + 4;
     }
     Relays = [];
-    logd("Cleared all relay restrictions");
 }
 
 /* -------------------- SETTINGS CONSUMPTION -------------------- */
 
 apply_settings_sync(string msg) {
-    // PHASE 2: Read directly from linkset data
+    if (!json_has(msg, ["kv"])) return;
+    
+    string kv_json = llJsonGetValue(msg, ["kv"]);
+    
     // Reset to defaults
     Mode = MODE_ON;
     Hardcore = FALSE;
     
-    // Load persisted values from linkset data
-    string val_mode = llLinksetDataRead(KEY_RELAY_MODE);
-    if (val_mode != "") {
-        Mode = (integer)val_mode;
+    // Load persisted values
+    if (json_has(kv_json, [KEY_RELAY_MODE])) {
+        Mode = (integer)llJsonGetValue(kv_json, [KEY_RELAY_MODE]);
     }
     
-    string val_hardcore = llLinksetDataRead(KEY_RELAY_HARDCORE);
-    if (val_hardcore != "") {
-        Hardcore = (integer)val_hardcore;
+    if (json_has(kv_json, [KEY_RELAY_HARDCORE])) {
+        Hardcore = (integer)llJsonGetValue(kv_json, [KEY_RELAY_HARDCORE]);
     }
     
     // Update relay listen state
     update_relay_listen_state();
     
-    logd("Settings sync applied: Mode=" + (string)Mode + " Hardcore=" + (string)Hardcore);
 }
 
 apply_settings_delta(string msg) {
-    // PHASE 2: Simplified - just re-read affected key from linkset data
-    if (!json_has(msg, ["key"])) return;
+    if (!json_has(msg, ["op"])) return;
     
-    string key_name = llJsonGetValue(msg, ["key"]);
+    string op = llJsonGetValue(msg, ["op"]);
     
-    if (key_name == KEY_RELAY_MODE) {
-        string val = llLinksetDataRead(KEY_RELAY_MODE);
-        if (val != "") {
-            Mode = (integer)val;
+    if (op == "set") {
+        if (!json_has(msg, ["changes"])) return;
+        string changes = llJsonGetValue(msg, ["changes"]);
+        
+        if (json_has(changes, [KEY_RELAY_MODE])) {
+            Mode = (integer)llJsonGetValue(changes, [KEY_RELAY_MODE]);
+            update_relay_listen_state();
         }
-        else {
-            Mode = MODE_ON;
+        
+        if (json_has(changes, [KEY_RELAY_HARDCORE])) {
+            Hardcore = (integer)llJsonGetValue(changes, [KEY_RELAY_HARDCORE]);
         }
-        logd("Delta: mode = " + (string)Mode);
-        update_relay_listen_state();
-    }
-    else if (key_name == KEY_RELAY_HARDCORE) {
-        string val = llLinksetDataRead(KEY_RELAY_HARDCORE);
-        if (val != "") {
-            Hardcore = (integer)val;
-        }
-        else {
-            Hardcore = FALSE;
-        }
-        logd("Delta: hardcore = " + (string)Hardcore);
     }
 }
 
@@ -395,7 +354,6 @@ show_main_menu() {
     ]);
     
     llMessageLinked(LINK_SET, DIALOG_BUS, msg, NULL_KEY);
-    logd("Showing main menu to " + llKey2Name(CurrentUser));
 }
 
 show_mode_menu() {
@@ -549,7 +507,7 @@ handle_button_click(string button) {
 /* -------------------- NAVIGATION -------------------- */
 
 return_to_root() {
-    string msg = create_routed_message("kmod_ui", [
+    string msg = llList2Json(JSON_OBJECT, [
         "type", "return",
         "context", PLUGIN_CONTEXT,
         "user", (string)CurrentUser
@@ -557,7 +515,6 @@ return_to_root() {
     llMessageLinked(LINK_SET, UI_BUS, msg, CurrentUser);
     
     cleanup_session();
-    logd("Returning to root menu");
 }
 
 close_silent() {
@@ -569,7 +526,6 @@ close_silent() {
     llMessageLinked(LINK_SET, UI_BUS, msg, CurrentUser);
     
     cleanup_session();
-    logd("Closing session silently");
 }
 
 /* -------------------- SESSION MANAGEMENT -------------------- */
@@ -598,8 +554,8 @@ handle_ground_rez() {
     
     // Update listen state
     update_relay_listen_state();
-
-    llInstantMessage(llGetOwner(), "Collar rezzed on ground - Relay turned OFF");
+    
+    llOwnerSay("[RELAY] Collar rezzed on ground - Relay turned OFF");
 }
 
 /* -------------------- MESSAGE HANDLERS -------------------- */
@@ -617,7 +573,6 @@ handle_start(string msg) {
     CurrentUser = user;
     request_acl(user);
     
-    logd("Started by " + llKey2Name(user));
 }
 
 handle_dialog_response(string msg) {
@@ -636,8 +591,6 @@ handle_dialog_timeout(string msg) {
     
     string session = llJsonGetValue(msg, ["session_id"]);
     if (session != SessionId) return;
-    
-    logd("Dialog timeout");
     cleanup_session();
 }
 
@@ -678,7 +631,6 @@ handle_relay_message(key sender_id, string sender_name, string raw_msg) {
             // Check if command is meant for this wearer (or wildcard)
             if (target_uuid != WearerKey && target_uuid != WILDCARD_UUID) {
                 // Command not meant for this wearer, ignore it
-                logd("Ignoring command meant for " + (string)target_uuid);
                 return;
             }
 
@@ -741,7 +693,6 @@ default
             handle_ground_rez();
         }
 
-        logd("Plugin started (Attached=" + (string)IsAttached + ")");
 
         // Request settings
         string request = llList2Json(JSON_OBJECT, [
@@ -770,8 +721,6 @@ default
     }
     
     link_message(integer sender, integer num, string msg, key id) {
-        if (!is_message_for_me(msg)) return;
-        
         if (!json_has(msg, ["type"])) return;
         
         string msg_type = llJsonGetValue(msg, ["type"]);

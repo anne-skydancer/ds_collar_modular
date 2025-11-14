@@ -12,10 +12,6 @@ CHANGES:
 - Consolidated settings channel handling for consistent module access
 --------------------*/
 
-integer DEBUG = TRUE;
-integer PRODUCTION = FALSE;  // Set FALSE for development builds
-
-string SCRIPT_ID = "kmod_settings";
 
 /* -------------------- CONSOLIDATED ABI -------------------- */
 integer SETTINGS_BUS = 800;
@@ -46,7 +42,7 @@ string SEPARATOR = "=";
 
 /* -------------------- STATE -------------------- */
 key LastOwner = NULL_KEY;
-// PHASE 2: Removed KvJson - now using linkset data directly
+string KvJson = "{}";
 
 key NotecardQuery = NULL_KEY;
 integer NotecardLine = 0;
@@ -54,15 +50,9 @@ integer IsLoadingNotecard = FALSE;
 key NotecardKey = NULL_KEY;  // Track settings notecard changes
 
 integer MaxListLen = 64;
-integer LinksetDataUsed = 0;  // Track linkset data usage
-integer LINKSET_DATA_LIMIT = 131072;  // 128KB limit
 
 /* -------------------- HELPERS -------------------- */
-integer logd(string msg) {
-    // SECURITY FIX: Production mode guard
-    if (DEBUG && !PRODUCTION) llOwnerSay("[SETTINGS] " + msg);
-    return FALSE;
-}
+
 
 integer json_has(string j, list path) {
     return (llJsonGetValue(j, path) != JSON_INVALID);
@@ -79,9 +69,6 @@ integer validate_required_fields(string json_str, list field_names, string funct
     while (i < len) {
         string field = llList2String(field_names, i);
         if (!json_has(json_str, [field])) {
-            if (DEBUG && !PRODUCTION) {
-                logd("ERROR: " + function_name + " missing '" + field + "' field");
-            }
             return FALSE;
         }
         i += 1;
@@ -108,32 +95,6 @@ list list_remove_all(list source_list, string s) {
     return source_list;
 }
 
-/* -------------------- MESSAGE ROUTING -------------------- */
-
-integer is_message_for_me(string msg) {
-    if (llGetSubString(msg, 0, 0) != "{") return FALSE;
-    
-    integer to_pos = llSubStringIndex(msg, "\"to\"");
-    if (to_pos == -1) return TRUE;  // No routing = broadcast
-    
-    string header = llGetSubString(msg, 0, to_pos + 100);
-    
-    if (llSubStringIndex(header, "\"*\"") != -1) return TRUE;
-    if (llSubStringIndex(header, SCRIPT_ID) != -1) return TRUE;
-    if (llSubStringIndex(header, "\"kmod:*\"") != -1) return TRUE;
-    
-    return FALSE;
-}
-
-string create_routed_message(string to_id, list fields) {
-    list routed = ["from", SCRIPT_ID, "to", to_id] + fields;
-    return llList2Json(JSON_OBJECT, routed);
-}
-
-string create_broadcast(list fields) {
-    return create_routed_message("*", fields);
-}
-
 list list_unique(list source_list) {
     list unique_list = [];
     integer i = 0;
@@ -148,11 +109,11 @@ list list_unique(list source_list) {
     return unique_list;
 }
 
-/* -------------------- KV OPERATIONS (PHASE 2: Linkset Data) -------------------- */
+/* -------------------- KV OPERATIONS -------------------- */
 
 string kv_get(string key_name) {
-    string val = llLinksetDataRead(key_name);
-    if (val == "") return "";
+    string val = llJsonGetValue(KvJson, [key_name]);
+    if (val == JSON_INVALID) return "";
     return val;
 }
 
@@ -160,14 +121,7 @@ integer kv_set_scalar(string key_name, string value) {
     string old_val = kv_get(key_name);
     if (old_val == value) return FALSE;
     
-    integer result = llLinksetDataWrite(key_name, value);
-    if (result == 0) {
-        logd("ERROR: Failed to write " + key_name + " (linkset data full?)");
-        return FALSE;
-    }
-    
-    logd("SET " + key_name + " = " + value);
-    LinksetDataUsed = llLinksetDataCountKeys();
+    KvJson = llJsonSetValue(KvJson, [key_name], value);
     return TRUE;
 }
 
@@ -176,14 +130,7 @@ integer kv_set_list(string key_name, list values) {
     string old_arr = kv_get(key_name);
     if (old_arr == new_arr) return FALSE;
     
-    integer result = llLinksetDataWrite(key_name, new_arr);
-    if (result == 0) {
-        logd("ERROR: Failed to write " + key_name + " (linkset data full?)");
-        return FALSE;
-    }
-    
-    logd("SET " + key_name + " count=" + (string)llGetListLength(values));
-    LinksetDataUsed = llLinksetDataCountKeys();
+    KvJson = llJsonSetValue(KvJson, [key_name], new_arr);
     return TRUE;
 }
 
@@ -268,7 +215,6 @@ integer apply_owner_set_guard(string who) {
     // CRITICAL: Prevent self-ownership
     if ((key)who == wearer) {
         llOwnerSay("ERROR: Cannot add wearer as owner (role separation required)");
-        logd("CRITICAL: Blocked attempt to add wearer as owner");
         return FALSE;
     }
 
@@ -281,7 +227,6 @@ integer apply_owner_set_guard(string who) {
             trustees = list_remove_all(trustees, who);
             if (kv_set_list(KEY_TRUSTEES, trustees)) {
                 broadcast_delta_list_remove(KEY_TRUSTEES, who);
-                logd("BROADCAST: Removed " + who + " from trustees (owner promotion)");
             }
         }
     }
@@ -295,7 +240,6 @@ integer apply_owner_set_guard(string who) {
             blacklist = list_remove_all(blacklist, who);
             if (kv_set_list(KEY_BLACKLIST, blacklist)) {
                 broadcast_delta_list_remove(KEY_BLACKLIST, who);
-                logd("BROADCAST: Removed " + who + " from blacklist (owner promotion)");
             }
         }
     }
@@ -307,7 +251,6 @@ integer apply_owner_set_guard(string who) {
 integer apply_trustee_add_guard(string who) {
     // SECURITY FIX: Can't add owner as trustee (check both modes)
     if (is_owner(who)) {
-        logd("WARNING: Cannot add owner as trustee");
         return FALSE;
     }
 
@@ -320,7 +263,6 @@ integer apply_trustee_add_guard(string who) {
             blacklist = list_remove_all(blacklist, who);
             if (kv_set_list(KEY_BLACKLIST, blacklist)) {
                 broadcast_delta_list_remove(KEY_BLACKLIST, who);
-                logd("BROADCAST: Removed " + who + " from blacklist (trustee promotion)");
             }
         }
     }
@@ -339,7 +281,6 @@ integer apply_blacklist_add_guard(string who) {
             trustees = list_remove_all(trustees, who);
             if (kv_set_list(KEY_TRUSTEES, trustees)) {
                 broadcast_delta_list_remove(KEY_TRUSTEES, who);
-                logd("BROADCAST: Removed " + who + " from trustees (blacklisted)");
             }
         }
     }
@@ -349,7 +290,6 @@ integer apply_blacklist_add_guard(string who) {
     if (cur_owner != "" && cur_owner == who) {
         if (kv_set_scalar(KEY_OWNER_KEY, (string)NULL_KEY)) {
             broadcast_delta_scalar(KEY_OWNER_KEY, (string)NULL_KEY);
-            logd("BROADCAST: Cleared single owner (was blacklisted)");
         }
     }
 
@@ -361,7 +301,6 @@ integer apply_blacklist_add_guard(string who) {
             // Only process if actually present
             if (kv_list_remove_all(KEY_OWNER_KEYS, who)) {
                 broadcast_delta_list_remove(KEY_OWNER_KEYS, who);
-                logd("BROADCAST: Removed " + who + " from multi-owner list (blacklisted)");
             }
         }
     }
@@ -371,52 +310,48 @@ integer apply_blacklist_add_guard(string who) {
 
 /* -------------------- BROADCASTING -------------------- */
 
-/* -------------------- PHASE 2: Lightweight Broadcast Notifications -------------------- */
-
 broadcast_full_sync() {
-    // PHASE 2: No data payload - consumers read from linkset data directly
-    string msg = create_broadcast([
+    string msg = llList2Json(JSON_OBJECT, [
         "type", "settings_sync",
-        "keys", (string)llLinksetDataCountKeys()  // Just count for diagnostics
+        "kv", KvJson
     ]);
     llMessageLinked(LINK_SET, SETTINGS_BUS, msg, NULL_KEY);
-    logd("Broadcast: settings sync notification (" + (string)llLinksetDataCountKeys() + " keys available)");
 }
 
 broadcast_delta_scalar(string key_name, string new_value) {
-    // PHASE 2: No value payload - consumers read via llLinksetDataRead(key_name)
-    string msg = create_broadcast([
+    string changes = llList2Json(JSON_OBJECT, [
+        key_name, new_value
+    ]);
+    
+    string msg = llList2Json(JSON_OBJECT, [
         "type", "settings_delta",
         "op", "set",
-        "key", key_name
+        "changes", changes
     ]);
     
     llMessageLinked(LINK_SET, SETTINGS_BUS, msg, NULL_KEY);
-    logd("Broadcast: delta set " + key_name);
 }
 
 broadcast_delta_list_add(string key_name, string elem) {
-    // PHASE 2: No elem payload - consumers re-read full list from linkset data
-    string msg = create_broadcast([
+    string msg = llList2Json(JSON_OBJECT, [
         "type", "settings_delta",
         "op", "list_add",
-        "key", key_name
+        "key", key_name,
+        "elem", elem
     ]);
     
     llMessageLinked(LINK_SET, SETTINGS_BUS, msg, NULL_KEY);
-    logd("Broadcast: delta list_add " + key_name);
 }
 
 broadcast_delta_list_remove(string key_name, string elem) {
-    // PHASE 2: No elem payload - consumers re-read full list from linkset data
-    string msg = create_broadcast([
+    string msg = llList2Json(JSON_OBJECT, [
         "type", "settings_delta",
         "op", "list_remove",
-        "key", key_name
+        "key", key_name,
+        "elem", elem
     ]);
     
     llMessageLinked(LINK_SET, SETTINGS_BUS, msg, NULL_KEY);
-    logd("Broadcast: delta list_remove " + key_name);
 }
 
 /* -------------------- KEY VALIDATION -------------------- */
@@ -459,7 +394,6 @@ parse_notecard_line(string line) {
     
     integer sep_pos = llSubStringIndex(line, SEPARATOR);
     if (sep_pos == -1) {
-        logd("Invalid line (no separator): " + line);
         return;
     }
     
@@ -467,7 +401,6 @@ parse_notecard_line(string line) {
     string value = llStringTrim(llGetSubString(line, sep_pos + 1, -1), STRING_TRIM);
     
     if (!is_allowed_key(key_name)) {
-        logd("Unknown key ignored: " + key_name);
         return;
     }
     
@@ -482,7 +415,6 @@ parse_notecard_line(string line) {
         if (llGetListLength(parsed_list) > MaxListLen) {
             parsed_list = llList2List(parsed_list, 0, MaxListLen - 1);
             llOwnerSay("WARNING: " + key_name + " list truncated to " + (string)MaxListLen + " entries");
-            logd("WARNING: Truncated " + key_name + " to MaxListLen");
         }
         
         // Apply guards for special lists
@@ -531,7 +463,6 @@ parse_notecard_line(string line) {
                 if (!has_external_owner()) {
                     llOwnerSay("ERROR: Cannot enable TPE via notecard - requires external owner");
                     llOwnerSay("HINT: Set owner_key or owner_keys BEFORE tpe_mode in notecard");
-                    logd("CRITICAL: Blocked TPE enable from notecard (no external owner)");
                     return;  // Don't set TPE
                 }
             }
@@ -549,11 +480,8 @@ parse_notecard_line(string line) {
 
 integer start_notecard_reading() {
     if (llGetInventoryType(NOTECARD_NAME) != INVENTORY_NOTECARD) {
-        logd("Notecard '" + NOTECARD_NAME + "' not found");
         return FALSE;
     }
-    
-    logd("Loading notecard: " + NOTECARD_NAME);
     IsLoadingNotecard = TRUE;
     NotecardLine = 0;
     NotecardQuery = llGetNotecardLine(NOTECARD_NAME, NotecardLine);
@@ -572,7 +500,6 @@ handle_set(string msg) {
     string key_name = llJsonGetValue(msg, ["key"]);
     if (!is_allowed_key(key_name)) return;
     if (is_notecard_only_key(key_name)) {
-        logd("Blocked: " + key_name + " is notecard-only");
         return;
     }
     
@@ -636,7 +563,6 @@ handle_set(string msg) {
             if ((integer)value == 1) {
                 if (!has_external_owner()) {
                     llOwnerSay("ERROR: Cannot enable TPE - requires external owner");
-                    logd("CRITICAL: Blocked TPE enable (no external owner)");
                     return;  // Don't set TPE
                 }
             }
@@ -665,7 +591,6 @@ handle_list_add(string msg) {
     
     if (!is_allowed_key(key_name)) return;
     if (is_notecard_only_key(key_name)) {
-        logd("Blocked: " + key_name + " is notecard-only");
         return;
     }
     
@@ -758,12 +683,10 @@ default
             if (current_notecard_key != NotecardKey) {
                 // Notecard was deleted -> reset to defaults
                 if (current_notecard_key == NULL_KEY) {
-                    logd("Settings notecard deleted, resetting to defaults");
                     llResetScript();
                 }
                 else {
                     // Notecard edited or re-added -> reload and overlay
-                    logd("Settings notecard changed, reloading settings");
                     NotecardKey = current_notecard_key;
                     start_notecard_reading();
                 }
@@ -782,17 +705,12 @@ default
         }
         else {
             IsLoadingNotecard = FALSE;
-            logd("Notecard loading complete");
             broadcast_full_sync();
         }
     }
     
     link_message(integer sender, integer num, string msg, key id) {
         if (num != SETTINGS_BUS) return;
-        
-        // Early filter: ignore messages not for us
-        if (!is_message_for_me(msg)) return;
-        
         string msg_type = get_msg_type(msg);
         if (msg_type == "") return;
         

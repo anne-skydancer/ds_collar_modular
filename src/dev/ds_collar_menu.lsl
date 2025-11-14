@@ -1,7 +1,7 @@
 /*--------------------
 MODULE: ds_collar_menu.lsl
 VERSION: 1.00
-REVISION: 11
+REVISION: 10
 PURPOSE: Menu rendering and visual presentation service
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
@@ -10,21 +10,15 @@ CHANGES:
 - Maintains stateless presentation separate from business logic
 - Routes dialogs through dedicated dialog module for display
 - Provides single-responsibility rendering for easier maintenance
-- PERFORMANCE: Pass-through mode - buttons arrive pre-ordered from UI
 --------------------*/
 
-integer DEBUG = TRUE;
-integer PRODUCTION = FALSE;  // Set FALSE for development builds
 
 /* -------------------- CONSOLIDATED ABI -------------------- */
 integer UI_BUS = 900;
 integer DIALOG_BUS = 950;
 
 /* -------------------- HELPERS -------------------- */
-integer logd(string msg) {
-    if (DEBUG && !PRODUCTION) llOwnerSay("[MENU] " + msg);
-    return FALSE;
-}
+
 
 integer json_has(string j, list path) {
     return (llJsonGetValue(j, path) != JSON_INVALID);
@@ -44,9 +38,6 @@ integer validate_required_fields(string json_str, list field_names, string funct
     while (i < len) {
         string field = llList2String(field_names, i);
         if (!json_has(json_str, [field])) {
-            if (DEBUG && !PRODUCTION) {
-                logd("ERROR: " + function_name + " missing '" + field + "' field");
-            }
             return FALSE;
         }
         i += 1;
@@ -111,8 +102,6 @@ list reorder_buttons_for_display(list buttons) {
 /* -------------------- RENDERING -------------------- */
 
 render_menu(string msg) {
-    if (DEBUG && !PRODUCTION) llOwnerSay("[MENU] T+" + (string)llGetTime() + "s render_menu received");
-
     // Validate required fields
     if (!validate_required_fields(msg, ["user", "session_id", "menu_type", "buttons"], "render_menu")) {
         return;
@@ -125,13 +114,35 @@ render_menu(string msg) {
     integer current_page = (integer)llJsonGetValue(msg, ["page"]);
     integer total_pages = (integer)llJsonGetValue(msg, ["total_pages"]);
     string buttons_json = llJsonGetValue(msg, ["buttons"]);
+    integer has_nav = (integer)llJsonGetValue(msg, ["has_nav"]);
 
-    // PERFORMANCE: Buttons now arrive in final llDialog order from UI
-    // Format: [label, context, state, label, context, state, ...] strided list (STRIDE=3)
-    // No reordering needed - pass through directly
-    
-    // Parse button array (simple strings, not JSON objects)
-    list button_data = llJson2List(buttons_json);
+    // Parse buttons array (now contains button data objects)
+    list button_data_list = llJson2List(buttons_json);
+
+    // Reorder for natural display
+    list reordered = reorder_buttons_for_display(button_data_list);
+
+    // DESIGN DECISION: Navigation row is ALWAYS present (DO NOT CHANGE)
+    //
+    // The navigation buttons (<<, >>, Close) are added at the front, placing
+    // them in the bottom row of the dialog. Navigation buttons are plain strings,
+    // plugin buttons are JSON objects.
+    //
+    // IMPORTANT: has_nav is always 1. The navigation row must be present even
+    // for single-page menus. This provides:
+    // - Consistent UI layout across all menu states
+    // - Predictable button positions (muscle memory)
+    // - Uniform user experience
+    //
+    // This is a deliberate design decision and is NOT open to modification.
+    // Do not add conditional logic to hide navigation based on page count.
+    list final_button_data = [];
+    if (has_nav) {
+        final_button_data = ["<<", ">>", "Close"] + reordered;
+    }
+    else {
+        final_button_data = ["Close"] + reordered;
+    }
 
     // Construct title based on menu type
     string title = "";
@@ -162,16 +173,17 @@ render_menu(string msg) {
         body_text = "Choose:";
     }
 
-    if (DEBUG && !PRODUCTION) llOwnerSay("[MENU] T+" + (string)llGetTime() + "s Sending to Dialog");
+    // Convert button data back to JSON (mixed array of strings and objects)
+    string final_button_data_json = llList2Json(JSON_ARRAY, final_button_data);
 
-    // Send to dialog bus - buttons already in final format
+    // Send to dialog bus with button_data field
     string dialog_msg = llList2Json(JSON_OBJECT, [
         "type", "dialog_open",
         "session_id", session_id,
         "user", (string)user,
         "title", title,
         "body", body_text,
-        "button_data", buttons_json,
+        "button_data", final_button_data_json,
         "timeout", 60
     ]);
 
@@ -187,7 +199,6 @@ show_message(string msg) {
     string message_text = llJsonGetValue(msg, ["message"]);
 
     llRegionSayTo(user, 0, message_text);
-    logd("Showed message to " + llKey2Name(user) + ": " + message_text);
 }
 
 /* -------------------- EVENTS -------------------- */
@@ -195,7 +206,6 @@ show_message(string msg) {
 default
 {
     state_entry() {
-        logd("Menu rendering module started (v1.0 - UI/Kmod Split)");
     }
 
     link_message(integer sender_num, integer num, string msg, key id) {
