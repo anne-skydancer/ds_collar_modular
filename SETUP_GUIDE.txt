@@ -131,7 +131,7 @@ TO CHANGE LEASH MODE:
 TO ADJUST THE LEASH:
 1. While leashed, touch the collar
 2. Click "Leash"
-3. Click "Length" to make the leash longer or shorter (1m to 20m)
+3. Click "Length" then choose: 1m, 3m, 5m, 10m, 15m, or 20m
 4. Click "Yank" to pull the wearer closer
 
 TO END THE LEASH:
@@ -169,7 +169,7 @@ OTHER
 - Prevents you from creating objects
 - Prevents you from touching things
 
-Your owner controls these through the collar menu under "RLV Restrict".
+Your owner controls these through the collar menu under "Restrict".
 
 
 ================================================================================
@@ -180,7 +180,7 @@ VERY IMPORTANT - READ THIS CAREFULLY
 
 If you need to escape all restrictions immediately:
 
-1. TOUCH AND HOLD the collar for 2 seconds (long press)
+1. TOUCH AND HOLD the collar for 1.5 seconds (long press)
 2. This opens the EMERGENCY MENU
 3. Click one of these options:
    - "Unleash" - Removes the leash immediately
@@ -262,7 +262,7 @@ TROUBLESHOOTING
 PROBLEM: I touch the collar but no menu appears
 - Wait 10 seconds and try again (scripts may still be starting)
 - Make sure you are the wearer or the owner
-- Try touching and holding for 2 seconds for the emergency menu
+- Try touching and holding for 1.5 seconds for the emergency menu
 
 PROBLEM: The leash does not make me follow
 - Make sure you have RLV enabled in your viewer
