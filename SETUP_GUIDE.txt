@@ -58,6 +58,22 @@ This step gives someone else control of your collar.
 Once this is done, your owner will have full control of the collar. They can
 now use the collar menu and control your avatar.
 
+ADVANCED: Multiple Owners (Notecard Only)
+If you want more than one owner, you must configure this through a settings
+notecard. This cannot be done through menus.
+
+1. Edit the collar object
+2. Create a notecard named "settings" (or edit existing one)
+3. Add these lines:
+   multi_owner_mode = 1
+   owner_keys = ["uuid-1", "uuid-2", "uuid-3"]
+   owner_honorifics = ["Master", "Mistress", "Sir"]
+4. Save the notecard
+5. Reset the collar scripts
+
+All owners will have equal control. You need the UUID (unique ID) for each
+owner.
+
 
 ================================================================================
 STEP 3: BASIC SETTINGS FOR PLAY
