@@ -20,7 +20,7 @@ BEFORE YOU START
 What you will need:
 
 1. A collar object in Second Life with all the collar scripts installed
-2. The person who will be your owner
+2. The person who will be your owner nearby
 3. A Second Life viewer that supports restrictions (Firestorm is recommended)
 
 Important: Make sure you trust the person you are giving control to. This
@@ -46,46 +46,53 @@ STEP 2: SET YOUR OWNER
 This step gives someone else control of your collar.
 
 1. Touch the collar to open the menu
-2. Click "Owner"
-3. Click "Set Owner"
-4. Touch the person who will own you
-5. They will receive a confirmation dialog
-6. They click "Accept" to claim ownership
+2. Click "Access" (this is the owner management button)
+3. Click "Add Owner"
+4. Select the person from the numbered list who will own you
+5. They will receive a confirmation dialog asking if they accept
+6. They click "Yes"
+7. They choose what they want to be called (Master, Mistress, etc)
+8. You receive a final confirmation dialog
+9. Click "Yes" to confirm
 
 Once this is done, your owner will have full control of the collar. They can
 now use the collar menu and control your avatar.
 
 Note: If you want more than one owner, you (the wearer) need to enable
 multi-owner mode in the settings notecard first, then your owner can add
-additional owners through the Owner menu.
+additional owners through the Access menu.
 
 
 ================================================================================
 STEP 3: BASIC SETTINGS FOR PLAY
 ================================================================================
 
-These settings control how the collar works. Your owner can change these, but
-you should discuss them together first.
+These are simple toggle settings. Most can only be changed by your owner once
+you are owned.
 
 LOCK THE COLLAR
-- Touch collar, click "Lock"
-- The collar toggles between locked and unlocked
-- When locked, you cannot remove the collar without permission
+- Touch collar
+- Click "Locked: N" to lock (it will change to "Locked: Y")
+- Click "Locked: Y" to unlock (it will change to "Locked: N")
+- When locked, you cannot remove the collar
 - This requires RLV enabled in your viewer to work
 
 PUBLIC ACCESS
-- Touch collar, click "Public"
-- Click "Enable" or "Disable"
+- Touch collar
+- Click "Public: N" to turn on public access (changes to "Public: Y")
+- Click "Public: Y" to turn off public access (changes to "Public: N")
 - When OFF: Only your owner and people they approve can use the collar
 - When ON: Anyone can see your collar status and use some basic features
 - Recommended: Keep this OFF for private play
 
 ALLOW OBJECTS TO CONTROL YOU (RLV RELAY)
-- Touch collar, click "RLV Relay"
+- Touch collar
+- Click "RLV Relay"
+- Click "Mode"
 - Choose one of these options:
   * OFF - No outside control from furniture or objects
   * ON - Outside control allowed, you can use your safeword
-  * HARDCORE - Outside control allowed, you cannot use your safeword
+  * HARDCORE - Outside control allowed, you cannot use your safeword (owner only)
 - Recommended: Start with OFF until you understand how this works
 
 
@@ -198,7 +205,7 @@ ANIMATIONS
 
 TRUSTEES
 - Owner can add people as trustees
-- Touch collar, click "Owner", click "Trustee+"
+- Touch collar, click "Access", click "Add Trustee"
 - Trustees have some control but cannot change major settings
 - Good for friends or secondary partners
 
