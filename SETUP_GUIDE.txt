@@ -279,7 +279,7 @@ PROBLEM: Restrictions are not working
 PROBLEM: I cannot set an owner
 - Make sure you are the wearer of the collar
 - Make sure you do not already have an owner (release first if needed)
-- Make sure the person you are trying to set as owner is nearby
+- Make sure the person you are trying to set as owner is within 20 meters of you (in the same region)
 
 PROBLEM: The collar is not responding at all
 - Remove the collar and wear it again
