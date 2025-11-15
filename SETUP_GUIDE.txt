@@ -181,7 +181,8 @@ VERY IMPORTANT - READ THIS CAREFULLY
 If you need to escape all restrictions immediately:
 
 1. TOUCH AND HOLD the collar for 1.5 seconds (long press)
-2. This opens the EMERGENCY MENU
+2. This opens the EMERGENCY MENU.
+   You will see a pop-up menu appear on your screen, confirming the emergency menu is active.
 3. Click one of these options:
    - "Unleash" - Removes the leash immediately
    - "Clear RLV" - Removes all restrictions immediately
