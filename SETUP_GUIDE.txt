@@ -20,7 +20,7 @@ BEFORE YOU START
 What you will need:
 
 1. A collar object in Second Life with all the collar scripts installed
-2. The name of the person who will be your owner
+2. The person who will be your owner
 3. A Second Life viewer that supports restrictions (Firestorm is recommended)
 
 Important: Make sure you trust the person you are giving control to. This
@@ -46,17 +46,18 @@ STEP 2: SET YOUR OWNER
 This step gives someone else control of your collar.
 
 1. Touch the collar to open the menu
-2. Select "Settings"
-3. Select "Owner"
-4. Select "Set Owner"
-5. Type the name of the person who will own you in chat
-6. Confirm the selection when asked
+2. Click "Owner"
+3. Click "Set Owner"
+4. Touch the person who will own you
+5. They will receive a confirmation dialog
+6. They click "Accept" to claim ownership
 
 Once this is done, your owner will have full control of the collar. They can
 now use the collar menu and control your avatar.
 
-Note: If you want more than one owner, ask your primary owner to add additional
-owners through the "Multi Owner" option.
+Note: If you want more than one owner, your primary owner needs to enable
+multi-owner mode in the settings notecard first, then they can add additional
+owners through the Owner menu.
 
 
 ================================================================================
@@ -67,21 +68,22 @@ These settings control how the collar works. Your owner can change these, but
 you should discuss them together first.
 
 LOCK THE COLLAR
-- Touch collar, select "Lock/Unlock"
+- Touch collar, click "Lock"
+- The collar toggles between locked and unlocked
 - When locked, you cannot remove the collar without permission
-- This requires a compatible viewer to work properly
+- This requires RLV enabled in your viewer to work
 
 PUBLIC ACCESS
-- Touch collar, select "Settings", then "Public Access"
+- Touch collar, click "Public"
+- Click "Enable" or "Disable"
 - When OFF: Only your owner and people they approve can use the collar
 - When ON: Anyone can see your collar status and use some basic features
 - Recommended: Keep this OFF for private play
 
-ALLOW OTHERS TO CONTROL YOU
-- Touch collar, select "Settings", then "Relay"
-- This lets furniture and other objects control your avatar
-- Options:
-  * OFF - No outside control
+ALLOW OBJECTS TO CONTROL YOU (RLV RELAY)
+- Touch collar, click "RLV Relay"
+- Choose one of these options:
+  * OFF - No outside control from furniture or objects
   * ON - Outside control allowed, you can use your safeword
   * HARDCORE - Outside control allowed, you cannot use your safeword
 - Recommended: Start with OFF until you understand how this works
@@ -94,23 +96,30 @@ STEP 4: HOW TO USE THE LEASH
 The leash makes your avatar follow another person or stay in one spot.
 
 TO START A LEASH (Owner does this):
-1. Touch the collar (or use the remote control)
-2. Select "Leash"
-3. Choose who or what to leash to:
-   - "Avatar" - Follow a specific person
-   - "Post" - Stay anchored to your current location
+1. Touch the collar
+2. Click "Leash"
+3. Click "Grab"
+4. The wearer will now follow you
+
+TO CHANGE LEASH MODE:
+1. Touch the collar
+2. Click "Leash"
+3. Click "Mode"
+4. Choose:
+   - "Avatar" - Follow a specific person (default)
+   - "Post" - Stay anchored to a location
    - "Coffle" - Chain multiple collars together
 
-TO ADJUST THE LEASH (Owner does this):
+TO ADJUST THE LEASH:
 1. While leashed, touch the collar
-2. Select "Leash"
-3. Choose "Length" to make the leash longer or shorter (1 to 20 steps)
-4. Choose "Yank" to pull the wearer closer
+2. Click "Leash"
+3. Click "Length" to make the leash longer or shorter (1m to 20m)
+4. Click "Yank" to pull the wearer closer
 
 TO END THE LEASH:
 1. Touch the collar
-2. Select "Leash"
-3. Select "Unleash"
+2. Click "Leash"
+3. Click "Unleash"
 
 
 ================================================================================
@@ -118,7 +127,7 @@ STEP 5: UNDERSTANDING RESTRICTIONS
 ================================================================================
 
 Your owner can restrict what you can do in Second Life. These restrictions
-only work if you have a compatible viewer.
+only work if you have RLV enabled in your viewer.
 
 Common restrictions include:
 
@@ -142,7 +151,7 @@ OTHER
 - Prevents you from creating objects
 - Prevents you from touching things
 
-Your owner controls these through the collar menu under "Restrictions".
+Your owner controls these through the collar menu under "RLV Restrict".
 
 
 ================================================================================
@@ -155,7 +164,7 @@ If you need to escape all restrictions immediately:
 
 1. TOUCH AND HOLD the collar for 2 seconds (long press)
 2. This opens the EMERGENCY MENU
-3. Select one of these options:
+3. Click one of these options:
    - "Unleash" - Removes the leash immediately
    - "Clear RLV" - Removes all restrictions immediately
    - "Clear Relay" - Stops outside objects from controlling you
@@ -176,22 +185,26 @@ STEP 6: OTHER FEATURES TO EXPLORE
 Once you are comfortable with basic play, you and your owner can explore:
 
 BELL
+- Touch collar, click "Bell"
 - Makes a sound when you move
-- Can be turned on or off
-- Can adjust volume
+- Can show or hide the bell
+- Can turn sound on or off
 
 ANIMATIONS
+- Touch collar, click "Animate"
 - Plays poses and animations on your avatar
 - Owner can start and stop animations
 - Automatically finds animations in the collar
 
-TRUSTED PEOPLE
-- Owner can add people as "trustees"
+TRUSTEES
+- Owner can add people as trustees
+- Touch collar, click "Owner", click "Trustee+"
 - Trustees have some control but cannot change major settings
 - Good for friends or secondary partners
 
-BLOCKED PEOPLE
+BLACKLIST
 - Owner can block specific people from using the collar
+- Touch collar, click "Blacklist"
 - Blocked people cannot see status or interact at all
 
 
@@ -234,8 +247,8 @@ PROBLEM: I touch the collar but no menu appears
 - Try touching and holding for 2 seconds for the emergency menu
 
 PROBLEM: The leash does not make me follow
-- Make sure you have a compatible viewer with restrictions enabled
-- The leash works better with restrictions enabled, but can work without them
+- Make sure you have RLV enabled in your viewer
+- The leash works better with RLV enabled, but can work without it
 - Your owner may need to use a shorter leash length
 
 PROBLEM: Restrictions are not working
@@ -247,7 +260,7 @@ PROBLEM: Restrictions are not working
 PROBLEM: I cannot set an owner
 - Make sure you are the wearer of the collar
 - Make sure you do not already have an owner (release first if needed)
-- Type the owner's name exactly as it appears in Second Life
+- Make sure the person you are trying to set as owner is nearby
 
 PROBLEM: The collar is not responding at all
 - Remove the collar and wear it again
