@@ -157,8 +157,7 @@ If you need to escape all restrictions immediately:
 2. This opens the EMERGENCY MENU
 3. Select one of these options:
    - "Unleash" - Removes the leash immediately
-   - "Clear RLV" - Removes all restrictions immediately (RLV means the
-     restriction system in your viewer)
+   - "Clear RLV" - Removes all restrictions immediately
    - "Clear Relay" - Stops outside objects from controlling you
 
 This emergency menu ALWAYS works, no matter what restrictions are active.
@@ -220,10 +219,9 @@ TIPS FOR SAFE AND FUN PLAY
    Talk during and after play. If something does not feel right, speak up.
 
 6. UNDERSTAND TPE MODE
-   There is a special "TPE Mode" (which stands for Total Power Exchange)
-   that removes all your access to the collar menu. Only use this if you
-   completely trust your owner. You will only have the emergency menu in
-   this mode.
+   There is a special TPE Mode that removes all your access to the collar
+   menu. Only use this if you completely trust your owner. You will only
+   have the emergency menu in this mode.
 
 
 ================================================================================
@@ -242,9 +240,9 @@ PROBLEM: The leash does not make me follow
 
 PROBLEM: Restrictions are not working
 - You need a compatible viewer (Firestorm recommended)
-- You must have RLV (the restriction system) enabled in your viewer
+- You must have RLV enabled in your viewer
 - In Firestorm: Click "Avatar" menu, then "Preferences", then look for
-  the RLV or restraints option and make sure it is turned on
+  the RLV option and make sure it is turned on
 
 PROBLEM: I cannot set an owner
 - Make sure you are the wearer of the collar
