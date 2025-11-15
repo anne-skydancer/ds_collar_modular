@@ -68,8 +68,7 @@ notecard. This cannot be done through menus.
    multi_owner_mode = 1
    owner_keys = ["uuid-1", "uuid-2", "uuid-3"]
    owner_honorifics = ["Master", "Mistress", "Sir"]
-4. Save the notecard
-5. Reset the collar scripts
+4. Save the notecard (the collar will reload automatically)
 
 All owners will have equal control. You need the UUID (unique ID) for each
 owner.
