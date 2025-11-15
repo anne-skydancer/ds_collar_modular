@@ -58,10 +58,6 @@ This step gives someone else control of your collar.
 Once this is done, your owner will have full control of the collar. They can
 now use the collar menu and control your avatar.
 
-Note: If you want more than one owner, you (the wearer) need to enable
-multi-owner mode in the settings notecard first, then your owner can add
-additional owners through the Access menu.
-
 
 ================================================================================
 STEP 3: BASIC SETTINGS FOR PLAY
