@@ -141,4 +141,4 @@ The system uses a **5-channel architecture** for all inter-script communication:
 
 ## 📜 License
 
-MIT License – see [LICENSE](./LICENSE) for details.
+GPL v3 License – see [LICENSE](./LICENSE) for details.
