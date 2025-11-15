@@ -10,9 +10,7 @@
 2. [Quick Start](#quick-start)
 3. [Settings Keys Reference](#settings-keys-reference)
 4. [Notecard Configuration](#notecard-configuration)
-5. [Settings Architecture](#settings-architecture)
-6. [Developer Guide](#developer-guide)
-7. [Troubleshooting](#troubleshooting)
+5. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -500,3 +498,4 @@ bell_sound = 16fcf579-82cb-b110-c1a4-5fa5e1385406
 
 **Questions or Issues?**
 Please refer to the [main README](./README.md) or review the [source code](./src/stable/ds_collar_kmod_settings.lsl) for implementation details.
+
