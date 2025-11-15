@@ -1,0 +1,307 @@
+DS COLLAR - QUICK SETUP GUIDE FOR PLAY
+
+================================================================================
+WHAT IS THIS?
+================================================================================
+
+This is a wearable collar for Second Life that allows someone to take control
+of your avatar during play. The person who controls the collar (called the
+owner) can lead you around with a leash, lock the collar on you, restrict what
+you can do, and more.
+
+The collar is designed to be safe. You can always get out of restrictions using
+the emergency menu, even if the owner has locked everything down.
+
+
+================================================================================
+BEFORE YOU START
+================================================================================
+
+What you will need:
+
+1. A collar object in Second Life with all the collar scripts installed
+2. The person who will be your owner nearby
+3. A Second Life viewer that supports restrictions (Firestorm is recommended)
+
+Important: Make sure you trust the person you are giving control to. This
+collar can restrict your ability to move, talk, and use your inventory during
+play.
+
+
+================================================================================
+STEP 1: WEAR THE COLLAR
+================================================================================
+
+1. Find the collar object in your inventory
+2. Right-click the collar and choose "Wear" or "Add"
+3. The collar will appear on your avatar
+4. Wait a few seconds for all the scripts to start up
+5. Touch the collar - you should see a menu appear
+
+
+================================================================================
+STEP 2: SET YOUR OWNER
+================================================================================
+
+This step gives someone else control of your collar.
+
+1. Touch the collar to open the menu
+2. Click "Access" (this is the owner management button)
+3. Click "Add Owner"
+4. Select the person from the numbered list who will own you
+5. They will receive a confirmation dialog asking if they accept
+6. They click "Yes"
+7. They choose what they want to be called (Master, Mistress, etc)
+8. You receive a final confirmation dialog
+9. Click "Yes" to confirm
+
+Once this is done, your owner will have full control of the collar. They can
+now use the collar menu and control your avatar.
+
+ADVANCED: Multiple Owners (Notecard Only)
+If you want more than one owner, you must configure this through a settings
+notecard. This cannot be done through menus.
+
+1. Edit the collar object
+2. Create a notecard named "settings" (or edit existing one)
+3. Add these lines:
+   multi_owner_mode = 1
+   owner_keys = ["uuid-1", "uuid-2", "uuid-3"]
+   owner_honorifics = ["Master", "Mistress", "Sir"]
+4. Save the notecard (the collar will reload automatically)
+
+All owners will have equal control. You need the UUID (unique ID) for each
+owner.
+
+
+================================================================================
+STEP 3: BASIC SETTINGS FOR PLAY
+================================================================================
+
+These are simple toggle settings. Most can only be changed by your owner once
+you are owned.
+
+LOCK THE COLLAR
+- Touch collar
+- Click "Locked: N" to lock (it will change to "Locked: Y")
+- Click "Locked: Y" to unlock (it will change to "Locked: N")
+- When locked, you cannot remove the collar
+- This requires RLV enabled in your viewer to work
+
+PUBLIC ACCESS
+- Touch collar
+- Click "Public: N" to turn on public access (changes to "Public: Y")
+- Click "Public: Y" to turn off public access (changes to "Public: N")
+- When OFF: Only your owner and people they approve can use the collar
+- When ON: Anyone can see your collar status and use some basic features
+- Recommended: Keep this OFF for private play
+
+ALLOW OBJECTS TO CONTROL YOU (RLV RELAY)
+- Touch collar
+- Click "RLV Relay"
+- Click "Mode"
+- Choose one of these options:
+  * OFF - No outside control from furniture or objects
+  * ON - Outside control allowed, you can use your safeword
+  * HARDCORE - Outside control allowed, you cannot use your safeword (owner only)
+- Recommended: Start with OFF until you understand how this works
+
+
+================================================================================
+STEP 4: HOW TO USE THE LEASH
+================================================================================
+
+The leash makes your avatar follow another person or stay in one spot.
+
+TO START A LEASH (Owner does this):
+1. Touch the collar
+2. Click "Leash"
+3. Click "Grab"
+4. The wearer will now follow you
+
+TO CHANGE LEASH MODE:
+1. Touch the collar
+2. Click "Leash"
+3. Click "Mode"
+4. Choose:
+   - "Avatar" - Follow a specific person (default)
+   - "Post" - Stay anchored to a location
+   - "Coffle" (chain multiple collars together)
+
+TO ADJUST THE LEASH:
+1. While leashed, touch the collar
+2. Click "Leash"
+3. Click "Length" then choose: 1m, 3m, 5m, 10m, 15m, or 20m
+4. Click "Yank" to pull the wearer closer
+
+TO END THE LEASH:
+1. Touch the collar
+2. Click "Leash"
+3. Click "Unleash"
+
+
+================================================================================
+STEP 5: UNDERSTANDING RESTRICTIONS
+================================================================================
+
+Your owner can restrict what you can do in Second Life. These restrictions
+only work if you have RLV enabled in your viewer.
+
+Common restrictions include:
+
+INVENTORY
+- Prevents you from removing clothes or attachments
+- Prevents you from adding new items
+- Prevents you from accessing your inventory
+
+TALKING
+- Prevents you from using regular chat
+- Prevents you from sending instant messages
+- May redirect your speech to emotes only
+
+MOVEMENT
+- Prevents you from teleporting away
+- Prevents you from sitting or standing
+- Prevents you from going to certain places
+
+OTHER
+- Prevents you from editing objects
+- Prevents you from creating objects
+- Prevents you from touching things
+
+Your owner controls these through the collar menu under "Restrict".
+
+
+================================================================================
+EMERGENCY: HOW TO ESCAPE
+================================================================================
+
+VERY IMPORTANT - READ THIS CAREFULLY
+
+If you need to escape all restrictions immediately:
+
+1. TOUCH AND HOLD the collar for 1.5 seconds (long press)
+2. This opens the EMERGENCY MENU.
+   You will see a pop-up menu appear on your screen, confirming the emergency menu is active.
+3. Click one of these options:
+   - "Unleash" - Removes the leash immediately
+   - "Clear RLV" - Removes all restrictions immediately
+   - "Clear Relay" - Stops outside objects from controlling you
+
+This emergency menu ALWAYS works, no matter what restrictions are active.
+Your owner CANNOT disable this menu. It is your safety escape at all times.
+
+If the emergency menu does not work:
+1. Remove the collar from your avatar manually
+2. If you cannot remove it, restart your viewer
+3. Contact the collar maker for help
+
+
+================================================================================
+STEP 6: OTHER FEATURES TO EXPLORE
+================================================================================
+
+Once you are comfortable with basic play, you and your owner can explore:
+
+BELL
+- Touch collar, click "Bell"
+- Makes a sound when you move
+- Can show or hide the bell
+- Can turn sound on or off
+
+ANIMATIONS
+- Touch collar, click "Animate"
+- Plays poses and animations on your avatar
+- Owner can start and stop animations
+- Automatically finds animations in the collar
+
+TRUSTEES
+- Owner can add people as trustees
+- Touch collar, click "Access", click "Add Trustee"
+- Trustees have some control but cannot change major settings
+- Good for friends or secondary partners
+
+BLACKLIST
+- Owner can block specific people from using the collar
+- Touch collar, click "Blacklist"
+- Blocked people cannot see status or interact at all
+
+
+================================================================================
+TIPS FOR SAFE AND FUN PLAY
+================================================================================
+
+1. DISCUSS LIMITS FIRST
+   Talk with your owner about what you are comfortable with before playing.
+   Decide on boundaries and what restrictions are okay to use.
+
+2. AGREE ON A SAFEWORD
+   Even though the emergency menu always works, agree on a word or phrase
+   that means "stop everything right now."
+
+3. START SLOWLY
+   Try simple things first (like the leash) before using heavy restrictions.
+   Get comfortable with how the collar works.
+
+4. TEST THE EMERGENCY MENU
+   Before doing serious play, practice using the emergency menu so you know
+   it works and you know how to access it.
+
+5. KEEP COMMUNICATION OPEN
+   Talk during and after play. If something does not feel right, speak up.
+
+6. UNDERSTAND TPE MODE
+   There is a special TPE Mode that removes all your access to the collar
+   menu. Only use this if you completely trust your owner. You will only
+   have the emergency menu in this mode.
+
+
+================================================================================
+TROUBLESHOOTING
+================================================================================
+
+PROBLEM: I touch the collar but no menu appears
+- Wait 10 seconds and try again (scripts may still be starting)
+- Make sure you are the wearer or the owner
+- Try touching and holding for 1.5 seconds for the emergency menu
+
+PROBLEM: The leash does not make me follow
+- Make sure you have RLV enabled in your viewer
+- The leash works better with RLV enabled, but can work without it
+- Your owner may need to use a shorter leash length
+
+PROBLEM: Restrictions are not working
+- You need a compatible viewer (Firestorm recommended)
+- You must have RLV enabled in your viewer
+- In Firestorm: Click "Avatar" menu, then "Preferences", then look for
+  the RLV option and make sure it is turned on
+
+PROBLEM: I cannot set an owner
+- Make sure you are the wearer of the collar
+- Make sure you do not already have an owner (release first if needed)
+- Make sure the person you are trying to set as owner is within 20 meters of you (in the same region)
+
+PROBLEM: The collar is not responding at all
+- Remove the collar and wear it again
+- If that does not work, check that all scripts are running (edit collar,
+  go to Contents tab, look for script names)
+- Contact the collar maker for help
+
+
+================================================================================
+GETTING HELP
+================================================================================
+
+If you need more help:
+
+1. Check the detailed user guide (USER_GUIDE.md) for advanced features
+2. Visit the GitHub page: https://github.com/anne-skydancer/ds_collar_modular
+3. Contact the collar creator in Second Life
+
+Remember: The collar is designed for consensual play between adults.
+Always discuss boundaries, respect limits, and have fun safely.
+
+
+================================================================================
+END OF SETUP GUIDE
+================================================================================
