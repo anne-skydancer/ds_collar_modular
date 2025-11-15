@@ -126,7 +126,7 @@ TO CHANGE LEASH MODE:
 4. Choose:
    - "Avatar" - Follow a specific person (default)
    - "Post" - Stay anchored to a location
-   - "Coffle" - Chain multiple collars together
+   - "Coffle" (chain multiple collars together)
 
 TO ADJUST THE LEASH:
 1. While leashed, touch the collar
