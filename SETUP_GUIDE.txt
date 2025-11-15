@@ -20,7 +20,7 @@ BEFORE YOU START
 What you will need:
 
 1. A collar object in Second Life with all the collar scripts installed
-2. The name or key of the person who will be your owner
+2. The name of the person who will be your owner
 3. A Second Life viewer that supports restrictions (Firestorm is recommended)
 
 Important: Make sure you trust the person you are giving control to. This
@@ -157,7 +157,7 @@ If you need to escape all restrictions immediately:
 2. This opens the EMERGENCY MENU
 3. Select one of these options:
    - "Unleash" - Removes the leash immediately
-   - "Clear RLV" - Removes all restrictions immediately
+   - "Clear Restrictions" - Removes all restrictions immediately
    - "Clear Relay" - Stops outside objects from controlling you
 
 This emergency menu ALWAYS works, no matter what restrictions are active.
@@ -218,10 +218,10 @@ TIPS FOR SAFE AND FUN PLAY
 5. KEEP COMMUNICATION OPEN
    Talk during and after play. If something does not feel right, speak up.
 
-6. UNDERSTAND TOTAL POWER EXCHANGE MODE
-   There is a special "TPE Mode" that removes all your access to the collar.
-   Only use this if you completely trust your owner. You will only have the
-   emergency menu in this mode.
+6. UNDERSTAND TOTAL CONTROL MODE
+   There is a special "Total Control Mode" that removes all your access to
+   the collar menu. Only use this if you completely trust your owner. You
+   will only have the emergency menu in this mode.
 
 
 ================================================================================
@@ -241,7 +241,8 @@ PROBLEM: The leash does not make me follow
 PROBLEM: Restrictions are not working
 - You need a compatible viewer (Firestorm recommended)
 - You must have restrictions enabled in your viewer preferences
-- Check under "Firestorm" > "Preferences" > "Firestorm" > "RLV"
+- In Firestorm: Click "Avatar" menu, then "Preferences", then look for
+  the restrictions or restraints option and make sure it is turned on
 
 PROBLEM: I cannot set an owner
 - Make sure you are the wearer of the collar
