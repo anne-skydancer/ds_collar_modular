@@ -1,10 +1,11 @@
 /*--------------------
 PLUGIN: ds_collar_plugin_lock.lsl
 VERSION: 1.00
-REVISION: 20
+REVISION: 21
 PURPOSE: Toggle collar lock and RLV detach control labels
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- Updated to use lightweight update_label mechanism for UI toggles
 - Provides direct toggle logic without menu interactions
 - Restricts usage to Unowned and Primary Owner ACL levels
 - Updates kernel registration label to reflect current lock state
@@ -116,16 +117,7 @@ apply_settings_delta(string msg) {
             if (old_locked != Locked) {
                 apply_lock_state();
                 // Only update label, don't return to menu (no active user in delta context)
-                string new_label = PLUGIN_LABEL_UNLOCKED;
-                if (Locked) {
-                    new_label = PLUGIN_LABEL_LOCKED;
-                }
-                string msg = llList2Json(JSON_OBJECT, [
-                    "type", "update_label",
-                    "context", PLUGIN_CONTEXT,
-                    "label", new_label
-                ]);
-                llMessageLinked(LINK_SET, UI_BUS, msg, NULL_KEY);
+                update_ui_label();
             }
             
         }
@@ -188,8 +180,7 @@ show_unlocked_prim() {
 
 /* -------------------- UI LABEL UPDATE -------------------- */
 
-update_ui_label_and_return(key user) {
-    // Tell UI our new label
+update_ui_label() {
     string new_label = PLUGIN_LABEL_UNLOCKED;
     if (Locked) {
         new_label = PLUGIN_LABEL_LOCKED;
@@ -201,9 +192,13 @@ update_ui_label_and_return(key user) {
         "label", new_label
     ]);
     llMessageLinked(LINK_SET, UI_BUS, msg, NULL_KEY);
+}
+
+update_ui_label_and_return(key user) {
+    update_ui_label();
     
     // Return user to root menu to see the updated button
-    msg = llList2Json(JSON_OBJECT, [
+    string msg = llList2Json(JSON_OBJECT, [
         "type", "return",
         "user", (string)user
     ]);

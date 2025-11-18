@@ -1,10 +1,15 @@
 /*--------------------
 PLUGIN: ds_collar_plugin_leash.lsl
 VERSION: 1.00
-REVISION: 21
+REVISION: 24
 PURPOSE: User interface and configuration for the leashing system
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- REVISION 24: Verified "Yank" button logic compatibility with kernel update.
+- REVISION 23: Removed "Unclip" button for ACL 2 (Owned Wearer). Owned wearers
+  must now use the SOS plugin for emergency release.
+- REVISION 22: Added "Take" and "Unclip" options for authorized users (ACL 3+)
+  even when not the current leasher.
 - REVISION 21: Stack-heap collision fix: Removed unused functions (ROOT_CONTEXT,
   get_msg_type, validate_required_fields, registerSelf, sendPong). 993→968 lines.
 - Added coffle and post modes with ACL-restricted access controls
@@ -147,11 +152,21 @@ showMainMenu() {
         }
     }
     else {
-        if (UserAcl == 2) {
+        // Unclip: Leasher or Admin (3+)
+        // ACL 2 (Owned Wearer) must use SOS to unclip
+        if (CurrentUser == Leasher || UserAcl >= 3) {
             buttons += ["Unclip"];
         }
-        else if (CurrentUser == Leasher) {
-            buttons += ["Unclip", "Pass", "Yank"];
+        
+        // Pass/Yank: Only current leasher
+        if (CurrentUser == Leasher) {
+            buttons += ["Pass", "Yank"];
+        }
+        
+        // Take: Authorized grabbers who are NOT the leasher
+        // Only show if they have permission to steal (ACL >= 3)
+        if (CurrentUser != Leasher && inAllowedList(UserAcl, ALLOWED_ACL_GRAB) && UserAcl >= 3) {
+            buttons += ["Take"];
         }
     }
 
@@ -426,7 +441,7 @@ sendSetLength(integer length) {
 handleButtonClick(string button) {
     
     if (MenuContext == "main") {
-        if (button == "Clip") {
+        if (button == "Clip" || button == "Take") {
             if (inAllowedList(UserAcl, ALLOWED_ACL_GRAB)) {
                 sendLeashAction("grab");
                 cleanupSession();

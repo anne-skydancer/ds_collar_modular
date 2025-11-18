@@ -1,10 +1,11 @@
 /*--------------------
 PLUGIN: ds_collar_plugin_tpe.lsl
 VERSION: 1.00
-REVISION: 20
+REVISION: 21
 PURPOSE: Manage TPE mode with wearer confirmation and owner oversight
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- Updated to use lightweight update_label mechanism for UI toggles
 - Adds wearer confirmation dialog before enabling TPE mode
 - Provides direct owner-driven deactivation returning to root menu
 - Updates button labels dynamically based on TPE state
@@ -126,6 +127,22 @@ persist_tpe_mode(integer new_value) {
     llMessageLinked(LINK_SET, SETTINGS_BUS, msg, NULL_KEY);
 }
 
+/* -------------------- UI LABEL UPDATE -------------------- */
+
+update_ui_label() {
+    string new_label = PLUGIN_LABEL_OFF;
+    if (TpeModeEnabled) {
+        new_label = PLUGIN_LABEL_ON;
+    }
+    
+    string msg = llList2Json(JSON_OBJECT, [
+        "type", "update_label",
+        "context", PLUGIN_CONTEXT,
+        "label", new_label
+    ]);
+    llMessageLinked(LINK_SET, UI_BUS, msg, NULL_KEY);
+}
+
 /* -------------------- BUTTON HANDLING -------------------- */
 
 handle_button_click(string button) {
@@ -140,13 +157,7 @@ handle_button_click(string button) {
         }
         
         // Update UI label
-        string new_label = PLUGIN_LABEL_ON;
-        string msg = llList2Json(JSON_OBJECT, [
-            "type", "update_label",
-            "context", PLUGIN_CONTEXT,
-            "label", new_label
-        ]);
-        llMessageLinked(LINK_SET, UI_BUS, msg, NULL_KEY);
+        update_ui_label();
         
         // Close UI for wearer (who clicked the dialog)
         close_ui_for_user(WearerKey);
@@ -211,16 +222,10 @@ handle_tpe_click(key user, integer acl_level) {
         }
 
         // Update UI label
-        string new_label = PLUGIN_LABEL_OFF;
-        string msg = llList2Json(JSON_OBJECT, [
-            "type", "update_label",
-            "context", PLUGIN_CONTEXT,
-            "label", new_label
-        ]);
-        llMessageLinked(LINK_SET, UI_BUS, msg, NULL_KEY);
+        update_ui_label();
         
         // Return owner to root menu (so they see the updated button)
-        msg = llList2Json(JSON_OBJECT, [
+        string msg = llList2Json(JSON_OBJECT, [
             "type", "return",
             "user", (string)user
         ]);

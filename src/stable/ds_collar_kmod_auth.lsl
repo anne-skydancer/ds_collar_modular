@@ -1,10 +1,12 @@
 /*--------------------
 MODULE: ds_collar_kmod_auth.lsl
 VERSION: 1.00
-REVISION: 21
+REVISION: 22
 PURPOSE: Authoritative ACL and policy engine
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- Implemented event-driven ACL invalidation (broadcast_acl_change)
+- Enforced immediate session revocation on role changes
 - Owner change detection resets the module to prevent stale ACL data
 - Corrected default ACL response to return NOACCESS instead of BLACKLIST
 - Reordered blacklist evaluation to run before other access checks
@@ -88,6 +90,15 @@ integer is_owner(key av) {
 }
 
 /* -------------------- ACL COMPUTATION -------------------- */
+
+broadcast_acl_change(string scope, key avatar) {
+    string msg = llList2Json(JSON_OBJECT, [
+        "type", "acl_update",
+        "scope", scope,
+        "avatar", (string)avatar
+    ]);
+    llMessageLinked(LINK_SET, AUTH_BUS, msg, NULL_KEY);
+}
 
 integer compute_acl_level(key av) {
     key wearer = llGetOwner();
@@ -385,6 +396,9 @@ apply_settings_sync(string msg) {
     
     SettingsReady = TRUE;
     
+    // Broadcast global update to invalidate stale UI sessions
+    broadcast_acl_change("global", NULL_KEY);
+    
     // Process pending queries
     integer i = 0;
     integer len = llGetListLength(PendingQueries);
@@ -408,16 +422,19 @@ apply_settings_delta(string msg) {
         
         if (json_has(changes, [KEY_PUBLIC_ACCESS])) {
             PublicMode = (integer)llJsonGetValue(changes, [KEY_PUBLIC_ACCESS]);
+            broadcast_acl_change("global", NULL_KEY);
         }
         
         if (json_has(changes, [KEY_TPE_MODE])) {
             TpeMode = (integer)llJsonGetValue(changes, [KEY_TPE_MODE]);
+            broadcast_acl_change("global", NULL_KEY);
         }
         
         if (json_has(changes, [KEY_OWNER_KEY])) {
             OwnerKey = (key)llJsonGetValue(changes, [KEY_OWNER_KEY]);
             // Enforce exclusivity after owner change
             enforce_role_exclusivity();
+            broadcast_acl_change("global", NULL_KEY); // Owner change affects everyone
         }
     }
     else if (op == "list_add") {
@@ -432,6 +449,7 @@ apply_settings_delta(string msg) {
                 OwnerKeys += [elem];
                 // Enforce exclusivity after adding owner
                 enforce_role_exclusivity();
+                broadcast_acl_change("global", NULL_KEY);
             }
         }
         else if (key_name == KEY_TRUSTEES) {
@@ -439,11 +457,13 @@ apply_settings_delta(string msg) {
                 TrusteeList += [elem];
                 // Enforce exclusivity after adding trustee
                 enforce_role_exclusivity();
+                broadcast_acl_change("avatar", (key)elem);
             }
         }
         else if (key_name == KEY_BLACKLIST) {
             if (llListFindList(Blacklist, [elem]) == -1) {
                 Blacklist += [elem];
+                broadcast_acl_change("avatar", (key)elem);
             }
         }
     }
@@ -460,6 +480,7 @@ apply_settings_delta(string msg) {
                 OwnerKeys = llDeleteSubList(OwnerKeys, idx, idx);
                 idx = llListFindList(OwnerKeys, [elem]);
             }
+            broadcast_acl_change("global", NULL_KEY);
         }
         else if (key_name == KEY_TRUSTEES) {
             integer idx = llListFindList(TrusteeList, [elem]);
@@ -467,6 +488,7 @@ apply_settings_delta(string msg) {
                 TrusteeList = llDeleteSubList(TrusteeList, idx, idx);
                 idx = llListFindList(TrusteeList, [elem]);
             }
+            broadcast_acl_change("avatar", (key)elem);
         }
         else if (key_name == KEY_BLACKLIST) {
             integer idx = llListFindList(Blacklist, [elem]);
@@ -474,6 +496,7 @@ apply_settings_delta(string msg) {
                 Blacklist = llDeleteSubList(Blacklist, idx, idx);
                 idx = llListFindList(Blacklist, [elem]);
             }
+            broadcast_acl_change("avatar", (key)elem);
         }
     }
 }

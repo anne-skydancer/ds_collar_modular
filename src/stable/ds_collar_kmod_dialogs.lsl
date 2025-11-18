@@ -34,14 +34,6 @@ integer SESSION_BUTTON_MAP = 5;  // List of [button_text, context] pairs
 list Sessions = [];
 integer NextChannelOffset = 1;
 
-/* Button config list stride: [context, button_a_label, button_b_label] */
-integer BUTTON_CONFIG_STRIDE = 3;
-integer BUTTON_CONTEXT = 0;
-integer BUTTON_A_LABEL = 1;
-integer BUTTON_B_LABEL = 2;
-
-list ButtonConfigs = [];
-
 /* -------------------- HELPERS -------------------- */
 
 
@@ -152,49 +144,6 @@ integer get_next_channel() {
     return -1 - (integer)llFrand(2.0E09);
 }
 
-/* -------------------- BUTTON CONFIG MANAGEMENT -------------------- */
-
-integer find_button_config_idx(string context) {
-    integer i = 0;
-    integer len = llGetListLength(ButtonConfigs);
-    while (i < len) {
-        if (llList2String(ButtonConfigs, i + BUTTON_CONTEXT) == context) {
-            return i;
-        }
-        i += BUTTON_CONFIG_STRIDE;
-    }
-    return -1;
-}
-
-register_button_config(string context, string button_a, string button_b) {
-    integer idx = find_button_config_idx(context);
-
-    if (idx != -1) {
-        // Update existing config
-        ButtonConfigs = llListReplaceList(ButtonConfigs, [context, button_a, button_b], idx, idx + BUTTON_CONFIG_STRIDE - 1);
-    }
-    else {
-        // Add new config
-        ButtonConfigs += [context, button_a, button_b];
-    }
-}
-
-string get_button_label(string context, integer button_state) {
-    integer idx = find_button_config_idx(context);
-
-    if (idx == -1) {
-        // No config found, return context as-is
-        return context;
-    }
-
-    if (button_state == 0) {
-        return llList2String(ButtonConfigs, idx + BUTTON_A_LABEL);
-    }
-    else {
-        return llList2String(ButtonConfigs, idx + BUTTON_B_LABEL);
-    }
-}
-
 /* -------------------- DIALOG DISPLAY -------------------- */
 
 handle_dialog_open(string msg) {
@@ -228,28 +177,17 @@ handle_dialog_open(string msg) {
             string button_text = "";
             string button_context = "";
 
-            // Plugin buttons: JSON objects with context+label+state (routable to plugins)
+            // Plugin buttons: JSON objects with context+label (routable to plugins)
             // Check for "{" prefix to avoid JSON parsing overhead/errors on plain strings
             if (llGetSubString(item, 0, 0) == "{" && 
                 llJsonValueType(item, []) == JSON_OBJECT &&
-                json_has(item, ["context"]) && json_has(item, ["label"]) && json_has(item, ["state"])) {
+                json_has(item, ["context"]) && json_has(item, ["label"])) {
 
                 string context = llJsonGetValue(item, ["context"]);
                 string label = llJsonGetValue(item, ["label"]);
-                integer button_state = (integer)llJsonGetValue(item, ["state"]);
 
-                // Check if there's a button config for this context (for toggle buttons)
-                integer config_idx = find_button_config_idx(context);
-
-                if (config_idx != -1) {
-                    // Toggle button: use registered config to resolve label
-                    button_text = get_button_label(context, button_state);
-                }
-                else {
-                    // Regular plugin: use label field directly
-                    button_text = label;
-                }
-
+                // Use label field directly
+                button_text = label;
                 button_context = context;  // Plugin buttons route to context
             }
             else {
@@ -515,16 +453,6 @@ default
         }
         else if (msg_type == "dialog_close") {
             handle_dialog_close(msg);
-        }
-        else if (msg_type == "register_button_config") {
-            if (json_has(msg, ["context"]) && json_has(msg, ["button_a"]) && json_has(msg, ["button_b"])) {
-                string context = llJsonGetValue(msg, ["context"]);
-                string button_a = llJsonGetValue(msg, ["button_a"]);
-                string button_b = llJsonGetValue(msg, ["button_b"]);
-                register_button_config(context, button_a, button_b);
-            }
-            else {
-            }
         }
     }
     
