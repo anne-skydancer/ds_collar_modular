@@ -19,7 +19,6 @@ integer KERNEL_LIFECYCLE = 500;
 integer DIALOG_BUS = 950;
 
 /* -------------------- CONSTANTS -------------------- */
-integer CHANNEL_BASE = -8000000;
 integer SESSION_MAX = 10;  // Maximum concurrent sessions
 
 /* Session list stride: [session_id, user_key, channel, listen_handle, timeout_unix, button_map] */
@@ -148,24 +147,9 @@ integer is_channel_in_use(integer channel) {
 }
 
 integer get_next_channel() {
-    // SECURITY FIX: Try up to 100 times to find unused channel
-    integer attempts = 0;
-    integer channel;
-    
-    while (attempts < 100) {
-        channel = CHANNEL_BASE - NextChannelOffset;
-        NextChannelOffset += 1;
-        if (NextChannelOffset > 1000000) NextChannelOffset = 1;
-        
-        if (!is_channel_in_use(channel)) {
-            return channel;
-        }
-        
-        attempts += 1;
-    }
-    
-    // Fallback: use random channel (collision still possible but very unlikely)
-    return CHANNEL_BASE - (integer)llFrand(1000000);
+    // Use large negative range (-1 to -2 billion)
+    // Collision probability is extremely low, O(1) operation
+    return -1 - (integer)llFrand(2.0E09);
 }
 
 /* -------------------- BUTTON CONFIG MANAGEMENT -------------------- */
@@ -245,7 +229,9 @@ handle_dialog_open(string msg) {
             string button_context = "";
 
             // Plugin buttons: JSON objects with context+label+state (routable to plugins)
-            if (llJsonValueType(item, []) == JSON_OBJECT &&
+            // Check for "{" prefix to avoid JSON parsing overhead/errors on plain strings
+            if (llGetSubString(item, 0, 0) == "{" && 
+                llJsonValueType(item, []) == JSON_OBJECT &&
                 json_has(item, ["context"]) && json_has(item, ["label"]) && json_has(item, ["state"])) {
 
                 string context = llJsonGetValue(item, ["context"]);
@@ -269,7 +255,9 @@ handle_dialog_open(string msg) {
             else {
                 // Navigation buttons or other non-routable buttons
                 // Extract label from JSON object if available, otherwise use string as-is
-                if (llJsonValueType(item, []) == JSON_OBJECT && json_has(item, ["label"])) {
+                if (llGetSubString(item, 0, 0) == "{" && 
+                    llJsonValueType(item, []) == JSON_OBJECT && 
+                    json_has(item, ["label"])) {
                     button_text = llJsonGetValue(item, ["label"]);
                 }
                 else {

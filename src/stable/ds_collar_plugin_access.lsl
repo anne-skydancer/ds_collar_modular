@@ -407,9 +407,10 @@ show_remove_trustee() {
     list names = [];
     integer i;
     integer len = llGetListLength(TrusteeKeys);
+    integer hon_len = llGetListLength(TrusteeHonorifics);
     while (i < len && i < 11) {
         string name = get_name((key)llList2String(TrusteeKeys, i));
-        if (i < llGetListLength(TrusteeHonorifics)) {
+        if (i < hon_len) {
             name += " (" + llList2String(TrusteeHonorifics, i) + ")";
         }
         names += [name];

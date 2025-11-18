@@ -179,15 +179,16 @@ parse_blacklist_value(string raw) {
     
     // Try JSON array format first
     if (llGetSubString(raw, 0, 0) == "[") {
+        list parsed = llJson2List(raw);
         list updated = [];
         integer i = 0;
-        string val = llJsonGetValue(raw, [i]);
-        while (val != JSON_INVALID) {
+        integer count = llGetListLength(parsed);
+        while (i < count) {
+            string val = llList2String(parsed, i);
             if (val != "" && llListFindList(updated, [val]) == -1) {
                 updated += [val];
             }
             i += 1;
-            val = llJsonGetValue(raw, [i]);
         }
         Blacklist = updated;
         return;

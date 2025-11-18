@@ -47,56 +47,42 @@ integer validate_required_fields(string json_str, list field_names, string funct
 
 /* -------------------- BUTTON LAYOUT -------------------- */
 
-// Helper: Reverse complete rows of buttons (3 per row)
-// Note: button_list now contains JSON objects, not strings
-list reverse_complete_rows(list button_list, integer row_size) {
-    list reordered = [];
-    integer count = llGetListLength(button_list);
-    if (count == 0) return [];
-
-    integer num_rows = count / row_size;
-    integer row = num_rows - 1;
-    while (row >= 0) {
-        integer row_start = row * row_size;
-        integer j = 0;
-        while (j < row_size) {
-            reordered += [llList2String(button_list, row_start + j)];  // Still string because JSON object is stored as string
-            j = j + 1;
-        }
-        row = row - 1;
-    }
-    return reordered;
-}
-
 list reorder_buttons_for_display(list buttons) {
     // Reorder buttons for natural reading (left-to-right, top-to-bottom)
     // LSL dialog positions: [9-11]=top, [6-8]=mid, [3-5]=low, [0-2]=bottom
-    // We reverse ROW order (not individual buttons within rows)
+    // We chunk the list into rows of 3, pad them to ensure alignment,
+    // and then reverse the order of the rows.
 
     integer count = llGetListLength(buttons);
     if (count == 0) return [];
 
+    list result = [];
     integer row_size = 3;
-    integer partial_count = count % row_size;
+    integer i = 0;
 
-    if (partial_count == 0) {
-        // All rows complete - reverse row order normally
-        return reverse_complete_rows(buttons, row_size);
+    while (i < count) {
+        // Get chunk of buttons for this row
+        // llList2List handles out-of-bounds end index by clamping to list end
+        list chunk = llList2List(buttons, i, i + row_size - 1);
+        
+        // Pad chunk if incomplete to maintain alignment
+        // This ensures that when this row is stacked above others,
+        // it doesn't "steal" buttons from the row above it in the dialog layout
+        integer chunk_len = llGetListLength(chunk);
+        while (chunk_len < row_size) {
+            chunk += ["-"];
+            chunk_len++;
+        }
+        
+        // Prepend to result (reversing the order of rows)
+        // Row 0 (Top) becomes the last row in the list
+        // Row N (Bottom) becomes the first row in the list
+        result = chunk + result;
+        
+        i += row_size;
     }
-    else {
-        // Incomplete row at the beginning of sorted list
-        // Should appear at TOP (highest positions) in dialog
-        // Complete rows should fill LOWER positions
-
-        list partial_row = llList2List(buttons, 0, partial_count - 1);
-        list complete_buttons = llList2List(buttons, partial_count, -1);
-
-        // Reverse the complete rows and append partial row at end
-        list reordered_complete = reverse_complete_rows(complete_buttons, row_size);
-
-        // Append partial row at end (will occupy highest dialog positions)
-        return reordered_complete + partial_row;
-    }
+    
+    return result;
 }
 
 /* -------------------- RENDERING -------------------- */

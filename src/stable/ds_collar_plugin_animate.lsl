@@ -26,6 +26,10 @@ string PLUGIN_LABEL = "Animate";
 integer PLUGIN_MIN_ACL = 1;  // Public can use
 string ROOT_CONTEXT = "core_root";
 
+/* -------------------- OTHER CONSTANTS -------------------- */
+
+integer MAX_ANIMATIONS = 128;
+
 /* -------------------- STATE -------------------- */
 // Session management
 key CurrentUser = NULL_KEY;
@@ -60,8 +64,14 @@ string generate_session_id() {
 refresh_animation_list() {
     AnimationList = [];
     integer count = llGetInventoryNumber(INVENTORY_ANIMATION);
-    integer i;
     
+    // Safety cap to prevent stack-heap collision
+    if (count > MAX_ANIMATIONS) {
+        llOwnerSay("WARNING: Too many animations (" + (string)count + "). Only loading first " + (string)MAX_ANIMATIONS + ".");
+        count = MAX_ANIMATIONS;
+    }
+
+    integer i;
     for (i = 0; i < count; i++) {
         string anim_name = llGetInventoryName(INVENTORY_ANIMATION, i);
         if (anim_name != "") {

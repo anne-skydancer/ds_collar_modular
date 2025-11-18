@@ -39,6 +39,8 @@ string PRIM_UNLOCKED = "unlocked";
 
 /* -------------------- STATE -------------------- */
 integer Locked = FALSE;
+integer LinkLocked = 0;
+integer LinkUnlocked = 0;
 
 /* -------------------- HELPERS -------------------- */
 
@@ -160,36 +162,28 @@ apply_lock_state() {
 
 /* -------------------- VISUAL FEEDBACK (optional prims) -------------------- */
 
-show_locked_prim() {
-    integer link_count = llGetNumberOfPrims();
-    integer i;
-    
-    for (i = 1; i <= link_count; i++) {
-        string name = llGetLinkName(i);
-        
-        if (name == PRIM_LOCKED) {
-            llSetLinkAlpha(i, 1.0, ALL_SIDES);
-        }
-        else if (name == PRIM_UNLOCKED) {
-            llSetLinkAlpha(i, 0.0, ALL_SIDES);
+update_prims_cache() {
+    if (LinkLocked == 0 && LinkUnlocked == 0) {
+        integer link_count = llGetNumberOfPrims();
+        integer i;
+        for (i = 1; i <= link_count; i++) {
+            string name = llGetLinkName(i);
+            if (name == PRIM_LOCKED) LinkLocked = i;
+            else if (name == PRIM_UNLOCKED) LinkUnlocked = i;
         }
     }
 }
 
+show_locked_prim() {
+    update_prims_cache();
+    if (LinkLocked != 0) llSetLinkAlpha(LinkLocked, 1.0, ALL_SIDES);
+    if (LinkUnlocked != 0) llSetLinkAlpha(LinkUnlocked, 0.0, ALL_SIDES);
+}
+
 show_unlocked_prim() {
-    integer link_count = llGetNumberOfPrims();
-    integer i;
-    
-    for (i = 1; i <= link_count; i++) {
-        string name = llGetLinkName(i);
-        
-        if (name == PRIM_LOCKED) {
-            llSetLinkAlpha(i, 0.0, ALL_SIDES);
-        }
-        else if (name == PRIM_UNLOCKED) {
-            llSetLinkAlpha(i, 1.0, ALL_SIDES);
-        }
-    }
+    update_prims_cache();
+    if (LinkLocked != 0) llSetLinkAlpha(LinkLocked, 0.0, ALL_SIDES);
+    if (LinkUnlocked != 0) llSetLinkAlpha(LinkUnlocked, 1.0, ALL_SIDES);
 }
 
 /* -------------------- UI LABEL UPDATE -------------------- */
@@ -289,6 +283,10 @@ default {
     changed(integer change) {
         if (change & CHANGED_OWNER) {
             llResetScript();
+        }
+        if (change & CHANGED_LINK) {
+            LinkLocked = 0;
+            LinkUnlocked = 0;
         }
     }
     

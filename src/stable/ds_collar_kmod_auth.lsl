@@ -126,16 +126,12 @@ integer compute_acl_level(key av) {
 // Register or update plugin ACL requirement
 register_plugin_acl(string context, integer min_acl) {
     // Find existing entry
-    integer i = 0;
-    integer len = llGetListLength(PluginAclRegistry);
-    while (i < len) {
-        if (llList2String(PluginAclRegistry, i + PLUGIN_ACL_CONTEXT) == context) {
-            // Update existing
-            PluginAclRegistry = llListReplaceList(PluginAclRegistry, [min_acl],
-                i + PLUGIN_ACL_MIN_ACL, i + PLUGIN_ACL_MIN_ACL);
-            return;
-        }
-        i += PLUGIN_ACL_STRIDE;
+    integer idx = llListFindList(PluginAclRegistry, [context]);
+    if (idx != -1) {
+        // Update existing
+        PluginAclRegistry = llListReplaceList(PluginAclRegistry, [min_acl],
+            idx + PLUGIN_ACL_MIN_ACL, idx + PLUGIN_ACL_MIN_ACL);
+        return;
     }
 
     // Add new entry
@@ -161,16 +157,8 @@ broadcast_plugin_acl_list() {
         i += PLUGIN_ACL_STRIDE;
     }
 
-    // Build array - manual construction required because acl_data contains
-    // pre-serialized JSON objects; llList2Json would quote them incorrectly
-    string acl_array = "[";
-    integer j;
-    integer acl_data_len = llGetListLength(acl_data);
-    for (j = 0; j < acl_data_len; j = j + 1) {
-        if (j > 0) acl_array += ",";
-        acl_array += llList2String(acl_data, j);
-    }
-    acl_array += "]";
+    // Build array using native function
+    string acl_array = "[" + llDumpList2String(acl_data, ",") + "]";
 
     // Manual outer object construction for same reason
     string msg = "{\"type\":\"plugin_acl_list\",\"acl_data\":" + acl_array + "}";
@@ -180,15 +168,11 @@ broadcast_plugin_acl_list() {
 // Check if user can access a specific plugin
 integer can_access_plugin(key user, string context) {
     // Find plugin's ACL requirement
-    integer i = 0;
-    integer len = llGetListLength(PluginAclRegistry);
-    while (i < len) {
-        if (llList2String(PluginAclRegistry, i + PLUGIN_ACL_CONTEXT) == context) {
-            integer required_acl = llList2Integer(PluginAclRegistry, i + PLUGIN_ACL_MIN_ACL);
-            integer user_acl = compute_acl_level(user);
-            return (user_acl >= required_acl);
-        }
-        i += PLUGIN_ACL_STRIDE;
+    integer idx = llListFindList(PluginAclRegistry, [context]);
+    if (idx != -1) {
+        integer required_acl = llList2Integer(PluginAclRegistry, idx + PLUGIN_ACL_MIN_ACL);
+        integer user_acl = compute_acl_level(user);
+        return (user_acl >= required_acl);
     }
 
     // Plugin not registered - deny by default
@@ -206,20 +190,13 @@ list filter_plugins_for_user(key user, list plugin_contexts) {
         string context = llList2String(plugin_contexts, i);
 
         // Find plugin's ACL requirement
-        integer j = 0;
-        integer reg_len = llGetListLength(PluginAclRegistry);
-        while (j < reg_len) {
-            if (llList2String(PluginAclRegistry, j + PLUGIN_ACL_CONTEXT) == context) {
-                integer required_acl = llList2Integer(PluginAclRegistry, j + PLUGIN_ACL_MIN_ACL);
-                if (user_acl >= required_acl) {
-                    accessible += [context];
-                }
-                jump next_plugin;
+        integer idx = llListFindList(PluginAclRegistry, [context]);
+        if (idx != -1) {
+            integer required_acl = llList2Integer(PluginAclRegistry, idx + PLUGIN_ACL_MIN_ACL);
+            if (user_acl >= required_acl) {
+                accessible += [context];
             }
-            j += PLUGIN_ACL_STRIDE;
         }
-
-        @next_plugin;
         i++;
     }
 

@@ -297,16 +297,8 @@ handleAclResult(string msg) {
 
 /* ===== COMMAND LISTING ===== */
 sendCommandList(key user) {
-    // Build list of unique commands
-    list command_list = [];
-    integer i = 0;
-    integer len = llGetListLength(CommandRegistry);
-
-    while (i < len) {
-        string cmd = llList2String(CommandRegistry, i);
-        command_list += [cmd];
-        i = i + 2;
-    }
+    // Build list of unique commands using strided extraction
+    list command_list = llList2ListStrided(CommandRegistry, 0, -1, 2);
 
     llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
         "type", "chatcmd_list",
@@ -369,14 +361,13 @@ handleChatCmdRegister(string msg) {
     string plugin_context = llJsonGetValue(msg, ["context"]);
     string commands_json = llJsonGetValue(msg, ["commands"]);
 
-    string num_str = llJsonGetValue(commands_json, ["length"]);
-    if (num_str == JSON_INVALID) return;
-
-    integer num_commands = (integer)num_str;
+    // Convert JSON array to list once
+    list commands = llJson2List(commands_json);
+    integer num_commands = llGetListLength(commands);
 
     integer i = 0;
     while (i < num_commands) {
-        string cmd = llJsonGetValue(commands_json, [i]);
+        string cmd = llList2String(commands, i);
         if (cmd != JSON_INVALID && cmd != "") {
             registerCommand(cmd, plugin_context);
         }

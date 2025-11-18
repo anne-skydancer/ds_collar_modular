@@ -370,37 +370,30 @@ start_name_resolution() {
 
 handle_dataserver_name(key query_id, string name) {
     // Find this query
-    integer i = 0;
-    integer len = llGetListLength(OwnerNameQueries);
-    while (i < len) {
-        key stored_query = llList2Key(OwnerNameQueries, i);
-        if (stored_query == query_id) {
-            key owner = llList2Key(OwnerNameQueries, i + 1);
-            
-            // Update display name
-            integer owner_idx = -1;
-            if (MultiOwnerMode) {
-                owner_idx = llListFindList(OwnerKeys, [(string)owner]);
-            }
-            else {
-                if (owner == OwnerKey) owner_idx = 0;
-            }
-            
-            if (owner_idx != -1 && owner_idx < llGetListLength(OwnerDisplayNames)) {
-                OwnerDisplayNames = llListReplaceList(OwnerDisplayNames, [name], owner_idx, owner_idx);
-            }
-            
-            // Remove this query
-            OwnerNameQueries = llDeleteSubList(OwnerNameQueries, i, i + NAME_QUERY_STRIDE - 1);
-            
-            // Check if all names resolved
-            if (llGetListLength(OwnerNameQueries) == 0) {
-                check_bootstrap_complete();
-            }
-            
-            return;
+    integer idx = llListFindList(OwnerNameQueries, [query_id]);
+    if (idx != -1) {
+        key owner = llList2Key(OwnerNameQueries, idx + 1);
+        
+        // Update display name
+        integer owner_idx = -1;
+        if (MultiOwnerMode) {
+            owner_idx = llListFindList(OwnerKeys, [(string)owner]);
         }
-        i += NAME_QUERY_STRIDE;
+        else {
+            if (owner == OwnerKey) owner_idx = 0;
+        }
+        
+        if (owner_idx != -1 && owner_idx < llGetListLength(OwnerDisplayNames)) {
+            OwnerDisplayNames = llListReplaceList(OwnerDisplayNames, [name], owner_idx, owner_idx);
+        }
+        
+        // Remove this query
+        OwnerNameQueries = llDeleteSubList(OwnerNameQueries, idx, idx + NAME_QUERY_STRIDE - 1);
+        
+        // Check if all names resolved
+        if (llGetListLength(OwnerNameQueries) == 0) {
+            check_bootstrap_complete();
+        }
     }
 }
 
@@ -435,11 +428,9 @@ announce_status() {
     if (MultiOwnerMode) {
         integer owner_count = llGetListLength(OwnerKeys);
         if (owner_count > 0) {
-            string owner_line = "Owned by ";
+            list owner_parts = [];
             integer i = 0;
             while (i < owner_count) {
-                if (i > 0) owner_line += ", ";
-                
                 string hon = "";
                 if (i < llGetListLength(OwnerHonorifics)) {
                     hon = llList2String(OwnerHonorifics, i);
@@ -451,15 +442,15 @@ announce_status() {
                 }
                 
                 if (hon != "") {
-                    owner_line += hon + " " + name;
+                    owner_parts += [hon + " " + name];
                 }
                 else {
-                    owner_line += name;
+                    owner_parts += [name];
                 }
                 
                 i += 1;
             }
-            sendIM(owner_line);
+            sendIM("Owned by " + llDumpList2String(owner_parts, ", "));
         }
         else {
             sendIM("Uncommitted");

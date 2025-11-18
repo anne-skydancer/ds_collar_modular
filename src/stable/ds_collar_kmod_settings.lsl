@@ -96,17 +96,17 @@ list list_remove_all(list source_list, string s) {
 }
 
 list list_unique(list source_list) {
-    list unique_list = [];
+    if (llGetListLength(source_list) < 2) return source_list;
+    source_list = llListSort(source_list, 1, TRUE);
     integer i = 0;
-    integer len = llGetListLength(source_list);
-    while (i < len) {
-        string s = llList2String(source_list, i);
-        if (!list_contains(unique_list, s)) {
-            unique_list += [s];
+    while (i < llGetListLength(source_list) - 1) {
+        if (llList2String(source_list, i) == llList2String(source_list, i + 1)) {
+            source_list = llDeleteSubList(source_list, i, i);
+        } else {
+            i += 1;
         }
-        i += 1;
     }
-    return unique_list;
+    return source_list;
 }
 
 /* -------------------- KV OPERATIONS -------------------- */
@@ -357,25 +357,14 @@ broadcast_delta_list_remove(string key_name, string elem) {
 /* -------------------- KEY VALIDATION -------------------- */
 
 integer is_allowed_key(string k) {
-    if (k == KEY_MULTI_OWNER_MODE) return TRUE;
-    if (k == KEY_OWNER_KEY) return TRUE;
-    if (k == KEY_OWNER_KEYS) return TRUE;
-    if (k == KEY_OWNER_HON) return TRUE;
-    if (k == KEY_OWNER_HONS) return TRUE;
-    if (k == KEY_TRUSTEES) return TRUE;
-    if (k == KEY_TRUSTEE_HONS) return TRUE;
-    if (k == KEY_BLACKLIST) return TRUE;
-    if (k == KEY_PUBLIC_ACCESS) return TRUE;
-    if (k == KEY_TPE_MODE) return TRUE;
-    if (k == KEY_LOCKED) return TRUE;
-    // Bell plugin keys
-    if (k == KEY_BELL_VISIBLE) return TRUE;
-    if (k == KEY_BELL_SOUND_ENABLED) return TRUE;
-    if (k == KEY_BELL_VOLUME) return TRUE;
-    if (k == KEY_BELL_SOUND) return TRUE;
-    // Chat command module keys (chatcmd_enabled, chatcmd_prefix, chatcmd_private_chan, chatcmd_registry_*)
-    if (llGetSubString(k, 0, 7) == "chatcmd_") return TRUE;
-    return FALSE;
+    list allowed = [
+        KEY_MULTI_OWNER_MODE, KEY_OWNER_KEY, KEY_OWNER_KEYS, 
+        KEY_OWNER_HON, KEY_OWNER_HONS, KEY_TRUSTEES, 
+        KEY_TRUSTEE_HONS, KEY_BLACKLIST, KEY_PUBLIC_ACCESS, 
+        KEY_TPE_MODE, KEY_LOCKED, KEY_BELL_VISIBLE, 
+        KEY_BELL_SOUND_ENABLED, KEY_BELL_VOLUME, KEY_BELL_SOUND
+    ];
+    return (llListFindList(allowed, [k]) != -1);
 }
 
 integer is_notecard_only_key(string k) {

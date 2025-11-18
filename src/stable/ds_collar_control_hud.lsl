@@ -100,13 +100,9 @@ cleanup_session() {
 /* -------------------- COLLAR DETECTION -------------------- */
 
 add_detected_collar(key avatar_key, key collar_key, string avatar_name) {
-    // Check if already detected
-    integer i = 0;
-    while (i < llGetListLength(DetectedCollars)) {
-        if (llList2Key(DetectedCollars, i) == avatar_key) {
-            return;  // Already have this one
-        }
-        i += COLLAR_STRIDE;
+    // Check if already detected using native search (faster than loop)
+    if (llListFindList(DetectedCollars, [avatar_key]) != -1) {
+        return;
     }
     
     DetectedCollars += [avatar_key, collar_key, avatar_name];
@@ -165,7 +161,8 @@ process_scan_results() {
 /* -------------------- COLLAR SELECTION DIALOG -------------------- */
 
 show_collar_selection_dialog() {
-    integer num_collars = llGetListLength(DetectedCollars) / COLLAR_STRIDE;
+    integer len = llGetListLength(DetectedCollars);
+    integer num_collars = len / COLLAR_STRIDE;
     
     if (num_collars == 0) return;
     
@@ -180,7 +177,7 @@ show_collar_selection_dialog() {
     list buttons = [];
     integer i = 0;
     
-    while (i < llGetListLength(DetectedCollars) && (i / COLLAR_STRIDE) < 12) {
+    while (i < len && (i / COLLAR_STRIDE) < 12) {
         string avatar_name = llList2String(DetectedCollars, i + 2);
         buttons += [avatar_name];
         i += COLLAR_STRIDE;
@@ -361,12 +358,13 @@ default {
             
             // Find selected collar by name
             integer i = 0;
+            integer len = llGetListLength(DetectedCollars);
             key selected_avatar = NULL_KEY;
-            while (i < llGetListLength(DetectedCollars)) {
+            while (i < len) {
                 string avatar_name = llList2String(DetectedCollars, i + 2);
                 if (avatar_name == message) {
                     selected_avatar = llList2Key(DetectedCollars, i);
-                    i = llGetListLength(DetectedCollars);  // Exit loop
+                    i = len;  // Exit loop
                 }
                 else {
                     i += COLLAR_STRIDE;

@@ -77,22 +77,16 @@ integer check_rate_limit(key requester, integer request_type, string request_nam
     integer now_time = now();
 
     // Find this requester's last request of this type
-    integer idx = 0;
-    integer len = llGetListLength(RateLimitTimestamps);
-    while (idx < len) {
-        if (llList2Key(RateLimitTimestamps, idx + RATE_LIMIT_KEY) == requester &&
-            llList2Integer(RateLimitTimestamps, idx + RATE_LIMIT_TYPE) == request_type) {
-
-            integer last_request = llList2Integer(RateLimitTimestamps, idx + RATE_LIMIT_TIME);
-            if ((now_time - last_request) < REQUEST_COOLDOWN) {
-                return FALSE;
-            }
-
-            // Update timestamp
-            RateLimitTimestamps = llListReplaceList(RateLimitTimestamps, [now_time], idx + RATE_LIMIT_TIME, idx + RATE_LIMIT_TIME);
-            return TRUE;
+    integer idx = llListFindList(RateLimitTimestamps, [requester, request_type]);
+    if (idx != -1) {
+        integer last_request = llList2Integer(RateLimitTimestamps, idx + RATE_LIMIT_TIME);
+        if ((now_time - last_request) < REQUEST_COOLDOWN) {
+            return FALSE;
         }
-        idx += RATE_LIMIT_STRIDE;
+
+        // Update timestamp
+        RateLimitTimestamps = llListReplaceList(RateLimitTimestamps, [now_time], idx + RATE_LIMIT_TIME, idx + RATE_LIMIT_TIME);
+        return TRUE;
     }
 
     // First request of this type from this user
@@ -178,16 +172,7 @@ add_pending_query(key hud_wearer, key hud_object) {
 }
 
 integer find_pending_query(key hud_wearer) {
-    integer idx = 0;
-    integer list_len = llGetListLength(PendingQueries);
-    while (idx < list_len) {
-        key pending_wearer = llList2Key(PendingQueries, idx);
-        if (pending_wearer == hud_wearer) {
-            return idx;
-        }
-        idx += QUERY_STRIDE;
-    }
-    return -1;
+    return llListFindList(PendingQueries, [hud_wearer]);
 }
 
 remove_pending_query(key hud_wearer) {
@@ -334,13 +319,8 @@ handle_menu_request_external(string message) {
     }
 
     // Check if already pending for this user
-    integer i = 0;
-    integer len = llGetListLength(PendingMenuRequests);
-    while (i < len) {
-        if (llList2Key(PendingMenuRequests, i) == hud_wearer) {
-            return;
-        }
-        i += MENU_REQUEST_STRIDE;
+    if (llListFindList(PendingMenuRequests, [hud_wearer]) != -1) {
+        return;
     }
 
     // SECURITY: Verify ACL before triggering menu
@@ -452,17 +432,13 @@ default {
             }
             
             // Check if this is a menu request ACL verification
-            integer menu_idx = 0;
-            integer len = llGetListLength(PendingMenuRequests);
             string requested_context = "";
+            integer menu_idx = llListFindList(PendingMenuRequests, [avatar_key]);
 
-            while (menu_idx < len) {
-                if (llList2Key(PendingMenuRequests, menu_idx) == avatar_key) {
-                    requested_context = llList2String(PendingMenuRequests, menu_idx + 1);
-                    PendingMenuRequests = llDeleteSubList(PendingMenuRequests, menu_idx, menu_idx + MENU_REQUEST_STRIDE - 1);
-                    jump found_menu_request;
-                }
-                menu_idx += MENU_REQUEST_STRIDE;
+            if (menu_idx != -1) {
+                requested_context = llList2String(PendingMenuRequests, menu_idx + 1);
+                PendingMenuRequests = llDeleteSubList(PendingMenuRequests, menu_idx, menu_idx + MENU_REQUEST_STRIDE - 1);
+                jump found_menu_request;
             }
             jump not_menu_request;
 

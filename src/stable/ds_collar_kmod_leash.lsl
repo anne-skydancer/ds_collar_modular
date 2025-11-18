@@ -57,6 +57,7 @@ integer FollowActive = FALSE;
 vector LastTargetPos = ZERO_VECTOR;
 float LastDistance = -1.0;
 integer ControlsOk = FALSE;
+integer TickCount = 0;
 
 // Turn-to-face throttling (NEW)
 float LastTurnAngle = -999.0;
@@ -110,8 +111,9 @@ integer jsonHas(string j, list path) {
     return (llJsonGetValue(j, path) != JSON_INVALID);
 }
 string jsonGet(string j, string k, string default_val) {
-    if (jsonHas(j, [k])) return llJsonGetValue(j, [k]);
-    return default_val;
+    string v = llJsonGetValue(j, [k]);
+    if (v == JSON_INVALID) return default_val;
+    return v;
 }
 integer now() {
     return llGetUnixTime();
@@ -395,10 +397,7 @@ requestAclForPassTarget(key target) {
 /* -------------------- DS HOLDER PROTOCOL (IMPROVED STATE MACHINE) -------------------- */
 beginHolderHandshake(key user) {
     // Improved randomness for session ID using multiple entropy sources
-    integer key_entropy = (integer)("0x" + llGetSubString((string)llGetOwner(), 0, 7));
-    HolderSession = (integer)(llFrand(999999.0) +
-                              (now() % 1000000) +
-                              (key_entropy % 1000));
+    HolderSession = (integer)llFrand(9.0E06);
     HolderState = HOLDER_STATE_DS_PHASE;
     HolderPhaseStart = now();
 
@@ -846,17 +845,21 @@ followTick() {
 
     if (LeashMode == MODE_AVATAR) {
         // Avatar mode: follow holder or leasher
+        integer use_holder = FALSE;
         if (HolderTarget != NULL_KEY) {
             list details = llGetObjectDetails(HolderTarget, [OBJECT_POS]);
-            if (llGetListLength(details) == 0) {
+            if (llGetListLength(details) > 0) {
+                target_pos = llList2Vector(details, 0);
+                follow_target = Leasher;
+                use_holder = TRUE;
+            } else {
                 HolderTarget = NULL_KEY;
                 updateParticlesTarget(Leasher);
-                return;
+                // Fall through to leasher
             }
-            target_pos = llList2Vector(details, 0);
-            follow_target = Leasher;
         }
-        else {
+        
+        if (!use_holder) {
             list details = llGetObjectDetails(Leasher, [OBJECT_POS]);
             if (llGetListLength(details) == 0) return;
             target_pos = llList2Vector(details, 0);
@@ -1044,9 +1047,12 @@ default
         // Advance holder detection state machine
         advanceHolderStateMachine();
         
-        // Check for offsim/auto-release
-        if (Leashed) checkLeasherPresence();
-        if (!Leashed && ReclipScheduled != 0) checkAutoReclip();
+        TickCount++;
+        // Check for offsim/auto-release (Throttled to every ~3 seconds)
+        if (TickCount % 6 == 0) {
+            if (Leashed) checkLeasherPresence();
+            if (!Leashed && ReclipScheduled != 0) checkAutoReclip();
+        }
         
         // Follow tick
         if (FollowActive && Leashed) followTick();

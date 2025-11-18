@@ -94,24 +94,11 @@ integer now() {
 }
 
 integer count_scripts() {
-    integer count = 0;
-    integer i;
-    integer inv_count = llGetInventoryNumber(INVENTORY_SCRIPT);
-    for (i = 0; i < inv_count; i = i + 1) {
-        count = count + 1;
-    }
-    return count;
+    return llGetInventoryNumber(INVENTORY_SCRIPT);
 }
 
 integer is_authorized_sender(string sender_name) {
-    integer i;
-    integer len = llGetListLength(AUTHORIZED_RESET_SENDERS);
-    for (i = 0; i < len; i = i + 1) {
-        if (llList2String(AUTHORIZED_RESET_SENDERS, i) == sender_name) {
-            return TRUE;
-        }
-    }
-    return FALSE;
+    return (llListFindList(AUTHORIZED_RESET_SENDERS, [sender_name]) != -1);
 }
 
 integer is_plugin_script(string script_name) {
@@ -545,7 +532,7 @@ handle_register(string msg) {
 
     // Route fields to interested modules
     route_field(msg, context, "min_acl", "register_acl", AUTH_BUS);
-    route_field(msg, context, "commands", "chatcmd_register", UI_BUS);
+    // Chat command registration deprecated/removed
 }
 
 handle_pong(string msg) {

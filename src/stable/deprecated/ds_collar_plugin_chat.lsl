@@ -411,14 +411,15 @@ default
                 if (id != CurrentUser) return;
 
                 AvailableCommands = [];
-                if (jsonHas(msg, ["commands"]) && jsonHas(msg, ["count"])) {
+                if (jsonHas(msg, ["commands"])) {
                     string commands_json = llJsonGetValue(msg, ["commands"]);
-                    integer num_commands = (integer)llJsonGetValue(msg, ["count"]);
+                    list cmds = llJson2List(commands_json);
+                    integer num_commands = llGetListLength(cmds);
 
                     integer i;
                     for (i = 0; i < num_commands; i++) {
-                        string cmd = llJsonGetValue(commands_json, [i]);
-                        if (cmd != JSON_INVALID && cmd != "") {
+                        string cmd = llList2String(cmds, i);
+                        if (cmd != "" && cmd != JSON_INVALID) {
                             AvailableCommands += [cmd];
                         }
                     }

@@ -253,10 +253,12 @@ do_display_access_list() {
             
             if (llGetListLength(owners) > 0) {
                 integer i = 0;
-                while (i < llGetListLength(owners)) {
+                integer count = llGetListLength(owners);
+                integer honors_count = llGetListLength(honors);
+                while (i < count) {
                     string owner_key = llList2String(owners, i);
                     string honor = "Owner";
-                    if (i < llGetListLength(honors)) {
+                    if (i < honors_count) {
                         honor = llList2String(honors, i);
                     }
                     output += "  " + honor + " - " + owner_key + "\n";
@@ -299,10 +301,12 @@ do_display_access_list() {
         
         if (llGetListLength(trustees) > 0) {
             integer i = 0;
-            while (i < llGetListLength(trustees)) {
+            integer count = llGetListLength(trustees);
+            integer honors_count = llGetListLength(t_honors);
+            while (i < count) {
                 string trustee_key = llList2String(trustees, i);
                 string honor = "Trustee";
-                if (i < llGetListLength(t_honors)) {
+                if (i < honors_count) {
                     honor = llList2String(t_honors, i);
                 }
                 output += "  " + honor + " - " + trustee_key + "\n";

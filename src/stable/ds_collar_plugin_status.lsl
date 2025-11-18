@@ -318,16 +318,18 @@ string build_status_report() {
             status_text += "Owners:\n";
             
             integer i;
+            integer hon_count = llGetListLength(OwnerHonorifics);
+            integer disp_count = llGetListLength(OwnerDisplayNames);
             for (i = 0; i < owner_count; i++) {
                 key owner_key = llList2Key(OwnerKeys, i);
                 string honorific = "";
                 
-                if (i < llGetListLength(OwnerHonorifics)) {
+                if (i < hon_count) {
                     honorific = llList2String(OwnerHonorifics, i);
                 }
                 
                 string display_name = "";
-                if (i < llGetListLength(OwnerDisplayNames)) {
+                if (i < disp_count) {
                     display_name = llList2String(OwnerDisplayNames, i);
                 }
                 
@@ -368,13 +370,14 @@ string build_status_report() {
         status_text += "Trustees: ";
         
         integer i;
+        integer hon_count = llGetListLength(TrusteeHonorifics);
         for (i = 0; i < trustee_count; i++) {
             if (i != 0) {
                 status_text += ", ";
             }
             
             string honorific = "";
-            if (i < llGetListLength(TrusteeHonorifics)) {
+            if (i < hon_count) {
                 honorific = llList2String(TrusteeHonorifics, i);
             }
             

@@ -105,15 +105,7 @@ string generate_session_id(key user) {
 /* -------------------- PLUGIN STATE MANAGEMENT -------------------- */
 
 integer find_plugin_state_idx(string context) {
-    integer i = 0;
-    integer len = llGetListLength(PluginStates);
-    while (i < len) {
-        if (llList2String(PluginStates, i + PLUGIN_STATE_CONTEXT) == context) {
-            return i;
-        }
-        i += PLUGIN_STATE_STRIDE;
-    }
-    return -1;
+    return llListFindList(PluginStates, [context]);
 }
 
 integer get_plugin_state(string context) {
@@ -140,15 +132,7 @@ set_plugin_state(string context, integer button_state) {
 /* -------------------- SESSION MANAGEMENT -------------------- */
 
 integer find_session_idx(key user) {
-    integer i = 0;
-    integer len = llGetListLength(Sessions);
-    while (i < len) {
-        if (llList2Key(Sessions, i + SESSION_USER) == user) {
-            return i;
-        }
-        i += SESSION_STRIDE;
-    }
-    return -1;
+    return llListFindList(Sessions, [user]);
 }
 
 integer get_session_filtered_start(integer session_idx) {
@@ -275,19 +259,12 @@ create_session(key user, integer acl, integer is_blacklisted, string context_fil
 apply_plugin_list(string plugins_json) {
     AllPlugins = [];
 
-    if (llJsonValueType(plugins_json, []) != JSON_ARRAY) {
-        return;
-    }
-    
-    integer count = 0;
-    while (llJsonValueType(plugins_json, [count]) != JSON_INVALID) {
-        count += 1;
-    }
-    
+    list plugins = llJson2List(plugins_json);
+    integer count = llGetListLength(plugins);
     
     integer i = 0;
     while (i < count) {
-        string plugin_obj = llJsonGetValue(plugins_json, [i]);
+        string plugin_obj = llList2String(plugins, i);
 
         if (json_has(plugin_obj, ["context"]) &&
             json_has(plugin_obj, ["label"])) {
@@ -314,38 +291,22 @@ apply_plugin_list(string plugins_json) {
 
 apply_plugin_acl_list(string acl_json) {
 
-    if (llJsonValueType(acl_json, []) != JSON_ARRAY) {
-        return;
-    }
-
-    integer count = 0;
-    while (llJsonValueType(acl_json, [count]) != JSON_INVALID) {
-        count += 1;
-    }
-
+    list acl_list = llJson2List(acl_json);
+    integer count = llGetListLength(acl_list);
 
     integer i = 0;
     while (i < count) {
-        string acl_obj = llJsonGetValue(acl_json, [i]);
+        string acl_obj = llList2String(acl_list, i);
 
         if (json_has(acl_obj, ["context"]) && json_has(acl_obj, ["min_acl"])) {
             string context = llJsonGetValue(acl_obj, ["context"]);
             integer min_acl = (integer)llJsonGetValue(acl_obj, ["min_acl"]);
 
             // Find this context in AllPlugins and update min_acl
-            // OPTIMIZATION: Jump to next_acl after match (acts as break)
-            // Each context appears at most once, so no need to continue searching
-            integer j = 0;
-            integer len = llGetListLength(AllPlugins);
-            while (j < len) {
-                if (llList2String(AllPlugins, j + PLUGIN_CONTEXT) == context) {
-                    AllPlugins = llListReplaceList(AllPlugins, [min_acl], j + PLUGIN_MIN_ACL, j + PLUGIN_MIN_ACL);
-                    jump next_acl;  // Break after match (each context is unique)
-                }
-                j += PLUGIN_STRIDE;
+            integer j = llListFindList(AllPlugins, [context]);
+            if (j != -1) {
+                AllPlugins = llListReplaceList(AllPlugins, [min_acl], j + PLUGIN_MIN_ACL, j + PLUGIN_MIN_ACL);
             }
-
-            @next_acl;
         }
 
         i += 1;

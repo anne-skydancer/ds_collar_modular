@@ -34,6 +34,7 @@ integer BellSoundEnabled = FALSE;
 float BellVolume = 0.3;
 string BellSound = "16fcf579-82cb-b110-c1a4-5fa5e1385406";
 integer IsMoving = FALSE;
+integer BellLink = 0;
 
 // Jingle timing
 float JINGLE_INTERVAL = 1.75;  // Play sound every 1.75 seconds while moving
@@ -57,26 +58,22 @@ string generate_session_id() {
 }
 
 set_bell_visibility(integer visible) {
-    integer link_count = llGetNumberOfPrims();
-    integer i;
-    integer found = FALSE;
-    
-    float alpha;
-    if (visible) {
-        alpha = 1.0;
-    } else {
-        alpha = 0.0;
-    }
-    
-    for (i = 1; i <= link_count; i++) {
-        string prim_name = llGetLinkName(i);
-        if (llToLower(prim_name) == "bell") {
-            llSetLinkAlpha(i, alpha, ALL_SIDES);
-            found = TRUE;
+    if (BellLink == 0) {
+        integer link_count = llGetNumberOfPrims();
+        integer i;
+        for (i = 1; i <= link_count; i++) {
+            if (llToLower(llGetLinkName(i)) == "bell") {
+                BellLink = i;
+                jump found_bell;
+            }
         }
+        @found_bell;
     }
-    
-    if (!found) {
+
+    if (BellLink != 0) {
+        float alpha = 0.0;
+        if (visible) alpha = 1.0;
+        llSetLinkAlpha(BellLink, alpha, ALL_SIDES);
     }
     
     BellVisible = visible;
@@ -327,6 +324,9 @@ default {
     changed(integer change) {
         if (change & CHANGED_OWNER) {
             llResetScript();
+        }
+        if (change & CHANGED_LINK) {
+            BellLink = 0;
         }
     }
     
