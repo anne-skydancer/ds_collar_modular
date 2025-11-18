@@ -1,10 +1,14 @@
 /*--------------------
 MODULE: ds_collar_kmod_auth.lsl
 VERSION: 1.00
-REVISION: 22
+REVISION: 23
 PURPOSE: Authoritative ACL and policy engine
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- REVISION 23: Changed default ACL for unauthorized users from 0 (NOACCESS) to -1 (BLACKLIST)
+  to distinguish public touchers when public mode is off from TPE wearers (who stay at 0).
+  - SECURITY: Prevents unauthorized users from accessing SOS menu (ACL 0) by exploiting
+    the ambiguity between "Public Access Off" and "TPE Restricted Wearer".
 - Implemented event-driven ACL invalidation (broadcast_acl_change)
 - Enforced immediate session revocation on role changes
 - Owner change detection resets the module to prevent stale ACL data
@@ -127,9 +131,8 @@ integer compute_acl_level(key av) {
     // Public mode check
     if (PublicMode) return ACL_PUBLIC;
     
-    // SECURITY FIX: Default is NOACCESS (not BLACKLIST)
-    // BLACKLIST is explicit denial, NOACCESS is simply no privileges
-    return ACL_NOACCESS;
+    // Default for non-authorized users is BLACKLIST (-1) to distinguish from TPE Wearer (0)
+    return ACL_BLACKLIST;
 }
 
 /* -------------------- PLUGIN ACL MANAGEMENT -------------------- */
