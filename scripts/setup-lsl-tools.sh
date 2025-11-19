@@ -51,9 +51,36 @@ else
         cp lslint.exe "$INSTALL_DIR/" || cp lslint "$INSTALL_DIR/"
         echo "✅ lslint installed to $INSTALL_DIR"
     else
-        echo "❌ 'make' not found. Please install MinGW build tools."
-        echo "   You can install via: pacman -S make gcc"
-        exit 1
+        echo "⚠️ 'make' not found. Attempting to download pre-built binary..."
+        
+        # URL for the latest known working nightly build for Windows 64-bit
+        DOWNLOAD_URL="https://github.com/Makopo/lslint/releases/download/nightly_build_20230410045235/lslint_nightly_build_20230410045235_win64.zip"
+        ZIP_FILE="lslint.zip"
+        
+        if command -v curl &> /dev/null; then
+            curl -L -o "$ZIP_FILE" "$DOWNLOAD_URL"
+        elif command -v wget &> /dev/null; then
+            wget -O "$ZIP_FILE" "$DOWNLOAD_URL"
+        else
+            echo "❌ Neither 'curl' nor 'wget' found. Cannot download binary."
+            exit 1
+        fi
+        
+        if command -v unzip &> /dev/null; then
+            unzip -o "$ZIP_FILE"
+            # Find the exe (it might be in a subdir or named differently)
+            FOUND_EXE=$(find . -name "lslint.exe" | head -n 1)
+            if [ -n "$FOUND_EXE" ]; then
+                cp "$FOUND_EXE" "$INSTALL_DIR/lslint.exe"
+                echo "✅ lslint installed to $INSTALL_DIR (from binary)"
+            else
+                echo "❌ lslint.exe not found in downloaded zip."
+                exit 1
+            fi
+        else
+            echo "❌ 'unzip' not found. Cannot extract binary."
+            exit 1
+        fi
     fi
 fi
 

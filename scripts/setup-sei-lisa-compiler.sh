@@ -29,53 +29,61 @@ INSTALL_DIR=$(mktemp -d)
 echo "→ Working directory: $INSTALL_DIR"
 cd "$INSTALL_DIR"
 
-# Check and install dependencies
-echo ""
-echo "→ Checking dependencies..."
+# Check for build tools
+MISSING_TOOLS=""
+if ! command -v flex &> /dev/null; then MISSING_TOOLS="$MISSING_TOOLS flex"; fi
+if ! command -v bison &> /dev/null; then MISSING_TOOLS="$MISSING_TOOLS bison"; fi
+if ! command -v make &> /dev/null; then MISSING_TOOLS="$MISSING_TOOLS make"; fi
+if ! command -v g++ &> /dev/null; then MISSING_TOOLS="$MISSING_TOOLS g++"; fi
 
-DEPS_TO_INSTALL=""
-
-if ! command -v flex &> /dev/null; then
-    DEPS_TO_INSTALL="$DEPS_TO_INSTALL flex"
+# Check for Python 2 (Required for kwdb)
+HAS_PY2=false
+if command -v python2 &> /dev/null; then HAS_PY2=true; fi
+if [ "$HAS_PY2" = false ] && command -v python &> /dev/null; then
+    VER=$(python -c 'import sys; print(sys.version_info[0])')
+    if [ "$VER" == "2" ]; then HAS_PY2=true; fi
 fi
 
-if ! command -v bison &> /dev/null; then
-    DEPS_TO_INSTALL="$DEPS_TO_INSTALL bison"
-fi
+if [ -n "$MISSING_TOOLS" ] || [ "$HAS_PY2" = false ]; then
+    echo "❌ CRITICAL: Missing build environment!"
+    echo ""
+    echo "This script attempts to compile the Sei-Lisa LSL Compiler (lslcomp) from C++ source."
+    echo "It requires a full MinGW/MSYS2 build environment which is NOT present."
+    echo ""
+    echo "Missing components:"
+    if [ -n "$MISSING_TOOLS" ]; then echo "  • Build Tools:$MISSING_TOOLS"; fi
+    if [ "$HAS_PY2" = false ]; then echo "  • Python 2.x (Required for kwdb generation)"; fi
+    echo ""
+    
+    # Check if lslopt is installed (the likely intended tool)
+    if command -v lslopt &> /dev/null || [ -f "$HOME/.local/bin/lslopt" ]; then
+        echo "✅ GOOD NEWS: You already have 'lslopt' (Sei-Lisa Optimizer) installed!"
+        echo "   Most developers only need the optimizer/shrinker."
+        echo "   You only need 'lslcomp' if you want to generate LSO/Mono assembly code."
+        echo ""
+    else
+        echo "💡 DID YOU MEAN THE OPTIMIZER?"
+        echo "   If you want the Sei-Lisa LSL Optimizer (to shrink scripts), run:"
+        echo "   ./scripts/setup-lsl-tools.ps1"
+        echo ""
+    fi
 
-if ! command -v g++ &> /dev/null; then
-    DEPS_TO_INSTALL="$DEPS_TO_INSTALL g++"
-fi
-
-if ! command -v python2 &> /dev/null && ! command -v python2.7 &> /dev/null; then
-    DEPS_TO_INSTALL="$DEPS_TO_INSTALL python2"
-fi
-
-if ! command -v git &> /dev/null; then
-    DEPS_TO_INSTALL="$DEPS_TO_INSTALL git"
-fi
-
-if ! command -v wget &> /dev/null; then
-    DEPS_TO_INSTALL="$DEPS_TO_INSTALL wget"
-fi
-
-if ! command -v make &> /dev/null; then
-    DEPS_TO_INSTALL="$DEPS_TO_INSTALL make"
-fi
-
-if [ -n "$DEPS_TO_INSTALL" ]; then
-    echo "→ Installing dependencies:$DEPS_TO_INSTALL"
-    sudo apt-get update -qq
-    sudo apt-get install -y $DEPS_TO_INSTALL
-    echo "✓ Dependencies installed"
-else
-    echo "✓ All dependencies already installed"
+    echo "HOW TO FIX THIS (If you really need lslcomp):"
+    echo "1. Install MSYS2 from https://www.msys2.org/"
+    echo "2. Open MSYS2 terminal and run:"
+    echo "   pacman -S base-devel gcc python2 git"
+    echo "3. Run this script again from the MSYS2 terminal."
+    echo ""
+    exit 1
 fi
 
 # Clone and setup kwdb (keyword database)
 echo ""
 echo "→ Cloning kwdb (LSL keyword database)..."
-git clone -q https://bitbucket.org/Sei_Lisa/kwdb.git
+if [ -d "kwdb" ]; then
+    rm -rf kwdb
+fi
+git clone -q https://github.com/Sei-Lisa/kwdb.git
 echo "✓ kwdb cloned"
 
 # Setup kwdb
@@ -87,6 +95,15 @@ if command -v python2 &> /dev/null; then
     PYTHON_CMD=python2
 elif command -v python2.7 &> /dev/null; then
     PYTHON_CMD=python2.7
+elif command -v python &> /dev/null && python --version &> /dev/null; then
+    # Verify it is python 2
+    VER=$(python -c 'import sys; print(sys.version_info[0])')
+    if [ "$VER" == "2" ]; then
+        PYTHON_CMD=python
+    else
+        echo "⚠ Python 2 not found (python is version $VER). kwdb build may fail."
+        PYTHON_CMD=python
+    fi
 else
     echo "✗ Error: Python 2 is required but not found"
     exit 1
@@ -129,11 +146,14 @@ make clean > /dev/null 2>&1 || true
 make > /dev/null 2>&1
 echo "✓ Compiler built successfully"
 
-# Install lslcomp to /usr/local/bin
+# Install lslcomp to local bin
 echo ""
-echo "→ Installing lslcomp to /usr/local/bin..."
-sudo cp lslcomp /usr/local/bin/
-sudo chmod +x /usr/local/bin/lslcomp
+INSTALL_BIN_DIR="$HOME/.local/bin"
+mkdir -p "$INSTALL_BIN_DIR"
+
+echo "→ Installing lslcomp to $INSTALL_BIN_DIR..."
+cp lslcomp "$INSTALL_BIN_DIR/"
+chmod +x "$INSTALL_BIN_DIR/lslcomp"
 echo "✓ Installation complete"
 
 # Store paths for future reference
@@ -143,7 +163,7 @@ cat > "$INSTALL_INFO_DIR/paths.txt" << EOF
 Installation Date: $(date)
 KWDB Path: $KWDB_PATH
 Compiler Path: $INSTALL_DIR/LSL-compiler
-Binary Location: /usr/local/bin/lslcomp
+Binary Location: $INSTALL_BIN_DIR/lslcomp
 EOF
 echo "✓ Installation info saved to $INSTALL_INFO_DIR/paths.txt"
 
@@ -152,7 +172,7 @@ echo "========================================="
 echo "✓ Sei-Lisa LSL Compiler Installed!"
 echo "========================================="
 echo ""
-echo "Compiler location: /usr/local/bin/lslcomp"
+echo "Compiler location: $INSTALL_BIN_DIR/lslcomp"
 echo ""
 echo "Usage:"
 echo "  lslcomp <script.lsl>"

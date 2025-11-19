@@ -44,7 +44,17 @@ if (-not (Test-Path $setupScript)) {
 }
 
 # Convert Windows path to Git Bash path
-$setupScriptBash = $setupScript -replace '\\', '/' -replace '^([A-Z]):', {param($m) "/$(($m.Groups[1].Value).ToLower())"}
+$setupScriptBash = $setupScript -replace '\\', '/'
+if ($setupScriptBash -match '^([A-Z]):') {
+    $drive = $matches[1].ToLower()
+    $setupScriptBash = $setupScriptBash -replace '^[A-Z]:', "/$drive"
+}
+
+$scriptDirBash = $scriptDir -replace '\\', '/'
+if ($scriptDirBash -match '^([A-Z]):') {
+    $drive = $matches[1].ToLower()
+    $scriptDirBash = $scriptDirBash -replace '^[A-Z]:', "/$drive"
+}
 
 Write-Host "Running setup script in Git Bash..." -ForegroundColor Cyan
 Write-Host "Script: $setupScriptBash" -ForegroundColor Gray
@@ -53,7 +63,7 @@ Write-Host "----------------------------------------"
 Write-Host ""
 
 # Execute the bash script
-& $gitBash -l -c "cd '$setupScriptBash' && bash '$setupScriptBash'"
+& $gitBash -l -c "cd '$scriptDirBash' && bash 'setup-lsl-tools.sh'"
 
 $exitCode = $LASTEXITCODE
 

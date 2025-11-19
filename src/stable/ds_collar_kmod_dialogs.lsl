@@ -1,8 +1,7 @@
-
 /*--------------------
 MODULE: ds_collar_kmod_dialogs.lsl
 VERSION: 1.00
-REVISION: 21
+REVISION: 22
 PURPOSE: Centralized dialog management for shared listener handling
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
@@ -371,7 +370,6 @@ default
     state_entry() {
         Sessions = [];
         NextChannelOffset = 1;
-        ButtonConfigs = [];
 
         // Start timer for session cleanup
         llSetTimerEvent(5.0);
