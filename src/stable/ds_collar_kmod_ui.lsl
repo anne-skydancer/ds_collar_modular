@@ -1,7 +1,7 @@
 /*--------------------
 MODULE: ds_collar_kmod_ui.lsl
 VERSION: 1.00
-REVISION: 49
+REVISION: 50
 PURPOSE: Session management, ACL filtering, and plugin list orchestration
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
@@ -80,30 +80,6 @@ list PendingAcl = [];
 list TouchData = [];
 
 /* -------------------- HELPERS -------------------- */
-
-
-integer json_has(string j, list path) {
-    return (llJsonGetValue(j, path) != JSON_INVALID);
-}
-string get_msg_type(string msg) {
-    if (!json_has(msg, ["type"])) return "";
-    return llJsonGetValue(msg, ["type"]);
-}
-
-
-// MEMORY OPTIMIZATION: Compact field validation helper
-integer validate_required_fields(string json_str, list field_names, string function_name) {
-    integer i = 0;
-    integer len = llGetListLength(field_names);
-    while (i < len) {
-        string field = llList2String(field_names, i);
-        if (!json_has(json_str, [field])) {
-            return FALSE;
-        }
-        i += 1;
-    }
-    return TRUE;
-}
 
 string generate_session_id(key user) {
     return "ui_" + (string)user + "_" + (string)llGetUnixTime();
@@ -226,8 +202,8 @@ apply_plugin_list(string plugins_json) {
     while (i < count) {
         string plugin_obj = llList2String(plugins, i);
 
-        if (json_has(plugin_obj, ["context"]) &&
-            json_has(plugin_obj, ["label"])) {
+        if (llJsonGetValue(plugin_obj, ["context"]) != JSON_INVALID &&
+            llJsonGetValue(plugin_obj, ["label"]) != JSON_INVALID) {
 
             string context = llJsonGetValue(plugin_obj, ["context"]);
             string label = llJsonGetValue(plugin_obj, ["label"]);
@@ -262,7 +238,7 @@ apply_plugin_acl_list(string acl_json) {
     while (i < count) {
         string acl_obj = llList2String(acl_list, i);
 
-        if (json_has(acl_obj, ["context"]) && json_has(acl_obj, ["min_acl"])) {
+        if (llJsonGetValue(acl_obj, ["context"]) != JSON_INVALID && llJsonGetValue(acl_obj, ["min_acl"]) != JSON_INVALID) {
             string context = llJsonGetValue(acl_obj, ["context"]);
             integer min_acl = (integer)llJsonGetValue(acl_obj, ["min_acl"]);
 
@@ -516,7 +492,7 @@ update_plugin_label(string context, string new_label) {
 /* -------------------- MESSAGE HANDLERS -------------------- */
 
 handle_acl_update(string msg) {
-    if (!json_has(msg, ["scope"])) return;
+    if (llJsonGetValue(msg, ["scope"]) == JSON_INVALID) return;
     string scope = llJsonGetValue(msg, ["scope"]);
     
     if (scope == "global") {
@@ -527,7 +503,7 @@ handle_acl_update(string msg) {
         }
     }
     else if (scope == "avatar") {
-        if (!json_has(msg, ["avatar"])) return;
+        if (llJsonGetValue(msg, ["avatar"]) == JSON_INVALID) return;
         key avatar = (key)llJsonGetValue(msg, ["avatar"]);
         cleanup_session(avatar);
     }
@@ -535,7 +511,7 @@ handle_acl_update(string msg) {
 
 handle_plugin_list(string msg) {
 
-    if (!json_has(msg, ["plugins"])) {
+    if (llJsonGetValue(msg, ["plugins"]) == JSON_INVALID) {
         return;
     }
 
@@ -567,7 +543,9 @@ handle_plugin_list(string msg) {
 }
 
 handle_acl_result(string msg) {
-    if (!validate_required_fields(msg, ["avatar", "level", "is_blacklisted"], "handle_acl_result")) return;
+    if (llJsonGetValue(msg, ["avatar"]) == JSON_INVALID || 
+        llJsonGetValue(msg, ["level"]) == JSON_INVALID || 
+        llJsonGetValue(msg, ["is_blacklisted"]) == JSON_INVALID) return;
 
     key avatar = (key)llJsonGetValue(msg, ["avatar"]);
     integer level = (integer)llJsonGetValue(msg, ["level"]);
@@ -585,7 +563,7 @@ handle_acl_result(string msg) {
 }
 
 handle_start(string msg, key user_key) {
-    if (!json_has(msg, ["context"])) {
+    if (llJsonGetValue(msg, ["context"]) == JSON_INVALID) {
         start_root_session(user_key);
         return;
     }
@@ -632,7 +610,7 @@ start_sos_session(key user_key) {
 }
 
 handle_return(string msg) {
-    if (!json_has(msg, ["user"])) return;
+    if (llJsonGetValue(msg, ["user"]) == JSON_INVALID) return;
 
     key user_key = (key)llJsonGetValue(msg, ["user"]);
 
@@ -668,7 +646,7 @@ handle_return(string msg) {
 }
 
 handle_update_label(string msg) {
-    if (!validate_required_fields(msg, ["context", "label"], "handle_update_label")) return;
+    if (llJsonGetValue(msg, ["context"]) == JSON_INVALID || llJsonGetValue(msg, ["label"]) == JSON_INVALID) return;
 
     string context = llJsonGetValue(msg, ["context"]);
     string new_label = llJsonGetValue(msg, ["label"]);
@@ -677,7 +655,7 @@ handle_update_label(string msg) {
 }
 
 handle_plugin_acl_list(string msg) {
-    if (!json_has(msg, ["acl_data"])) return;
+    if (llJsonGetValue(msg, ["acl_data"]) == JSON_INVALID) return;
 
     string acl_json = llJsonGetValue(msg, ["acl_data"]);
     apply_plugin_acl_list(acl_json);
@@ -692,7 +670,9 @@ handle_plugin_acl_list(string msg) {
 }
 
 handle_dialog_response(string msg) {
-    if (!validate_required_fields(msg, ["session_id", "button", "user"], "handle_dialog_response")) return;
+    if (llJsonGetValue(msg, ["session_id"]) == JSON_INVALID || 
+        llJsonGetValue(msg, ["button"]) == JSON_INVALID || 
+        llJsonGetValue(msg, ["user"]) == JSON_INVALID) return;
 
     string session_id = llJsonGetValue(msg, ["session_id"]);
     string button = llJsonGetValue(msg, ["button"]);
@@ -700,7 +680,7 @@ handle_dialog_response(string msg) {
 
     // Extract context (may be empty string for navigation buttons)
     string context = "";
-    if (json_has(msg, ["context"])) {
+    if (llJsonGetValue(msg, ["context"]) != JSON_INVALID) {
         context = llJsonGetValue(msg, ["context"]);
     }
 
@@ -712,7 +692,7 @@ handle_dialog_response(string msg) {
 }
 
 handle_dialog_timeout(string msg) {
-    if (!validate_required_fields(msg, ["session_id", "user"], "handle_dialog_timeout")) return;
+    if (llJsonGetValue(msg, ["session_id"]) == JSON_INVALID || llJsonGetValue(msg, ["user"]) == JSON_INVALID) return;
 
     string session_id = llJsonGetValue(msg, ["session_id"]);
     key user = (key)llJsonGetValue(msg, ["user"]);
@@ -812,8 +792,8 @@ default
     }
 
     link_message(integer sender, integer num, string msg, key id) {
-        string msg_type = get_msg_type(msg);
-        if (msg_type == "") return;
+        if (llJsonGetValue(msg, ["type"]) == JSON_INVALID) return;
+        string msg_type = llJsonGetValue(msg, ["type"]);
 
         if (msg_type != "ping" && msg_type != "pong" && msg_type != "register" && msg_type != "register_now") {
         }

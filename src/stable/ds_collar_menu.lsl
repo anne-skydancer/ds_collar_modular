@@ -1,7 +1,7 @@
 /*--------------------
 MODULE: ds_collar_menu.lsl
 VERSION: 1.00
-REVISION: 11
+REVISION: 12
 PURPOSE: Menu rendering and visual presentation service
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
@@ -14,34 +14,6 @@ CHANGES:
 /* -------------------- CONSOLIDATED ABI -------------------- */
 integer UI_BUS = 900;
 integer DIALOG_BUS = 950;
-
-/* -------------------- HELPERS -------------------- */
-
-
-integer json_has(string j, list path) {
-    return (llJsonGetValue(j, path) != JSON_INVALID);
-}
-string get_msg_type(string msg) {
-    if (!json_has(msg, ["type"])) return "";
-    return llJsonGetValue(msg, ["type"]);
-}
-
-
-// MEMORY OPTIMIZATION: Compact field validation helper
-// Validates multiple required JSON fields and logs errors for missing ones
-// Returns TRUE if all fields present, FALSE if any missing
-integer validate_required_fields(string json_str, list field_names, string function_name) {
-    integer i = 0;
-    integer len = llGetListLength(field_names);
-    while (i < len) {
-        string field = llList2String(field_names, i);
-        if (!json_has(json_str, [field])) {
-            return FALSE;
-        }
-        i += 1;
-    }
-    return TRUE;
-}
 
 /* -------------------- BUTTON LAYOUT -------------------- */
 
@@ -87,7 +59,11 @@ list reorder_list_for_display(list items, string pad_char) {
 
 render_menu(string msg) {
     // Validate required fields
-    if (!validate_required_fields(msg, ["user", "session_id", "menu_type", "buttons", "contexts"], "render_menu")) {
+    if (llJsonGetValue(msg, ["user"]) == JSON_INVALID || 
+        llJsonGetValue(msg, ["session_id"]) == JSON_INVALID || 
+        llJsonGetValue(msg, ["menu_type"]) == JSON_INVALID || 
+        llJsonGetValue(msg, ["buttons"]) == JSON_INVALID || 
+        llJsonGetValue(msg, ["contexts"]) == JSON_INVALID) {
         return;
     }
 
@@ -167,7 +143,7 @@ render_menu(string msg) {
 }
 
 show_message(string msg) {
-    if (!validate_required_fields(msg, ["user", "message"], "show_message")) {
+    if (llJsonGetValue(msg, ["user"]) == JSON_INVALID || llJsonGetValue(msg, ["message"]) == JSON_INVALID) {
         return;
     }
 
@@ -185,8 +161,8 @@ default
     }
 
     link_message(integer sender_num, integer num, string msg, key id) {
-        string msg_type = get_msg_type(msg);
-        if (msg_type == "") return;
+        if (llJsonGetValue(msg, ["type"]) == JSON_INVALID) return;
+        string msg_type = llJsonGetValue(msg, ["type"]);
 
         if (num == UI_BUS) {
             if (msg_type == "render_menu") {

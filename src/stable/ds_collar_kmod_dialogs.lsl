@@ -1,7 +1,7 @@
 /*--------------------
 MODULE: ds_collar_kmod_dialogs.lsl
 VERSION: 1.00
-REVISION: 23
+REVISION: 24
 PURPOSE: Centralized dialog management for shared listener handling
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
@@ -35,30 +35,6 @@ integer NextChannelOffset = 1;
 
 /* -------------------- HELPERS -------------------- */
 
-
-integer json_has(string j, list path) {
-    return (llJsonGetValue(j, path) != JSON_INVALID);
-}
-string get_msg_type(string msg) {
-    if (!json_has(msg, ["type"])) return "";
-    return llJsonGetValue(msg, ["type"]);
-}
-
-
-// MEMORY OPTIMIZATION: Compact field validation helper
-integer validate_required_fields(string json_str, list field_names, string function_name) {
-    integer i = 0;
-    integer len = llGetListLength(field_names);
-    while (i < len) {
-        string field = llList2String(field_names, i);
-        if (!json_has(json_str, [field])) {
-            return FALSE;
-        }
-        i += 1;
-    }
-    return TRUE;
-}
-
 integer now() {
     return llGetUnixTime();
 }
@@ -66,13 +42,9 @@ integer now() {
 /* -------------------- SESSION MANAGEMENT -------------------- */
 
 integer find_session_idx(string session_id) {
-    integer i = 0;
-    integer len = llGetListLength(Sessions);
-    while (i < len) {
-        if (llList2String(Sessions, i + SESSION_ID) == session_id) {
-            return i;
-        }
-        i += SESSION_STRIDE;
+    integer idx = llListFindList(Sessions, [session_id]);
+    if (idx != -1 && (idx % SESSION_STRIDE) == SESSION_ID) {
+        return idx;
     }
     return -1;
 }
@@ -146,7 +118,7 @@ integer get_next_channel() {
 /* -------------------- DIALOG DISPLAY -------------------- */
 
 handle_dialog_open(string msg) {
-    if (!validate_required_fields(msg, ["session_id", "user"], "handle_dialog_open")) {
+    if (llJsonGetValue(msg, ["session_id"]) == JSON_INVALID || llJsonGetValue(msg, ["user"]) == JSON_INVALID) {
         return;
     }
 
@@ -154,7 +126,7 @@ handle_dialog_open(string msg) {
     key user = (key)llJsonGetValue(msg, ["user"]);
 
     // Check for numbered list type
-    if (json_has(msg, ["dialog_type"]) && llJsonGetValue(msg, ["dialog_type"]) == "numbered_list") {
+    if (llJsonGetValue(msg, ["dialog_type"]) == "numbered_list") {
         handle_numbered_list_dialog(msg, session_id, user);
         return;
     }
@@ -164,13 +136,13 @@ handle_dialog_open(string msg) {
     string buttons_json = "[]";
     string contexts_json = "[]";
 
-    if (json_has(msg, ["buttons"]) && json_has(msg, ["contexts"])) {
+    if (llJsonGetValue(msg, ["buttons"]) != JSON_INVALID && llJsonGetValue(msg, ["contexts"]) != JSON_INVALID) {
         // New optimized format: pre-split arrays
         buttons_json = llJsonGetValue(msg, ["buttons"]);
         contexts_json = llJsonGetValue(msg, ["contexts"]);
         buttons = llJson2List(buttons_json);
     }
-    else if (json_has(msg, ["button_data"])) {
+    else if (llJsonGetValue(msg, ["button_data"]) != JSON_INVALID) {
         // Legacy format support (fallback)
         string button_data_json = llJsonGetValue(msg, ["button_data"]);
         list button_data_list = llJson2List(button_data_json);
@@ -182,7 +154,7 @@ handle_dialog_open(string msg) {
             string item = llList2String(button_data_list, i);
             if (llGetSubString(item, 0, 0) == "{" && 
                 llJsonValueType(item, []) == JSON_OBJECT &&
-                json_has(item, ["context"]) && json_has(item, ["label"])) {
+                llJsonGetValue(item, ["context"]) != JSON_INVALID && llJsonGetValue(item, ["label"]) != JSON_INVALID) {
                 
                 buttons += [llJsonGetValue(item, ["label"])];
                 contexts += [llJsonGetValue(item, ["context"])];
@@ -204,16 +176,16 @@ handle_dialog_open(string msg) {
     string message = "Select an option:";
     integer timeout = 60;
 
-    if (json_has(msg, ["title"])) {
+    if (llJsonGetValue(msg, ["title"]) != JSON_INVALID) {
         title = llJsonGetValue(msg, ["title"]);
     }
-    if (json_has(msg, ["body"])) {
+    if (llJsonGetValue(msg, ["body"]) != JSON_INVALID) {
         message = llJsonGetValue(msg, ["body"]);
     }
-    else if (json_has(msg, ["message"])) {
+    else if (llJsonGetValue(msg, ["message"]) != JSON_INVALID) {
         message = llJsonGetValue(msg, ["message"]);
     }
-    if (json_has(msg, ["timeout"])) {
+    if (llJsonGetValue(msg, ["timeout"]) != JSON_INVALID) {
         timeout = (integer)llJsonGetValue(msg, ["timeout"]);
     }
 
@@ -248,7 +220,7 @@ handle_dialog_open(string msg) {
 }
 
 handle_numbered_list_dialog(string msg, string session_id, key user) {
-    if (!validate_required_fields(msg, ["items"], "handle_numbered_list_dialog")) {
+    if (llJsonGetValue(msg, ["items"]) == JSON_INVALID) {
         return;
     }
     
@@ -256,13 +228,13 @@ handle_numbered_list_dialog(string msg, string session_id, key user) {
     string prompt = "Choose:";
     integer timeout = 60;
     
-    if (json_has(msg, ["title"])) {
+    if (llJsonGetValue(msg, ["title"]) != JSON_INVALID) {
         title = llJsonGetValue(msg, ["title"]);
     }
-    if (json_has(msg, ["prompt"])) {
+    if (llJsonGetValue(msg, ["prompt"]) != JSON_INVALID) {
         prompt = llJsonGetValue(msg, ["prompt"]);
     }
-    if (json_has(msg, ["timeout"])) {
+    if (llJsonGetValue(msg, ["timeout"]) != JSON_INVALID) {
         timeout = (integer)llJsonGetValue(msg, ["timeout"]);
     }
     
@@ -338,7 +310,7 @@ handle_numbered_list_dialog(string msg, string session_id, key user) {
 }
 
 handle_dialog_close(string msg) {
-    if (!json_has(msg, ["session_id"])) return;
+    if (llJsonGetValue(msg, ["session_id"]) == JSON_INVALID) return;
     
     string session_id = llJsonGetValue(msg, ["session_id"]);
     close_session(session_id);
@@ -411,8 +383,8 @@ default
     }
     
     link_message(integer sender, integer num, string msg, key id) {
-        string msg_type = get_msg_type(msg);
-        if (msg_type == "") return;
+        if (llJsonGetValue(msg, ["type"]) == JSON_INVALID) return;
+        string msg_type = llJsonGetValue(msg, ["type"]);
 
         /* -------------------- KERNEL LIFECYCLE -------------------- */
         if (num == KERNEL_LIFECYCLE) {
