@@ -1,0 +1,751 @@
+/*--------------------
+MODULE: ds_collar_kernel.lsl
+VERSION: 1.00
+REVISION: 34
+PURPOSE: Plugin registry, lifecycle management, heartbeat monitoring
+ARCHITECTURE: Consolidated message bus lanes
+CHANGES:
+- Event-driven plugin registration queue replaces broadcast storms
+- Adaptive timer shifts between batch processing and heartbeat modes
+- Inventory discovery detects new or updated plugin scripts automatically
+- Authorized reset handling protects against unauthorized soft resets
+- Deferred plugin list responses avoid race conditions during registration
+--------------------*/
+
+
+/* -------------------- CONSOLIDATED ABI -------------------- */
+integer KERNEL_LIFECYCLE = 500;
+integer AUTH_BUS = 700;
+integer UI_BUS = 900;
+
+/* -------------------- CONSTANTS -------------------- */
+float   PING_INTERVAL_SEC     = 5.0;
+integer PING_TIMEOUT_SEC      = 15;
+float   INV_SWEEP_INTERVAL    = 3.0;
+float   BATCH_WINDOW_SEC      = 0.1;  // Small batch window during startup burst
+float   DISCOVERY_INTERVAL_SEC = 5.0;  // Active plugin discovery interval
+
+/* Registry stride: [context, label, script, script_uuid, last_seen_unix, min_acl] */
+integer REG_STRIDE = 6;
+integer REG_CONTEXT = 0;
+integer REG_LABEL = 1;
+integer REG_SCRIPT = 2;
+integer REG_SCRIPT_UUID = 3;
+integer REG_LAST_SEEN = 4;
+integer REG_MIN_ACL = 5;    // Stored for auth module recovery (not used for decisions)
+
+/* Plugin operation queue stride: [op_type, context, label, script, min_acl, timestamp] */
+integer QUEUE_STRIDE = 6;
+integer QUEUE_OP_TYPE = 0;    // "REG" or "UNREG"
+integer QUEUE_CONTEXT = 1;
+integer QUEUE_LABEL = 2;
+integer QUEUE_SCRIPT = 3;
+integer QUEUE_MIN_ACL = 4;    // Stored for auth module recovery (not used for decisions)
+integer QUEUE_TIMESTAMP = 5;  // Registration timestamp
+
+/* Authorized senders for privileged operations */
+list AUTHORIZED_RESET_SENDERS = ["bootstrap", "maintenance"];
+
+/* -------------------- STATE -------------------- */
+list PluginRegistry = [];           // Active plugin registry
+list RegistrationQueue = [];        // Pending operations queue (Unix modprobe style)
+integer PendingBatchTimer = FALSE;  // TRUE if batch timer is active
+integer PendingPluginListRequest = FALSE;  // TRUE if plugin_list_request received during batch
+integer LastPingUnix = 0;
+integer LastInvSweepUnix = 0;
+integer LastDiscoveryUnix = 0;      // Track last active plugin discovery
+key LastOwner = NULL_KEY;
+integer LastScriptCount = 0;        // Track script count to detect add/remove
+
+/* -------------------- HELPERS -------------------- */
+
+
+integer json_has(string j, list path) {
+    return (llJsonGetValue(j, path) != JSON_INVALID);
+}
+string get_msg_type(string msg) {
+    if (!json_has(msg, ["type"])) return "";
+    return llJsonGetValue(msg, ["type"]);
+}
+
+
+// MEMORY OPTIMIZATION: Compact field validation helper
+integer validate_required_fields(string json_str, list field_names, string function_name) {
+    integer i = 0;
+    integer len = llGetListLength(field_names);
+    while (i < len) {
+        string field = llList2String(field_names, i);
+        if (!json_has(json_str, [field])) {
+            return FALSE;
+        }
+        i += 1;
+    }
+    return TRUE;
+}
+
+integer now() {
+    integer unix_time = llGetUnixTime();
+    // INTEGER OVERFLOW PROTECTION: Handle year 2038 problem
+    if (unix_time < 0) {
+        llOwnerSay("[KERNEL] ERROR: Unix timestamp overflow detected!");
+        return 0;
+    }
+    return unix_time;
+}
+
+integer count_scripts() {
+    return llGetInventoryNumber(INVENTORY_SCRIPT);
+}
+
+integer is_authorized_sender(string sender_name) {
+    return (llListFindList(AUTHORIZED_RESET_SENDERS, [sender_name]) != -1);
+}
+
+integer is_plugin_script(string script_name) {
+    // Plugins all start with ds_collar_plugin_
+    return (llSubStringIndex(script_name, "ds_collar_plugin_") == 0);
+}
+
+/* -------------------- QUEUE MANAGEMENT (Unix modprobe-style) -------------------- */
+
+// Add operation to queue (deduplicates by context)
+// Schedules batch processing if not already scheduled
+// Returns: 1 (void function)
+//
+// PERFORMANCE NOTE: Deduplication is O(n) but intentional:
+// - Typical startup has ~15 plugins (n is small)
+// - Deduplicating at insertion prevents duplicate operations in batch
+// - Guarantees queue contains at most one operation per context
+// - Alternative (defer to batch) would process duplicates and cause multiple broadcasts
+integer queue_add(string op_type, string context, string label, string script, integer min_acl) {
+    // Remove any existing queue entry for this context (newest operation wins)
+    list new_queue = [];
+    integer i = 0;
+    integer len = llGetListLength(RegistrationQueue);
+    while (i < len) {
+        string queued_context = llList2String(RegistrationQueue, i + QUEUE_CONTEXT);
+        if (queued_context != context) {
+            new_queue += llList2List(RegistrationQueue, i, i + QUEUE_STRIDE - 1);
+        }
+        i += QUEUE_STRIDE;
+    }
+
+    // Add new operation to queue
+    integer timestamp = now();
+    new_queue += [op_type, context, label, script, min_acl, timestamp];
+    RegistrationQueue = new_queue;
+
+
+    // Schedule batch processing if not already scheduled
+    // This creates a small batching window for startup bursts
+    if (!PendingBatchTimer) {
+        PendingBatchTimer = TRUE;
+        llSetTimerEvent(BATCH_WINDOW_SEC);
+    }
+
+    return 1;
+}
+
+// Process all pending queue operations (atomic batch)
+// Returns TRUE if any changes were made to registry
+// Resets timer to heartbeat interval after processing
+integer process_queue() {
+    if (llGetListLength(RegistrationQueue) == 0) {
+        // No operations in queue - switch to heartbeat mode
+        if (PendingBatchTimer) {
+            PendingBatchTimer = FALSE;
+            llSetTimerEvent(PING_INTERVAL_SEC);
+        }
+        return FALSE;
+    }
+
+    integer changes_made = FALSE;
+    integer i = 0;
+    integer len = llGetListLength(RegistrationQueue);
+
+
+    while (i < len) {
+        string op_type = llList2String(RegistrationQueue, i + QUEUE_OP_TYPE);
+        string context = llList2String(RegistrationQueue, i + QUEUE_CONTEXT);
+        string label = llList2String(RegistrationQueue, i + QUEUE_LABEL);
+        string script = llList2String(RegistrationQueue, i + QUEUE_SCRIPT);
+        integer min_acl = llList2Integer(RegistrationQueue, i + QUEUE_MIN_ACL);
+
+        if (op_type == "REG") {
+            // Returns TRUE if new plugin OR if existing plugin data changed
+            integer reg_delta = registry_upsert(context, label, script, min_acl);
+            if (reg_delta) changes_made = TRUE;
+        }
+        else if (op_type == "UNREG") {
+            integer was_removed = registry_remove(context);
+            if (was_removed) changes_made = TRUE;
+        }
+
+        i += QUEUE_STRIDE;
+    }
+
+    // Clear queue
+    RegistrationQueue = [];
+
+    // Reset to heartbeat mode
+    PendingBatchTimer = FALSE;
+    llSetTimerEvent(PING_INTERVAL_SEC);
+
+    return changes_made;
+}
+
+/* -------------------- REGISTRY MANAGEMENT -------------------- */
+
+// Find plugin index in registry by context
+integer registry_find(string context) {
+    integer i = 0;
+    integer len = llGetListLength(PluginRegistry);
+    while (i < len) {
+        if (llList2String(PluginRegistry, i + REG_CONTEXT) == context) {
+            return i;
+        }
+        i += REG_STRIDE;
+    }
+    return -1;
+}
+
+integer registry_find_by_script(string script_name) {
+    integer i = 0;
+    integer len = llGetListLength(PluginRegistry);
+    while (i < len) {
+        if (llList2String(PluginRegistry, i + REG_SCRIPT) == script_name) {
+            return i;
+        }
+        i += REG_STRIDE;
+    }
+    return -1;
+}
+
+// Add or update plugin in registry
+// Returns TRUE if new plugin added OR script UUID changed (recompiled/updated)
+// Returns FALSE only if re-registering with identical UUID
+integer registry_upsert(string context, string label, string script, integer min_acl) {
+    integer idx = registry_find(context);
+    integer now_unix = now();
+
+    // Get script UUID - changes when script is recompiled/replaced
+    // PERFORMANCE NOTE: llGetInventoryKey() is called on every upsert (intentional):
+    // - This is the ONLY way to detect script recompilation
+    // - Caching would defeat the purpose (we need to detect UUID changes)
+    // - Inventory lookup is O(1) by name, not expensive for single-prim design
+    // - Only called during registration bursts, not in steady state
+    key script_uuid = llGetInventoryKey(script);
+
+    if (idx == -1) {
+        // New plugin - add to registry
+        PluginRegistry += [context, label, script, script_uuid, now_unix, min_acl];
+        return TRUE;
+    }
+    else {
+        // Existing plugin - check if script UUID changed
+        key old_uuid = llList2Key(PluginRegistry, idx + REG_SCRIPT_UUID);
+
+        integer uuid_changed = (old_uuid != script_uuid);
+
+        // Update registry (timestamp and min_acl always update) - batched for performance
+        PluginRegistry = llListReplaceList(PluginRegistry,
+            [label, script, script_uuid, now_unix, min_acl],
+            idx + REG_LABEL,
+            idx + REG_MIN_ACL);
+
+        // Note: uuid_changed tracked but not logged to reduce spam
+
+        return uuid_changed;
+    }
+}
+
+// Remove plugin from registry
+// Returns TRUE if plugin was removed, FALSE if not found
+integer registry_remove(string context) {
+    integer idx = registry_find(context);
+    if (idx == -1) return FALSE;
+
+    PluginRegistry = llDeleteSubList(PluginRegistry, idx, idx + REG_STRIDE - 1);
+    return TRUE;
+}
+
+// Update last_seen timestamp for plugin
+// Returns: 1 (void function)
+integer update_last_seen(string context) {
+    integer idx = registry_find(context);
+    if (idx != -1) {
+        integer now_unix = now();
+        PluginRegistry = llListReplaceList(PluginRegistry, [now_unix], idx + REG_LAST_SEEN, idx + REG_LAST_SEEN);
+    }
+
+    return 1;
+}
+
+// Remove dead plugins (haven't responded to ping in PING_TIMEOUT_SEC)
+integer prune_dead_plugins() {
+    integer now_unix = now();
+    if (now_unix == 0) return 0; // Overflow protection
+    
+    integer cutoff = now_unix - PING_TIMEOUT_SEC;
+    if (cutoff < 0) cutoff = 0; // Additional overflow protection
+    
+    integer pruned = 0;
+    
+    list new_registry = [];
+    integer i = 0;
+    integer len = llGetListLength(PluginRegistry);
+    
+    while (i < len) {
+        string context = llList2String(PluginRegistry, i + REG_CONTEXT);
+        integer last_seen = llList2Integer(PluginRegistry, i + REG_LAST_SEEN);
+        
+        if (last_seen >= cutoff) {
+            // Keep this plugin
+            new_registry += llList2List(PluginRegistry, i, i + REG_STRIDE - 1);
+        }
+        else {
+            // Prune dead plugin
+            pruned += 1;
+        }
+        
+        i += REG_STRIDE;
+    }
+    
+    PluginRegistry = new_registry;
+    return pruned;
+}
+
+// Remove plugins whose scripts no longer exist in inventory
+integer prune_missing_scripts() {
+    list new_registry = [];
+    integer pruned = 0;
+    integer i = 0;
+    integer len = llGetListLength(PluginRegistry);
+    
+    while (i < len) {
+        string script = llList2String(PluginRegistry, i + REG_SCRIPT);
+        string context = llList2String(PluginRegistry, i + REG_CONTEXT);
+        
+        if (llGetInventoryType(script) == INVENTORY_SCRIPT) {
+            // Script still exists, keep plugin
+            new_registry += llList2List(PluginRegistry, i, i + REG_STRIDE - 1);
+        }
+        else {
+            // Script missing, prune plugin
+            pruned += 1;
+        }
+        
+        i += REG_STRIDE;
+    }
+    
+    PluginRegistry = new_registry;
+    return pruned;
+}
+
+/* -------------------- PLUGIN DISCOVERY (Active pull-based detection) -------------------- */
+
+// Actively discover new or changed plugin scripts
+// Enumerates inventory, detects new/recompiled plugins, triggers registration
+integer discover_plugins() {
+    integer inv_count = llGetInventoryNumber(INVENTORY_SCRIPT);
+    integer i;
+    integer discoveries = 0;
+
+    for (i = 0; i < inv_count; i = i + 1) {
+        string script_name = llGetInventoryName(INVENTORY_SCRIPT, i);
+
+        // Only check plugin scripts (not kernel modules)
+        if (is_plugin_script(script_name)) {
+            key script_uuid = llGetInventoryKey(script_name);
+            integer idx = registry_find_by_script(script_name);
+
+            // New script - not in registry
+            if (idx == -1) {
+                discoveries = discoveries + 1;
+            }
+            else {
+                // Check if UUID changed (recompiled/replaced)
+                key registered_uuid = llList2Key(PluginRegistry, idx + REG_SCRIPT_UUID);
+                if (registered_uuid != script_uuid) {
+                    discoveries = discoveries + 1;
+                }
+            }
+        }
+    }
+
+    // If we found new/changed scripts, broadcast register_now
+    if (discoveries > 0) {
+        broadcast_register_now();
+    }
+
+    return discoveries;
+}
+
+/* -------------------- BROADCASTING -------------------- */
+
+// Request all plugins to register (no time window - event-driven)
+broadcast_register_now() {
+    string msg = llList2Json(JSON_OBJECT, [
+        "type", "register_now"
+    ]);
+    llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, msg, NULL_KEY);
+
+}
+
+// Heartbeat ping to all plugins
+broadcast_ping() {
+    string msg = llList2Json(JSON_OBJECT, [
+        "type", "ping"
+    ]);
+    llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, msg, NULL_KEY);
+    // Ping logging disabled - too noisy
+}
+
+// Send current plugin list (only when registry changes)
+// SECURITY FIX: Use proper JSON encoding to prevent string injection
+broadcast_plugin_list() {
+    list plugins = [];
+    integer i = 0;
+    integer len = llGetListLength(PluginRegistry);
+
+    while (i < len) {
+        string context = llList2String(PluginRegistry, i + REG_CONTEXT);
+        string label = llList2String(PluginRegistry, i + REG_LABEL);
+
+        // Build individual plugin object with proper JSON encoding
+        string plugin_obj = llList2Json(JSON_OBJECT, [
+            "context", context,
+            "label", label
+        ]);
+
+        plugins += [plugin_obj];
+        i += REG_STRIDE;
+    }
+
+    // Convert list of JSON objects into JSON array string
+    string plugins_array = "[";
+    integer j;
+    for (j = 0; j < llGetListLength(plugins); j = j + 1) {
+        if (j > 0) plugins_array += ",";
+        plugins_array += llList2String(plugins, j);
+    }
+    plugins_array += "]";
+
+    // Build final message (no version - UUID tracking handles change detection)
+    string msg = "{\"type\":\"plugin_list\",\"plugins\":" + plugins_array + "}";
+
+    llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, msg, NULL_KEY);
+}
+
+/* -------------------- OWNER CHANGE DETECTION -------------------- */
+
+integer check_owner_changed() {
+    key current_owner = llGetOwner();
+    if (current_owner == NULL_KEY) return FALSE;
+    
+    if (LastOwner != NULL_KEY && current_owner != LastOwner) {
+        LastOwner = current_owner;
+        llResetScript();
+        return TRUE;
+    }
+    
+    LastOwner = current_owner;
+    return FALSE;
+}
+
+/* -------------------- ROUTING HELPERS -------------------- */
+
+// Validates that field_name contains only safe characters for JSON field names
+// Returns TRUE if safe (alphanumeric + underscore only), FALSE otherwise
+// SECURITY: Prevents JSON injection when building field names manually
+integer is_safe_field_name(string field_name) {
+    integer len = llStringLength(field_name);
+    if (len == 0 || len > 64) return FALSE;  // Reasonable length bounds
+
+    integer i = 0;
+    while (i < len) {
+        string c = llGetSubString(field_name, i, i);
+
+        // Allow: a-z, A-Z, 0-9, underscore
+        // Use ASCII comparisons via llOrd() for efficiency
+        integer ascii = llOrd(c, 0);
+        integer is_alpha = ((ascii >= 97 && ascii <= 122) || (ascii >= 65 && ascii <= 90));
+        integer is_digit = (ascii >= 48 && ascii <= 57);
+        integer is_underscore = (ascii == 95);
+
+        if (!is_alpha && !is_digit && !is_underscore) {
+            return FALSE;  // Unsafe character found
+        }
+
+        i = i + 1;
+    }
+
+    return TRUE;
+}
+
+// Generic helper to route registration fields to modules
+// Extracts field from registration message and forwards to target module
+// CRITICAL: Preserves JSON structure (arrays/objects) without double-encoding
+// SECURITY: Validates field_name to prevent JSON injection
+// PRECONDITION: field_name must contain only alphanumeric characters and underscores
+route_field(string msg, string context, string field_name, string route_type, integer channel) {
+    if (!json_has(msg, [field_name])) return;
+
+    // SECURITY: Validate field_name before manual JSON construction
+    if (!is_safe_field_name(field_name)) {
+        llOwnerSay("[KERNEL] ERROR: Unsafe field name rejected: " + field_name);
+        return;
+    }
+
+    string field_value = llJsonGetValue(msg, [field_name]);
+
+    // Build base message with proper encoding for type and context
+    string routed_msg = llList2Json(JSON_OBJECT, [
+        "type", route_type,
+        "context", context
+    ]);
+
+    // Manually splice in field value to preserve JSON structure (arrays/objects)
+    // llList2Json would double-encode the field_value, breaking nested JSON
+    // SAFETY: field_name validated above to contain only safe characters
+    // Remove closing brace, add field, then close
+    routed_msg = llGetSubString(routed_msg, 0, -2) + ",\"" + field_name + "\":" + field_value + "}";
+
+    llMessageLinked(LINK_SET, channel, routed_msg, NULL_KEY);
+}
+
+/* -------------------- MESSAGE HANDLERS -------------------- */
+
+handle_register(string msg) {
+    if (!json_has(msg, ["context"])) return;
+    if (!json_has(msg, ["label"])) return;
+    if (!json_has(msg, ["min_acl"])) return;
+    if (!json_has(msg, ["script"])) return;
+
+    string context = llJsonGetValue(msg, ["context"]);
+    string label = llJsonGetValue(msg, ["label"]);
+    integer min_acl = (integer)llJsonGetValue(msg, ["min_acl"]);
+    string script = llJsonGetValue(msg, ["script"]);
+
+    // Add to lifecycle queue (kernel stores min_acl for auth recovery, not enforcement)
+    queue_add("REG", context, label, script, min_acl);
+
+    // Route fields to interested modules
+    route_field(msg, context, "min_acl", "register_acl", AUTH_BUS);
+    // Chat command registration deprecated/removed
+}
+
+handle_pong(string msg) {
+    if (!json_has(msg, ["context"])) return;
+    
+    string context = llJsonGetValue(msg, ["context"]);
+    update_last_seen(context);
+    // Pong logging disabled - too noisy
+}
+
+handle_plugin_list_request() {
+    // RACE CONDITION FIX: If batch timer is active, defer broadcast
+    // until registration window completes
+    if (PendingBatchTimer) {
+        PendingPluginListRequest = TRUE;
+        return;
+    }
+
+    // Process any pending queue operations first
+    process_queue();
+
+    // Broadcast current list
+    broadcast_plugin_list();
+}
+
+handle_soft_reset(string msg) {
+    // SECURITY FIX: Verify sender is authorized to request reset
+    string from = llJsonGetValue(msg, ["from"]);
+
+    if (from == JSON_INVALID || from == "") {
+        llOwnerSay("[KERNEL] ERROR: Soft reset rejected - sender not identified");
+        return;
+    }
+
+    if (!is_authorized_sender(from)) {
+        llOwnerSay("[KERNEL] ERROR: Soft reset rejected - unauthorized sender: " + from);
+        return;
+    }
+
+    // Authorized - proceed with reset
+    PluginRegistry = [];
+    RegistrationQueue = [];
+    PendingBatchTimer = FALSE;
+    PendingPluginListRequest = FALSE;
+    LastPingUnix = now();
+    LastInvSweepUnix = now();
+    LastDiscoveryUnix = now();
+    llSetTimerEvent(PING_INTERVAL_SEC);
+    broadcast_register_now();
+}
+
+handle_acl_registry_request() {
+    // Auth module requesting ACL repopulation (recovery from reset)
+    // Send all ACL data from kernel's registry
+
+    integer i = 0;
+    integer len = llGetListLength(PluginRegistry);
+
+    while (i < len) {
+        string context = llList2String(PluginRegistry, i + REG_CONTEXT);
+        integer min_acl = llList2Integer(PluginRegistry, i + REG_MIN_ACL);
+
+        // Send register_acl message for each plugin
+        string auth_msg = llList2Json(JSON_OBJECT, [
+            "type", "register_acl",
+            "context", context,
+            "min_acl", min_acl
+        ]);
+        llMessageLinked(LINK_SET, AUTH_BUS, auth_msg, NULL_KEY);
+
+        i += REG_STRIDE;
+    }
+
+}
+
+/* -------------------- EVENTS -------------------- */
+
+default
+{
+    state_entry() {
+        LastOwner = llGetOwner();
+        PluginRegistry = [];
+        RegistrationQueue = [];
+        PendingBatchTimer = FALSE;
+        PendingPluginListRequest = FALSE;
+        LastPingUnix = now();
+        LastInvSweepUnix = now();
+        LastDiscoveryUnix = now();
+        LastScriptCount = count_scripts();
+
+
+        // Immediately broadcast register_now (plugins add to queue)
+        broadcast_register_now();
+
+        // Start timer in heartbeat mode (batch timer will override when needed)
+        llSetTimerEvent(PING_INTERVAL_SEC);
+    }
+    
+    on_rez(integer start_param) {
+        check_owner_changed();
+    }
+    
+    attach(key id) {
+        if (id == NULL_KEY) return;
+        check_owner_changed();
+    }
+    
+    timer() {
+        integer now_unix = now();
+        if (now_unix == 0) return; // Overflow protection
+
+        // DUAL-MODE TIMER: Batch mode (0.1s) or Heartbeat mode (5s)
+        if (PendingBatchTimer) {
+            // Batch mode: Process queue and broadcast
+            integer changes = process_queue();
+
+            // RACE CONDITION FIX: Broadcast if changes OR if plugin_list_request pending
+            if (changes || PendingPluginListRequest) {
+                broadcast_plugin_list();
+                if (PendingPluginListRequest) {
+                }
+                PendingPluginListRequest = FALSE;
+            }
+            // process_queue() automatically switches back to heartbeat mode
+        }
+        else {
+            // Heartbeat mode: Periodic maintenance only
+            integer ping_elapsed = now_unix - LastPingUnix;
+            if (ping_elapsed < 0) ping_elapsed = 0; // Overflow protection
+
+            if (ping_elapsed >= PING_INTERVAL_SEC) {
+                broadcast_ping();
+
+                // Prune dead plugins and broadcast if any removed
+                integer pruned = prune_dead_plugins();
+                if (pruned > 0) {
+                    broadcast_plugin_list();
+                }
+
+                LastPingUnix = now_unix;
+            }
+
+            // Periodic inventory sweep
+            integer inv_elapsed = now_unix - LastInvSweepUnix;
+            if (inv_elapsed < 0) inv_elapsed = 0; // Overflow protection
+
+            if (inv_elapsed >= INV_SWEEP_INTERVAL) {
+                // Prune missing scripts and broadcast if any removed
+                integer pruned = prune_missing_scripts();
+                if (pruned > 0) {
+                    broadcast_plugin_list();
+                }
+
+                LastInvSweepUnix = now_unix;
+            }
+
+            // Periodic active plugin discovery
+            integer discovery_elapsed = now_unix - LastDiscoveryUnix;
+            if (discovery_elapsed < 0) discovery_elapsed = 0; // Overflow protection
+
+            if (discovery_elapsed >= DISCOVERY_INTERVAL_SEC) {
+                // Discover new/changed plugins (triggers register_now if found)
+                discover_plugins();
+                LastDiscoveryUnix = now_unix;
+            }
+        }
+    }
+    
+    link_message(integer sender, integer num, string msg, key id) {
+        string msg_type = get_msg_type(msg);
+        if (msg_type == "") return;
+
+        if (num == KERNEL_LIFECYCLE) {
+            if (msg_type == "register") {
+                handle_register(msg);
+            }
+            else if (msg_type == "pong") {
+                handle_pong(msg);
+            }
+            else if (msg_type == "plugin_list_request") {
+                handle_plugin_list_request();
+            }
+            else if (msg_type == "soft_reset" || msg_type == "soft_reset_all") {
+                handle_soft_reset(msg);
+            }
+        }
+        else if (num == AUTH_BUS) {
+            if (msg_type == "acl_registry_request") {
+                handle_acl_registry_request();
+            }
+        }
+    }
+    
+    changed(integer change) {
+        if (change & CHANGED_OWNER) {
+            check_owner_changed();
+        }
+
+        if (change & CHANGED_INVENTORY) {
+            // Check if SCRIPTS were added/removed (not notecards)
+            integer current_script_count = count_scripts();
+
+            if (current_script_count != LastScriptCount) {
+                LastScriptCount = current_script_count;
+
+                // Clear registry and queue, trigger re-registration
+                PluginRegistry = [];
+                RegistrationQueue = [];
+                PendingBatchTimer = FALSE;
+                PendingPluginListRequest = FALSE;
+                llSetTimerEvent(PING_INTERVAL_SEC);
+                broadcast_register_now();
+            }
+        }
+    }
+}

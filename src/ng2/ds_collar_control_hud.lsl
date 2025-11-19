@@ -1,0 +1,466 @@
+/*--------------------
+SCRIPT: ds_collar_control_hud.lsl
+VERSION: 1.00
+REVISION: 5
+PURPOSE: Auto-detect nearby collars and connect automatically
+ARCHITECTURE: RLV relay-style broadcast and listen workflow
+CHANGES:
+- Auto-scan on attach with timeout
+- Auto-connect to single collar or show selection dialog
+- ACL level verification before menu display
+- RLV relay-style broadcast discovery protocol
+- Multi-collar selection with avatar name display
+KNOWN ISSUES: None known
+TODO: None pending
+--------------------*/
+
+
+/* -------------------- EXTERNAL PROTOCOL CHANNELS -------------------- */
+integer COLLAR_ACL_QUERY_CHAN = -8675309;
+integer COLLAR_ACL_REPLY_CHAN = -8675310;
+integer COLLAR_MENU_CHAN      = -8675311;
+
+/* -------------------- ACL CONSTANTS -------------------- */
+integer ACL_BLACKLIST     = -1;
+integer ACL_NOACCESS      = 0;
+integer ACL_PUBLIC        = 1;
+integer ACL_OWNED         = 2;
+integer ACL_TRUSTEE       = 3;
+integer ACL_UNOWNED       = 4;
+integer ACL_PRIMARY_OWNER = 5;
+
+/* -------------------- DIALOG SETTINGS -------------------- */
+float QUERY_TIMEOUT_SEC = 3.0;
+float COLLAR_SCAN_TIME = 2.0;
+integer DIALOG_CHANNEL = -98765;
+float LONG_TOUCH_THRESHOLD = 1.5;
+
+/* -------------------- CONSTANTS -------------------- */
+string ROOT_CONTEXT = "core_root";
+string SOS_CONTEXT = "sos_root";
+
+/* -------------------- STATE -------------------- */
+key HudWearer = NULL_KEY;
+integer CollarListenHandle = 0;
+integer DialogListenHandle = 0;
+
+integer ScanningForCollars = FALSE;
+integer AclPending = FALSE;
+integer DisplayNamePending = FALSE;
+integer AclLevel = ACL_NOACCESS;
+
+key TargetCollarKey = NULL_KEY;
+key TargetAvatarKey = NULL_KEY;
+string TargetAvatarName = "";
+
+/* Detected collars: [avatar_key, collar_key, avatar_name, ...] */
+list DetectedCollars = [];
+integer COLLAR_STRIDE = 3;
+
+/* Touch tracking */
+float TouchStartTime = 0.0;
+string RequestedContext = "";
+
+/* Display name lookup */
+key DisplayNameQueryId = NULL_KEY;
+
+/* -------------------- HELPERS -------------------- */
+
+
+integer json_has(string json_str, list path) {
+    return (llJsonGetValue(json_str, path) != JSON_INVALID);
+}
+
+/* -------------------- SESSION MANAGEMENT -------------------- */
+
+cleanup_session() {
+    if (CollarListenHandle != 0) {
+        llListenRemove(CollarListenHandle);
+        CollarListenHandle = 0;
+    }
+    if (DialogListenHandle != 0) {
+        llListenRemove(DialogListenHandle);
+        DialogListenHandle = 0;
+    }
+
+    ScanningForCollars = FALSE;
+    AclPending = FALSE;
+    DisplayNamePending = FALSE;
+    AclLevel = ACL_NOACCESS;
+    TargetCollarKey = NULL_KEY;
+    TargetAvatarKey = NULL_KEY;
+    TargetAvatarName = "";
+    DetectedCollars = [];
+    TouchStartTime = 0.0;
+    RequestedContext = "";
+    DisplayNameQueryId = NULL_KEY;
+    llSetTimerEvent(0.0);
+}
+
+/* -------------------- COLLAR DETECTION -------------------- */
+
+add_detected_collar(key avatar_key, key collar_key, string avatar_name) {
+    // Check if already detected using native search (faster than loop)
+    if (llListFindList(DetectedCollars, [avatar_key]) != -1) {
+        return;
+    }
+    
+    DetectedCollars += [avatar_key, collar_key, avatar_name];
+}
+
+broadcast_collar_scan(string context) {
+    // Store the requested context for later use
+    RequestedContext = context;
+
+    // Broadcast to find all nearby collars
+    string json_msg = llList2Json(JSON_OBJECT, [
+        "type", "collar_scan",
+        "hud_wearer", (string)HudWearer
+    ]);
+
+    // Listen for collar responses
+    if (CollarListenHandle != 0) {
+        llListenRemove(CollarListenHandle);
+    }
+    CollarListenHandle = llListen(COLLAR_ACL_REPLY_CHAN, "", NULL_KEY, "");
+
+    // Broadcast scan
+    llRegionSay(COLLAR_ACL_QUERY_CHAN, json_msg);
+
+    ScanningForCollars = TRUE;
+    DetectedCollars = [];
+    llSetTimerEvent(COLLAR_SCAN_TIME);
+    llOwnerSay("Scanning for nearby collars...");
+}
+
+process_scan_results() {
+    ScanningForCollars = FALSE;
+    llSetTimerEvent(0.0);
+    
+    integer num_collars = llGetListLength(DetectedCollars) / COLLAR_STRIDE;
+    
+    if (num_collars == 0) {
+        llOwnerSay("No collars found nearby.");
+        cleanup_session();
+        return;
+    }
+    
+    if (num_collars == 1) {
+        // AUTO-CONNECT to single collar (RLV relay style!)
+        key avatar_key = llList2Key(DetectedCollars, 0);
+        string avatar_name = llList2String(DetectedCollars, 2);
+
+        request_acl_from_collar(avatar_key);
+        return;
+    }
+    
+    // Multiple collars - show dialog
+    show_collar_selection_dialog();
+}
+
+/* -------------------- COLLAR SELECTION DIALOG -------------------- */
+
+show_collar_selection_dialog() {
+    integer len = llGetListLength(DetectedCollars);
+    integer num_collars = len / COLLAR_STRIDE;
+    
+    if (num_collars == 0) return;
+    
+    // Set up dialog listener
+    if (DialogListenHandle != 0) {
+        llListenRemove(DialogListenHandle);
+    }
+    DialogListenHandle = llListen(DIALOG_CHANNEL, "", HudWearer, "");
+    
+    // Build dialog
+    string text = "Multiple collars found. Select one:\n\n";
+    list buttons = [];
+    integer i = 0;
+    
+    while (i < len && (i / COLLAR_STRIDE) < 12) {
+        string avatar_name = llList2String(DetectedCollars, i + 2);
+        buttons += [avatar_name];
+        i += COLLAR_STRIDE;
+    }
+    
+    if (llGetListLength(buttons) < 12) {
+        buttons += ["Cancel"];
+    }
+    
+    llDialog(HudWearer, text, buttons, DIALOG_CHANNEL);
+    llSetTimerEvent(30.0);
+}
+
+/* -------------------- ACL QUERY -------------------- */
+
+request_acl_from_collar(key avatar_key) {
+    string json_msg = llList2Json(JSON_OBJECT, [
+        "type", "acl_query_external",
+        "avatar", (string)HudWearer,
+        "hud", (string)llGetKey(),
+        "target_avatar", (string)avatar_key
+    ]);
+    
+    if (CollarListenHandle != 0) {
+        llListenRemove(CollarListenHandle);
+    }
+    CollarListenHandle = llListen(COLLAR_ACL_REPLY_CHAN, "", NULL_KEY, "");
+    
+    llRegionSay(COLLAR_ACL_QUERY_CHAN, json_msg);
+    
+    AclPending = TRUE;
+    TargetAvatarKey = avatar_key;
+    TargetAvatarName = llKey2Name(avatar_key);
+    llSetTimerEvent(QUERY_TIMEOUT_SEC);
+}
+
+/* -------------------- MENU TRIGGERING -------------------- */
+
+trigger_collar_menu() {
+    if (TargetCollarKey == NULL_KEY) {
+        llOwnerSay("Error: No collar connection established.");
+        return;
+    }
+
+
+    // Request display name via dataserver
+    DisplayNameQueryId = llRequestAgentData(TargetAvatarKey, DATA_NAME);
+    DisplayNamePending = TRUE;
+    llSetTimerEvent(QUERY_TIMEOUT_SEC);
+
+    // The actual menu triggering and success message will be handled in dataserver()
+}
+
+/* -------------------- ACL LEVEL PROCESSING -------------------- */
+
+process_acl_result(integer level) {
+    // Explicitly whitelist known ACL levels that grant access
+    // Reject unknown/malformed levels for security
+    integer has_access = (
+        level == ACL_PRIMARY_OWNER ||
+        level == ACL_TRUSTEE ||
+        level == ACL_OWNED ||
+        level == ACL_UNOWNED ||
+        level == ACL_PUBLIC
+    );
+
+    // EMERGENCY ACCESS: Allow wearer to access SOS menu even with ACL 0
+    // This handles TPE mode where wearer has no normal access to their collar
+    if (level == ACL_NOACCESS && RequestedContext == SOS_CONTEXT && HudWearer == TargetAvatarKey) {
+        has_access = TRUE;
+    }
+
+    if (has_access) {
+        trigger_collar_menu();
+    }
+    else {
+        llOwnerSay("Access denied.");
+        cleanup_session();
+    }
+}
+
+/* -------------------- EVENTS -------------------- */
+
+default {
+    state_entry() {
+        cleanup_session();
+        HudWearer = llGetOwner();
+        TouchStartTime = 0.0;
+        RequestedContext = "";
+        llOwnerSay("Control HUD ready. Touch to scan for collars, long-touch for emergency access.");
+    }
+    
+    on_rez(integer start_param) {
+        llResetScript();
+    }
+    
+    attach(key id) {
+        if (id != NULL_KEY) {
+            llResetScript();
+        }
+        else {
+            cleanup_session();
+        }
+    }
+    
+    changed(integer change_mask) {
+        if (change_mask & CHANGED_OWNER) {
+            llResetScript();
+        }
+    }
+    
+    touch_start(integer num_detected) {
+        if (ScanningForCollars) {
+            llOwnerSay("Scan already in progress...");
+            return;
+        }
+
+        if (AclPending) {
+            llOwnerSay("Still waiting for collar response...");
+            return;
+        }
+
+        // Record touch start time
+        TouchStartTime = llGetTime();
+    }
+
+    touch_end(integer num_detected) {
+        if (ScanningForCollars || AclPending) {
+            TouchStartTime = 0.0;  // Clear stale timestamp to prevent incorrect duration calculations
+            return;
+        }
+
+        // Calculate touch duration
+        float duration = llGetTime() - TouchStartTime;
+        TouchStartTime = 0.0;
+
+
+        cleanup_session();
+
+        // Determine context based on touch duration
+        string context = ROOT_CONTEXT;
+        if (duration >= LONG_TOUCH_THRESHOLD) {
+            context = SOS_CONTEXT;
+        }
+        else {
+        }
+
+        broadcast_collar_scan(context);
+    }
+    
+    listen(integer channel, string name, key id, string message) {
+        // Handle collar scan responses
+        if (channel == COLLAR_ACL_REPLY_CHAN && ScanningForCollars) {
+            if (!json_has(message, ["type"])) return;
+            
+            string msg_type = llJsonGetValue(message, ["type"]);
+            if (msg_type != "collar_scan_response") return;
+            
+            if (!json_has(message, ["collar_owner"])) return;
+            key collar_owner = (key)llJsonGetValue(message, ["collar_owner"]);
+            string owner_name = llKey2Name(collar_owner);
+            
+            add_detected_collar(collar_owner, id, owner_name);
+            return;
+        }
+        
+        // Handle collar selection dialog
+        if (channel == DIALOG_CHANNEL) {
+            llListenRemove(DialogListenHandle);
+            DialogListenHandle = 0;
+            llSetTimerEvent(0.0);
+            
+            if (message == "Cancel") {
+                llOwnerSay("Selection cancelled.");
+                cleanup_session();
+                return;
+            }
+            
+            // Find selected collar by name
+            integer i = 0;
+            integer len = llGetListLength(DetectedCollars);
+            key selected_avatar = NULL_KEY;
+            while (i < len) {
+                string avatar_name = llList2String(DetectedCollars, i + 2);
+                if (avatar_name == message) {
+                    selected_avatar = llList2Key(DetectedCollars, i);
+                    i = len;  // Exit loop
+                }
+                else {
+                    i += COLLAR_STRIDE;
+                }
+            }
+            
+            if (selected_avatar != NULL_KEY) {
+                request_acl_from_collar(selected_avatar);
+            }
+            else {
+                llOwnerSay("Error: Selection not found.");
+                cleanup_session();
+            }
+            return;
+        }
+        
+        // Handle ACL responses
+        if (channel == COLLAR_ACL_REPLY_CHAN && AclPending) {
+            if (!json_has(message, ["type"])) return;
+            
+            string msg_type = llJsonGetValue(message, ["type"]);
+            if (msg_type != "acl_result_external") return;
+            
+            if (!json_has(message, ["avatar"])) return;
+            key response_avatar = (key)llJsonGetValue(message, ["avatar"]);
+            
+            if (response_avatar != HudWearer) return;
+            
+            if (!json_has(message, ["collar_owner"])) return;
+            key collar_owner = (key)llJsonGetValue(message, ["collar_owner"]);
+            
+            if (collar_owner != TargetAvatarKey) return;
+            
+            llSetTimerEvent(0.0);
+            AclPending = FALSE;
+            
+            TargetCollarKey = id;
+            
+            if (json_has(message, ["level"])) {
+                AclLevel = (integer)llJsonGetValue(message, ["level"]);
+            }
+            
+            process_acl_result(AclLevel);
+            
+            if (CollarListenHandle != 0) {
+                llListenRemove(CollarListenHandle);
+                CollarListenHandle = 0;
+            }
+        }
+    }
+    
+    dataserver(key query_id, string data) {
+        if (query_id == DisplayNameQueryId) {
+            DisplayNameQueryId = NULL_KEY;
+            DisplayNamePending = FALSE;
+            llSetTimerEvent(0.0);
+
+            // Validate that session state is still valid
+            if (TargetCollarKey == NULL_KEY) {
+                return;
+            }
+
+            // Show simple connection message
+            llOwnerSay("Connected to " + data + "'s collar.");
+
+            // Send menu request to collar
+            string json_msg = llList2Json(JSON_OBJECT, [
+                "type", "menu_request_external",
+                "avatar", (string)HudWearer,
+                "context", RequestedContext
+            ]);
+            llRegionSayTo(TargetCollarKey, COLLAR_MENU_CHAN, json_msg);
+
+            cleanup_session();
+        }
+    }
+
+    timer() {
+        if (ScanningForCollars) {
+            process_scan_results();
+        }
+        else {
+            if (AclPending) {
+                llOwnerSay("Connection failed: No response from collar.");
+                cleanup_session();
+            }
+            else {
+                if (DisplayNamePending) {
+                    llOwnerSay("Connection failed: Unable to retrieve name.");
+                    cleanup_session();
+                }
+                else {
+                    llOwnerSay("Selection dialog timed out.");
+                    cleanup_session();
+                }
+            }
+        }
+    }
+}
