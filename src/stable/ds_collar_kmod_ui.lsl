@@ -1,7 +1,7 @@
 /*--------------------
 MODULE: ds_collar_kmod_ui.lsl
 VERSION: 1.00
-REVISION: 41
+REVISION: 42
 PURPOSE: Session management, ACL filtering, and plugin list orchestration
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
@@ -402,6 +402,9 @@ handle_button_click(key user, string button, string context) {
         return;
     }
 
+    // Update session activity timestamp to prevent timeout during active use
+    Sessions = llListReplaceList(Sessions, [llGetUnixTime()], session_idx + SESSION_CREATED_TIME, session_idx + SESSION_CREATED_TIME);
+
     // SECURITY FIX: Check blacklist status
     integer is_blacklisted = llList2Integer(Sessions, session_idx + SESSION_IS_BLACKLISTED);
     if (is_blacklisted) {
@@ -635,6 +638,9 @@ handle_return(string msg) {
             }
         }
         else {
+            // Update session activity timestamp
+            Sessions = llListReplaceList(Sessions, [llGetUnixTime()], session_idx + SESSION_CREATED_TIME, session_idx + SESSION_CREATED_TIME);
+
             string session_context = llList2String(Sessions, session_idx + SESSION_CONTEXT);
             send_render_menu(user_key, session_context);
         }
