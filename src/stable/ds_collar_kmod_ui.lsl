@@ -1,17 +1,13 @@
 /*--------------------
 MODULE: ds_collar_kmod_ui.lsl
 VERSION: 1.00
-REVISION: 45
+REVISION: 48
 PURPOSE: Session management, ACL filtering, and plugin list orchestration
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
-- Implemented shared filter caching for memory optimization
-- Added reactive session cleanup on ACL update events
-- Split UI logic from menu rendering to delegate visuals to ds_collar_menu.lsl
-- Added UUID-based plugin change detection to avoid registration races
-- Enforced touch range validation and blacklist checks during session start
-- Revalidated ACL levels on session return with time-based expiry
-- Guarded debug logging for production and handled owner change resets
+- Replaced O(N) loops with O(1) native llListFindList in hot paths
+- Optimized touch handling and button click lookups
+- Reduced bytecode size by removing manual iteration logic
 --------------------*/
 
 
@@ -117,25 +113,6 @@ string generate_session_id(key user) {
 
 integer find_session_idx(key user) {
     return llListFindList(Sessions, [user]);
-}
-
-integer get_session_filtered_start(integer session_idx) {
-    return llList2Integer(Sessions, session_idx + SESSION_FILTERED_START);
-}
-
-integer get_session_filtered_count(integer session_idx) {
-    return llList2Integer(Sessions, session_idx + SESSION_FILTERED_COUNT);
-}
-
-list get_session_filtered_plugins(integer session_idx) {
-    integer start = get_session_filtered_start(session_idx);
-    integer count = get_session_filtered_count(session_idx);
-    integer end = start + (count * FILTERED_STRIDE);
-    
-    if (end > start) {
-        return llList2List(FilteredPluginsData, start, end - 1);
-    }
-    return [];
 }
 
 cleanup_session(key user) {
@@ -317,8 +294,8 @@ send_render_menu(key user, string menu_type) {
         return;
     }
 
-    list filtered = get_session_filtered_plugins(session_idx);
-    integer plugin_count = llGetListLength(filtered) / FILTERED_STRIDE;
+    // OPTIMIZATION: Read count directly from session to avoid list copy
+    integer plugin_count = llList2Integer(Sessions, session_idx + SESSION_FILTERED_COUNT);
 
     if (plugin_count == 0) {
         integer user_acl = llList2Integer(Sessions, session_idx + SESSION_ACL);
@@ -364,22 +341,35 @@ send_render_menu(key user, string menu_type) {
     }
 
     // Build button data with context and state
-    list button_data = [];
-    integer start_idx = current_page * MAX_FUNC_BTNS * FILTERED_STRIDE;
-    integer end_idx = start_idx + (MAX_FUNC_BTNS * FILTERED_STRIDE);
-    if (end_idx > llGetListLength(filtered)) {
-        end_idx = llGetListLength(filtered);
+    // OPTIMIZATION: Manual JSON construction avoids llList2Json escaping overhead
+    string buttons_json = "[";
+    string sep = "";
+
+    // OPTIMIZATION: Direct access to FilteredPluginsData avoids llList2List copy
+    integer session_start = llList2Integer(Sessions, session_idx + SESSION_FILTERED_START);
+    
+    integer start_offset = current_page * MAX_FUNC_BTNS * FILTERED_STRIDE;
+    integer abs_start = session_start + start_offset;
+    
+    // Calculate end of this page
+    integer abs_end = abs_start + (MAX_FUNC_BTNS * FILTERED_STRIDE);
+    
+    // Calculate absolute end of this session's data
+    integer session_end = session_start + (plugin_count * FILTERED_STRIDE);
+    
+    if (abs_end > session_end) {
+        abs_end = session_end;
     }
 
-    integer i = start_idx;
-    while (i < end_idx) {
+    integer i = abs_start;
+    while (i < abs_end) {
         // Direct JSON access - massive speedup
-        string btn_json = llList2String(filtered, i + FILTERED_JSON);
-        button_data += [btn_json];
+        string btn_json = llList2String(FilteredPluginsData, i + FILTERED_JSON);
+        buttons_json += sep + btn_json;
+        sep = ",";
         i += FILTERED_STRIDE;
     }
-
-    string buttons_json = llList2Json(JSON_ARRAY, button_data);
+    buttons_json += "]";
     string session_id = llList2String(Sessions, session_idx + SESSION_ID);
 
     // DESIGN DECISION: Navigation row is ALWAYS present (DO NOT CHANGE)
@@ -457,30 +447,28 @@ handle_button_click(key user, string button, string context) {
         // Update session activity timestamp
         Sessions = llListReplaceList(Sessions, [llGetUnixTime()], session_idx + SESSION_CREATED_TIME, session_idx + SESSION_CREATED_TIME);
 
-        // Find plugin by context
-        integer i = 0;
-        integer len = llGetListLength(AllPlugins);
-        while (i < len) {
-            if (llList2String(AllPlugins, i + PLUGIN_CONTEXT) == context) {
-                integer min_acl = llList2Integer(AllPlugins, i + PLUGIN_MIN_ACL);
-                integer user_acl = llList2Integer(Sessions, session_idx + SESSION_ACL);
+        // OPTIMIZATION: Use native list search instead of loop
+        integer i = llListFindList(AllPlugins, [context]);
+        
+        // Verify we found a context (index 0 of stride) and not a label or something else
+        if (i != -1 && (i % PLUGIN_STRIDE) == PLUGIN_CONTEXT) {
+            integer min_acl = llList2Integer(AllPlugins, i + PLUGIN_MIN_ACL);
+            integer user_acl = llList2Integer(Sessions, session_idx + SESSION_ACL);
 
-                // ACL check - CRITICAL for collar security
-                if (user_acl < min_acl) {
-                    send_message(user, "Access denied.");
-                    return;
-                }
-
-                string msg = llList2Json(JSON_OBJECT, [
-                    "type", "start",
-                    "context", context,
-                    "user", (string)user
-                ]);
-
-                llMessageLinked(LINK_SET, UI_BUS, msg, user);
+            // ACL check - CRITICAL for collar security
+            if (user_acl < min_acl) {
+                send_message(user, "Access denied.");
                 return;
             }
-            i += PLUGIN_STRIDE;
+
+            string msg = llList2Json(JSON_OBJECT, [
+                "type", "start",
+                "context", context,
+                "user", (string)user
+            ]);
+
+            llMessageLinked(LINK_SET, UI_BUS, msg, user);
+            return;
         }
         return;
     }
@@ -762,21 +750,17 @@ default
             }
 
             // Record touch start time
-            integer j = 0;
-            integer len = llGetListLength(TouchData);
-
-            while (j < len) {
-                if (llList2Key(TouchData, j + TOUCH_DATA_KEY) == toucher) {
-                    TouchData = llListReplaceList(TouchData, [llGetTime()], j + TOUCH_DATA_START_TIME, j + TOUCH_DATA_START_TIME);
-                    jump recorded;
-                }
-                j += TOUCH_DATA_STRIDE;
+            // OPTIMIZATION: Native list search
+            integer idx = llListFindList(TouchData, [toucher]);
+            
+            if (idx != -1) {
+                // Update existing timestamp
+                TouchData = llListReplaceList(TouchData, [llGetTime()], idx + TOUCH_DATA_START_TIME, idx + TOUCH_DATA_START_TIME);
             }
-
-            // If we reach here, toucher was not found in TouchData
-            TouchData += [toucher, llGetTime()];
-
-            @recorded;
+            else {
+                // Add new record
+                TouchData += [toucher, llGetTime()];
+            }
 
             @next_touch;
             i += 1;
@@ -790,34 +774,27 @@ default
         while (i < num_detected) {
             key toucher = llDetectedKey(i);
 
-            integer j = 0;
-            integer len = llGetListLength(TouchData);
+            // OPTIMIZATION: Native list search
+            integer idx = llListFindList(TouchData, [toucher]);
 
-            while (j < len) {
-                if (llList2Key(TouchData, j + TOUCH_DATA_KEY) == toucher) {
-                    float start_time = llList2Float(TouchData, j + TOUCH_DATA_START_TIME);
-                    float duration = llGetTime() - start_time;
+            if (idx != -1) {
+                float start_time = llList2Float(TouchData, idx + TOUCH_DATA_START_TIME);
+                float duration = llGetTime() - start_time;
 
-                    TouchData = llDeleteSubList(TouchData, j, j + TOUCH_DATA_STRIDE - 1);
+                TouchData = llDeleteSubList(TouchData, idx, idx + TOUCH_DATA_STRIDE - 1);
 
-
-                    if (duration >= LONG_TOUCH_THRESHOLD && toucher == wearer) {
-                        start_sos_session(toucher);
-                    }
-                    else {
-                        // Provide feedback if non-wearer attempted long-touch (SOS is wearer-only)
-                        if (duration >= LONG_TOUCH_THRESHOLD && toucher != wearer) {
-                            send_message(toucher, "Long-touch SOS is only available to the wearer.");
-                        }
-                        start_root_session(toucher);
-                    }
-
-                    jump next_toucher;
+                if (duration >= LONG_TOUCH_THRESHOLD && toucher == wearer) {
+                    start_sos_session(toucher);
                 }
-                j += TOUCH_DATA_STRIDE;
+                else {
+                    // Provide feedback if non-wearer attempted long-touch (SOS is wearer-only)
+                    if (duration >= LONG_TOUCH_THRESHOLD && toucher != wearer) {
+                        send_message(toucher, "Long-touch SOS is only available to the wearer.");
+                    }
+                    start_root_session(toucher);
+                }
             }
 
-            @next_toucher;
             i += 1;
         }
     }
