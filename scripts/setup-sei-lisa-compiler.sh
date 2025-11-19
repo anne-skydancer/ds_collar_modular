@@ -36,15 +36,17 @@ if ! command -v bison &> /dev/null; then MISSING_TOOLS="$MISSING_TOOLS bison"; f
 if ! command -v make &> /dev/null; then MISSING_TOOLS="$MISSING_TOOLS make"; fi
 if ! command -v g++ &> /dev/null; then MISSING_TOOLS="$MISSING_TOOLS g++"; fi
 
-# Check for Python 2 (Required for kwdb)
-HAS_PY2=false
-if command -v python2 &> /dev/null; then HAS_PY2=true; fi
-if [ "$HAS_PY2" = false ] && command -v python &> /dev/null; then
-    VER=$(python -c 'import sys; print(sys.version_info[0])')
-    if [ "$VER" == "2" ]; then HAS_PY2=true; fi
+# Check for Python interpreter (kwdb accepts Python 2 or 3)
+PYTHON_CMD=""
+if command -v python2 &> /dev/null; then
+    PYTHON_CMD=python2
+elif command -v python3 &> /dev/null; then
+    PYTHON_CMD=python3
+elif command -v python &> /dev/null; then
+    PYTHON_CMD=python
 fi
 
-if [ -n "$MISSING_TOOLS" ] || [ "$HAS_PY2" = false ]; then
+if [ -n "$MISSING_TOOLS" ] || [ -z "$PYTHON_CMD" ]; then
     echo "❌ CRITICAL: Missing build environment!"
     echo ""
     echo "This script attempts to compile the Sei-Lisa LSL Compiler (lslcomp) from C++ source."
@@ -52,7 +54,7 @@ if [ -n "$MISSING_TOOLS" ] || [ "$HAS_PY2" = false ]; then
     echo ""
     echo "Missing components:"
     if [ -n "$MISSING_TOOLS" ]; then echo "  • Build Tools:$MISSING_TOOLS"; fi
-    if [ "$HAS_PY2" = false ]; then echo "  • Python 2.x (Required for kwdb generation)"; fi
+    if [ -z "$PYTHON_CMD" ]; then echo "  • Python 2.x or 3.x (Required for kwdb generation)"; fi
     echo ""
     
     # Check if lslopt is installed (the likely intended tool)
@@ -90,29 +92,18 @@ echo "✓ kwdb cloned"
 echo "→ Setting up kwdb..."
 cd kwdb
 
-# Ensure Python 2 is used
-if command -v python2 &> /dev/null; then
-    PYTHON_CMD=python2
-elif command -v python2.7 &> /dev/null; then
-    PYTHON_CMD=python2.7
-elif command -v python &> /dev/null && python --version &> /dev/null; then
-    # Verify it is python 2
-    VER=$(python -c 'import sys; print(sys.version_info[0])')
-    if [ "$VER" == "2" ]; then
-        PYTHON_CMD=python
-    else
-        echo "⚠ Python 2 not found (python is version $VER). kwdb build may fail."
-        PYTHON_CMD=python
+if [ -f "setup.py" ]; then
+    echo "→ Building kwdb using $PYTHON_CMD..."
+    if ! $PYTHON_CMD setup.py build > kwdb_build.log 2>&1; then
+        echo "✗ kwdb build failed. Showing last 20 lines of kwdb_build.log"
+        tail -n 20 kwdb_build.log
+        exit 1
     fi
+    rm -f kwdb_build.log
+    echo "✓ kwdb built"
 else
-    echo "✗ Error: Python 2 is required but not found"
-    exit 1
+    echo "→ setup.py not found; skipping kwdb build (repo already ships generated data)"
 fi
-
-# Build kwdb
-echo "→ Building kwdb..."
-$PYTHON_CMD setup.py build > /dev/null 2>&1
-echo "✓ kwdb built"
 
 KWDB_PATH="$INSTALL_DIR/kwdb"
 cd "$INSTALL_DIR"
@@ -133,17 +124,26 @@ echo "✓ Compiler configured"
 
 # Update Makefile to point to kwdb installation
 echo "→ Updating Makefile..."
-sed -i "s|^KWDB_DIR = .*|KWDB_DIR = $KWDB_PATH|" Makefile || {
-    # If the sed pattern doesn't match, add the line
-    echo "KWDB_DIR = $KWDB_PATH" >> Makefile
-}
+if grep -q '^LSLK=' Makefile; then
+    sed -i "s|^LSLK=.*|LSLK=$KWDB_PATH/|" Makefile
+else
+    echo "LSLK=$KWDB_PATH/" >> Makefile
+fi
 echo "✓ Makefile updated"
 
 # Build the compiler
 echo ""
 echo "→ Building LSL compiler (this may take a minute)..."
-make clean > /dev/null 2>&1 || true
-make > /dev/null 2>&1
+BUILD_LOG="$INSTALL_DIR/build.log"
+if ! make clean > "$BUILD_LOG" 2>&1; then
+    echo "⚠ make clean reported issues (continuing). See $BUILD_LOG for details."
+fi
+if ! make >> "$BUILD_LOG" 2>&1; then
+    echo "✗ Compiler build failed. Showing last 20 lines of $BUILD_LOG"
+    tail -n 20 "$BUILD_LOG"
+    exit 1
+fi
+rm -f "$BUILD_LOG"
 echo "✓ Compiler built successfully"
 
 # Install lslcomp to local bin
