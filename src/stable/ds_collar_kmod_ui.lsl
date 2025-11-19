@@ -1,7 +1,7 @@
 /*--------------------
 MODULE: ds_collar_kmod_ui.lsl
 VERSION: 1.00
-REVISION: 42
+REVISION: 45
 PURPOSE: Session management, ACL filtering, and plugin list orchestration
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
@@ -34,6 +34,11 @@ integer PLUGIN_STRIDE = 3;
 integer PLUGIN_CONTEXT = 0;
 integer PLUGIN_LABEL = 1;
 integer PLUGIN_MIN_ACL = 2;
+
+/* Filtered Data Stride: [context, button_json] */
+integer FILTERED_STRIDE = 2;
+integer FILTERED_CONTEXT = 0;
+integer FILTERED_JSON = 1;
 
 /* Session list stride - SECURITY FIX: Added SESSION_CREATED_TIME */
 integer SESSION_STRIDE = 10;
@@ -125,7 +130,7 @@ integer get_session_filtered_count(integer session_idx) {
 list get_session_filtered_plugins(integer session_idx) {
     integer start = get_session_filtered_start(session_idx);
     integer count = get_session_filtered_count(session_idx);
-    integer end = start + (count * PLUGIN_STRIDE);
+    integer end = start + (count * FILTERED_STRIDE);
     
     if (end > start) {
         return llList2List(FilteredPluginsData, start, end - 1);
@@ -206,17 +211,16 @@ create_session(key user, integer acl, integer is_blacklisted, string context_fil
         }
 
         if (should_include) {
-            filtered += [context, label, min_acl];
+            // Pre-build JSON for rendering speed
+            string btn_json = llList2Json(JSON_OBJECT, ["context", context, "label", label]);
+            filtered += [context, btn_json];
         }
 
         i += PLUGIN_STRIDE;
     }
 
-    // Sort filtered plugins alphabetically by label (field index 1)
-    integer plugin_count = llGetListLength(filtered) / PLUGIN_STRIDE;
-    if (plugin_count > 1) {
-        filtered = llListSortStrided(filtered, PLUGIN_STRIDE, PLUGIN_LABEL, TRUE);
-    }
+    // OPTIMIZATION: Removed sorting here as AllPlugins is pre-sorted
+    integer plugin_count = llGetListLength(filtered) / FILTERED_STRIDE;
 
     filtered_start = llGetListLength(FilteredPluginsData);
     filtered_count = plugin_count;
@@ -262,6 +266,10 @@ apply_plugin_list(string plugins_json) {
         i += 1;
     }
 
+    // OPTIMIZATION: Sort AllPlugins once at initialization
+    if (llGetListLength(AllPlugins) > PLUGIN_STRIDE) {
+        AllPlugins = llListSortStrided(AllPlugins, PLUGIN_STRIDE, PLUGIN_LABEL, TRUE);
+    }
 
     // Request ACL data from auth module
     string request = llList2Json(JSON_OBJECT, ["type", "plugin_acl_list_request"]);
@@ -310,7 +318,7 @@ send_render_menu(key user, string menu_type) {
     }
 
     list filtered = get_session_filtered_plugins(session_idx);
-    integer plugin_count = llGetListLength(filtered) / PLUGIN_STRIDE;
+    integer plugin_count = llGetListLength(filtered) / FILTERED_STRIDE;
 
     if (plugin_count == 0) {
         integer user_acl = llList2Integer(Sessions, session_idx + SESSION_ACL);
@@ -347,28 +355,28 @@ send_render_menu(key user, string menu_type) {
     if (current_page < 0) current_page = total_pages - 1;
 
     // Batch update for performance (SESSION_PAGE=3, SESSION_TOTAL_PAGES=4 are consecutive)
-    Sessions = llListReplaceList(Sessions, [current_page, total_pages], session_idx + SESSION_PAGE, session_idx + SESSION_TOTAL_PAGES);
+    // OPTIMIZATION: Only write if changed to reduce list churn
+    integer stored_page = llList2Integer(Sessions, session_idx + SESSION_PAGE);
+    integer stored_total = llList2Integer(Sessions, session_idx + SESSION_TOTAL_PAGES);
+    
+    if (current_page != stored_page || total_pages != stored_total) {
+        Sessions = llListReplaceList(Sessions, [current_page, total_pages], session_idx + SESSION_PAGE, session_idx + SESSION_TOTAL_PAGES);
+    }
 
     // Build button data with context and state
     list button_data = [];
-    integer start_idx = current_page * MAX_FUNC_BTNS * PLUGIN_STRIDE;
-    integer end_idx = start_idx + (MAX_FUNC_BTNS * PLUGIN_STRIDE);
+    integer start_idx = current_page * MAX_FUNC_BTNS * FILTERED_STRIDE;
+    integer end_idx = start_idx + (MAX_FUNC_BTNS * FILTERED_STRIDE);
     if (end_idx > llGetListLength(filtered)) {
         end_idx = llGetListLength(filtered);
     }
 
     integer i = start_idx;
     while (i < end_idx) {
-        string context = llList2String(filtered, i + PLUGIN_CONTEXT);
-        string label = llList2String(filtered, i + PLUGIN_LABEL);
-
-        // Create button data object with context and label
-        string btn_obj = llList2Json(JSON_OBJECT, [
-            "context", context,
-            "label", label
-        ]);
-        button_data += [btn_obj];
-        i += PLUGIN_STRIDE;
+        // Direct JSON access - massive speedup
+        string btn_json = llList2String(filtered, i + FILTERED_JSON);
+        button_data += [btn_json];
+        i += FILTERED_STRIDE;
     }
 
     string buttons_json = llList2Json(JSON_ARRAY, button_data);
@@ -402,9 +410,6 @@ handle_button_click(key user, string button, string context) {
         return;
     }
 
-    // Update session activity timestamp to prevent timeout during active use
-    Sessions = llListReplaceList(Sessions, [llGetUnixTime()], session_idx + SESSION_CREATED_TIME, session_idx + SESSION_CREATED_TIME);
-
     // SECURITY FIX: Check blacklist status
     integer is_blacklisted = llList2Integer(Sessions, session_idx + SESSION_IS_BLACKLISTED);
     if (is_blacklisted) {
@@ -418,10 +423,26 @@ handle_button_click(key user, string button, string context) {
     string session_context = llList2String(Sessions, session_idx + SESSION_CONTEXT);
 
     // Handle navigation buttons (no context)
-    if (button == "<<") {
-        current_page -= 1;
-        if (current_page < 0) current_page = total_pages - 1;
-        Sessions = llListReplaceList(Sessions, [current_page], session_idx + SESSION_PAGE, session_idx + SESSION_PAGE);
+    if (button == "<<" || button == ">>") {
+        if (button == "<<") {
+            current_page -= 1;
+            if (current_page < 0) current_page = total_pages - 1;
+        } else {
+            current_page += 1;
+            if (current_page >= total_pages) current_page = 0;
+        }
+
+        // OPTIMIZATION: Combined update of Page (3) through Timestamp (7)
+        // Preserves: TOTAL_PAGES (4), ID (5), FILTERED_START (6)
+        // Updates: PAGE (3), CREATED_TIME (7)
+        integer total = llList2Integer(Sessions, session_idx + SESSION_TOTAL_PAGES);
+        string sess_id = llList2String(Sessions, session_idx + SESSION_ID);
+        integer f_start = llList2Integer(Sessions, session_idx + SESSION_FILTERED_START);
+        
+        Sessions = llListReplaceList(Sessions, [
+            current_page, total, sess_id, f_start, llGetUnixTime()
+        ], session_idx + SESSION_PAGE, session_idx + SESSION_CREATED_TIME);
+
         send_render_menu(user, session_context);
         return;
     }
@@ -431,16 +452,11 @@ handle_button_click(key user, string button, string context) {
         return;
     }
 
-    if (button == ">>") {
-        current_page += 1;
-        if (current_page >= total_pages) current_page = 0;
-        Sessions = llListReplaceList(Sessions, [current_page], session_idx + SESSION_PAGE, session_idx + SESSION_PAGE);
-        send_render_menu(user, session_context);
-        return;
-    }
-
     // Plugin button clicked - use context directly for fast lookup
     if (context != "") {
+        // Update session activity timestamp
+        Sessions = llListReplaceList(Sessions, [llGetUnixTime()], session_idx + SESSION_CREATED_TIME, session_idx + SESSION_CREATED_TIME);
+
         // Find plugin by context
         integer i = 0;
         integer len = llGetListLength(AllPlugins);
@@ -483,11 +499,12 @@ update_plugin_label(string context, string new_label) {
             
             integer j = 0;
             while (j < llGetListLength(FilteredPluginsData)) {
-                string filtered_context = llList2String(FilteredPluginsData, j + PLUGIN_CONTEXT);
+                string filtered_context = llList2String(FilteredPluginsData, j + FILTERED_CONTEXT);
                 if (filtered_context == context) {
-                    FilteredPluginsData = llListReplaceList(FilteredPluginsData, [new_label], j + PLUGIN_LABEL, j + PLUGIN_LABEL);
+                    string new_json = llList2Json(JSON_OBJECT, ["context", context, "label", new_label]);
+                    FilteredPluginsData = llListReplaceList(FilteredPluginsData, [new_json], j + FILTERED_JSON, j + FILTERED_JSON);
                 }
-                j += PLUGIN_STRIDE;
+                j += FILTERED_STRIDE;
             }
             return;
         }
