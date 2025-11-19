@@ -1,11 +1,10 @@
 /*--------------------
 PLUGIN: ds_collar_plugin_public.lsl
 VERSION: 1.00
-REVISION: 21
+REVISION: 20
 PURPOSE: Toggle public access mode directly from main menu
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
-- Updated to use lightweight update_label mechanism for UI toggles
 - Replaces submenu with single main-menu toggle button
 - Updates button label dynamically to reflect public mode state
 - Persists public_mode flag via settings sync and delta handlers
@@ -94,7 +93,7 @@ apply_settings_sync(string msg) {
     
     // If state changed, update label
     if (old_state != PublicModeEnabled) {
-        update_ui_label();
+        register_self();
     }
 }
 
@@ -113,7 +112,7 @@ apply_settings_delta(string msg) {
             
             // If state changed, update label
             if (old_state != PublicModeEnabled) {
-                update_ui_label();
+                register_self();
             }
         }
     }
@@ -134,7 +133,7 @@ persist_public_mode(integer new_value) {
 
 /* -------------------- UI LABEL UPDATE -------------------- */
 
-update_ui_label() {
+update_ui_label_and_return(key user) {
     string new_label = PLUGIN_LABEL_OFF;
     if (PublicModeEnabled) {
         new_label = PLUGIN_LABEL_ON;
@@ -146,13 +145,9 @@ update_ui_label() {
         "label", new_label
     ]);
     llMessageLinked(LINK_SET, UI_BUS, msg, NULL_KEY);
-}
-
-update_ui_label_and_return(key user) {
-    update_ui_label();
     
     // Return user to root menu
-    string msg = llList2Json(JSON_OBJECT, [
+    msg = llList2Json(JSON_OBJECT, [
         "type", "return",
         "user", (string)user
     ]);

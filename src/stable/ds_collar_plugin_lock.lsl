@@ -1,11 +1,10 @@
 /*--------------------
 PLUGIN: ds_collar_plugin_lock.lsl
 VERSION: 1.00
-REVISION: 21
+REVISION: 20
 PURPOSE: Toggle collar lock and RLV detach control labels
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
-- Updated to use lightweight update_label mechanism for UI toggles
 - Provides direct toggle logic without menu interactions
 - Restricts usage to Unowned and Primary Owner ACL levels
 - Updates kernel registration label to reflect current lock state
@@ -40,8 +39,6 @@ string PRIM_UNLOCKED = "unlocked";
 
 /* -------------------- STATE -------------------- */
 integer Locked = FALSE;
-integer LinkLocked = 0;
-integer LinkUnlocked = 0;
 
 /* -------------------- HELPERS -------------------- */
 
@@ -117,7 +114,16 @@ apply_settings_delta(string msg) {
             if (old_locked != Locked) {
                 apply_lock_state();
                 // Only update label, don't return to menu (no active user in delta context)
-                update_ui_label();
+                string new_label = PLUGIN_LABEL_UNLOCKED;
+                if (Locked) {
+                    new_label = PLUGIN_LABEL_LOCKED;
+                }
+                string msg = llList2Json(JSON_OBJECT, [
+                    "type", "update_label",
+                    "context", PLUGIN_CONTEXT,
+                    "label", new_label
+                ]);
+                llMessageLinked(LINK_SET, UI_BUS, msg, NULL_KEY);
             }
             
         }
@@ -154,33 +160,42 @@ apply_lock_state() {
 
 /* -------------------- VISUAL FEEDBACK (optional prims) -------------------- */
 
-update_prims_cache() {
-    if (LinkLocked == 0 && LinkUnlocked == 0) {
-        integer link_count = llGetNumberOfPrims();
-        integer i;
-        for (i = 1; i <= link_count; i++) {
-            string name = llGetLinkName(i);
-            if (name == PRIM_LOCKED) LinkLocked = i;
-            else if (name == PRIM_UNLOCKED) LinkUnlocked = i;
+show_locked_prim() {
+    integer link_count = llGetNumberOfPrims();
+    integer i;
+    
+    for (i = 1; i <= link_count; i++) {
+        string name = llGetLinkName(i);
+        
+        if (name == PRIM_LOCKED) {
+            llSetLinkAlpha(i, 1.0, ALL_SIDES);
+        }
+        else if (name == PRIM_UNLOCKED) {
+            llSetLinkAlpha(i, 0.0, ALL_SIDES);
         }
     }
 }
 
-show_locked_prim() {
-    update_prims_cache();
-    if (LinkLocked != 0) llSetLinkAlpha(LinkLocked, 1.0, ALL_SIDES);
-    if (LinkUnlocked != 0) llSetLinkAlpha(LinkUnlocked, 0.0, ALL_SIDES);
-}
-
 show_unlocked_prim() {
-    update_prims_cache();
-    if (LinkLocked != 0) llSetLinkAlpha(LinkLocked, 0.0, ALL_SIDES);
-    if (LinkUnlocked != 0) llSetLinkAlpha(LinkUnlocked, 1.0, ALL_SIDES);
+    integer link_count = llGetNumberOfPrims();
+    integer i;
+    
+    for (i = 1; i <= link_count; i++) {
+        string name = llGetLinkName(i);
+        
+        if (name == PRIM_LOCKED) {
+            llSetLinkAlpha(i, 0.0, ALL_SIDES);
+        }
+        else if (name == PRIM_UNLOCKED) {
+            llSetLinkAlpha(i, 1.0, ALL_SIDES);
+        }
+    }
 }
 
 /* -------------------- UI LABEL UPDATE -------------------- */
 
-update_ui_label() {
+update_ui_label_and_return(key user) {
+    // Tell UI our new label
     string new_label = PLUGIN_LABEL_UNLOCKED;
     if (Locked) {
         new_label = PLUGIN_LABEL_LOCKED;
@@ -192,13 +207,9 @@ update_ui_label() {
         "label", new_label
     ]);
     llMessageLinked(LINK_SET, UI_BUS, msg, NULL_KEY);
-}
-
-update_ui_label_and_return(key user) {
-    update_ui_label();
     
     // Return user to root menu to see the updated button
-    string msg = llList2Json(JSON_OBJECT, [
+    msg = llList2Json(JSON_OBJECT, [
         "type", "return",
         "user", (string)user
     ]);
@@ -278,10 +289,6 @@ default {
     changed(integer change) {
         if (change & CHANGED_OWNER) {
             llResetScript();
-        }
-        if (change & CHANGED_LINK) {
-            LinkLocked = 0;
-            LinkUnlocked = 0;
         }
     }
     

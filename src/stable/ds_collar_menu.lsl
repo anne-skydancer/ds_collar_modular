@@ -1,13 +1,15 @@
 /*--------------------
 MODULE: ds_collar_menu.lsl
 VERSION: 1.00
-REVISION: 12
+REVISION: 10
 PURPOSE: Menu rendering and visual presentation service
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
-- Updated to support parallel arrays for buttons and contexts
-- Optimized reordering logic to handle split data streams
-- Reduced JSON parsing overhead by passing raw lists
+- Receives render requests from ds_collar_kmod_ui via UI bus messages
+- Constructs dialog layouts with correct bottom-to-top button ordering
+- Maintains stateless presentation separate from business logic
+- Routes dialogs through dedicated dialog module for display
+- Provides single-responsibility rendering for easier maintenance
 --------------------*/
 
 
@@ -15,55 +17,93 @@ CHANGES:
 integer UI_BUS = 900;
 integer DIALOG_BUS = 950;
 
+/* -------------------- HELPERS -------------------- */
+
+
+integer json_has(string j, list path) {
+    return (llJsonGetValue(j, path) != JSON_INVALID);
+}
+string get_msg_type(string msg) {
+    if (!json_has(msg, ["type"])) return "";
+    return llJsonGetValue(msg, ["type"]);
+}
+
+
+// MEMORY OPTIMIZATION: Compact field validation helper
+// Validates multiple required JSON fields and logs errors for missing ones
+// Returns TRUE if all fields present, FALSE if any missing
+integer validate_required_fields(string json_str, list field_names, string function_name) {
+    integer i = 0;
+    integer len = llGetListLength(field_names);
+    while (i < len) {
+        string field = llList2String(field_names, i);
+        if (!json_has(json_str, [field])) {
+            return FALSE;
+        }
+        i += 1;
+    }
+    return TRUE;
+}
+
 /* -------------------- BUTTON LAYOUT -------------------- */
 
-list reorder_list_for_display(list items, string pad_char) {
-    // Reorder buttons for natural reading (left-to-right, top-to-bottom)
-    // LSL dialog positions: [9-11]=top, [6-8]=mid, [3-5]=low, [0-2]=bottom
-    // We chunk the list into rows of 3, pad them to ensure alignment,
-    // and then reverse the order of the rows.
-
-    integer count = llGetListLength(items);
+// Helper: Reverse complete rows of buttons (3 per row)
+// Note: button_list now contains JSON objects, not strings
+list reverse_complete_rows(list button_list, integer row_size) {
+    list reordered = [];
+    integer count = llGetListLength(button_list);
     if (count == 0) return [];
 
-    list result = [];
-    integer row_size = 3;
-    integer i = 0;
-
-    while (i < count) {
-        // Get chunk of buttons for this row
-        // llList2List handles out-of-bounds end index by clamping to list end
-        list chunk = llList2List(items, i, i + row_size - 1);
-        
-        // Pad chunk if incomplete to maintain alignment
-        // This ensures that when this row is stacked above others,
-        // it doesn't "steal" buttons from the row above it in the dialog layout
-        integer chunk_len = llGetListLength(chunk);
-        while (chunk_len < row_size) {
-            chunk += [pad_char];
-            chunk_len++;
+    integer num_rows = count / row_size;
+    integer row = num_rows - 1;
+    while (row >= 0) {
+        integer row_start = row * row_size;
+        integer j = 0;
+        while (j < row_size) {
+            reordered += [llList2String(button_list, row_start + j)];  // Still string because JSON object is stored as string
+            j = j + 1;
         }
-        
-        // Prepend to result (reversing the order of rows)
-        // Row 0 (Top) becomes the last row in the list
-        // Row N (Bottom) becomes the first row in the list
-        result = chunk + result;
-        
-        i += row_size;
+        row = row - 1;
     }
-    
-    return result;
+    return reordered;
+}
+
+list reorder_buttons_for_display(list buttons) {
+    // Reorder buttons for natural reading (left-to-right, top-to-bottom)
+    // LSL dialog positions: [9-11]=top, [6-8]=mid, [3-5]=low, [0-2]=bottom
+    // We reverse ROW order (not individual buttons within rows)
+
+    integer count = llGetListLength(buttons);
+    if (count == 0) return [];
+
+    integer row_size = 3;
+    integer partial_count = count % row_size;
+
+    if (partial_count == 0) {
+        // All rows complete - reverse row order normally
+        return reverse_complete_rows(buttons, row_size);
+    }
+    else {
+        // Incomplete row at the beginning of sorted list
+        // Should appear at TOP (highest positions) in dialog
+        // Complete rows should fill LOWER positions
+
+        list partial_row = llList2List(buttons, 0, partial_count - 1);
+        list complete_buttons = llList2List(buttons, partial_count, -1);
+
+        // Reverse the complete rows and append partial row at end
+        list reordered_complete = reverse_complete_rows(complete_buttons, row_size);
+
+        // Append partial row at end (will occupy highest dialog positions)
+        return reordered_complete + partial_row;
+    }
 }
 
 /* -------------------- RENDERING -------------------- */
 
 render_menu(string msg) {
     // Validate required fields
-    if (llJsonGetValue(msg, ["user"]) == JSON_INVALID || 
-        llJsonGetValue(msg, ["session_id"]) == JSON_INVALID || 
-        llJsonGetValue(msg, ["menu_type"]) == JSON_INVALID || 
-        llJsonGetValue(msg, ["buttons"]) == JSON_INVALID || 
-        llJsonGetValue(msg, ["contexts"]) == JSON_INVALID) {
+    if (!validate_required_fields(msg, ["user", "session_id", "menu_type", "buttons"], "render_menu")) {
         return;
     }
 
@@ -74,28 +114,34 @@ render_menu(string msg) {
     integer current_page = (integer)llJsonGetValue(msg, ["page"]);
     integer total_pages = (integer)llJsonGetValue(msg, ["total_pages"]);
     string buttons_json = llJsonGetValue(msg, ["buttons"]);
-    string contexts_json = llJsonGetValue(msg, ["contexts"]);
     integer has_nav = (integer)llJsonGetValue(msg, ["has_nav"]);
 
-    // Parse parallel arrays
-    list button_list = llJson2List(buttons_json);
-    list context_list = llJson2List(contexts_json);
+    // Parse buttons array (now contains button data objects)
+    list button_data_list = llJson2List(buttons_json);
 
     // Reorder for natural display
-    list reordered_buttons = reorder_list_for_display(button_list, "-");
-    list reordered_contexts = reorder_list_for_display(context_list, "");
+    list reordered = reorder_buttons_for_display(button_data_list);
 
     // DESIGN DECISION: Navigation row is ALWAYS present (DO NOT CHANGE)
-    list final_buttons = [];
-    list final_contexts = [];
-    
+    //
+    // The navigation buttons (<<, >>, Close) are added at the front, placing
+    // them in the bottom row of the dialog. Navigation buttons are plain strings,
+    // plugin buttons are JSON objects.
+    //
+    // IMPORTANT: has_nav is always 1. The navigation row must be present even
+    // for single-page menus. This provides:
+    // - Consistent UI layout across all menu states
+    // - Predictable button positions (muscle memory)
+    // - Uniform user experience
+    //
+    // This is a deliberate design decision and is NOT open to modification.
+    // Do not add conditional logic to hide navigation based on page count.
+    list final_button_data = [];
     if (has_nav) {
-        final_buttons = ["<<", ">>", "Close"] + reordered_buttons;
-        final_contexts = ["", "", ""] + reordered_contexts;
+        final_button_data = ["<<", ">>", "Close"] + reordered;
     }
     else {
-        final_buttons = ["Close"] + reordered_buttons;
-        final_contexts = [""] + reordered_contexts;
+        final_button_data = ["Close"] + reordered;
     }
 
     // Construct title based on menu type
@@ -127,15 +173,17 @@ render_menu(string msg) {
         body_text = "Choose:";
     }
 
-    // Send to dialog bus with split arrays
+    // Convert button data back to JSON (mixed array of strings and objects)
+    string final_button_data_json = llList2Json(JSON_ARRAY, final_button_data);
+
+    // Send to dialog bus with button_data field
     string dialog_msg = llList2Json(JSON_OBJECT, [
         "type", "dialog_open",
         "session_id", session_id,
         "user", (string)user,
         "title", title,
         "body", body_text,
-        "buttons", llList2Json(JSON_ARRAY, final_buttons),
-        "contexts", llList2Json(JSON_ARRAY, final_contexts),
+        "button_data", final_button_data_json,
         "timeout", 60
     ]);
 
@@ -143,7 +191,7 @@ render_menu(string msg) {
 }
 
 show_message(string msg) {
-    if (llJsonGetValue(msg, ["user"]) == JSON_INVALID || llJsonGetValue(msg, ["message"]) == JSON_INVALID) {
+    if (!validate_required_fields(msg, ["user", "message"], "show_message")) {
         return;
     }
 
@@ -161,8 +209,8 @@ default
     }
 
     link_message(integer sender_num, integer num, string msg, key id) {
-        if (llJsonGetValue(msg, ["type"]) == JSON_INVALID) return;
-        string msg_type = llJsonGetValue(msg, ["type"]);
+        string msg_type = get_msg_type(msg);
+        if (msg_type == "") return;
 
         if (num == UI_BUS) {
             if (msg_type == "render_menu") {

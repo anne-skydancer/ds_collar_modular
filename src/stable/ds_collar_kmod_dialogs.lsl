@@ -1,14 +1,16 @@
+
 /*--------------------
 MODULE: ds_collar_kmod_dialogs.lsl
 VERSION: 1.00
-REVISION: 24
+REVISION: 21
 PURPOSE: Centralized dialog management for shared listener handling
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
-- ARCHITECTURE CHANGE: Split button map into parallel arrays for O(1) lookup
-- Optimized listen handler to use native llListFindList instead of loops
-- Updated handle_dialog_open to accept pre-split button/context arrays
-- Removed complex JSON parsing logic
+- Centralized dialog sessions remove per-plugin listen management
+- Dedicated dialog bus coordinates all open and timeout events
+- Channel collision detection mitigates negative channel reuse conflicts
+- Owner change handling resets listeners for safe transfers
+- Truncation warnings added for numbered button lists
 --------------------*/
 
 
@@ -17,23 +19,55 @@ integer KERNEL_LIFECYCLE = 500;
 integer DIALOG_BUS = 950;
 
 /* -------------------- CONSTANTS -------------------- */
+integer CHANNEL_BASE = -8000000;
 integer SESSION_MAX = 10;  // Maximum concurrent sessions
 
-/* Session list stride: [session_id, user_key, channel, listen_handle, timeout_unix, buttons_json, contexts_json] */
-integer SESSION_STRIDE = 7;
+/* Session list stride: [session_id, user_key, channel, listen_handle, timeout_unix, button_map] */
+integer SESSION_STRIDE = 6;
 integer SESSION_ID = 0;
 integer SESSION_USER = 1;
 integer SESSION_CHANNEL = 2;
 integer SESSION_LISTEN = 3;
 integer SESSION_TIMEOUT = 4;
-integer SESSION_BUTTONS = 5;   // JSON array of button labels
-integer SESSION_CONTEXTS = 6;  // JSON array of contexts
+integer SESSION_BUTTON_MAP = 5;  // List of [button_text, context] pairs
 
 /* -------------------- STATE -------------------- */
 list Sessions = [];
 integer NextChannelOffset = 1;
 
+/* Button config list stride: [context, button_a_label, button_b_label] */
+integer BUTTON_CONFIG_STRIDE = 3;
+integer BUTTON_CONTEXT = 0;
+integer BUTTON_A_LABEL = 1;
+integer BUTTON_B_LABEL = 2;
+
+list ButtonConfigs = [];
+
 /* -------------------- HELPERS -------------------- */
+
+
+integer json_has(string j, list path) {
+    return (llJsonGetValue(j, path) != JSON_INVALID);
+}
+string get_msg_type(string msg) {
+    if (!json_has(msg, ["type"])) return "";
+    return llJsonGetValue(msg, ["type"]);
+}
+
+
+// MEMORY OPTIMIZATION: Compact field validation helper
+integer validate_required_fields(string json_str, list field_names, string function_name) {
+    integer i = 0;
+    integer len = llGetListLength(field_names);
+    while (i < len) {
+        string field = llList2String(field_names, i);
+        if (!json_has(json_str, [field])) {
+            return FALSE;
+        }
+        i += 1;
+    }
+    return TRUE;
+}
 
 integer now() {
     return llGetUnixTime();
@@ -42,9 +76,13 @@ integer now() {
 /* -------------------- SESSION MANAGEMENT -------------------- */
 
 integer find_session_idx(string session_id) {
-    integer idx = llListFindList(Sessions, [session_id]);
-    if (idx != -1 && (idx % SESSION_STRIDE) == SESSION_ID) {
-        return idx;
+    integer i = 0;
+    integer len = llGetListLength(Sessions);
+    while (i < len) {
+        if (llList2String(Sessions, i + SESSION_ID) == session_id) {
+            return i;
+        }
+        i += SESSION_STRIDE;
     }
     return -1;
 }
@@ -110,15 +148,73 @@ integer is_channel_in_use(integer channel) {
 }
 
 integer get_next_channel() {
-    // Use large negative range (-1 to -2 billion)
-    // Collision probability is extremely low, O(1) operation
-    return -1 - (integer)llFrand(2.0E09);
+    // SECURITY FIX: Try up to 100 times to find unused channel
+    integer attempts = 0;
+    integer channel;
+    
+    while (attempts < 100) {
+        channel = CHANNEL_BASE - NextChannelOffset;
+        NextChannelOffset += 1;
+        if (NextChannelOffset > 1000000) NextChannelOffset = 1;
+        
+        if (!is_channel_in_use(channel)) {
+            return channel;
+        }
+        
+        attempts += 1;
+    }
+    
+    // Fallback: use random channel (collision still possible but very unlikely)
+    return CHANNEL_BASE - (integer)llFrand(1000000);
+}
+
+/* -------------------- BUTTON CONFIG MANAGEMENT -------------------- */
+
+integer find_button_config_idx(string context) {
+    integer i = 0;
+    integer len = llGetListLength(ButtonConfigs);
+    while (i < len) {
+        if (llList2String(ButtonConfigs, i + BUTTON_CONTEXT) == context) {
+            return i;
+        }
+        i += BUTTON_CONFIG_STRIDE;
+    }
+    return -1;
+}
+
+register_button_config(string context, string button_a, string button_b) {
+    integer idx = find_button_config_idx(context);
+
+    if (idx != -1) {
+        // Update existing config
+        ButtonConfigs = llListReplaceList(ButtonConfigs, [context, button_a, button_b], idx, idx + BUTTON_CONFIG_STRIDE - 1);
+    }
+    else {
+        // Add new config
+        ButtonConfigs += [context, button_a, button_b];
+    }
+}
+
+string get_button_label(string context, integer button_state) {
+    integer idx = find_button_config_idx(context);
+
+    if (idx == -1) {
+        // No config found, return context as-is
+        return context;
+    }
+
+    if (button_state == 0) {
+        return llList2String(ButtonConfigs, idx + BUTTON_A_LABEL);
+    }
+    else {
+        return llList2String(ButtonConfigs, idx + BUTTON_B_LABEL);
+    }
 }
 
 /* -------------------- DIALOG DISPLAY -------------------- */
 
 handle_dialog_open(string msg) {
-    if (llJsonGetValue(msg, ["session_id"]) == JSON_INVALID || llJsonGetValue(msg, ["user"]) == JSON_INVALID) {
+    if (!validate_required_fields(msg, ["session_id", "user"], "handle_dialog_open")) {
         return;
     }
 
@@ -126,47 +222,78 @@ handle_dialog_open(string msg) {
     key user = (key)llJsonGetValue(msg, ["user"]);
 
     // Check for numbered list type
-    if (llJsonGetValue(msg, ["dialog_type"]) == "numbered_list") {
+    if (json_has(msg, ["dialog_type"]) && llJsonGetValue(msg, ["dialog_type"]) == "numbered_list") {
         handle_numbered_list_dialog(msg, session_id, user);
         return;
     }
 
-    // Standard dialog - optimized for parallel arrays
+    // Standard dialog - check for button_data (new format) or buttons (old format)
     list buttons = [];
-    string buttons_json = "[]";
-    string contexts_json = "[]";
+    list button_map = [];  // Maps button_text -> context
 
-    if (llJsonGetValue(msg, ["buttons"]) != JSON_INVALID && llJsonGetValue(msg, ["contexts"]) != JSON_INVALID) {
-        // New optimized format: pre-split arrays
-        buttons_json = llJsonGetValue(msg, ["buttons"]);
-        contexts_json = llJsonGetValue(msg, ["contexts"]);
-        buttons = llJson2List(buttons_json);
-    }
-    else if (llJsonGetValue(msg, ["button_data"]) != JSON_INVALID) {
-        // Legacy format support (fallback)
+    if (json_has(msg, ["button_data"])) {
+        // New format: button_data contains mixed array of strings and objects
         string button_data_json = llJsonGetValue(msg, ["button_data"]);
         list button_data_list = llJson2List(button_data_json);
-        list contexts = [];
-        
+
+        // Resolve button labels from config+state and build mapping
         integer i = 0;
         integer len = llGetListLength(button_data_list);
         while (i < len) {
             string item = llList2String(button_data_list, i);
-            if (llGetSubString(item, 0, 0) == "{" && 
-                llJsonValueType(item, []) == JSON_OBJECT &&
-                llJsonGetValue(item, ["context"]) != JSON_INVALID && llJsonGetValue(item, ["label"]) != JSON_INVALID) {
-                
-                buttons += [llJsonGetValue(item, ["label"])];
-                contexts += [llJsonGetValue(item, ["context"])];
+            string button_text = "";
+            string button_context = "";
+
+            // Plugin buttons: JSON objects with context+label+state (routable to plugins)
+            if (llJsonValueType(item, []) == JSON_OBJECT &&
+                json_has(item, ["context"]) && json_has(item, ["label"]) && json_has(item, ["state"])) {
+
+                string context = llJsonGetValue(item, ["context"]);
+                string label = llJsonGetValue(item, ["label"]);
+                integer button_state = (integer)llJsonGetValue(item, ["state"]);
+
+                // Check if there's a button config for this context (for toggle buttons)
+                integer config_idx = find_button_config_idx(context);
+
+                if (config_idx != -1) {
+                    // Toggle button: use registered config to resolve label
+                    button_text = get_button_label(context, button_state);
+                }
+                else {
+                    // Regular plugin: use label field directly
+                    button_text = label;
+                }
+
+                button_context = context;  // Plugin buttons route to context
             }
             else {
-                buttons += [item];
-                contexts += [""];
+                // Navigation buttons or other non-routable buttons
+                // Extract label from JSON object if available, otherwise use string as-is
+                if (llJsonValueType(item, []) == JSON_OBJECT && json_has(item, ["label"])) {
+                    button_text = llJsonGetValue(item, ["label"]);
+                }
+                else {
+                    button_text = item;
+                }
+                // button_context remains empty (no routing)
             }
+
+            buttons += [button_text];
+            button_map += [button_text, button_context];
             i++;
         }
-        buttons_json = llList2Json(JSON_ARRAY, buttons);
-        contexts_json = llList2Json(JSON_ARRAY, contexts);
+    }
+    else if (json_has(msg, ["buttons"])) {
+        // Old format: buttons is array of strings
+        string buttons_json = llJsonGetValue(msg, ["buttons"]);
+        buttons = llJson2List(buttons_json);
+
+        // Build empty button_map for old format
+        integer i = 0;
+        while (i < llGetListLength(buttons)) {
+            button_map += [llList2String(buttons, i), ""];
+            i++;
+        }
     }
     else {
         return;
@@ -176,16 +303,16 @@ handle_dialog_open(string msg) {
     string message = "Select an option:";
     integer timeout = 60;
 
-    if (llJsonGetValue(msg, ["title"]) != JSON_INVALID) {
+    if (json_has(msg, ["title"])) {
         title = llJsonGetValue(msg, ["title"]);
     }
-    if (llJsonGetValue(msg, ["body"]) != JSON_INVALID) {
+    if (json_has(msg, ["body"])) {
         message = llJsonGetValue(msg, ["body"]);
     }
-    else if (llJsonGetValue(msg, ["message"]) != JSON_INVALID) {
+    else if (json_has(msg, ["message"])) {
         message = llJsonGetValue(msg, ["message"]);
     }
-    if (llJsonGetValue(msg, ["timeout"]) != JSON_INVALID) {
+    if (json_has(msg, ["timeout"])) {
         timeout = (integer)llJsonGetValue(msg, ["timeout"]);
     }
 
@@ -211,8 +338,8 @@ handle_dialog_open(string msg) {
         timeout_unix = now() + timeout;
     }
 
-    // Add to sessions (store parallel JSON arrays)
-    Sessions += [session_id, user, channel, listen_handle, timeout_unix, buttons_json, contexts_json];
+    // Add to sessions (serialize button_map as JSON to maintain SESSION_STRIDE)
+    Sessions += [session_id, user, channel, listen_handle, timeout_unix, llList2Json(JSON_ARRAY, button_map)];
 
     // Show dialog
     llDialog(user, title + "\n\n" + message, buttons, channel);
@@ -220,7 +347,7 @@ handle_dialog_open(string msg) {
 }
 
 handle_numbered_list_dialog(string msg, string session_id, key user) {
-    if (llJsonGetValue(msg, ["items"]) == JSON_INVALID) {
+    if (!validate_required_fields(msg, ["items"], "handle_numbered_list_dialog")) {
         return;
     }
     
@@ -228,13 +355,13 @@ handle_numbered_list_dialog(string msg, string session_id, key user) {
     string prompt = "Choose:";
     integer timeout = 60;
     
-    if (llJsonGetValue(msg, ["title"]) != JSON_INVALID) {
+    if (json_has(msg, ["title"])) {
         title = llJsonGetValue(msg, ["title"]);
     }
-    if (llJsonGetValue(msg, ["prompt"]) != JSON_INVALID) {
+    if (json_has(msg, ["prompt"])) {
         prompt = llJsonGetValue(msg, ["prompt"]);
     }
-    if (llJsonGetValue(msg, ["timeout"]) != JSON_INVALID) {
+    if (json_has(msg, ["timeout"])) {
         timeout = (integer)llJsonGetValue(msg, ["timeout"]);
     }
     
@@ -289,20 +416,15 @@ handle_numbered_list_dialog(string msg, string session_id, key user) {
     }
 
     // Build button_map for numbered list (buttons have no context)
-    // OPTIMIZATION: Store as parallel arrays
-    string buttons_json = llList2Json(JSON_ARRAY, buttons);
-    
-    // Create empty contexts list of same length
-    list contexts = [];
+    list button_map = [];
     integer j = 0;
     while (j < llGetListLength(buttons)) {
-        contexts += [""];
+        button_map += [llList2String(buttons, j), ""];
         j++;
     }
-    string contexts_json = llList2Json(JSON_ARRAY, contexts);
 
-    // Add to sessions (store parallel JSON arrays)
-    Sessions += [session_id, user, channel, listen_handle, timeout_unix, buttons_json, contexts_json];
+    // Add to sessions (serialize button_map as JSON to maintain SESSION_STRIDE)
+    Sessions += [session_id, user, channel, listen_handle, timeout_unix, llList2Json(JSON_ARRAY, button_map)];
 
     // Show dialog
     llDialog(user, title + "\n\n" + body, buttons, channel);
@@ -310,7 +432,7 @@ handle_numbered_list_dialog(string msg, string session_id, key user) {
 }
 
 handle_dialog_close(string msg) {
-    if (llJsonGetValue(msg, ["session_id"]) == JSON_INVALID) return;
+    if (!json_has(msg, ["session_id"])) return;
     
     string session_id = llJsonGetValue(msg, ["session_id"]);
     close_session(session_id);
@@ -323,6 +445,7 @@ default
     state_entry() {
         Sessions = [];
         NextChannelOffset = 1;
+        ButtonConfigs = [];
 
         // Start timer for session cleanup
         llSetTimerEvent(5.0);
@@ -346,20 +469,22 @@ default
                 // Verify speaker matches session user
                 if (id == session_user) {
                     string session_id = llList2String(Sessions, i + SESSION_ID);
-                    
-                    // Deserialize parallel arrays
-                    string buttons_json = llList2String(Sessions, i + SESSION_BUTTONS);
-                    string contexts_json = llList2String(Sessions, i + SESSION_CONTEXTS);
-                    list buttons = llJson2List(buttons_json);
-                    list contexts = llJson2List(contexts_json);
+                    // Deserialize button_map from JSON
+                    string button_map_json = llList2String(Sessions, i + SESSION_BUTTON_MAP);
+                    list button_map = llJson2List(button_map_json);
 
-                    // OPTIMIZATION: Native list search instead of loop
-                    integer btn_idx = llListFindList(buttons, [message]);
+                    // Look up context for this button
                     string clicked_context = "";
-                    
-                    if (btn_idx != -1) {
-                        clicked_context = llList2String(contexts, btn_idx);
+                    integer j = 0;
+                    integer map_len = llGetListLength(button_map);
+                    while (j < map_len) {
+                        if (llList2String(button_map, j) == message) {
+                            clicked_context = llList2String(button_map, j + 1);
+                            jump found_context;
+                        }
+                        j += 2;
                     }
+                    @found_context;
 
                     // Send response message with context
                     string response = llList2Json(JSON_OBJECT, [
@@ -383,8 +508,8 @@ default
     }
     
     link_message(integer sender, integer num, string msg, key id) {
-        if (llJsonGetValue(msg, ["type"]) == JSON_INVALID) return;
-        string msg_type = llJsonGetValue(msg, ["type"]);
+        string msg_type = get_msg_type(msg);
+        if (msg_type == "") return;
 
         /* -------------------- KERNEL LIFECYCLE -------------------- */
         if (num == KERNEL_LIFECYCLE) {
@@ -402,6 +527,16 @@ default
         }
         else if (msg_type == "dialog_close") {
             handle_dialog_close(msg);
+        }
+        else if (msg_type == "register_button_config") {
+            if (json_has(msg, ["context"]) && json_has(msg, ["button_a"]) && json_has(msg, ["button_b"])) {
+                string context = llJsonGetValue(msg, ["context"]);
+                string button_a = llJsonGetValue(msg, ["button_a"]);
+                string button_b = llJsonGetValue(msg, ["button_b"]);
+                register_button_config(context, button_a, button_b);
+            }
+            else {
+            }
         }
     }
     

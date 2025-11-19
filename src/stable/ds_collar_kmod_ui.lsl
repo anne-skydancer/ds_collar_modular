@@ -1,14 +1,15 @@
 /*--------------------
 MODULE: ds_collar_kmod_ui.lsl
 VERSION: 1.00
-REVISION: 50
+REVISION: 40
 PURPOSE: Session management, ACL filtering, and plugin list orchestration
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
-- ARCHITECTURE CHANGE: Split button data into parallel 'labels' and 'contexts' arrays
-- Removed JSON object construction for buttons to reduce parsing overhead downstream
-- Optimized FilteredPluginsData to store plain labels instead of JSON strings
-- Updated send_render_menu to transmit parallel arrays
+- Split UI logic from menu rendering to delegate visuals to ds_collar_menu.lsl
+- Added UUID-based plugin change detection to avoid registration races
+- Enforced touch range validation and blacklist checks during session start
+- Revalidated ACL levels on session return with time-based expiry
+- Guarded debug logging for production and handled owner change resets
 --------------------*/
 
 
@@ -32,13 +33,8 @@ integer PLUGIN_CONTEXT = 0;
 integer PLUGIN_LABEL = 1;
 integer PLUGIN_MIN_ACL = 2;
 
-/* Filtered Data Stride: [context, label] */
-integer FILTERED_STRIDE = 2;
-integer FILTERED_CONTEXT = 0;
-integer FILTERED_LABEL = 1;
-
 /* Session list stride - SECURITY FIX: Added SESSION_CREATED_TIME */
-integer SESSION_STRIDE = 10;
+integer SESSION_STRIDE = 9;
 integer SESSION_USER = 0;
 integer SESSION_ACL = 1;
 integer SESSION_IS_BLACKLISTED = 2;
@@ -48,18 +44,14 @@ integer SESSION_ID = 5;
 integer SESSION_FILTERED_START = 6;
 integer SESSION_CREATED_TIME = 7;  // SECURITY FIX: Timestamp for ACL refresh
 integer SESSION_CONTEXT = 8;  // Context filter for this session (root or sos)
-integer SESSION_FILTERED_COUNT = 9; // Cached count of filtered plugins
+
+/* Plugin state list stride: [context, state] */
+integer PLUGIN_STATE_STRIDE = 2;
+integer PLUGIN_STATE_CONTEXT = 0;
+integer PLUGIN_STATE_VALUE = 1;
 
 integer MAX_SESSIONS = 5;
 integer SESSION_MAX_AGE = 60;  // Seconds before ACL refresh required
-
-/* Filter Cache Stride: [acl, is_blacklisted, context, start_idx, count] */
-integer FILTER_CACHE_STRIDE = 5;
-integer FILTER_CACHE_ACL = 0;
-integer FILTER_CACHE_BLACKLISTED = 1;
-integer FILTER_CACHE_CONTEXT = 2;
-integer FILTER_CACHE_START = 3;
-integer FILTER_CACHE_COUNT = 4;
 
 /* Touch tracking stride */
 integer TOUCH_DATA_STRIDE = 2;
@@ -75,21 +67,118 @@ integer PENDING_ACL_CONTEXT = 1;
 list AllPlugins = [];
 list Sessions = [];
 list FilteredPluginsData = [];
-list FilterCache = []; // Cache for filtered plugin lists
 list PendingAcl = [];
 list TouchData = [];
+list PluginStates = [];  // Stores toggle button states [context, state]
 
 /* -------------------- HELPERS -------------------- */
+
+
+integer json_has(string j, list path) {
+    return (llJsonGetValue(j, path) != JSON_INVALID);
+}
+string get_msg_type(string msg) {
+    if (!json_has(msg, ["type"])) return "";
+    return llJsonGetValue(msg, ["type"]);
+}
+
+
+// MEMORY OPTIMIZATION: Compact field validation helper
+integer validate_required_fields(string json_str, list field_names, string function_name) {
+    integer i = 0;
+    integer len = llGetListLength(field_names);
+    while (i < len) {
+        string field = llList2String(field_names, i);
+        if (!json_has(json_str, [field])) {
+            return FALSE;
+        }
+        i += 1;
+    }
+    return TRUE;
+}
 
 string generate_session_id(key user) {
     return "ui_" + (string)user + "_" + (string)llGetUnixTime();
 }
 
 
+/* -------------------- PLUGIN STATE MANAGEMENT -------------------- */
+
+integer find_plugin_state_idx(string context) {
+    integer i = 0;
+    integer len = llGetListLength(PluginStates);
+    while (i < len) {
+        if (llList2String(PluginStates, i + PLUGIN_STATE_CONTEXT) == context) {
+            return i;
+        }
+        i += PLUGIN_STATE_STRIDE;
+    }
+    return -1;
+}
+
+integer get_plugin_state(string context) {
+    integer idx = find_plugin_state_idx(context);
+    if (idx == -1) {
+        return 0;  // Default state
+    }
+    return llList2Integer(PluginStates, idx + PLUGIN_STATE_VALUE);
+}
+
+set_plugin_state(string context, integer button_state) {
+    integer idx = find_plugin_state_idx(context);
+
+    if (idx != -1) {
+        // Update existing state
+        PluginStates = llListReplaceList(PluginStates, [button_state], idx + PLUGIN_STATE_VALUE, idx + PLUGIN_STATE_VALUE);
+    }
+    else {
+        // Add new state
+        PluginStates += [context, button_state];
+    }
+}
+
 /* -------------------- SESSION MANAGEMENT -------------------- */
 
 integer find_session_idx(key user) {
-    return llListFindList(Sessions, [user]);
+    integer i = 0;
+    integer len = llGetListLength(Sessions);
+    while (i < len) {
+        if (llList2Key(Sessions, i + SESSION_USER) == user) {
+            return i;
+        }
+        i += SESSION_STRIDE;
+    }
+    return -1;
+}
+
+integer get_session_filtered_start(integer session_idx) {
+    return llList2Integer(Sessions, session_idx + SESSION_FILTERED_START);
+}
+
+integer get_session_filtered_count(integer session_idx) {
+    integer start = get_session_filtered_start(session_idx);
+    integer next_session_idx = session_idx + SESSION_STRIDE;
+    
+    integer end;
+    if (next_session_idx < llGetListLength(Sessions)) {
+        end = llList2Integer(Sessions, next_session_idx + SESSION_FILTERED_START);
+    }
+    else {
+        end = llGetListLength(FilteredPluginsData);
+    }
+    
+    return (end - start) / PLUGIN_STRIDE;
+}
+
+list get_session_filtered_plugins(integer session_idx) {
+    integer start = get_session_filtered_start(session_idx);
+    integer count = get_session_filtered_count(session_idx);
+    integer end = start + (count * PLUGIN_STRIDE);
+    
+    if (end > start) {
+        return llList2List(FilteredPluginsData, start, end - 1);
+    }
+    return [];
 }
 
 cleanup_session(key user) {
@@ -104,11 +193,24 @@ cleanup_session(key user) {
     ]);
     llMessageLinked(LINK_SET, DIALOG_BUS, close_msg, NULL_KEY);
 
-    // MEMORY OPTIMIZATION: Do NOT delete from FilteredPluginsData
-    // Data is now cached and shared between sessions.
-    // FilteredPluginsData is only cleared when AllPlugins changes.
+    integer start = get_session_filtered_start(idx);
+    integer count = get_session_filtered_count(idx);
+    integer end = start + (count * PLUGIN_STRIDE);
+
+    if (count > 0) {
+        FilteredPluginsData = llDeleteSubList(FilteredPluginsData, start, end - 1);
+    }
+
+    integer shift_amount = count * PLUGIN_STRIDE;
+    integer i = idx + SESSION_STRIDE;
+    while (i < llGetListLength(Sessions)) {
+        integer old_start = llList2Integer(Sessions, i + SESSION_FILTERED_START);
+        Sessions = llListReplaceList(Sessions, [old_start - shift_amount], i + SESSION_FILTERED_START, i + SESSION_FILTERED_START);
+        i += SESSION_STRIDE;
+    }
 
     Sessions = llDeleteSubList(Sessions, idx, idx + SESSION_STRIDE - 1);
+
 }
 
 create_session(key user, integer acl, integer is_blacklisted, string context_filter) {
@@ -122,27 +224,9 @@ create_session(key user, integer acl, integer is_blacklisted, string context_fil
         cleanup_session(oldest_user);
     }
 
-    // Check Cache
-    integer filtered_start = -1;
-    integer filtered_count = 0;
-    
-    integer i = 0;
-    integer cache_len = llGetListLength(FilterCache);
-    while (i < cache_len) {
-        if (llList2Integer(FilterCache, i + FILTER_CACHE_ACL) == acl &&
-            llList2Integer(FilterCache, i + FILTER_CACHE_BLACKLISTED) == is_blacklisted &&
-            llList2String(FilterCache, i + FILTER_CACHE_CONTEXT) == context_filter) {
-            
-            filtered_start = llList2Integer(FilterCache, i + FILTER_CACHE_START);
-            filtered_count = llList2Integer(FilterCache, i + FILTER_CACHE_COUNT);
-            jump cache_found;
-        }
-        i += FILTER_CACHE_STRIDE;
-    }
-
-    // Cache Miss - Build filtered list
+    // Build filtered list based on ACL and context (SOS vs root)
     list filtered = [];
-    i = 0;
+    integer i = 0;
     integer len = llGetListLength(AllPlugins);
 
     while (i < len) {
@@ -165,29 +249,25 @@ create_session(key user, integer acl, integer is_blacklisted, string context_fil
         }
 
         if (should_include) {
-            // Store plain label for rendering speed
-            filtered += [context, label];
+            filtered += [context, label, min_acl];
         }
 
         i += PLUGIN_STRIDE;
     }
 
-    // OPTIMIZATION: Removed sorting here as AllPlugins is pre-sorted
-    integer plugin_count = llGetListLength(filtered) / FILTERED_STRIDE;
+    // Sort filtered plugins alphabetically by label (field index 1)
+    integer plugin_count = llGetListLength(filtered) / PLUGIN_STRIDE;
+    if (plugin_count > 1) {
+        filtered = llListSortStrided(filtered, PLUGIN_STRIDE, PLUGIN_LABEL, TRUE);
+    }
 
-    filtered_start = llGetListLength(FilteredPluginsData);
-    filtered_count = plugin_count;
+    integer filtered_start = llGetListLength(FilteredPluginsData);
     FilteredPluginsData += filtered;
-    
-    // Add to Cache
-    FilterCache += [acl, is_blacklisted, context_filter, filtered_start, filtered_count];
-
-    @cache_found;
 
     // SECURITY FIX: Add timestamp to session
     string session_id = generate_session_id(user);
     integer created_time = llGetUnixTime();
-    Sessions += [user, acl, is_blacklisted, 0, 0, session_id, filtered_start, created_time, context_filter, filtered_count];
+    Sessions += [user, acl, is_blacklisted, 0, 0, session_id, filtered_start, created_time, context_filter];
 }
 
 /* -------------------- PLUGIN LIST MANAGEMENT -------------------- */
@@ -195,15 +275,22 @@ create_session(key user, integer acl, integer is_blacklisted, string context_fil
 apply_plugin_list(string plugins_json) {
     AllPlugins = [];
 
-    list plugins = llJson2List(plugins_json);
-    integer count = llGetListLength(plugins);
+    if (llJsonValueType(plugins_json, []) != JSON_ARRAY) {
+        return;
+    }
+    
+    integer count = 0;
+    while (llJsonValueType(plugins_json, [count]) != JSON_INVALID) {
+        count += 1;
+    }
+    
     
     integer i = 0;
     while (i < count) {
-        string plugin_obj = llList2String(plugins, i);
+        string plugin_obj = llJsonGetValue(plugins_json, [i]);
 
-        if (llJsonGetValue(plugin_obj, ["context"]) != JSON_INVALID &&
-            llJsonGetValue(plugin_obj, ["label"]) != JSON_INVALID) {
+        if (json_has(plugin_obj, ["context"]) &&
+            json_has(plugin_obj, ["label"])) {
 
             string context = llJsonGetValue(plugin_obj, ["context"]);
             string label = llJsonGetValue(plugin_obj, ["label"]);
@@ -219,10 +306,6 @@ apply_plugin_list(string plugins_json) {
         i += 1;
     }
 
-    // OPTIMIZATION: Sort AllPlugins once at initialization
-    if (llGetListLength(AllPlugins) > PLUGIN_STRIDE) {
-        AllPlugins = llListSortStrided(AllPlugins, PLUGIN_STRIDE, PLUGIN_LABEL, TRUE);
-    }
 
     // Request ACL data from auth module
     string request = llList2Json(JSON_OBJECT, ["type", "plugin_acl_list_request"]);
@@ -231,22 +314,38 @@ apply_plugin_list(string plugins_json) {
 
 apply_plugin_acl_list(string acl_json) {
 
-    list acl_list = llJson2List(acl_json);
-    integer count = llGetListLength(acl_list);
+    if (llJsonValueType(acl_json, []) != JSON_ARRAY) {
+        return;
+    }
+
+    integer count = 0;
+    while (llJsonValueType(acl_json, [count]) != JSON_INVALID) {
+        count += 1;
+    }
+
 
     integer i = 0;
     while (i < count) {
-        string acl_obj = llList2String(acl_list, i);
+        string acl_obj = llJsonGetValue(acl_json, [i]);
 
-        if (llJsonGetValue(acl_obj, ["context"]) != JSON_INVALID && llJsonGetValue(acl_obj, ["min_acl"]) != JSON_INVALID) {
+        if (json_has(acl_obj, ["context"]) && json_has(acl_obj, ["min_acl"])) {
             string context = llJsonGetValue(acl_obj, ["context"]);
             integer min_acl = (integer)llJsonGetValue(acl_obj, ["min_acl"]);
 
             // Find this context in AllPlugins and update min_acl
-            integer j = llListFindList(AllPlugins, [context]);
-            if (j != -1) {
-                AllPlugins = llListReplaceList(AllPlugins, [min_acl], j + PLUGIN_MIN_ACL, j + PLUGIN_MIN_ACL);
+            // OPTIMIZATION: Jump to next_acl after match (acts as break)
+            // Each context appears at most once, so no need to continue searching
+            integer j = 0;
+            integer len = llGetListLength(AllPlugins);
+            while (j < len) {
+                if (llList2String(AllPlugins, j + PLUGIN_CONTEXT) == context) {
+                    AllPlugins = llListReplaceList(AllPlugins, [min_acl], j + PLUGIN_MIN_ACL, j + PLUGIN_MIN_ACL);
+                    jump next_acl;  // Break after match (each context is unique)
+                }
+                j += PLUGIN_STRIDE;
             }
+
+            @next_acl;
         }
 
         i += 1;
@@ -270,8 +369,8 @@ send_render_menu(key user, string menu_type) {
         return;
     }
 
-    // OPTIMIZATION: Read count directly from session to avoid list copy
-    integer plugin_count = llList2Integer(Sessions, session_idx + SESSION_FILTERED_COUNT);
+    list filtered = get_session_filtered_plugins(session_idx);
+    integer plugin_count = llGetListLength(filtered) / PLUGIN_STRIDE;
 
     if (plugin_count == 0) {
         integer user_acl = llList2Integer(Sessions, session_idx + SESSION_ACL);
@@ -308,56 +407,33 @@ send_render_menu(key user, string menu_type) {
     if (current_page < 0) current_page = total_pages - 1;
 
     // Batch update for performance (SESSION_PAGE=3, SESSION_TOTAL_PAGES=4 are consecutive)
-    // OPTIMIZATION: Only write if changed to reduce list churn
-    integer stored_page = llList2Integer(Sessions, session_idx + SESSION_PAGE);
-    integer stored_total = llList2Integer(Sessions, session_idx + SESSION_TOTAL_PAGES);
-    
-    if (current_page != stored_page || total_pages != stored_total) {
-        Sessions = llListReplaceList(Sessions, [current_page, total_pages], session_idx + SESSION_PAGE, session_idx + SESSION_TOTAL_PAGES);
-    }
+    Sessions = llListReplaceList(Sessions, [current_page, total_pages], session_idx + SESSION_PAGE, session_idx + SESSION_TOTAL_PAGES);
 
     // Build button data with context and state
-    // OPTIMIZATION: Manual JSON construction avoids llList2Json escaping overhead
-    string buttons_json = "[";
-    string contexts_json = "[";
-    string sep = "";
-
-    // OPTIMIZATION: Direct access to FilteredPluginsData avoids llList2List copy
-    integer session_start = llList2Integer(Sessions, session_idx + SESSION_FILTERED_START);
-    
-    integer start_offset = current_page * MAX_FUNC_BTNS * FILTERED_STRIDE;
-    integer abs_start = session_start + start_offset;
-    
-    // Calculate end of this page
-    integer abs_end = abs_start + (MAX_FUNC_BTNS * FILTERED_STRIDE);
-    
-    // Calculate absolute end of this session's data
-    integer session_end = session_start + (plugin_count * FILTERED_STRIDE);
-    
-    if (abs_end > session_end) {
-        abs_end = session_end;
+    list button_data = [];
+    integer start_idx = current_page * MAX_FUNC_BTNS * PLUGIN_STRIDE;
+    integer end_idx = start_idx + (MAX_FUNC_BTNS * PLUGIN_STRIDE);
+    if (end_idx > llGetListLength(filtered)) {
+        end_idx = llGetListLength(filtered);
     }
 
-    integer i = abs_start;
-    while (i < abs_end) {
-        // Direct JSON access - massive speedup
-        string label = llList2String(FilteredPluginsData, i + FILTERED_LABEL);
-        string context = llList2String(FilteredPluginsData, i + FILTERED_CONTEXT);
-        
-        // Escape quotes in label just in case
-        // Simple replace for " to \"
-        // Note: LSL doesn't have a native replace all, but labels shouldn't have quotes usually.
-        // For safety, we wrap in quotes.
-        
-        buttons_json += sep + "\"" + label + "\"";
-        contexts_json += sep + "\"" + context + "\"";
-        
-        sep = ",";
-        i += FILTERED_STRIDE;
+    integer i = start_idx;
+    while (i < end_idx) {
+        string context = llList2String(filtered, i + PLUGIN_CONTEXT);
+        string label = llList2String(filtered, i + PLUGIN_LABEL);
+        integer button_state = get_plugin_state(context);
+
+        // Create button data object with context, label, and state
+        string btn_obj = llList2Json(JSON_OBJECT, [
+            "context", context,
+            "label", label,
+            "state", button_state
+        ]);
+        button_data += [btn_obj];
+        i += PLUGIN_STRIDE;
     }
-    buttons_json += "]";
-    contexts_json += "]";
-    
+
+    string buttons_json = llList2Json(JSON_ARRAY, button_data);
     string session_id = llList2String(Sessions, session_idx + SESSION_ID);
 
     // DESIGN DECISION: Navigation row is ALWAYS present (DO NOT CHANGE)
@@ -374,7 +450,6 @@ send_render_menu(key user, string menu_type) {
         "page", current_page,
         "total_pages", total_pages,
         "buttons", buttons_json,
-        "contexts", contexts_json,
         "has_nav", has_nav
     ]);
 
@@ -402,26 +477,10 @@ handle_button_click(key user, string button, string context) {
     string session_context = llList2String(Sessions, session_idx + SESSION_CONTEXT);
 
     // Handle navigation buttons (no context)
-    if (button == "<<" || button == ">>") {
-        if (button == "<<") {
-            current_page -= 1;
-            if (current_page < 0) current_page = total_pages - 1;
-        } else {
-            current_page += 1;
-            if (current_page >= total_pages) current_page = 0;
-        }
-
-        // OPTIMIZATION: Combined update of Page (3) through Timestamp (7)
-        // Preserves: TOTAL_PAGES (4), ID (5), FILTERED_START (6)
-        // Updates: PAGE (3), CREATED_TIME (7)
-        integer total = llList2Integer(Sessions, session_idx + SESSION_TOTAL_PAGES);
-        string sess_id = llList2String(Sessions, session_idx + SESSION_ID);
-        integer f_start = llList2Integer(Sessions, session_idx + SESSION_FILTERED_START);
-        
-        Sessions = llListReplaceList(Sessions, [
-            current_page, total, sess_id, f_start, llGetUnixTime()
-        ], session_idx + SESSION_PAGE, session_idx + SESSION_CREATED_TIME);
-
+    if (button == "<<") {
+        current_page -= 1;
+        if (current_page < 0) current_page = total_pages - 1;
+        Sessions = llListReplaceList(Sessions, [current_page], session_idx + SESSION_PAGE, session_idx + SESSION_PAGE);
         send_render_menu(user, session_context);
         return;
     }
@@ -431,33 +490,40 @@ handle_button_click(key user, string button, string context) {
         return;
     }
 
+    if (button == ">>") {
+        current_page += 1;
+        if (current_page >= total_pages) current_page = 0;
+        Sessions = llListReplaceList(Sessions, [current_page], session_idx + SESSION_PAGE, session_idx + SESSION_PAGE);
+        send_render_menu(user, session_context);
+        return;
+    }
+
     // Plugin button clicked - use context directly for fast lookup
     if (context != "") {
-        // Update session activity timestamp
-        Sessions = llListReplaceList(Sessions, [llGetUnixTime()], session_idx + SESSION_CREATED_TIME, session_idx + SESSION_CREATED_TIME);
+        // Find plugin by context
+        integer i = 0;
+        integer len = llGetListLength(AllPlugins);
+        while (i < len) {
+            if (llList2String(AllPlugins, i + PLUGIN_CONTEXT) == context) {
+                integer min_acl = llList2Integer(AllPlugins, i + PLUGIN_MIN_ACL);
+                integer user_acl = llList2Integer(Sessions, session_idx + SESSION_ACL);
 
-        // OPTIMIZATION: Use native list search instead of loop
-        integer i = llListFindList(AllPlugins, [context]);
-        
-        // Verify we found a context (index 0 of stride) and not a label or something else
-        if (i != -1 && (i % PLUGIN_STRIDE) == PLUGIN_CONTEXT) {
-            integer min_acl = llList2Integer(AllPlugins, i + PLUGIN_MIN_ACL);
-            integer user_acl = llList2Integer(Sessions, session_idx + SESSION_ACL);
+                // ACL check - CRITICAL for collar security
+                if (user_acl < min_acl) {
+                    send_message(user, "Access denied.");
+                    return;
+                }
 
-            // ACL check - CRITICAL for collar security
-            if (user_acl < min_acl) {
-                send_message(user, "Access denied.");
+                string msg = llList2Json(JSON_OBJECT, [
+                    "type", "start",
+                    "context", context,
+                    "user", (string)user
+                ]);
+
+                llMessageLinked(LINK_SET, UI_BUS, msg, user);
                 return;
             }
-
-            string msg = llList2Json(JSON_OBJECT, [
-                "type", "start",
-                "context", context,
-                "user", (string)user
-            ]);
-
-            llMessageLinked(LINK_SET, UI_BUS, msg, user);
-            return;
+            i += PLUGIN_STRIDE;
         }
         return;
     }
@@ -476,11 +542,11 @@ update_plugin_label(string context, string new_label) {
             
             integer j = 0;
             while (j < llGetListLength(FilteredPluginsData)) {
-                string filtered_context = llList2String(FilteredPluginsData, j + FILTERED_CONTEXT);
+                string filtered_context = llList2String(FilteredPluginsData, j + PLUGIN_CONTEXT);
                 if (filtered_context == context) {
-                    FilteredPluginsData = llListReplaceList(FilteredPluginsData, [new_label], j + FILTERED_LABEL, j + FILTERED_LABEL);
+                    FilteredPluginsData = llListReplaceList(FilteredPluginsData, [new_label], j + PLUGIN_LABEL, j + PLUGIN_LABEL);
                 }
-                j += FILTERED_STRIDE;
+                j += PLUGIN_STRIDE;
             }
             return;
         }
@@ -491,27 +557,9 @@ update_plugin_label(string context, string new_label) {
 
 /* -------------------- MESSAGE HANDLERS -------------------- */
 
-handle_acl_update(string msg) {
-    if (llJsonGetValue(msg, ["scope"]) == JSON_INVALID) return;
-    string scope = llJsonGetValue(msg, ["scope"]);
-    
-    if (scope == "global") {
-        // Invalidate ALL sessions
-        while (llGetListLength(Sessions) > 0) {
-            key user = llList2Key(Sessions, SESSION_USER);
-            cleanup_session(user);
-        }
-    }
-    else if (scope == "avatar") {
-        if (llJsonGetValue(msg, ["avatar"]) == JSON_INVALID) return;
-        key avatar = (key)llJsonGetValue(msg, ["avatar"]);
-        cleanup_session(avatar);
-    }
-}
-
 handle_plugin_list(string msg) {
 
-    if (llJsonGetValue(msg, ["plugins"]) == JSON_INVALID) {
+    if (!json_has(msg, ["plugins"])) {
         return;
     }
 
@@ -537,15 +585,12 @@ handle_plugin_list(string msg) {
 
         Sessions = [];
         FilteredPluginsData = [];
-        FilterCache = []; // Clear cache
         PendingAcl = [];
     }
 }
 
 handle_acl_result(string msg) {
-    if (llJsonGetValue(msg, ["avatar"]) == JSON_INVALID || 
-        llJsonGetValue(msg, ["level"]) == JSON_INVALID || 
-        llJsonGetValue(msg, ["is_blacklisted"]) == JSON_INVALID) return;
+    if (!validate_required_fields(msg, ["avatar", "level", "is_blacklisted"], "handle_acl_result")) return;
 
     key avatar = (key)llJsonGetValue(msg, ["avatar"]);
     integer level = (integer)llJsonGetValue(msg, ["level"]);
@@ -563,7 +608,7 @@ handle_acl_result(string msg) {
 }
 
 handle_start(string msg, key user_key) {
-    if (llJsonGetValue(msg, ["context"]) == JSON_INVALID) {
+    if (!json_has(msg, ["context"])) {
         start_root_session(user_key);
         return;
     }
@@ -610,7 +655,7 @@ start_sos_session(key user_key) {
 }
 
 handle_return(string msg) {
-    if (llJsonGetValue(msg, ["user"]) == JSON_INVALID) return;
+    if (!json_has(msg, ["user"])) return;
 
     key user_key = (key)llJsonGetValue(msg, ["user"]);
 
@@ -633,9 +678,6 @@ handle_return(string msg) {
             }
         }
         else {
-            // Update session activity timestamp
-            Sessions = llListReplaceList(Sessions, [llGetUnixTime()], session_idx + SESSION_CREATED_TIME, session_idx + SESSION_CREATED_TIME);
-
             string session_context = llList2String(Sessions, session_idx + SESSION_CONTEXT);
             send_render_menu(user_key, session_context);
         }
@@ -646,7 +688,7 @@ handle_return(string msg) {
 }
 
 handle_update_label(string msg) {
-    if (llJsonGetValue(msg, ["context"]) == JSON_INVALID || llJsonGetValue(msg, ["label"]) == JSON_INVALID) return;
+    if (!validate_required_fields(msg, ["context", "label"], "handle_update_label")) return;
 
     string context = llJsonGetValue(msg, ["context"]);
     string new_label = llJsonGetValue(msg, ["label"]);
@@ -654,8 +696,17 @@ handle_update_label(string msg) {
     update_plugin_label(context, new_label);
 }
 
+handle_update_state(string msg) {
+    if (!validate_required_fields(msg, ["context", "state"], "handle_update_state")) return;
+
+    string context = llJsonGetValue(msg, ["context"]);
+    integer plugin_state = (integer)llJsonGetValue(msg, ["state"]);
+
+    set_plugin_state(context, plugin_state);
+}
+
 handle_plugin_acl_list(string msg) {
-    if (llJsonGetValue(msg, ["acl_data"]) == JSON_INVALID) return;
+    if (!json_has(msg, ["acl_data"])) return;
 
     string acl_json = llJsonGetValue(msg, ["acl_data"]);
     apply_plugin_acl_list(acl_json);
@@ -670,9 +721,7 @@ handle_plugin_acl_list(string msg) {
 }
 
 handle_dialog_response(string msg) {
-    if (llJsonGetValue(msg, ["session_id"]) == JSON_INVALID || 
-        llJsonGetValue(msg, ["button"]) == JSON_INVALID || 
-        llJsonGetValue(msg, ["user"]) == JSON_INVALID) return;
+    if (!validate_required_fields(msg, ["session_id", "button", "user"], "handle_dialog_response")) return;
 
     string session_id = llJsonGetValue(msg, ["session_id"]);
     string button = llJsonGetValue(msg, ["button"]);
@@ -680,7 +729,7 @@ handle_dialog_response(string msg) {
 
     // Extract context (may be empty string for navigation buttons)
     string context = "";
-    if (llJsonGetValue(msg, ["context"]) != JSON_INVALID) {
+    if (json_has(msg, ["context"])) {
         context = llJsonGetValue(msg, ["context"]);
     }
 
@@ -692,7 +741,7 @@ handle_dialog_response(string msg) {
 }
 
 handle_dialog_timeout(string msg) {
-    if (llJsonGetValue(msg, ["session_id"]) == JSON_INVALID || llJsonGetValue(msg, ["user"]) == JSON_INVALID) return;
+    if (!validate_required_fields(msg, ["session_id", "user"], "handle_dialog_timeout")) return;
 
     string session_id = llJsonGetValue(msg, ["session_id"]);
     key user = (key)llJsonGetValue(msg, ["user"]);
@@ -713,6 +762,7 @@ default
         FilteredPluginsData = [];
         PendingAcl = [];
         TouchData = [];
+        PluginStates = [];
 
 
         // Request plugin list (kernel defers response during active registration)
@@ -742,17 +792,21 @@ default
             }
 
             // Record touch start time
-            // OPTIMIZATION: Native list search
-            integer idx = llListFindList(TouchData, [toucher]);
-            
-            if (idx != -1) {
-                // Update existing timestamp
-                TouchData = llListReplaceList(TouchData, [llGetTime()], idx + TOUCH_DATA_START_TIME, idx + TOUCH_DATA_START_TIME);
+            integer j = 0;
+            integer len = llGetListLength(TouchData);
+
+            while (j < len) {
+                if (llList2Key(TouchData, j + TOUCH_DATA_KEY) == toucher) {
+                    TouchData = llListReplaceList(TouchData, [llGetTime()], j + TOUCH_DATA_START_TIME, j + TOUCH_DATA_START_TIME);
+                    jump recorded;
+                }
+                j += TOUCH_DATA_STRIDE;
             }
-            else {
-                // Add new record
-                TouchData += [toucher, llGetTime()];
-            }
+
+            // If we reach here, toucher was not found in TouchData
+            TouchData += [toucher, llGetTime()];
+
+            @recorded;
 
             @next_touch;
             i += 1;
@@ -766,34 +820,41 @@ default
         while (i < num_detected) {
             key toucher = llDetectedKey(i);
 
-            // OPTIMIZATION: Native list search
-            integer idx = llListFindList(TouchData, [toucher]);
+            integer j = 0;
+            integer len = llGetListLength(TouchData);
 
-            if (idx != -1) {
-                float start_time = llList2Float(TouchData, idx + TOUCH_DATA_START_TIME);
-                float duration = llGetTime() - start_time;
+            while (j < len) {
+                if (llList2Key(TouchData, j + TOUCH_DATA_KEY) == toucher) {
+                    float start_time = llList2Float(TouchData, j + TOUCH_DATA_START_TIME);
+                    float duration = llGetTime() - start_time;
 
-                TouchData = llDeleteSubList(TouchData, idx, idx + TOUCH_DATA_STRIDE - 1);
+                    TouchData = llDeleteSubList(TouchData, j, j + TOUCH_DATA_STRIDE - 1);
 
-                if (duration >= LONG_TOUCH_THRESHOLD && toucher == wearer) {
-                    start_sos_session(toucher);
-                }
-                else {
-                    // Provide feedback if non-wearer attempted long-touch (SOS is wearer-only)
-                    if (duration >= LONG_TOUCH_THRESHOLD && toucher != wearer) {
-                        send_message(toucher, "Long-touch SOS is only available to the wearer.");
+
+                    if (duration >= LONG_TOUCH_THRESHOLD && toucher == wearer) {
+                        start_sos_session(toucher);
                     }
-                    start_root_session(toucher);
+                    else {
+                        // Provide feedback if non-wearer attempted long-touch (SOS is wearer-only)
+                        if (duration >= LONG_TOUCH_THRESHOLD && toucher != wearer) {
+                            send_message(toucher, "Long-touch SOS is only available to the wearer.");
+                        }
+                        start_root_session(toucher);
+                    }
+
+                    jump next_toucher;
                 }
+                j += TOUCH_DATA_STRIDE;
             }
 
+            @next_toucher;
             i += 1;
         }
     }
 
     link_message(integer sender, integer num, string msg, key id) {
-        if (llJsonGetValue(msg, ["type"]) == JSON_INVALID) return;
-        string msg_type = llJsonGetValue(msg, ["type"]);
+        string msg_type = get_msg_type(msg);
+        if (msg_type == "") return;
 
         if (msg_type != "ping" && msg_type != "pong" && msg_type != "register" && msg_type != "register_now") {
         }
@@ -808,7 +869,6 @@ default
         /* -------------------- AUTH BUS -------------------- */
         if (num == AUTH_BUS) {
             if (msg_type == "acl_result") handle_acl_result(msg);
-            else if (msg_type == "acl_update") handle_acl_update(msg);
             else if (msg_type == "plugin_acl_list") handle_plugin_acl_list(msg);
             return;
         }
@@ -818,6 +878,7 @@ default
             if (msg_type == "start") handle_start(msg, id);
             else if (msg_type == "return") handle_return(msg);
             else if (msg_type == "update_label") handle_update_label(msg);
+            else if (msg_type == "update_state") handle_update_state(msg);
             return;
         }
 
