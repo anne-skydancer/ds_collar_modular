@@ -164,7 +164,7 @@ handle_button_click(string button) {
         
         // Return owner to root menu to see updated button (if different from wearer)
         if (CurrentUser != WearerKey) {
-            msg = llList2Json(JSON_OBJECT, [
+            string msg = llList2Json(JSON_OBJECT, [
                 "type", "return",
                 "user", (string)CurrentUser
             ]);
