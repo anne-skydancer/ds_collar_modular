@@ -1,15 +1,13 @@
 /*--------------------
 MODULE: ds_collar_menu.lsl
 VERSION: 1.00
-REVISION: 10
+REVISION: 11
 PURPOSE: Menu rendering and visual presentation service
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
-- Receives render requests from ds_collar_kmod_ui via UI bus messages
-- Constructs dialog layouts with correct bottom-to-top button ordering
-- Maintains stateless presentation separate from business logic
-- Routes dialogs through dedicated dialog module for display
-- Provides single-responsibility rendering for easier maintenance
+- Updated to support parallel arrays for buttons and contexts
+- Optimized reordering logic to handle split data streams
+- Reduced JSON parsing overhead by passing raw lists
 --------------------*/
 
 
@@ -47,13 +45,13 @@ integer validate_required_fields(string json_str, list field_names, string funct
 
 /* -------------------- BUTTON LAYOUT -------------------- */
 
-list reorder_buttons_for_display(list buttons) {
+list reorder_list_for_display(list items, string pad_char) {
     // Reorder buttons for natural reading (left-to-right, top-to-bottom)
     // LSL dialog positions: [9-11]=top, [6-8]=mid, [3-5]=low, [0-2]=bottom
     // We chunk the list into rows of 3, pad them to ensure alignment,
     // and then reverse the order of the rows.
 
-    integer count = llGetListLength(buttons);
+    integer count = llGetListLength(items);
     if (count == 0) return [];
 
     list result = [];
@@ -63,14 +61,14 @@ list reorder_buttons_for_display(list buttons) {
     while (i < count) {
         // Get chunk of buttons for this row
         // llList2List handles out-of-bounds end index by clamping to list end
-        list chunk = llList2List(buttons, i, i + row_size - 1);
+        list chunk = llList2List(items, i, i + row_size - 1);
         
         // Pad chunk if incomplete to maintain alignment
         // This ensures that when this row is stacked above others,
         // it doesn't "steal" buttons from the row above it in the dialog layout
         integer chunk_len = llGetListLength(chunk);
         while (chunk_len < row_size) {
-            chunk += ["-"];
+            chunk += [pad_char];
             chunk_len++;
         }
         
@@ -89,7 +87,7 @@ list reorder_buttons_for_display(list buttons) {
 
 render_menu(string msg) {
     // Validate required fields
-    if (!validate_required_fields(msg, ["user", "session_id", "menu_type", "buttons"], "render_menu")) {
+    if (!validate_required_fields(msg, ["user", "session_id", "menu_type", "buttons", "contexts"], "render_menu")) {
         return;
     }
 
@@ -100,34 +98,28 @@ render_menu(string msg) {
     integer current_page = (integer)llJsonGetValue(msg, ["page"]);
     integer total_pages = (integer)llJsonGetValue(msg, ["total_pages"]);
     string buttons_json = llJsonGetValue(msg, ["buttons"]);
+    string contexts_json = llJsonGetValue(msg, ["contexts"]);
     integer has_nav = (integer)llJsonGetValue(msg, ["has_nav"]);
 
-    // Parse buttons array (now contains button data objects)
-    list button_data_list = llJson2List(buttons_json);
+    // Parse parallel arrays
+    list button_list = llJson2List(buttons_json);
+    list context_list = llJson2List(contexts_json);
 
     // Reorder for natural display
-    list reordered = reorder_buttons_for_display(button_data_list);
+    list reordered_buttons = reorder_list_for_display(button_list, "-");
+    list reordered_contexts = reorder_list_for_display(context_list, "");
 
     // DESIGN DECISION: Navigation row is ALWAYS present (DO NOT CHANGE)
-    //
-    // The navigation buttons (<<, >>, Close) are added at the front, placing
-    // them in the bottom row of the dialog. Navigation buttons are plain strings,
-    // plugin buttons are JSON objects.
-    //
-    // IMPORTANT: has_nav is always 1. The navigation row must be present even
-    // for single-page menus. This provides:
-    // - Consistent UI layout across all menu states
-    // - Predictable button positions (muscle memory)
-    // - Uniform user experience
-    //
-    // This is a deliberate design decision and is NOT open to modification.
-    // Do not add conditional logic to hide navigation based on page count.
-    list final_button_data = [];
+    list final_buttons = [];
+    list final_contexts = [];
+    
     if (has_nav) {
-        final_button_data = ["<<", ">>", "Close"] + reordered;
+        final_buttons = ["<<", ">>", "Close"] + reordered_buttons;
+        final_contexts = ["", "", ""] + reordered_contexts;
     }
     else {
-        final_button_data = ["Close"] + reordered;
+        final_buttons = ["Close"] + reordered_buttons;
+        final_contexts = [""] + reordered_contexts;
     }
 
     // Construct title based on menu type
@@ -159,17 +151,15 @@ render_menu(string msg) {
         body_text = "Choose:";
     }
 
-    // Convert button data back to JSON (mixed array of strings and objects)
-    string final_button_data_json = llList2Json(JSON_ARRAY, final_button_data);
-
-    // Send to dialog bus with button_data field
+    // Send to dialog bus with split arrays
     string dialog_msg = llList2Json(JSON_OBJECT, [
         "type", "dialog_open",
         "session_id", session_id,
         "user", (string)user,
         "title", title,
         "body", body_text,
-        "button_data", final_button_data_json,
+        "buttons", llList2Json(JSON_ARRAY, final_buttons),
+        "contexts", llList2Json(JSON_ARRAY, final_contexts),
         "timeout", 60
     ]);
 

@@ -1,13 +1,14 @@
 /*--------------------
 MODULE: ds_collar_kmod_ui.lsl
 VERSION: 1.00
-REVISION: 48
+REVISION: 49
 PURPOSE: Session management, ACL filtering, and plugin list orchestration
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
-- Replaced O(N) loops with O(1) native llListFindList in hot paths
-- Optimized touch handling and button click lookups
-- Reduced bytecode size by removing manual iteration logic
+- ARCHITECTURE CHANGE: Split button data into parallel 'labels' and 'contexts' arrays
+- Removed JSON object construction for buttons to reduce parsing overhead downstream
+- Optimized FilteredPluginsData to store plain labels instead of JSON strings
+- Updated send_render_menu to transmit parallel arrays
 --------------------*/
 
 
@@ -31,10 +32,10 @@ integer PLUGIN_CONTEXT = 0;
 integer PLUGIN_LABEL = 1;
 integer PLUGIN_MIN_ACL = 2;
 
-/* Filtered Data Stride: [context, button_json] */
+/* Filtered Data Stride: [context, label] */
 integer FILTERED_STRIDE = 2;
 integer FILTERED_CONTEXT = 0;
-integer FILTERED_JSON = 1;
+integer FILTERED_LABEL = 1;
 
 /* Session list stride - SECURITY FIX: Added SESSION_CREATED_TIME */
 integer SESSION_STRIDE = 10;
@@ -188,9 +189,8 @@ create_session(key user, integer acl, integer is_blacklisted, string context_fil
         }
 
         if (should_include) {
-            // Pre-build JSON for rendering speed
-            string btn_json = llList2Json(JSON_OBJECT, ["context", context, "label", label]);
-            filtered += [context, btn_json];
+            // Store plain label for rendering speed
+            filtered += [context, label];
         }
 
         i += PLUGIN_STRIDE;
@@ -343,6 +343,7 @@ send_render_menu(key user, string menu_type) {
     // Build button data with context and state
     // OPTIMIZATION: Manual JSON construction avoids llList2Json escaping overhead
     string buttons_json = "[";
+    string contexts_json = "[";
     string sep = "";
 
     // OPTIMIZATION: Direct access to FilteredPluginsData avoids llList2List copy
@@ -364,12 +365,23 @@ send_render_menu(key user, string menu_type) {
     integer i = abs_start;
     while (i < abs_end) {
         // Direct JSON access - massive speedup
-        string btn_json = llList2String(FilteredPluginsData, i + FILTERED_JSON);
-        buttons_json += sep + btn_json;
+        string label = llList2String(FilteredPluginsData, i + FILTERED_LABEL);
+        string context = llList2String(FilteredPluginsData, i + FILTERED_CONTEXT);
+        
+        // Escape quotes in label just in case
+        // Simple replace for " to \"
+        // Note: LSL doesn't have a native replace all, but labels shouldn't have quotes usually.
+        // For safety, we wrap in quotes.
+        
+        buttons_json += sep + "\"" + label + "\"";
+        contexts_json += sep + "\"" + context + "\"";
+        
         sep = ",";
         i += FILTERED_STRIDE;
     }
     buttons_json += "]";
+    contexts_json += "]";
+    
     string session_id = llList2String(Sessions, session_idx + SESSION_ID);
 
     // DESIGN DECISION: Navigation row is ALWAYS present (DO NOT CHANGE)
@@ -386,6 +398,7 @@ send_render_menu(key user, string menu_type) {
         "page", current_page,
         "total_pages", total_pages,
         "buttons", buttons_json,
+        "contexts", contexts_json,
         "has_nav", has_nav
     ]);
 
@@ -489,8 +502,7 @@ update_plugin_label(string context, string new_label) {
             while (j < llGetListLength(FilteredPluginsData)) {
                 string filtered_context = llList2String(FilteredPluginsData, j + FILTERED_CONTEXT);
                 if (filtered_context == context) {
-                    string new_json = llList2Json(JSON_OBJECT, ["context", context, "label", new_label]);
-                    FilteredPluginsData = llListReplaceList(FilteredPluginsData, [new_json], j + FILTERED_JSON, j + FILTERED_JSON);
+                    FilteredPluginsData = llListReplaceList(FilteredPluginsData, [new_label], j + FILTERED_LABEL, j + FILTERED_LABEL);
                 }
                 j += FILTERED_STRIDE;
             }
