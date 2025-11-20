@@ -32,7 +32,7 @@ string get_msg_type(string msg) {
 // MEMORY OPTIMIZATION: Compact field validation helper
 // Validates multiple required JSON fields and logs errors for missing ones
 // Returns TRUE if all fields present, FALSE if any missing
-integer validate_required_fields(string json_str, list field_names, string function_name) {
+integer validate_required_fields(string json_str, list field_names) {
     integer i = 0;
     integer len = llGetListLength(field_names);
     while (i < len) {
@@ -103,7 +103,7 @@ list reorder_buttons_for_display(list buttons) {
 
 render_menu(string msg) {
     // Validate required fields
-    if (!validate_required_fields(msg, ["user", "session_id", "menu_type", "buttons"], "render_menu")) {
+    if (!validate_required_fields(msg, ["user", "session_id", "menu_type", "buttons"])) {
         return;
     }
 
@@ -191,7 +191,7 @@ render_menu(string msg) {
 }
 
 show_message(string msg) {
-    if (!validate_required_fields(msg, ["user", "message"], "show_message")) {
+    if (!validate_required_fields(msg, ["user", "message"])) {
         return;
     }
 

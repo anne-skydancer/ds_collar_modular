@@ -24,7 +24,6 @@ integer DIALOG_BUS = 950;
 string PLUGIN_CONTEXT = "core_relay";
 string PLUGIN_LABEL = "RLV Relay";
 integer PLUGIN_MIN_ACL = 2;  // Wearer and above
-string ROOT_CONTEXT = "core_root";
 
 /* ACL levels for reference:
    -1 = Blacklisted
@@ -43,7 +42,6 @@ integer MAX_RELAYS = 5;
 
 integer MODE_OFF = 0;
 integer MODE_ON = 1;
-integer MODE_HARDCORE = 2;
 
 integer SOS_MSG_NUM = 555;  // SOS emergency channel
 
@@ -79,10 +77,6 @@ integer ObjectListPage = 0;
 
 integer json_has(string j, list path) {
     return (llJsonGetValue(j, path) != JSON_INVALID);
-}
-
-integer now() {
-    return llGetUnixTime();
 }
 
 string generate_session_id() {

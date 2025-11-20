@@ -1,0 +1,1 @@
+default { state_entry() { integer x = ; } }

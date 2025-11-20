@@ -24,7 +24,6 @@ string PLUGIN_CONTEXT = "core_lock";
 string PLUGIN_LABEL_LOCKED = "Locked: Y";    // Label when locked
 string PLUGIN_LABEL_UNLOCKED = "Locked: N";    // Label when unlocked
 integer PLUGIN_MIN_ACL = 4;  // Unowned wearer or owner
-string ROOT_CONTEXT = "core_root";
 
 /* -------------------- SETTINGS KEYS -------------------- */
 string KEY_LOCKED = "locked";
@@ -118,12 +117,12 @@ apply_settings_delta(string msg) {
                 if (Locked) {
                     new_label = PLUGIN_LABEL_LOCKED;
                 }
-                string msg = llList2Json(JSON_OBJECT, [
+                string label_msg = llList2Json(JSON_OBJECT, [
                     "type", "update_label",
                     "context", PLUGIN_CONTEXT,
                     "label", new_label
                 ]);
-                llMessageLinked(LINK_SET, UI_BUS, msg, NULL_KEY);
+                llMessageLinked(LINK_SET, UI_BUS, label_msg, NULL_KEY);
             }
             
         }
@@ -144,7 +143,6 @@ persist_locked(integer new_value) {
 /* -------------------- LOCK STATE APPLICATION -------------------- */
 
 apply_lock_state() {
-    key owner = llGetOwner();
     
     if (Locked) {
         // Lock collar - prevent detach

@@ -15,7 +15,6 @@ CHANGES:
 
 /* -------------------- CONSOLIDATED ABI -------------------- */
 integer KERNEL_LIFECYCLE = 500;
-integer AUTH_BUS = 700;
 integer SETTINGS_BUS = 800;
 
 /* -------------------- RLV DETECTION CONFIG -------------------- */
@@ -25,10 +24,10 @@ integer RLV_MAX_RETRIES = 8;
 integer RLV_INITIAL_DELAY_SEC = 1;
 
 // Probe multiple channels for better compatibility
-integer USE_FIXED_4711 = TRUE;
-integer USE_RELAY_CHAN = TRUE;
+integer UseFixed4711;
+integer UseRelayChan;
 integer RELAY_CHAN = -1812221819;
-integer PROBE_RELAY_BOTH_SIGNS = TRUE;  // Also try positive relay channel
+integer ProbeRelayBothSigns;  // Also try positive relay channel
 
 /* -------------------- DISPLAY NAME REQUEST RATE LIMITING -------------------- */
 float NAME_REQUEST_INTERVAL_SEC = 2.5;  // Space requests 2.5s apart to avoid throttling
@@ -74,7 +73,6 @@ integer NAME_RESOLUTION_TIMEOUT_SEC = 30;
 
 // Name request queue (rate-limited)
 list PendingNameRequests = [];  // List of owner keys waiting for display name requests
-integer NAME_REQUEST_STRIDE = 1;
 integer NextNameRequestTime = 0;  // Timestamp when next request can be sent
 
 /* -------------------- HELPERS -------------------- */
@@ -188,10 +186,10 @@ start_rlv_probe() {
     clearProbeChannels();
     
     // Set up multiple probe channels
-    if (USE_FIXED_4711) addProbeChannel(4711);
-    if (USE_RELAY_CHAN) {
+    if (UseFixed4711) addProbeChannel(4711);
+    if (UseRelayChan) {
         addProbeChannel(RELAY_CHAN);
-        if (PROBE_RELAY_BOTH_SIGNS) {
+        if (ProbeRelayBothSigns) {
             addProbeChannel(-RELAY_CHAN);  // Try opposite sign too
         }
     }
@@ -478,6 +476,10 @@ announce_status() {
 default
 {
     state_entry() {
+        UseFixed4711 = TRUE;
+        UseRelayChan = TRUE;
+        ProbeRelayBothSigns = TRUE;
+
         LastOwner = llGetOwner();
         BootstrapComplete = FALSE;
         SettingsReceived = FALSE;

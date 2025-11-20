@@ -42,6 +42,14 @@ string KEY_BLACKLIST        = "blacklist";
 string KEY_PUBLIC_ACCESS    = "public_mode";
 string KEY_TPE_MODE         = "tpe_mode";
 
+/* -------------------- LINKSET DATA KEYS -------------------- */
+string LSD_KEY_ACL_OWNERS    = "ACL.OWNERS";
+string LSD_KEY_ACL_TRUSTEES  = "ACL.TRUSTEES";
+string LSD_KEY_ACL_BLACKLIST = "ACL.BLACKLIST";
+string LSD_KEY_ACL_PUBLIC    = "ACL.PUBLIC";
+string LSD_KEY_ACL_TPE       = "ACL.TPE";
+string LSD_KEY_ACL_TIMESTAMP = "ACL.TIMESTAMP";
+
 /* -------------------- STATE (CACHED SETTINGS) -------------------- */
 integer MultiOwnerMode = FALSE;
 key OwnerKey = NULL_KEY;
@@ -61,6 +69,37 @@ list PluginAclRegistry = [];
 integer PLUGIN_ACL_STRIDE = 2;
 integer PLUGIN_ACL_CONTEXT = 0;
 integer PLUGIN_ACL_MIN_ACL = 1;
+
+/* -------------------- ACL CACHE HELPERS -------------------- */
+
+persist_acl_cache() {
+    list owners_payload = [];
+    if (MultiOwnerMode) {
+        owners_payload = OwnerKeys;
+    }
+    else if (OwnerKey != NULL_KEY) {
+        owners_payload = [(string)OwnerKey];
+    }
+
+    string owners_json = llList2Json(JSON_ARRAY, owners_payload);
+    string trustees_json = llList2Json(JSON_ARRAY, TrusteeList);
+    string blacklist_json = llList2Json(JSON_ARRAY, Blacklist);
+
+    llLinksetDataWrite(LSD_KEY_ACL_OWNERS, owners_json);
+    llLinksetDataWrite(LSD_KEY_ACL_TRUSTEES, trustees_json);
+    llLinksetDataWrite(LSD_KEY_ACL_BLACKLIST, blacklist_json);
+    llLinksetDataWrite(LSD_KEY_ACL_PUBLIC, (string)PublicMode);
+    llLinksetDataWrite(LSD_KEY_ACL_TPE, (string)TpeMode);
+
+    integer timestamp = llGetUnixTime();
+    llLinksetDataWrite(LSD_KEY_ACL_TIMESTAMP, (string)timestamp);
+
+    string update_msg = llList2Json(JSON_OBJECT, [
+        "type", "acl_cache_updated",
+        "timestamp", (string)timestamp
+    ]);
+    llMessageLinked(LINK_SET, AUTH_BUS, update_msg, NULL_KEY);
+}
 
 /* -------------------- HELPERS -------------------- */
 
@@ -180,18 +219,7 @@ broadcast_plugin_acl_list() {
 }
 
 // Check if user can access a specific plugin
-integer can_access_plugin(key user, string context) {
-    // Find plugin's ACL requirement
-    integer idx = llListFindList(PluginAclRegistry, [context]);
-    if (idx != -1) {
-        integer required_acl = llList2Integer(PluginAclRegistry, idx + PLUGIN_ACL_MIN_ACL);
-        integer user_acl = compute_acl_level(user);
-        return (user_acl >= required_acl);
-    }
 
-    // Plugin not registered - deny by default
-    return FALSE;
-}
 
 // Filter plugin list for user - returns list of accessible contexts
 list filter_plugins_for_user(key user, list plugin_contexts) {
@@ -396,6 +424,7 @@ apply_settings_sync(string msg) {
     
     // SECURITY FIX: Enforce role exclusivity after loading
     enforce_role_exclusivity();
+    persist_acl_cache();
     
     SettingsReady = TRUE;
     
@@ -418,6 +447,7 @@ apply_settings_delta(string msg) {
     if (!json_has(msg, ["op"])) return;
     
     string op = llJsonGetValue(msg, ["op"]);
+    integer cache_dirty = FALSE;
     
     if (op == "set") {
         if (!json_has(msg, ["changes"])) return;
@@ -426,11 +456,13 @@ apply_settings_delta(string msg) {
         if (json_has(changes, [KEY_PUBLIC_ACCESS])) {
             PublicMode = (integer)llJsonGetValue(changes, [KEY_PUBLIC_ACCESS]);
             broadcast_acl_change("global", NULL_KEY);
+            cache_dirty = TRUE;
         }
         
         if (json_has(changes, [KEY_TPE_MODE])) {
             TpeMode = (integer)llJsonGetValue(changes, [KEY_TPE_MODE]);
             broadcast_acl_change("global", NULL_KEY);
+            cache_dirty = TRUE;
         }
         
         if (json_has(changes, [KEY_OWNER_KEY])) {
@@ -438,6 +470,7 @@ apply_settings_delta(string msg) {
             // Enforce exclusivity after owner change
             enforce_role_exclusivity();
             broadcast_acl_change("global", NULL_KEY); // Owner change affects everyone
+            cache_dirty = TRUE;
         }
     }
     else if (op == "list_add") {
@@ -453,6 +486,7 @@ apply_settings_delta(string msg) {
                 // Enforce exclusivity after adding owner
                 enforce_role_exclusivity();
                 broadcast_acl_change("global", NULL_KEY);
+                cache_dirty = TRUE;
             }
         }
         else if (key_name == KEY_TRUSTEES) {
@@ -461,12 +495,14 @@ apply_settings_delta(string msg) {
                 // Enforce exclusivity after adding trustee
                 enforce_role_exclusivity();
                 broadcast_acl_change("avatar", (key)elem);
+                cache_dirty = TRUE;
             }
         }
         else if (key_name == KEY_BLACKLIST) {
             if (llListFindList(Blacklist, [elem]) == -1) {
                 Blacklist += [elem];
                 broadcast_acl_change("avatar", (key)elem);
+                cache_dirty = TRUE;
             }
         }
     }
@@ -484,6 +520,7 @@ apply_settings_delta(string msg) {
                 idx = llListFindList(OwnerKeys, [elem]);
             }
             broadcast_acl_change("global", NULL_KEY);
+            cache_dirty = TRUE;
         }
         else if (key_name == KEY_TRUSTEES) {
             integer idx = llListFindList(TrusteeList, [elem]);
@@ -492,6 +529,7 @@ apply_settings_delta(string msg) {
                 idx = llListFindList(TrusteeList, [elem]);
             }
             broadcast_acl_change("avatar", (key)elem);
+            cache_dirty = TRUE;
         }
         else if (key_name == KEY_BLACKLIST) {
             integer idx = llListFindList(Blacklist, [elem]);
@@ -500,7 +538,12 @@ apply_settings_delta(string msg) {
                 idx = llListFindList(Blacklist, [elem]);
             }
             broadcast_acl_change("avatar", (key)elem);
+            cache_dirty = TRUE;
         }
+    }
+
+    if (cache_dirty) {
+        persist_acl_cache();
     }
 }
 

@@ -21,7 +21,6 @@ integer COLLAR_ACL_REPLY_CHAN = -8675310;
 integer COLLAR_MENU_CHAN      = -8675311;
 
 /* -------------------- ACL CONSTANTS -------------------- */
-integer ACL_BLACKLIST     = -1;
 integer ACL_NOACCESS      = 0;
 integer ACL_PUBLIC        = 1;
 integer ACL_OWNED         = 2;
@@ -148,7 +147,6 @@ process_scan_results() {
     if (num_collars == 1) {
         // AUTO-CONNECT to single collar (RLV relay style!)
         key avatar_key = llList2Key(DetectedCollars, 0);
-        string avatar_name = llList2String(DetectedCollars, 2);
 
         request_acl_from_collar(avatar_key);
         return;

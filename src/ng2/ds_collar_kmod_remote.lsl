@@ -49,9 +49,6 @@ float QUERY_TIMEOUT = 30.0;  // 30 seconds
 
 /* Per-request-type rate limiting: [avatar_key, request_type, timestamp, ...] */
 list RateLimitTimestamps = [];
-integer RATE_LIMIT_STRIDE = 3;
-integer RATE_LIMIT_KEY = 0;
-integer RATE_LIMIT_TYPE = 1;
 integer RATE_LIMIT_TIME = 2;
 float REQUEST_COOLDOWN = 2.0;  // 2 seconds between requests per user per type
 
@@ -73,7 +70,7 @@ integer now() {
 
 /* -------------------- RATE LIMITING (per-request-type) -------------------- */
 
-integer check_rate_limit(key requester, integer request_type, string request_name) {
+integer check_rate_limit(key requester, integer request_type) {
     integer now_time = now();
 
     // Find this requester's last request of this type
@@ -232,7 +229,7 @@ handle_collar_scan(string message) {
     if (hud_wearer == NULL_KEY) return;
 
     // SECURITY: Rate limit check
-    if (!check_rate_limit(hud_wearer, REQUEST_TYPE_SCAN, "scan")) return;
+    if (!check_rate_limit(hud_wearer, REQUEST_TYPE_SCAN)) return;
     
     // Check distance to HUD wearer
     list agent_data = llGetObjectDetails(hud_wearer, [OBJECT_POS]);
@@ -273,7 +270,7 @@ handle_acl_query_external(string message) {
     if (target_avatar == NULL_KEY) return;
 
     // SECURITY: Rate limit check
-    if (!check_rate_limit(hud_wearer, REQUEST_TYPE_ACL_QUERY, "ACL query")) return;
+    if (!check_rate_limit(hud_wearer, REQUEST_TYPE_ACL_QUERY)) return;
     
     // Check if this query is for OUR collar (target matches our owner)
     if (target_avatar != CollarOwner) {
@@ -303,7 +300,7 @@ handle_menu_request_external(string message) {
 
 
     // SECURITY: Rate limit check
-    if (!check_rate_limit(hud_wearer, REQUEST_TYPE_MENU, "menu")) return;
+    if (!check_rate_limit(hud_wearer, REQUEST_TYPE_MENU)) return;
 
     // SECURITY: Check range
     list agent_data = llGetObjectDetails(hud_wearer, [OBJECT_POS]);
@@ -459,11 +456,8 @@ default {
                     final_context = ROOT_CONTEXT;
                     llRegionSayTo(avatar_key, 0, "Only the collar wearer can access the SOS menu. Showing main menu instead.");
                 }
-                else if (requested_context == SOS_CONTEXT) {
-                }
 
                 trigger_menu_for_external_user(avatar_key, final_context);
-            } else {
             }
             return;
 

@@ -63,6 +63,23 @@ integer PENDING_ACL_STRIDE = 2;
 integer PENDING_ACL_AVATAR = 0;
 integer PENDING_ACL_CONTEXT = 1;
 
+/* ACL levels (mirrors auth module) */
+integer ACL_BLACKLIST = -1;
+integer ACL_NOACCESS = 0;
+integer ACL_PUBLIC = 1;
+integer ACL_OWNED = 2;
+integer ACL_TRUSTEE = 3;
+integer ACL_UNOWNED = 4;
+integer ACL_PRIMARY_OWNER = 5;
+
+/* Linkset data cache keys */
+string LSD_KEY_ACL_OWNERS    = "ACL.OWNERS";
+string LSD_KEY_ACL_TRUSTEES  = "ACL.TRUSTEES";
+string LSD_KEY_ACL_BLACKLIST = "ACL.BLACKLIST";
+string LSD_KEY_ACL_PUBLIC    = "ACL.PUBLIC";
+string LSD_KEY_ACL_TPE       = "ACL.TPE";
+string LSD_KEY_ACL_TIMESTAMP = "ACL.TIMESTAMP";
+
 /* -------------------- STATE -------------------- */
 list AllPlugins = [];
 list Sessions = [];
@@ -70,6 +87,12 @@ list FilteredPluginsData = [];
 list PendingAcl = [];
 list TouchData = [];
 list PluginStates = [];  // Stores toggle button states [context, state]
+list CachedOwners = [];
+list CachedTrustees = [];
+list CachedBlacklist = [];
+integer CachedPublicMode = FALSE;
+integer CachedTpeMode = FALSE;
+integer CachedAclTimestamp = 0;
 
 /* -------------------- HELPERS -------------------- */
 
@@ -84,7 +107,7 @@ string get_msg_type(string msg) {
 
 
 // MEMORY OPTIMIZATION: Compact field validation helper
-integer validate_required_fields(string json_str, list field_names, string function_name) {
+integer validate_required_fields(string json_str, list field_names) {
     integer i = 0;
     integer len = llGetListLength(field_names);
     while (i < len) {
@@ -135,6 +158,116 @@ set_plugin_state(string context, integer button_state) {
         // Add new state
         PluginStates += [context, button_state];
     }
+}
+
+/* -------------------- ACL CACHE MANAGEMENT -------------------- */
+
+integer refresh_acl_cache() {
+    string timestamp_str = llLinksetDataRead(LSD_KEY_ACL_TIMESTAMP);
+    if (timestamp_str == "") {
+        return FALSE;
+    }
+    integer timestamp = (integer)timestamp_str;
+    if (timestamp == CachedAclTimestamp) {
+        return TRUE;
+    }
+
+    string owners_json = llLinksetDataRead(LSD_KEY_ACL_OWNERS);
+    if (owners_json == "") {
+        owners_json = "[]";
+    }
+    CachedOwners = llJson2List(owners_json);
+
+    string trustees_json = llLinksetDataRead(LSD_KEY_ACL_TRUSTEES);
+    if (trustees_json == "") {
+        trustees_json = "[]";
+    }
+    CachedTrustees = llJson2List(trustees_json);
+
+    string blacklist_json = llLinksetDataRead(LSD_KEY_ACL_BLACKLIST);
+    if (blacklist_json == "") {
+        blacklist_json = "[]";
+    }
+    CachedBlacklist = llJson2List(blacklist_json);
+
+    string public_str = llLinksetDataRead(LSD_KEY_ACL_PUBLIC);
+    if (public_str == "") {
+        public_str = "0";
+    }
+    CachedPublicMode = (integer)public_str;
+
+    string tpe_str = llLinksetDataRead(LSD_KEY_ACL_TPE);
+    if (tpe_str == "") {
+        tpe_str = "0";
+    }
+    CachedTpeMode = (integer)tpe_str;
+
+    CachedAclTimestamp = timestamp;
+    return TRUE;
+}
+
+list get_cached_acl_result(key av) {
+    if (!refresh_acl_cache()) {
+        return [];
+    }
+
+    integer is_blacklisted = (llListFindList(CachedBlacklist, [(string)av]) != -1);
+    if (is_blacklisted) {
+        return [ACL_BLACKLIST, TRUE];
+    }
+
+    integer owner_set = (llGetListLength(CachedOwners) > 0);
+    integer is_owner = (llListFindList(CachedOwners, [(string)av]) != -1);
+    integer is_trustee = (llListFindList(CachedTrustees, [(string)av]) != -1);
+    integer is_wearer = (av == llGetOwner());
+
+    integer level;
+    if (is_owner) {
+        level = ACL_PRIMARY_OWNER;
+    }
+    else if (is_wearer) {
+        if (CachedTpeMode) {
+            level = ACL_NOACCESS;
+        }
+        else if (owner_set) {
+            level = ACL_OWNED;
+        }
+        else {
+            level = ACL_UNOWNED;
+        }
+    }
+    else if (is_trustee) {
+        level = ACL_TRUSTEE;
+    }
+    else if (CachedPublicMode) {
+        level = ACL_PUBLIC;
+    }
+    else {
+        level = ACL_BLACKLIST;
+    }
+
+    return [level, FALSE];
+}
+
+integer try_cached_session(key user_key, string context_filter) {
+    list cached = get_cached_acl_result(user_key);
+    if (llGetListLength(cached) == 0) {
+        return FALSE;
+    }
+
+    integer level = llList2Integer(cached, 0);
+    integer is_blacklisted = llList2Integer(cached, 1);
+
+    create_session(user_key, level, is_blacklisted, context_filter);
+    send_render_menu(user_key, context_filter);
+    return TRUE;
+}
+
+integer find_pending_acl_idx(key avatar_key) {
+    if (llGetListLength(PendingAcl) == 0) {
+        return -1;
+    }
+    return llListFindStrided(PendingAcl, [avatar_key], PENDING_ACL_AVATAR, -1, PENDING_ACL_STRIDE);
 }
 
 /* -------------------- SESSION MANAGEMENT -------------------- */
@@ -569,8 +702,6 @@ handle_plugin_list(string msg) {
     // Invalidate all sessions when plugin list changes
     // Kernel only broadcasts when UUID changes detected, so this is always meaningful
     if (llGetListLength(Sessions) > 0) {
-        integer session_count = llGetListLength(Sessions) / SESSION_STRIDE;
-
         // BUGFIX: Close all dialogs before clearing sessions
         integer i = 0;
         while (i < llGetListLength(Sessions)) {
@@ -589,15 +720,27 @@ handle_plugin_list(string msg) {
     }
 }
 
+handle_acl_cache_update(string msg) {
+    if (!json_has(msg, ["timestamp"])) return;
+
+    integer new_timestamp = (integer)llJsonGetValue(msg, ["timestamp"]);
+    if (new_timestamp <= CachedAclTimestamp) {
+        return;
+    }
+
+    CachedAclTimestamp = 0;
+    refresh_acl_cache();
+}
+
 handle_acl_result(string msg) {
-    if (!validate_required_fields(msg, ["avatar", "level", "is_blacklisted"], "handle_acl_result")) return;
+    if (!validate_required_fields(msg, ["avatar", "level", "is_blacklisted"])) return;
 
     key avatar = (key)llJsonGetValue(msg, ["avatar"]);
     integer level = (integer)llJsonGetValue(msg, ["level"]);
     integer is_blacklisted = (integer)llJsonGetValue(msg, ["is_blacklisted"]);
 
-    integer idx = llListFindList(PendingAcl, [avatar]);
-    if (idx == -1 || idx % PENDING_ACL_STRIDE != PENDING_ACL_AVATAR) return;
+    integer idx = find_pending_acl_idx(avatar);
+    if (idx == -1) return;
 
     string requested_context = llList2String(PendingAcl, idx + PENDING_ACL_CONTEXT);
     PendingAcl = llDeleteSubList(PendingAcl, idx, idx + PENDING_ACL_STRIDE - 1);
@@ -628,8 +771,12 @@ handle_start(string msg, key user_key) {
 
 start_root_session(key user_key) {
 
-    integer idx = llListFindList(PendingAcl, [user_key]);
-    if (idx != -1 && idx % PENDING_ACL_STRIDE == PENDING_ACL_AVATAR) return;
+    integer idx = find_pending_acl_idx(user_key);
+    if (idx != -1) return;
+
+    if (try_cached_session(user_key, ROOT_CONTEXT)) {
+        return;
+    }
 
     PendingAcl += [user_key, ROOT_CONTEXT];
 
@@ -642,8 +789,12 @@ start_root_session(key user_key) {
 
 start_sos_session(key user_key) {
 
-    integer idx = llListFindList(PendingAcl, [user_key]);
-    if (idx != -1 && idx % PENDING_ACL_STRIDE == PENDING_ACL_AVATAR) return;
+    integer idx = find_pending_acl_idx(user_key);
+    if (idx != -1) return;
+
+    if (try_cached_session(user_key, SOS_CONTEXT)) {
+        return;
+    }
 
     PendingAcl += [user_key, SOS_CONTEXT];
 
@@ -688,7 +839,7 @@ handle_return(string msg) {
 }
 
 handle_update_label(string msg) {
-    if (!validate_required_fields(msg, ["context", "label"], "handle_update_label")) return;
+    if (!validate_required_fields(msg, ["context", "label"])) return;
 
     string context = llJsonGetValue(msg, ["context"]);
     string new_label = llJsonGetValue(msg, ["label"]);
@@ -697,7 +848,7 @@ handle_update_label(string msg) {
 }
 
 handle_update_state(string msg) {
-    if (!validate_required_fields(msg, ["context", "state"], "handle_update_state")) return;
+    if (!validate_required_fields(msg, ["context", "state"])) return;
 
     string context = llJsonGetValue(msg, ["context"]);
     integer plugin_state = (integer)llJsonGetValue(msg, ["state"]);
@@ -721,7 +872,7 @@ handle_plugin_acl_list(string msg) {
 }
 
 handle_dialog_response(string msg) {
-    if (!validate_required_fields(msg, ["session_id", "button", "user"], "handle_dialog_response")) return;
+    if (!validate_required_fields(msg, ["session_id", "button", "user"])) return;
 
     string session_id = llJsonGetValue(msg, ["session_id"]);
     string button = llJsonGetValue(msg, ["button"]);
@@ -741,7 +892,7 @@ handle_dialog_response(string msg) {
 }
 
 handle_dialog_timeout(string msg) {
-    if (!validate_required_fields(msg, ["session_id", "user"], "handle_dialog_timeout")) return;
+    if (!validate_required_fields(msg, ["session_id", "user"])) return;
 
     string session_id = llJsonGetValue(msg, ["session_id"]);
     key user = (key)llJsonGetValue(msg, ["user"]);
@@ -763,6 +914,13 @@ default
         PendingAcl = [];
         TouchData = [];
         PluginStates = [];
+        CachedOwners = [];
+        CachedTrustees = [];
+        CachedBlacklist = [];
+        CachedPublicMode = FALSE;
+        CachedTpeMode = FALSE;
+        CachedAclTimestamp = 0;
+        refresh_acl_cache();
 
 
         // Request plugin list (kernel defers response during active registration)
@@ -856,9 +1014,6 @@ default
         string msg_type = get_msg_type(msg);
         if (msg_type == "") return;
 
-        if (msg_type != "ping" && msg_type != "pong" && msg_type != "register" && msg_type != "register_now") {
-        }
-
         /* -------------------- KERNEL LIFECYCLE -------------------- */
         if (num == KERNEL_LIFECYCLE) {
             if (msg_type == "plugin_list") handle_plugin_list(msg);
@@ -870,6 +1025,7 @@ default
         if (num == AUTH_BUS) {
             if (msg_type == "acl_result") handle_acl_result(msg);
             else if (msg_type == "plugin_acl_list") handle_plugin_acl_list(msg);
+            else if (msg_type == "acl_cache_updated") handle_acl_cache_update(msg);
             return;
         }
 

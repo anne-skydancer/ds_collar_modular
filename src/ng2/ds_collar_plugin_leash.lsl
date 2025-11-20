@@ -23,7 +23,6 @@ CHANGES:
 /* -------------------- CONSOLIDATED ABI -------------------- */
 integer KERNEL_LIFECYCLE = 500;
 integer AUTH_BUS = 700;
-integer SETTINGS_BUS = 800;
 integer UI_BUS = 900;
 integer DIALOG_BUS = 950;
 

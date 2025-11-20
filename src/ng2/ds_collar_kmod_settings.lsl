@@ -62,28 +62,10 @@ string get_msg_type(string msg) {
     return llJsonGetValue(msg, ["type"]);
 }
 
-// MEMORY OPTIMIZATION: Compact field validation helper
-integer validate_required_fields(string json_str, list field_names, string function_name) {
-    integer i = 0;
-    integer len = llGetListLength(field_names);
-    while (i < len) {
-        string field = llList2String(field_names, i);
-        if (!json_has(json_str, [field])) {
-            return FALSE;
-        }
-        i += 1;
-    }
-    return TRUE;
-}
-
 string normalize_bool(string s) {
     integer v = (integer)s;
     if (v != 0) v = 1;
     return (string)v;
-}
-
-integer list_contains(list search_list, string s) {
-    return (llListFindList(search_list, [s]) != -1);
 }
 
 list list_remove_all(list source_list, string s) {

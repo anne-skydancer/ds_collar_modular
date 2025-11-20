@@ -15,7 +15,6 @@ CHANGES:
 
 /* -------------------- CONSOLIDATED ABI -------------------- */
 integer KERNEL_LIFECYCLE = 500;
-integer AUTH_BUS = 700;
 integer SETTINGS_BUS = 800;
 integer UI_BUS = 900;
 integer DIALOG_BUS = 950;
@@ -24,7 +23,6 @@ integer DIALOG_BUS = 950;
 string PLUGIN_CONTEXT = "core_status";
 string PLUGIN_LABEL = "Status";
 integer PLUGIN_MIN_ACL = 1;  // Public can view
-string ROOT_CONTEXT = "core_root";
 
 /* -------------------- SETTINGS KEYS -------------------- */
 string KEY_MULTI_OWNER_MODE = "multi_owner_mode";
@@ -257,6 +255,7 @@ apply_settings_delta(string msg) {
         if (list_key == KEY_OWNER_KEYS || list_key == KEY_TRUSTEES || 
             list_key == KEY_OWNER_HONS || list_key == KEY_TRUSTEE_HONS) {
             // Request full sync to refresh lists
+            llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, ["type", "settings_get"]), NULL_KEY);
         }
     }
 }
