@@ -1,7 +1,7 @@
 /*--------------------
 PLUGIN: ds_collar_plugin_maintenance.lsl
 VERSION: 1.00
-REVISION: 20
+REVISION: 21
 PURPOSE: Maintenance and utility functions for collar management
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
@@ -24,7 +24,6 @@ integer DIALOG_BUS = 950;
 string PLUGIN_CONTEXT = "core_maintenance";
 string PLUGIN_LABEL = "Maintenance";
 integer PLUGIN_MIN_ACL = 1;  // Public can view (limited options)
-string ROOT_CONTEXT = "core_root";
 
 /* ACL levels for reference:
    -1 = Blacklisted
@@ -117,8 +116,9 @@ apply_settings_sync(string msg) {
     SettingsReady = TRUE;
 }
 
-apply_settings_delta(string msg) {
+apply_settings_delta() {
     // Request full sync to update our display cache
+    // (msg is unused because we just request a full sync regardless of what changed)
     string request = llList2Json(JSON_OBJECT, [
         "type", "settings_get"
     ]);
@@ -407,15 +407,6 @@ return_to_root() {
     cleanup_session();
 }
 
-close_ui() {
-    string msg = llList2Json(JSON_OBJECT, [
-        "type", "close",
-        "user", (string)CurrentUser
-    ]);
-    llMessageLinked(LINK_SET, UI_BUS, msg, NULL_KEY);
-    cleanup_session();
-}
-
 /* -------------------- SESSION CLEANUP -------------------- */
 
 cleanup_session() {
@@ -578,7 +569,7 @@ default {
             }
             
             if (msg_type == "settings_delta") {
-                apply_settings_delta(msg);
+                apply_settings_delta();
                 return;
             }
             

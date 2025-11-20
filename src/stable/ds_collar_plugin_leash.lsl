@@ -1,7 +1,7 @@
 /*--------------------
 PLUGIN: ds_collar_plugin_leash.lsl
 VERSION: 1.00
-REVISION: 24
+REVISION: 25
 PURPOSE: User interface and configuration for the leashing system
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
@@ -23,7 +23,6 @@ CHANGES:
 /* -------------------- CONSOLIDATED ABI -------------------- */
 integer KERNEL_LIFECYCLE = 500;
 integer AUTH_BUS = 700;
-integer SETTINGS_BUS = 800;
 integer UI_BUS = 900;
 integer DIALOG_BUS = 950;
 

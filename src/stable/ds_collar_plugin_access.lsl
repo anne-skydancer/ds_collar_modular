@@ -1,7 +1,7 @@
 /*--------------------
 PLUGIN: ds_collar_plugin_access.lsl
 VERSION: 1.00
-REVISION: 20
+REVISION: 21
 PURPOSE: Owner, trustee, and honorific management workflows
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:

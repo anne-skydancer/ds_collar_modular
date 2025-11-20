@@ -1,7 +1,7 @@
 /*--------------------
 MODULE: ds_collar_kernel.lsl
 VERSION: 1.00
-REVISION: 34
+REVISION: 35
 PURPOSE: Plugin registry, lifecycle management, heartbeat monitoring
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
@@ -16,7 +16,6 @@ CHANGES:
 /* -------------------- CONSOLIDATED ABI -------------------- */
 integer KERNEL_LIFECYCLE = 500;
 integer AUTH_BUS = 700;
-integer UI_BUS = 900;
 
 /* -------------------- CONSTANTS -------------------- */
 float   PING_INTERVAL_SEC     = 5.0;
@@ -41,7 +40,6 @@ integer QUEUE_CONTEXT = 1;
 integer QUEUE_LABEL = 2;
 integer QUEUE_SCRIPT = 3;
 integer QUEUE_MIN_ACL = 4;    // Stored for auth module recovery (not used for decisions)
-integer QUEUE_TIMESTAMP = 5;  // Registration timestamp
 
 /* Authorized senders for privileged operations */
 list AUTHORIZED_RESET_SENDERS = ["bootstrap", "maintenance"];
@@ -66,21 +64,6 @@ integer json_has(string j, list path) {
 string get_msg_type(string msg) {
     if (!json_has(msg, ["type"])) return "";
     return llJsonGetValue(msg, ["type"]);
-}
-
-
-// MEMORY OPTIMIZATION: Compact field validation helper
-integer validate_required_fields(string json_str, list field_names, string function_name) {
-    integer i = 0;
-    integer len = llGetListLength(field_names);
-    while (i < len) {
-        string field = llList2String(field_names, i);
-        if (!json_has(json_str, [field])) {
-            return FALSE;
-        }
-        i += 1;
-    }
-    return TRUE;
 }
 
 integer now() {
@@ -296,7 +279,6 @@ integer prune_dead_plugins() {
     integer len = llGetListLength(PluginRegistry);
     
     while (i < len) {
-        string context = llList2String(PluginRegistry, i + REG_CONTEXT);
         integer last_seen = llList2Integer(PluginRegistry, i + REG_LAST_SEEN);
         
         if (last_seen >= cutoff) {
@@ -324,7 +306,6 @@ integer prune_missing_scripts() {
     
     while (i < len) {
         string script = llList2String(PluginRegistry, i + REG_SCRIPT);
-        string context = llList2String(PluginRegistry, i + REG_CONTEXT);
         
         if (llGetInventoryType(script) == INVENTORY_SCRIPT) {
             // Script still exists, keep plugin
@@ -652,8 +633,6 @@ default
             // RACE CONDITION FIX: Broadcast if changes OR if plugin_list_request pending
             if (changes || PendingPluginListRequest) {
                 broadcast_plugin_list();
-                if (PendingPluginListRequest) {
-                }
                 PendingPluginListRequest = FALSE;
             }
             // process_queue() automatically switches back to heartbeat mode

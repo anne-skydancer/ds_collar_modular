@@ -1,7 +1,7 @@
 /*--------------------
 PLUGIN: ds_collar_plugin_sos.lsl
 VERSION: 1.00
-REVISION: 10
+REVISION: 11
 PURPOSE: Emergency wearer-accessible actions when ACL is locked out
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:

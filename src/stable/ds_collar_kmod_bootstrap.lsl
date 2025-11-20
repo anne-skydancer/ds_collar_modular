@@ -1,7 +1,7 @@
 /*--------------------
 MODULE: ds_collar_kmod_bootstrap.lsl
 VERSION: 1.00
-REVISION: 25
+REVISION: 27
 PURPOSE: Startup coordination, RLV detection, owner name resolution
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
@@ -15,7 +15,6 @@ CHANGES:
 
 /* -------------------- CONSOLIDATED ABI -------------------- */
 integer KERNEL_LIFECYCLE = 500;
-integer AUTH_BUS = 700;
 integer SETTINGS_BUS = 800;
 
 /* -------------------- RLV DETECTION CONFIG -------------------- */
@@ -25,10 +24,10 @@ integer RLV_MAX_RETRIES = 8;
 integer RLV_INITIAL_DELAY_SEC = 1;
 
 // Probe multiple channels for better compatibility
-integer USE_FIXED_4711 = TRUE;
-integer USE_RELAY_CHAN = TRUE;
+integer UseFixed4711;
+integer UseRelayChan;
 integer RELAY_CHAN = -1812221819;
-integer PROBE_RELAY_BOTH_SIGNS = TRUE;  // Also try positive relay channel
+integer ProbeRelayBothSigns;  // Also try positive relay channel
 
 /* -------------------- DISPLAY NAME REQUEST RATE LIMITING -------------------- */
 float NAME_REQUEST_INTERVAL_SEC = 2.5;  // Space requests 2.5s apart to avoid throttling
@@ -74,7 +73,6 @@ integer NAME_RESOLUTION_TIMEOUT_SEC = 30;
 
 // Name request queue (rate-limited)
 list PendingNameRequests = [];  // List of owner keys waiting for display name requests
-integer NAME_REQUEST_STRIDE = 1;
 integer NextNameRequestTime = 0;  // Timestamp when next request can be sent
 
 /* -------------------- HELPERS -------------------- */
@@ -188,10 +186,10 @@ start_rlv_probe() {
     clearProbeChannels();
     
     // Set up multiple probe channels
-    if (USE_FIXED_4711) addProbeChannel(4711);
-    if (USE_RELAY_CHAN) {
+    if (UseFixed4711) addProbeChannel(4711);
+    if (UseRelayChan) {
         addProbeChannel(RELAY_CHAN);
-        if (PROBE_RELAY_BOTH_SIGNS) {
+        if (ProbeRelayBothSigns) {
             addProbeChannel(-RELAY_CHAN);  // Try opposite sign too
         }
     }
@@ -397,6 +395,23 @@ handle_dataserver_name(key query_id, string name) {
     }
 }
 
+/* -------------------- BOOTSTRAP INITIATION -------------------- */
+
+start_bootstrap() {
+    BootstrapComplete = FALSE;
+    SettingsReceived = FALSE;
+    NameResolutionDeadline = 0;
+    PendingNameRequests = [];
+    NextNameRequestTime = 0;
+    
+    sendIM("DS Collar starting up. Please wait...");
+    
+    start_rlv_probe();
+    request_settings();
+    
+    llSetTimerEvent(1.0);
+}
+
 /* -------------------- BOOTSTRAP COMPLETION -------------------- */
 
 check_bootstrap_complete() {
@@ -436,16 +451,16 @@ announce_status() {
                     hon = llList2String(OwnerHonorifics, i);
                 }
                 
-                string name = "";
+                string display_name = "";
                 if (i < llGetListLength(OwnerDisplayNames)) {
-                    name = llList2String(OwnerDisplayNames, i);
+                    display_name = llList2String(OwnerDisplayNames, i);
                 }
                 
                 if (hon != "") {
-                    owner_parts += [hon + " " + name];
+                    owner_parts += [hon + " " + display_name];
                 }
                 else {
-                    owner_parts += [name];
+                    owner_parts += [display_name];
                 }
                 
                 i += 1;
@@ -474,26 +489,16 @@ announce_status() {
 }
 
 /* -------------------- EVENTS -------------------- */
-
 default
 {
     state_entry() {
+        UseFixed4711 = TRUE;
+        UseRelayChan = TRUE;
+        ProbeRelayBothSigns = TRUE;
+
         LastOwner = llGetOwner();
-        BootstrapComplete = FALSE;
-        SettingsReceived = FALSE;
-        NameResolutionDeadline = 0;
-        PendingNameRequests = [];
-        NextNameRequestTime = 0;
-        sendIM("DS Collar starting up. Please wait...");
-
-        // Start RLV detection
-        start_rlv_probe();
-
-        // Request settings
-        request_settings();
-
-        // Start timer for RLV probe management and name request processing
-        llSetTimerEvent(1.0);
+        
+        start_bootstrap();
     }
 
     on_rez(integer start_param) {
@@ -587,7 +592,11 @@ default
         
         /* -------------------- KERNEL LIFECYCLE -------------------- */
         else if (num == KERNEL_LIFECYCLE) {
-            if (msg_type == "soft_reset" || msg_type == "soft_reset_all") {
+            if (msg_type == "notecard_loaded") {
+                // Settings notecard was loaded/reloaded - re-run bootstrap
+                start_bootstrap();
+            }
+            else if (msg_type == "soft_reset" || msg_type == "soft_reset_all") {
                 // SECURITY FIX (v2.3 - MEDIUM-023): Validate sender authorization
                 if (!json_has(msg, ["from"])) {
                     return;

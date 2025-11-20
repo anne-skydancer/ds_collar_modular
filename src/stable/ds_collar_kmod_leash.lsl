@@ -1,7 +1,7 @@
 /*--------------------
 MODULE: ds_collar_kmod_leash.lsl
 VERSION: 1.00
-REVISION: 25
+REVISION: 26
 PURPOSE: Leashing engine providing leash services to plugins
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
@@ -133,7 +133,7 @@ integer now() {
 integer inAllowedList(integer level, list allowed) {
     return (llListFindList(allowed, [level]) != -1);
 }
-denyAccess(key user, string reason, string action, integer acl) {
+denyAccess(key user, string reason) {
     llRegionSayTo(user, 0, "Access denied: " + reason);
 }
 
@@ -302,7 +302,7 @@ handleAclResult(string msg) {
         if (PendingActionUser == Leasher || acl_level >= 3) {
             releaseLeashInternal(PendingActionUser);
         } else {
-            denyAccess(PendingActionUser, "only leasher or authorized users can release", "release", acl_level);
+            denyAccess(PendingActionUser, "only leasher or authorized users can release");
         }
     }
     // Special case: pass (current leasher OR level 3+ can pass, then verify target)
@@ -311,7 +311,7 @@ handleAclResult(string msg) {
             requestAclForPassTarget(PendingPassTarget);
             return;  // Don't clear pending state yet
         } else {
-            denyAccess(PendingActionUser, "insufficient permissions to pass leash", "pass", acl_level);
+            denyAccess(PendingActionUser, "insufficient permissions to pass leash");
         }
     }
     // Special case: offer (ACL 2 only, when NOT currently leashed, then verify target)
@@ -323,14 +323,13 @@ handleAclResult(string msg) {
         } else if (Leashed) {
             llRegionSayTo(PendingActionUser, 0, "Cannot offer leash: already leashed.");
         } else {
-            denyAccess(PendingActionUser, "insufficient permissions to offer leash", "offer", acl_level);
+            denyAccess(PendingActionUser, "insufficient permissions to offer leash");
         }
     }
     // Special case: pass_target_check (verifying the target's ACL for pass/offer)
     else if (PendingAction == "pass_target_check") {
         // This is the target verification for pass/offer action
         // Target must be level 1+ (public or higher) to receive leash
-        key target = (key)llJsonGetValue(msg, ["avatar"]);
 
 
         if (acl_level >= 1) {
@@ -374,7 +373,7 @@ handleAclResult(string msg) {
             else if (PendingAction == "set_length") setLengthInternal((integer)((string)PendingPassTarget));
             else if (PendingAction == "toggle_turn") toggleTurnInternal();
         } else {
-            denyAccess(PendingActionUser, "insufficient permissions", PendingAction, acl_level);
+            denyAccess(PendingActionUser, "insufficient permissions");
         }
     }
     
@@ -436,7 +435,6 @@ handleHolderResponseDs(string msg) {
     if (session != HolderSession) return;
     
     HolderTarget = (key)llJsonGetValue(msg, ["holder"]);
-    string holder_name = llJsonGetValue(msg, ["name"]);
     
 
     HolderState = HOLDER_STATE_COMPLETE;
@@ -913,8 +911,6 @@ default
         llRequestPermissions(llGetOwner(), PERMISSION_TAKE_CONTROLS);
 
         // Memory diagnostics
-        integer used = llGetUsedMemory();
-        integer free = llGetFreeMemory();
     }
     
     on_rez(integer start_param) {

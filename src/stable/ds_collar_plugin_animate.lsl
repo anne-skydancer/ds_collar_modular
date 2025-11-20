@@ -1,7 +1,7 @@
 /*--------------------
 PLUGIN: ds_collar_plugin_animate.lsl
 VERSION: 1.00
-REVISION: 20
+REVISION: 21
 PURPOSE: Paginated animation menu driven by inventory contents
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
@@ -16,7 +16,6 @@ CHANGES:
 /* -------------------- CONSOLIDATED ABI -------------------- */
 integer KERNEL_LIFECYCLE = 500;
 integer AUTH_BUS = 700;
-integer SETTINGS_BUS = 800;
 integer UI_BUS = 900;
 integer DIALOG_BUS = 950;
 
@@ -24,7 +23,6 @@ integer DIALOG_BUS = 950;
 string PLUGIN_CONTEXT = "core_animate";
 string PLUGIN_LABEL = "Animate";
 integer PLUGIN_MIN_ACL = 1;  // Public can use
-string ROOT_CONTEXT = "core_root";
 
 /* -------------------- OTHER CONSTANTS -------------------- */
 

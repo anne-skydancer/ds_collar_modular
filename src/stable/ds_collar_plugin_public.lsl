@@ -1,7 +1,7 @@
 /*--------------------
 PLUGIN: ds_collar_plugin_public.lsl
 VERSION: 1.00
-REVISION: 20
+REVISION: 21
 PURPOSE: Toggle public access mode directly from main menu
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
@@ -18,14 +18,12 @@ integer KERNEL_LIFECYCLE = 500;
 integer AUTH_BUS = 700;
 integer SETTINGS_BUS = 800;
 integer UI_BUS = 900;
-integer DIALOG_BUS = 950;
 
 /* -------------------- PLUGIN IDENTITY -------------------- */
 string PLUGIN_CONTEXT = "core_public";
 string PLUGIN_LABEL_ON = "Public: Y";
 string PLUGIN_LABEL_OFF = "Public: N";
 integer PLUGIN_MIN_ACL = 3;  // Trustee minimum
-string ROOT_CONTEXT = "core_root";
 
 /* ACL levels for reference:
    -1 = Blacklisted

@@ -1,7 +1,7 @@
 /*--------------------
 SCRIPT: ds_collar_leash_holder.lsl
 VERSION: 1.00
-REVISION: 1
+REVISION: 2
 PURPOSE: Minimal leash-holder target responder for external objects
 ARCHITECTURE: Direct channel listener with prim discovery fallback
 CHANGES:

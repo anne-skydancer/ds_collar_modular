@@ -2,7 +2,7 @@
 /*--------------------
 MODULE: ds_collar_kmod_dialogs.lsl
 VERSION: 1.00
-REVISION: 21
+REVISION: 22
 PURPOSE: Centralized dialog management for shared listener handling
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
@@ -56,7 +56,7 @@ string get_msg_type(string msg) {
 
 
 // MEMORY OPTIMIZATION: Compact field validation helper
-integer validate_required_fields(string json_str, list field_names, string function_name) {
+integer validate_required_fields(string json_str, list field_names) {
     integer i = 0;
     integer len = llGetListLength(field_names);
     while (i < len) {
@@ -94,8 +94,6 @@ close_session_at_idx(integer idx) {
     if (listen_handle != 0) {
         llListenRemove(listen_handle);
     }
-    
-    string session_id = llList2String(Sessions, idx + SESSION_ID);
     
     Sessions = llDeleteSubList(Sessions, idx, idx + SESSION_STRIDE - 1);
 }
@@ -214,7 +212,7 @@ string get_button_label(string context, integer button_state) {
 /* -------------------- DIALOG DISPLAY -------------------- */
 
 handle_dialog_open(string msg) {
-    if (!validate_required_fields(msg, ["session_id", "user"], "handle_dialog_open")) {
+    if (!validate_required_fields(msg, ["session_id", "user"])) {
         return;
     }
 
@@ -347,7 +345,7 @@ handle_dialog_open(string msg) {
 }
 
 handle_numbered_list_dialog(string msg, string session_id, key user) {
-    if (!validate_required_fields(msg, ["items"], "handle_numbered_list_dialog")) {
+    if (!validate_required_fields(msg, ["items"])) {
         return;
     }
     

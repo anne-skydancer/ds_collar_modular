@@ -1,7 +1,7 @@
 /*--------------------
 PLUGIN: ds_collar_plugin_tpe.lsl
 VERSION: 1.00
-REVISION: 21
+REVISION: 22
 PURPOSE: Manage TPE mode with wearer confirmation and owner oversight
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
@@ -26,7 +26,6 @@ string PLUGIN_CONTEXT = "core_tpe";
 string PLUGIN_LABEL_ON = "TPE: Y";
 string PLUGIN_LABEL_OFF = "TPE: N";
 integer PLUGIN_MIN_ACL = 5;  // Primary Owner ONLY
-string ROOT_CONTEXT = "core_root";
 
 /* ACL levels for reference:
    -1 = Blacklisted
@@ -56,10 +55,6 @@ integer AclPending = FALSE;        // Waiting for ACL result
 
 integer json_has(string j, list path) {
     return (llJsonGetValue(j, path) != JSON_INVALID);
-}
-
-integer is_json_arr(string j) {
-    return (llGetSubString(j, 0, 0) == "[");
 }
 
 string gen_session() {
@@ -305,8 +300,8 @@ default
     
     link_message(integer sender_num, integer num, string str, key id) {
         // Skip logging kernel lifecycle messages (too noisy)
-        if (num != KERNEL_LIFECYCLE) {
-        }
+        // if (num != KERNEL_LIFECYCLE) {
+        // }
         
         if (num == KERNEL_LIFECYCLE) {
             string msg_type = llJsonGetValue(str, ["type"]);

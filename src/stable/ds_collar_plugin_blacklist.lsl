@@ -1,7 +1,7 @@
 /*--------------------
 PLUGIN: ds_collar_plugin_blacklist.lsl
 VERSION: 1.00
-REVISION: 20
+REVISION: 21
 PURPOSE: Blacklist management with sensor-based avatar selection
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
@@ -24,7 +24,6 @@ integer DIALOG_BUS = 950;
 string PLUGIN_CONTEXT = "core_blacklist";
 string PLUGIN_LABEL = "Blacklist";
 integer PLUGIN_MIN_ACL = 2;  // Owned minimum
-string ROOT_CONTEXT = "core_root";
 
 /* ACL levels for reference:
    -1 = Blacklisted
@@ -406,7 +405,6 @@ handle_dialog_response(string msg) {
     if (MenuContext == "remove") {
         integer idx = (integer)button - 1;
         if (idx >= 0 && idx < llGetListLength(Blacklist)) {
-            string removed = llList2String(Blacklist, idx);
             Blacklist = llDeleteSubList(Blacklist, idx, idx);
             persist_blacklist();
             llRegionSayTo(CurrentUser, 0, "Removed from blacklist.");

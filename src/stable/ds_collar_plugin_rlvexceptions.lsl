@@ -1,7 +1,7 @@
 /*--------------------
 PLUGIN: ds_collar_plugin_rlvexceptions.lsl
 VERSION: 1.00
-REVISION: 20
+REVISION: 21
 PURPOSE: Manage RLV teleport and IM exceptions for owners and trustees
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
@@ -398,9 +398,10 @@ show_trustee_menu() {
     ]), NULL_KEY);
 }
 
-show_toggle(string role, string exception_type, string setting_key, integer current) {
+show_toggle(string role, string exception_type, integer current) {
     SessionId = gen_session();
     MenuContext = role + "_" + exception_type;
+    // setting_key is used implicitly by the menu context logic later
     
     string body = role + " " + exception_type + " Exception\n\n";
     if (current) body += "Current: Allowed\n\n";
@@ -447,12 +448,12 @@ handle_button(string btn) {
         else if (btn == "Trustee") show_trustee_menu();
     }
     else if (MenuContext == "owner") {
-        if (btn == "TP") show_toggle("Owner", "TP", KEY_EX_OWNER_TP, ExOwnerTp);
-        else if (btn == "IM") show_toggle("Owner", "IM", KEY_EX_OWNER_IM, ExOwnerIm);
+        if (btn == "TP") show_toggle("Owner", "TP", ExOwnerTp);
+        else if (btn == "IM") show_toggle("Owner", "IM", ExOwnerIm);
     }
     else if (MenuContext == "trustee") {
-        if (btn == "TP") show_toggle("Trustee", "TP", KEY_EX_TRUSTEE_TP, ExTrusteeTp);
-        else if (btn == "IM") show_toggle("Trustee", "IM", KEY_EX_TRUSTEE_IM, ExTrusteeIm);
+        if (btn == "TP") show_toggle("Trustee", "TP", ExTrusteeTp);
+        else if (btn == "IM") show_toggle("Trustee", "IM", ExTrusteeIm);
     }
     else if (MenuContext == "owner_TP") {
         if (btn == "Allow") {

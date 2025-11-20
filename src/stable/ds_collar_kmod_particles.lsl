@@ -1,7 +1,7 @@
 /*--------------------
 MODULE: ds_collar_kmod_particles.lsl
 VERSION: 1.00
-REVISION: 23
+REVISION: 24
 PURPOSE: Visual connection renderer with Lockmeister compatibility
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
