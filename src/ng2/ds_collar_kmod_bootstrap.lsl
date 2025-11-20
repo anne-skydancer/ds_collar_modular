@@ -395,6 +395,23 @@ handle_dataserver_name(key query_id, string name) {
     }
 }
 
+/* -------------------- BOOTSTRAP INITIATION -------------------- */
+
+start_bootstrap() {
+    BootstrapComplete = FALSE;
+    SettingsReceived = FALSE;
+    NameResolutionDeadline = 0;
+    PendingNameRequests = [];
+    NextNameRequestTime = 0;
+    
+    sendIM("DS Collar starting up. Please wait...");
+    
+    start_rlv_probe();
+    request_settings();
+    
+    llSetTimerEvent(1.0);
+}
+
 /* -------------------- BOOTSTRAP COMPLETION -------------------- */
 
 check_bootstrap_complete() {
@@ -481,21 +498,8 @@ default
         ProbeRelayBothSigns = TRUE;
 
         LastOwner = llGetOwner();
-        BootstrapComplete = FALSE;
-        SettingsReceived = FALSE;
-        NameResolutionDeadline = 0;
-        PendingNameRequests = [];
-        NextNameRequestTime = 0;
-        sendIM("DS Collar starting up. Please wait...");
-
-        // Start RLV detection
-        start_rlv_probe();
-
-        // Request settings
-        request_settings();
-
-        // Start timer for RLV probe management and name request processing
-        llSetTimerEvent(1.0);
+        
+        start_bootstrap();
     }
 
     on_rez(integer start_param) {
