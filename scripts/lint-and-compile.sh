@@ -4,6 +4,9 @@
 
 set -e  # Exit on error
 
+# Set tool paths
+LSLCOMP="/home/anne/.local/bin/lslcomp"
+
 # Check if lslint exists
 if ! command -v lslint &> /dev/null; then
     echo "Error: lslint not found. Run setup-lslint.sh first."
@@ -11,8 +14,8 @@ if ! command -v lslint &> /dev/null; then
 fi
 
 # Check if lslcomp exists
-if ! command -v lslcomp &> /dev/null; then
-    echo "Error: lslcomp not found in PATH."
+if [ ! -x "$LSLCOMP" ]; then
+    echo "Error: lslcomp not found at $LSLCOMP"
     exit 1
 fi
 
@@ -55,7 +58,7 @@ for FILE in "$@"; do
     
     # Run lslcomp
     echo -n "  [COMP] "
-    COMPILE_OUTPUT=$(lslcomp "$FILE" 2>&1)
+    COMPILE_OUTPUT=$("$LSLCOMP" "$FILE" 2>&1)
     if [ -z "$COMPILE_OUTPUT" ]; then
         echo "✓ Passed"
     else
@@ -72,16 +75,27 @@ done
 echo "Cleaning up compiler artifacts..."
 CLEANUP_COUNT=0
 
-# Find and remove .cil, .pp, .out files in the same directories as input files
+# Find and remove artifacts in the same directories as input files
 for FILE in "$@"; do
     DIR=$(dirname "$FILE")
     BASENAME=$(basename "$FILE" .lsl)
+    FILENAME=$(basename "$FILE")
     
-    # Remove artifacts for this specific file
+    # Remove artifacts - lslcomp creates both patterns:
+    # 1. basename.ext (e.g., ds_collar_kmod_bootstrap.cil)
+    # 2. filename.lsl.ext (e.g., ds_collar_kmod_bootstrap.lsl.pp)
     for EXT in cil pp out lso compiled; do
-        ARTIFACT="${DIR}/${BASENAME}.${EXT}"
-        if [ -f "$ARTIFACT" ]; then
-            rm -f "$ARTIFACT"
+        # Pattern 1: basename.ext
+        ARTIFACT1="${DIR}/${BASENAME}.${EXT}"
+        if [ -f "$ARTIFACT1" ]; then
+            rm -f "$ARTIFACT1"
+            CLEANUP_COUNT=$((CLEANUP_COUNT + 1))
+        fi
+        
+        # Pattern 2: filename.lsl.ext
+        ARTIFACT2="${DIR}/${FILENAME}.${EXT}"
+        if [ -f "$ARTIFACT2" ]; then
+            rm -f "$ARTIFACT2"
             CLEANUP_COUNT=$((CLEANUP_COUNT + 1))
         fi
     done
