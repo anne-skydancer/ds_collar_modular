@@ -451,16 +451,16 @@ announce_status() {
                     hon = llList2String(OwnerHonorifics, i);
                 }
                 
-                string name = "";
+                string display_name = "";
                 if (i < llGetListLength(OwnerDisplayNames)) {
-                    name = llList2String(OwnerDisplayNames, i);
+                    display_name = llList2String(OwnerDisplayNames, i);
                 }
                 
                 if (hon != "") {
-                    owner_parts += [hon + " " + name];
+                    owner_parts += [hon + " " + display_name];
                 }
                 else {
-                    owner_parts += [name];
+                    owner_parts += [display_name];
                 }
                 
                 i += 1;
@@ -489,7 +489,6 @@ announce_status() {
 }
 
 /* -------------------- EVENTS -------------------- */
-
 default
 {
     state_entry() {
