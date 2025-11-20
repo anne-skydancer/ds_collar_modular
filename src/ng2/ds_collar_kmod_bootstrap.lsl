@@ -1,7 +1,7 @@
 /*--------------------
 MODULE: ds_collar_kmod_bootstrap.lsl
 VERSION: 1.00
-REVISION: 26
+REVISION: 27
 PURPOSE: Startup coordination, RLV detection, owner name resolution
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
@@ -589,7 +589,11 @@ default
         
         /* -------------------- KERNEL LIFECYCLE -------------------- */
         else if (num == KERNEL_LIFECYCLE) {
-            if (msg_type == "soft_reset" || msg_type == "soft_reset_all") {
+            if (msg_type == "notecard_loaded") {
+                // Settings notecard was loaded/reloaded - re-run bootstrap
+                start_bootstrap();
+            }
+            else if (msg_type == "soft_reset" || msg_type == "soft_reset_all") {
                 // SECURITY FIX (v2.3 - MEDIUM-023): Validate sender authorization
                 if (!json_has(msg, ["from"])) {
                     return;

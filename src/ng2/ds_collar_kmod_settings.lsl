@@ -1,7 +1,7 @@
 /*--------------------
 MODULE: ds_collar_kmod_settings.lsl
 VERSION: 1.00
-REVISION: 24
+REVISION: 25
 PURPOSE: Persistent key-value store with notecard loading and delta updates
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
@@ -14,6 +14,7 @@ CHANGES:
 
 
 /* -------------------- CONSOLIDATED ABI -------------------- */
+integer KERNEL_LIFECYCLE = 500;
 integer SETTINGS_BUS = 800;
 
 /* -------------------- SETTINGS KEYS -------------------- */
@@ -677,6 +678,12 @@ default
         else {
             IsLoadingNotecard = FALSE;
             broadcast_full_sync();
+            
+            // Trigger bootstrap after notecard load completes
+            string bootstrap_msg = llList2Json(JSON_OBJECT, [
+                "type", "notecard_loaded"
+            ]);
+            llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, bootstrap_msg, NULL_KEY);
         }
     }
     
