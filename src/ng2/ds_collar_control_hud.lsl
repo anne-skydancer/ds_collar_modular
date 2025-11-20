@@ -1,7 +1,7 @@
 /*--------------------
 SCRIPT: ds_collar_control_hud.lsl
 VERSION: 1.00
-REVISION: 5
+REVISION: 6
 PURPOSE: Auto-detect nearby collars and connect automatically
 ARCHITECTURE: RLV relay-style broadcast and listen workflow
 CHANGES:

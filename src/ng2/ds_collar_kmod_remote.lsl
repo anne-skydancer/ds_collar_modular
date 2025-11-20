@@ -1,7 +1,7 @@
 /*--------------------
 MODULE: ds_collar_kmod_remote.lsl
 VERSION: 1.00
-REVISION: 21
+REVISION: 22
 PURPOSE: External HUD communication bridge for remote control workflows
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:

@@ -1,7 +1,7 @@
 /*--------------------
 PLUGIN: ds_collar_plugin_blacklist.lsl
 VERSION: 1.00
-REVISION: 20
+REVISION: 21
 PURPOSE: Blacklist management with sensor-based avatar selection
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:

@@ -1,7 +1,7 @@
 /*--------------------
 PLUGIN: ds_collar_plugin_rlvrelay.lsl
 VERSION: 1.00
-REVISION: 21
+REVISION: 22
 PURPOSE: Provide ORG-compliant RLV relay with hardcore mode and safeword hooks
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:

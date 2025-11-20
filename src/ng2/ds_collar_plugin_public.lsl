@@ -1,7 +1,7 @@
 /*--------------------
 PLUGIN: ds_collar_plugin_public.lsl
 VERSION: 1.00
-REVISION: 20
+REVISION: 21
 PURPOSE: Toggle public access mode directly from main menu
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:

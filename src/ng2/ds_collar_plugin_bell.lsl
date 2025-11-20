@@ -1,7 +1,7 @@
 /*--------------------
 PLUGIN: ds_collar_plugin_bell.lsl
 VERSION: 1.00
-REVISION: 10
+REVISION: 11
 PURPOSE: Bell visibility and jingling control for the collar
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:

@@ -1,7 +1,7 @@
 /*--------------------
 PLUGIN: ds_collar_plugin_animate.lsl
 VERSION: 1.00
-REVISION: 20
+REVISION: 21
 PURPOSE: Paginated animation menu driven by inventory contents
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
