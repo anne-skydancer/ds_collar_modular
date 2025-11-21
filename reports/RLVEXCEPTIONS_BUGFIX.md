@@ -177,25 +177,125 @@ These commands must be re-issued after any reset because:
 
 ### Other Plugins That May Need Similar Fix
 
-Checked plugins for similar pattern:
+**Verification Status**: All other plugins checked and analyzed.
 
-1. **ds_collar_plugin_rlvrestrict.lsl**: 
-   - ✓ Already requests settings on `register_now`
-   - No fix needed
+#### ✅ SAFE - Plugins That Already Request Settings on `register_now`
 
-2. **ds_collar_plugin_rlvrelay.lsl**:
-   - ✓ Already requests settings on `register_now`
-   - No fix needed
+None found. All other plugins rely on `state_entry()` for settings requests.
 
-3. **ds_collar_plugin_animate.lsl**:
-   - ✓ Uses inventory, not settings-dependent
-   - No fix needed
+#### ✅ SAFE - Plugins That Request Settings in `state_entry()` (No Live State)
+
+These plugins request settings on startup but don't manage live viewer state:
+
+1. **ds_collar_plugin_access.lsl**: 
+   - ✅ Requests settings in `state_entry()`
+   - ✅ No RLV commands issued
+   - ✅ Only manages data (owner lists, trustees)
+   - **Safe**: Data persists in settings, no reapplication needed
+
+2. **ds_collar_plugin_rlvrestrict.lsl**:
+   - ✅ Requests settings in `state_entry()`
+   - ⚠️ Issues RLV restriction commands in `apply_settings_sync()`
+   - 🔍 **REQUIRES FURTHER ANALYSIS** (see below)
+
+3. **ds_collar_plugin_bell.lsl**:
+   - ✅ Requests settings in `state_entry()`
+   - ✅ No RLV commands issued
+   - ✅ Manages bell visibility (prim alpha) and sound
+   - **Safe**: Prim state persists, no reapplication needed
 
 4. **ds_collar_plugin_leash.lsl**:
-   - ✓ Already requests settings on `register_now`
-   - No fix needed
+   - ✅ Sets `IsRegistered = TRUE` on `register_now`
+   - ✅ No RLV commands in normal operation
+   - **Safe**: Leash state managed by leash module, not plugin
 
-**Conclusion**: RLV exceptions plugin was the ONLY plugin with this bug.
+5. **ds_collar_plugin_tpe.lsl**:
+   - ✅ Registers on `register_now`
+   - ✅ TPE mode is a setting, not live state
+   - **Safe**: No live commands to reapply
+
+#### ⚠️  NEEDS INVESTIGATION - RLV Restrictions Plugin
+
+**ds_collar_plugin_rlvrestrict.lsl** requires deeper analysis:
+
+**Current Behavior**:
+```lsl
+state_entry() {
+    cleanup_session();
+    register_self();
+    
+    // Request settings
+    llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
+        "type", "settings_get"
+    ]), NULL_KEY);
+}
+
+// On register_now - ONLY registers, doesn't request settings
+if (type == "register_now") {
+    register_self();
+}
+
+// On settings_sync - issues RLV commands
+apply_settings_sync(string msg) {
+    // ... loads restrictions list ...
+    
+    // Reapply all restrictions
+    integer i = 0;
+    integer count = llGetListLength(Restrictions);
+    while (i < count) {
+        string restr_cmd = llList2String(Restrictions, i);
+        llOwnerSay(restr_cmd + "=y");  // ← Live RLV commands!
+        i = i + 1;
+    }
+}
+```
+
+**Analysis**:
+- Plugin issues RLV restriction commands (`@sit=y`, `@touch=y`, etc.)
+- These are **live viewer state**, not persistent
+- After kernel reset, plugin receives `register_now` but never re-requests settings
+- Therefore, restrictions are NOT reapplied
+
+**Verdict**: 🔴 **SAME BUG AS RLV EXCEPTIONS**
+
+**Impact**:
+- RLV restrictions disappear after kernel/module resets
+- User must manually reset collar or reapply restrictions
+- HIGH severity - affects core RLV functionality
+
+**Fix Required**: Apply same fix as rlvexceptions plugin.
+
+#### ✅ SAFE - Plugins Without Settings Dependencies
+
+6. **ds_collar_plugin_lock.lsl**:
+   - ⚠️ **Special Case Analysis Required**
+   - Issues RLV `@detach=n/y` commands
+   - Does NOT request settings in `state_entry()` 
+   - Calls `apply_lock_state()` directly in `state_entry()`
+   - **Behavior**:
+     ```lsl
+     state_entry() {
+         Locked = FALSE;  // ← Hardcoded default!
+         register_self();
+         apply_lock_state();  // ← Issues @detach=y
+     }
+     ```
+   - 🔴 **BUG FOUND**: Lock state resets to UNLOCKED on script reset!
+   - Lock plugin does not persist lock state across resets
+   - **However**: This is a different bug - lock state should be in settings
+
+7. **ds_collar_plugin_public.lsl**: No live state, no RLV commands
+8. **ds_collar_plugin_rlvrelay.lsl**: Relay uses listener, not persistent RLV state
+9. **ds_collar_plugin_sos.lsl**: One-time actions, no persistent state
+10. **ds_collar_plugin_status.lsl**: Display-only, no commands
+11. **ds_collar_plugin_maintenance.lsl**: Utility functions only
+12. **ds_collar_plugin_blacklist.lsl**: Data only, no RLV commands
+13. **ds_collar_plugin_animate.lsl**: Uses inventory, not settings
+
+**Conclusion**: 
+- **RLV Exceptions Plugin**: ✅ FIXED (Rev 22)
+- **RLV Restrictions Plugin**: 🔴 **SAME BUG** - needs identical fix
+- **Lock Plugin**: 🔴 **DIFFERENT BUG** - doesn't persist lock state properly
 
 ---
 
