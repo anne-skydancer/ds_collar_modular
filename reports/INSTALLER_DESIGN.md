@@ -10,17 +10,19 @@ A one-click installation system where a user drops a **listener script** into an
 
 **Use Case**: Installing D/s Collar on a new object that is not currently worn or locked.
 
-### 2. In-Place Update (Chat-Based)
+### 2. In-Place Update (Touch-Based)
 
-A self-contained update system where the **existing collar** responds to chat commands from an updater object, downloads new scripts, and performs a hot-swap update **without requiring any items to be dropped into the collar**.
+A self-contained update system where the wearer **touches an updater object**, which communicates with the **existing collar's remote listener** (`ds_collar_kmod_remote.lsl`), downloads new scripts, and performs a hot-swap update **without requiring any items to be dropped into the collar**.
 
 **Critical Feature**: Updates work on **any D/s Collar regardless of whether it is worn, locked, or under RLV restrictions** because:
 - No manual inventory modification required
+- Uses existing remote listener channels (same as HUD communication)
+- Triggered by touching updater object (more secure than chat)
 - Collar scripts temporarily release RLV restrictions during update
 - Settings are preserved via linkset data
-- Updates are triggered via chat commands (not inventory drops)
+- Updates are triggered via remote protocol (not inventory drops)
 
-**Why Separate Systems**: RLV prevents modification of locked attachments, making it **impossible** to drop a receiver script into a locked collar. Therefore, locked/worn collar updates must use the existing collar's built-in update capability rather than an external receiver script.
+**Why Separate Systems**: RLV prevents modification of locked attachments, making it **impossible** to drop a receiver script into a locked collar. Therefore, locked/worn collar updates must use the existing collar's built-in remote listener rather than an external receiver script.
 
 ---
 
@@ -48,20 +50,26 @@ A self-contained update system where the **existing collar** responds to chat co
 ### System 2: In-Place Update Components
 
 1. **Updater Object** (Donor/Source)
-   - Separate rezzed object OR the donor collar itself
+   - Separate rezzed object (box, sphere, etc.) containing update package
    - Contains `ds_collar_updater_source.lsl` (transmitter script)
    - Contains all new scripts, animations, objects, notecards
-   - Communicates via chat commands (not inventory drops)
+   - Wearer touches updater to initiate update
+   - Communicates on existing remote listener channels (not inventory drops)
 
 2. **Target Collar** (WORN/LOCKED/RESTRICTED)
    - Existing D/s Collar that needs updating
-   - Contains built-in update handler in kernel or dedicated update module
-   - Responds to chat-based update commands
+   - Uses built-in `ds_collar_kmod_remote.lsl` for communication
+   - Already listens on channels `-8675309` (queries) and `-8675311` (menu requests)
+   - Responds to update commands via existing remote protocol
    - **Critical**: Can be worn, locked, and under RLV restrictions
 
 3. **Update Protocol**
-   - Chat-based handshake (not inventory-based)
-   - Kernel/update module listens for update commands
+   - Touch-based initiation (wearer touches updater object)
+   - Uses existing remote listener channels (same as HUD communication)
+     - Channel `-8675309`: ACL queries and update discovery
+     - Channel `-8675310`: Responses from collar
+     - Channel `-8675311`: Update commands
+   - Kernel/remote module processes update requests
    - Temporarily releases RLV restrictions for update duration
    - Downloads new scripts via llGiveInventory to existing collar
    - Performs hot-swap using coordinator script
@@ -454,18 +462,19 @@ Confirmation from receiver, triggers cleanup.
 
 **For Existing Collars (Can Be Worn, Locked, RLV-Restricted)**
 
-#### For Updater (Collar Owner or Authorized Person)
+#### For Updater Setup
 
 1. **Prepare Updater Object**
-   - Rez updater object containing all new scripts/assets
-   - OR use donor collar with `ds_collar_updater_source.lsl`
-   - Updater listens on update channel `-87654322`
+   - Create or rez updater object (box, sphere, or any shape)
+   - Add `ds_collar_updater_source.lsl` script
+   - Add all new scripts, animations, objects, notecards
+   - Position updater where wearer can touch it
 
 2. **Initiate Update**
-   - Wearer keeps collar worn (no need to remove)
-   - Touch updater object OR type `/1update` in chat
-   - Updater broadcasts UPDATE_PING
-   - Collar responds automatically (built-in handler)
+   - Wearer touches updater object (must be collar owner)
+   - Updater broadcasts UPDATE_DISCOVER on channel `-8675309`
+   - Collar's `kmod_remote` responds automatically
+   - Updater validates toucher is collar owner (security check)
 
 3. **Automatic Update Process**
    - Collar temporarily releases RLV restrictions
@@ -485,10 +494,16 @@ Confirmation from receiver, triggers cleanup.
 #### For Collar Wearer
 
 1. **Keep collar worn** (do not remove)
-2. **Stand near updater** (within 5 meters)
+2. **Touch updater object** when ready
 3. **Wait for update to complete** (2-3 minutes)
-4. **No action required** - update is fully automatic
+4. **No further action required** - update is fully automatic
 5. **Collar remains functional** during and after update
+
+**Security Notes**:
+- Touch-based: More secure than chat commands (requires proximity)
+- Owner validation: Only collar owner can initiate update
+- Uses existing remote protocol: Same security as HUD communication
+- Range-limited: Must be within 20m (same as HUD range)
 
 **Progress Messages (Fresh Install)**:
 ```
@@ -572,12 +587,22 @@ Confirmation from receiver, triggers cleanup.
 1. **Collar Worn But Update Attempted via Fresh Install**
    - Receiver script cannot be dropped into worn collar
    - Error: "Cannot drop items into worn attachment. Use update system instead."
-   - Solution: Direct user to update system
+   - Solution: Direct user to touch-based update system
 
 2. **Update Handler Not Found**
-   - Updater pings but no collar responds
-   - Error: "No collar with update capability found in range."
-   - Solution: Ensure collar has kernel with built-in update handler
+   - Updater broadcasts but no collar responds on remote channels
+   - Error: "No collar with remote listener found in range."
+   - Solution: Ensure collar has `ds_collar_kmod_remote.lsl` active
+
+3. **Non-Owner Attempts Update**
+   - Someone other than collar owner touches updater
+   - Updater: "Access denied. Only collar owner can initiate update."
+   - Security feature: prevents unauthorized updates
+
+4. **Out of Range**
+   - Wearer too far from updater (>20m)
+   - Error: "Out of range. Move closer to updater object."
+   - Uses same range limits as HUD communication
 
 3. **RLV Release Failure**
    - Collar cannot release RLV restrictions (relay restrictions from external source)
@@ -673,20 +698,27 @@ Optional enhancement: Allow user to choose what to transfer
 
 ### System 2: In-Place Update
 
-#### Phase 1: Built-In Update Handler
-- [ ] Add update handler to `ds_collar_kernel.lsl`
-  - [ ] Listen on update channel `-87654322`
-  - [ ] Respond to UPDATE_PING with version info
+#### Phase 1: Remote Listener Integration
+- [ ] Extend `ds_collar_kmod_remote.lsl` to handle update messages
+  - [ ] Add update message handlers on existing channels
+  - [ ] Respond to UPDATE_DISCOVER with collar info
   - [ ] Handle PREPARE_UPDATE command
   - [ ] Temporarily release RLV restrictions
   - [ ] Backup settings to linkset data
   - [ ] Accept incoming scripts via llGiveInventory
+- [ ] Alternative: Create separate `ds_collar_kmod_update.lsl` module
+  - [ ] Listen on same remote channels as kmod_remote
+  - [ ] Coordinate with kmod_remote for protocol
+  - [ ] Handle update-specific logic separately
 
 #### Phase 2: Updater Source
 - [ ] Create `ds_collar_updater_source.lsl`
+  - [ ] Handle touch events (owner validation)
   - [ ] Scan updater inventory for new scripts
-  - [ ] Broadcast UPDATE_PING on update channel
-  - [ ] Handle collar responses
+  - [ ] Broadcast UPDATE_DISCOVER on channel `-8675309`
+  - [ ] Listen for responses on channel `-8675310`
+  - [ ] Validate toucher is collar owner (security)
+  - [ ] Send commands on channel `-8675311`
   - [ ] Transfer scripts with ".new" suffix via llGiveInventory
   - [ ] Transfer coordinator script
 
@@ -1437,20 +1469,24 @@ For new collars, unworn and unlocked. Uses a receiver script that must be manual
 - ❌ Cannot be used on locked collars
 - ❌ Requires collar to be detached and unworn
 
-### System 2: In-Place Update (Chat-Based)
-For existing collars that may be worn, locked, or RLV-restricted. Uses built-in update handler with chat protocol.
+### System 2: In-Place Update (Touch-Based)
+For existing collars that may be worn, locked, or RLV-restricted. Uses existing remote listener with touch-based protocol.
 
 **Key Benefits**:
 - ✅ Works on worn, locked, RLV-restricted collars
+- ✅ Touch-based initiation (more secure than chat)
+- ✅ Uses existing remote listener infrastructure (`kmod_remote`)
+- ✅ Same channels as HUD communication (proven secure)
 - ✅ No manual inventory modification required
 - ✅ Preserves all settings via linkset data
 - ✅ Hot-swap maintains collar functionality
 - ✅ Automatic RLV restriction management
-- ✅ Owner authorization and safety checks
+- ✅ Owner authorization and range checks
 
 **Requirements**:
-- ✅ Collar must have built-in update handler (kernel or module)
-- ✅ Uses chat commands instead of inventory drops
+- ✅ Collar must have `ds_collar_kmod_remote.lsl` (standard module)
+- ✅ Wearer touches updater object to initiate
+- ✅ Uses remote channels `-8675309`, `-8675310`, `-8675311`
 - ✅ More complex implementation but essential for production use
 
 ### Why Two Systems?
