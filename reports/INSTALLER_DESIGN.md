@@ -2,38 +2,83 @@
 
 ## Overview
 
-A one-click installation system where a user drops a **listener script** into any collar object, clicks the collar, and the system automatically transfers all necessary components (scripts, animations, HUD, leash holder, notecards) from a **donor collar** to the **target collar**.
+This document describes TWO SEPARATE systems:
+
+### 1. Fresh Installation (Receiver-Based)
+
+A one-click installation system where a user drops a **listener script** into any collar object (unworn/unlocked), clicks the collar, and the system automatically transfers all necessary components (scripts, animations, HUD, leash holder, notecards) from a **donor collar** to the **target collar**.
+
+**Use Case**: Installing D/s Collar on a new object that is not currently worn or locked.
+
+### 2. In-Place Update (Chat-Based)
+
+A self-contained update system where the **existing collar** responds to chat commands from an updater object, downloads new scripts, and performs a hot-swap update **without requiring any items to be dropped into the collar**.
+
+**Critical Feature**: Updates work on **any D/s Collar regardless of whether it is worn, locked, or under RLV restrictions** because:
+- No manual inventory modification required
+- Collar scripts temporarily release RLV restrictions during update
+- Settings are preserved via linkset data
+- Updates are triggered via chat commands (not inventory drops)
+
+**Why Separate Systems**: RLV prevents modification of locked attachments, making it **impossible** to drop a receiver script into a locked collar. Therefore, locked/worn collar updates must use the existing collar's built-in update capability rather than an external receiver script.
 
 ---
 
 ## Architecture
 
-### Components
+### System 1: Fresh Installation Components
 
 1. **Donor Collar** (Master/Source)
    - Contains all up-to-date scripts, animations, objects, and notecards
    - Contains `ds_collar_installer.lsl` (transmitter script)
    - Prepared as the "master copy" for installations
 
-2. **Target Collar** (Receiving Object)
+2. **Target Collar** (Receiving Object - UNWORN/UNLOCKED)
    - Any collar/object being "collarized"
-   - Contains only `ds_collar_receiver.lsl` (listener script)
+   - User manually drops `ds_collar_receiver.lsl` (listener script) into it
    - Will receive all components from donor
+   - **Requirement**: Must NOT be worn or locked (RLV prevents inventory modification)
 
-3. **Installation Protocol**
+3. **Fresh Installation Protocol**
    - Handshake-based communication on negative channel
    - Inventory manifest exchange
    - Chunked file transfer with acknowledgment
    - Automatic script removal and setup
 
+### System 2: In-Place Update Components
+
+1. **Updater Object** (Donor/Source)
+   - Separate rezzed object OR the donor collar itself
+   - Contains `ds_collar_updater_source.lsl` (transmitter script)
+   - Contains all new scripts, animations, objects, notecards
+   - Communicates via chat commands (not inventory drops)
+
+2. **Target Collar** (WORN/LOCKED/RESTRICTED)
+   - Existing D/s Collar that needs updating
+   - Contains built-in update handler in kernel or dedicated update module
+   - Responds to chat-based update commands
+   - **Critical**: Can be worn, locked, and under RLV restrictions
+
+3. **Update Protocol**
+   - Chat-based handshake (not inventory-based)
+   - Kernel/update module listens for update commands
+   - Temporarily releases RLV restrictions for update duration
+   - Downloads new scripts via llGiveInventory to existing collar
+   - Performs hot-swap using coordinator script
+   - Preserves all settings via linkset data
+   - Re-applies RLV restrictions after update
+
 ---
 
-## Installation Flow
+## System 1: Fresh Installation Flow
+
+**Prerequisites**: Target collar is NOT worn and NOT locked
 
 ```
 ┌─────────────────┐                    ┌─────────────────┐
 │  Donor Collar   │                    │ Target Collar   │
-│  (Transmitter)  │                    │  (Receiver)     │
+│  (Installer)    │                    │  (Receiver)     │
+│                 │                    │  [UNWORN]       │
 └────────┬────────┘                    └────────┬────────┘
          │                                      │
          │  User touches donor collar           │
@@ -87,13 +132,85 @@ A one-click installation system where a user drops a **listener script** into an
 
 ---
 
+## System 2: In-Place Update Flow
+
+**Prerequisites**: Target collar CAN be worn, locked, and RLV-restricted
+
+```
+┌─────────────────┐                    ┌─────────────────┐
+│ Updater Object  │                    │ Target Collar   │
+│   (Source)      │                    │   (WORN/LOCKED) │
+└────────┬────────┘                    └────────┬────────┘
+         │                                      │
+         │  User touches updater or types       │
+         │  chat command: "/1update"             │
+         │◄─────────────────────────────        │
+         │                                      │
+         │  1. UPDATE_PING                      │
+         │─────────────────────────────────────►│
+         │     (chat on channel -87654322)      │
+         │     "Who needs updates?"             │
+         │                                      │
+         │  2. UPDATE_READY                     │
+         │◄─────────────────────────────────────│
+         │     (collar responds with version)   │
+         │     Built-in handler in kernel       │
+         │                                      │
+         │  3. PREPARE_UPDATE                   │
+         │─────────────────────────────────────►│
+         │     Collar prepares for update       │
+         │                                      │
+         │  Collar releases RLV restrictions    │
+         │  Collar backs up settings to         │
+         │  linkset data                        │
+         │                                      │
+         │  4. READY_FOR_TRANSFER               │
+         │◄─────────────────────────────────────│
+         │                                      │
+         │  5. Transfer new scripts via         │
+         │     llGiveInventory (not drops!)     │
+         │─────────────────────────────────────►│
+         │     Scripts arrive with ".new"       │
+         │     suffix in collar inventory       │
+         │                                      │
+         │  6. Transfer coordinator script      │
+         │─────────────────────────────────────►│
+         │     ds_collar_updater_coordinator    │
+         │     starts automatically             │
+         │                                      │
+         │  Coordinator performs hot-swap:      │
+         │  - Stops old scripts                 │
+         │  - Removes old scripts               │
+         │  - Activates new scripts             │
+         │  - Restores settings                 │
+         │                                      │
+         │  7. UPDATE_COMPLETE                  │
+         │◄─────────────────────────────────────│
+         │                                      │
+         │  Collar fully updated, settings      │
+         │  restored, RLV restrictions          │
+         │  re-applied, still worn/locked       │
+         │                                      │
+```
+
+**Key Difference from Fresh Install**:
+- No manual script dropping required (impossible on locked collars)
+- Uses chat commands instead of inventory modification
+- Collar has built-in update handler (part of kernel or separate module)
+- llGiveInventory used (works on attachments) instead of requiring user to drop items
+- Hot-swap mechanism preserves worn/locked state
+
+---
+
 ## Message Protocol
 
-### Channel Selection
+### Fresh Installation Protocol
+
+### Channel Selection (Fresh Install)
 - **Channel**: `-87654321` (negative, pseudo-random)
 - **Alternative**: Generate channel from donor UUID hash to avoid collisions
 
-### Message Format
+### Message Format (Fresh Install)
 All messages use JSON on the installation channel:
 
 ```lsl
@@ -295,7 +412,11 @@ Confirmation from receiver, triggers cleanup.
 
 ## User Experience
 
-### For Installer (Donor Owner)
+### System 1: Fresh Installation Usage
+
+**For New Collars (Unworn, Unlocked)**
+
+#### For Installer (Donor Owner)
 
 1. **Prepare Donor Collar**
    - Ensure all scripts, animations, HUD, leash holder, and notecards are in donor
@@ -304,11 +425,12 @@ Confirmation from receiver, triggers cleanup.
 
 2. **Prepare Target Collar**
    - Give `ds_collar_receiver.lsl` to person who will receive collar
-   - They drop it into their collar object
+   - **IMPORTANT**: They must NOT be wearing the collar (RLV restriction)
+   - They drop receiver script into their unworn collar object
    - Target collar is now ready to receive
 
 3. **Execute Installation**
-   - Stand within 5 meters of target collar wearer
+   - Stand within 5 meters of target collar (rezzed nearby)
    - Touch donor collar
    - Installer broadcasts HELLO
    - Receiver responds automatically
@@ -317,16 +439,58 @@ Confirmation from receiver, triggers cleanup.
 4. **Completion**
    - "Installation complete: 27 scripts, 45 animations, 2 objects, 3 notecards transferred"
    - Target collar automatically resets and becomes functional
-   - Installer script remains in donor for future installations
+   - Recipient can now wear the collar
+   - Installer script remains in donor for future fresh installations
 
-### For Recipient (Target Owner)
+#### For Recipient (Target Owner)
 
-1. **Drop receiver script** into collar
-2. **Wait for installer** to initiate (no action needed)
-3. **Automatic installation** proceeds
-4. **Collar ready** after reset
+1. **Rez collar** on ground (do not wear yet)
+2. **Drop receiver script** into unworn collar
+3. **Wait for installer** to initiate (no action needed)
+4. **Automatic installation** proceeds
+5. **Collar ready** after reset - now safe to wear
 
-**Progress Messages**:
+### System 2: In-Place Update Usage
+
+**For Existing Collars (Can Be Worn, Locked, RLV-Restricted)**
+
+#### For Updater (Collar Owner or Authorized Person)
+
+1. **Prepare Updater Object**
+   - Rez updater object containing all new scripts/assets
+   - OR use donor collar with `ds_collar_updater_source.lsl`
+   - Updater listens on update channel `-87654322`
+
+2. **Initiate Update**
+   - Wearer keeps collar worn (no need to remove)
+   - Touch updater object OR type `/1update` in chat
+   - Updater broadcasts UPDATE_PING
+   - Collar responds automatically (built-in handler)
+
+3. **Automatic Update Process**
+   - Collar temporarily releases RLV restrictions
+   - Collar backs up settings to linkset data
+   - Updater transfers new scripts via llGiveInventory
+   - Coordinator performs hot-swap
+   - Settings restored, RLV re-applied
+   - **Collar remains worn and locked throughout**
+
+4. **Completion**
+   - "Update complete: Collar updated to v2.0"
+   - Collar fully functional with new scripts
+   - All settings preserved
+   - Lock state maintained
+   - No user action required
+
+#### For Collar Wearer
+
+1. **Keep collar worn** (do not remove)
+2. **Stand near updater** (within 5 meters)
+3. **Wait for update to complete** (2-3 minutes)
+4. **No action required** - update is fully automatic
+5. **Collar remains functional** during and after update
+
+**Progress Messages (Fresh Install)**:
 ```
 "Installation started: Receiving manifest..."
 "Manifest received: 77 items total"
@@ -339,9 +503,29 @@ Confirmation from receiver, triggers cleanup.
 "Resetting collar scripts..."
 ```
 
+**Progress Messages (Update)**:
+```
+"Update initiated: Preparing collar..."
+"Releasing RLV restrictions temporarily..."
+"Backing up settings..."
+"Settings backed up: 47 settings preserved"
+"Receiving new scripts: 1/27 (ds_collar_kernel.lsl.new)"
+"Receiving new scripts: 27/27 (complete)"
+"Coordinator received: Starting hot-swap..."
+"Stopping old scripts..."
+"Removing old scripts: 1/27..."
+"Removing old scripts: 27/27 (complete)"
+"Activating new scripts..."
+"Restoring settings..."
+"Re-applying RLV restrictions..."
+"Update complete! Collar updated to v2.0"
+```
+
 ---
 
 ## Error Handling
+
+### Fresh Installation Errors
 
 ### Timeout Scenarios
 
@@ -383,22 +567,60 @@ Confirmation from receiver, triggers cleanup.
    - Receiver validates `llGetOwnerKey(donor) == llGetOwner()`
    - If mismatch: Silently ignore (no error spam)
 
+### Update-Specific Errors
+
+1. **Collar Worn But Update Attempted via Fresh Install**
+   - Receiver script cannot be dropped into worn collar
+   - Error: "Cannot drop items into worn attachment. Use update system instead."
+   - Solution: Direct user to update system
+
+2. **Update Handler Not Found**
+   - Updater pings but no collar responds
+   - Error: "No collar with update capability found in range."
+   - Solution: Ensure collar has kernel with built-in update handler
+
+3. **RLV Release Failure**
+   - Collar cannot release RLV restrictions (relay restrictions from external source)
+   - Warning: "External RLV restrictions detected. Update may fail."
+   - Attempt update anyway, may require manual RLV safeword
+
+4. **Hot-Swap Failure**
+   - New scripts fail to start after old scripts removed
+   - Rollback: Re-activate old scripts from backup
+   - Error: "Update failed: Rolling back to previous version"
+
+5. **Settings Restoration Failure**
+   - Linkset data corrupted or lost
+   - Warning: "Settings backup lost. Using default settings."
+   - User must reconfigure collar manually
+
+6. **Owner Authorization**
+   - Update initiated by non-owner
+   - Collar validates: Only owner or primary owner can approve updates
+   - Collar prompts owner: "Accept update to v2.0? [Yes] [No]"
+
 ---
 
 ## Advanced Features
 
 ### Update Mode vs Fresh Install
 
-**Update Mode**: Target collar already has D/s Collar scripts (COMPLEX)
-- Receiver detects existing `ds_collar_kernel.lsl`
-- Sends `"mode": "update"` in RECEIVER_READY
-- **Critical Challenge**: Cannot remove running scripts while collar is locked/worn
-- **Solution**: Multi-phase update with atomic swap (see Update Strategy below)
-
-**Fresh Install Mode**: Target collar is empty/different system
-- Sends `"mode": "fresh"`
-- Transfers everything
+**Fresh Install Mode** (System 1): Target collar is empty/different system
+- Uses receiver script dropped into unworn collar
+- Target must NOT be worn (RLV prevents inventory modification)
+- Sends `"mode": "fresh"` in RECEIVER_READY
+- Transfers everything via inventory drops
 - Simpler: no existing scripts to preserve
+- No settings to preserve (new collar)
+
+**Update Mode** (System 2): Target collar already has D/s Collar scripts
+- Uses built-in update handler (no receiver script needed)
+- Target CAN be worn, locked, and RLV-restricted
+- Collar responds to UPDATE_PING with current version
+- **Critical**: Cannot drop receiver script into worn/locked collar
+- **Solution**: Chat-based protocol with llGiveInventory transfers
+- Multi-phase update with hot-swap
+- Settings preserved via linkset data
 
 ### Selective Transfer
 
@@ -424,32 +646,66 @@ Optional enhancement: Allow user to choose what to transfer
 
 ## Implementation Checklist
 
-### Phase 1: Basic Functionality
+### System 1: Fresh Installation
+
+#### Phase 1: Basic Functionality
 - [ ] Create `ds_collar_receiver.lsl` with listen and inventory tracking
 - [ ] Create `ds_collar_installer.lsl` with inventory scan and transfer
 - [ ] Implement handshake protocol (HELLO → READY → MANIFEST)
 - [ ] Implement chunked transfer with acknowledgment
-- [ ] Test with 2-3 scripts only
+- [ ] Test with unworn collar and 2-3 scripts only
+- [ ] Verify receiver cannot be dropped in worn collar (expected failure)
 
-### Phase 2: Full Transfer
+#### Phase 2: Full Transfer
 - [ ] Transfer all scripts (27 items)
 - [ ] Transfer all animations (45+ items)
 - [ ] Transfer objects (HUD, leash holder)
 - [ ] Transfer notecards (manual, setup, "settings" notecard)
 - [ ] Handle timeout scenarios
 
-### Phase 3: Polish & Safety
+#### Phase 3: Polish & Safety
 - [ ] Add range validation (5m limit)
 - [ ] Add owner validation
 - [ ] Add session ID validation
 - [ ] Add progress messages to owner chat
 - [ ] Add error recovery
+- [ ] Warn user if collar is worn (cannot install)
 
-### Phase 4: Advanced Features
-- [ ] Update vs fresh install detection
-- [ ] Version checking
-- [ ] Selective transfer (optional categories)
-- [ ] Multi-receiver disambiguation
+### System 2: In-Place Update
+
+#### Phase 1: Built-In Update Handler
+- [ ] Add update handler to `ds_collar_kernel.lsl`
+  - [ ] Listen on update channel `-87654322`
+  - [ ] Respond to UPDATE_PING with version info
+  - [ ] Handle PREPARE_UPDATE command
+  - [ ] Temporarily release RLV restrictions
+  - [ ] Backup settings to linkset data
+  - [ ] Accept incoming scripts via llGiveInventory
+
+#### Phase 2: Updater Source
+- [ ] Create `ds_collar_updater_source.lsl`
+  - [ ] Scan updater inventory for new scripts
+  - [ ] Broadcast UPDATE_PING on update channel
+  - [ ] Handle collar responses
+  - [ ] Transfer scripts with ".new" suffix via llGiveInventory
+  - [ ] Transfer coordinator script
+
+#### Phase 3: Hot-Swap Coordinator
+- [ ] Create `ds_collar_updater_coordinator.lsl`
+  - [ ] Stop old scripts gracefully
+  - [ ] Remove old scripts one by one
+  - [ ] Activate new scripts with ".new" suffix
+  - [ ] Restore settings from linkset data
+  - [ ] Re-apply RLV restrictions
+  - [ ] Self-destruct after success
+
+#### Phase 4: Testing & Safety
+- [ ] Test update on worn collar
+- [ ] Test update on locked collar
+- [ ] Test update with RLV restrictions active
+- [ ] Test rollback on failure
+- [ ] Test owner authorization
+- [ ] Verify settings preservation
 
 ---
 
@@ -980,19 +1236,29 @@ restore_settings() {
 
 ### Handling Lock State During Update
 
-**Problem**: Collar may be locked, preventing normal access
+**Problem**: Collar may be locked, and RLV may prevent inventory modification
 
-**Solution**: Lock is a **settings value**, not a physical lock
+**Solution 1 (Fresh Install)**: Cannot install on locked collar
+```lsl
+// Fresh install requires unworn, unlocked collar
+// If collar is locked:
+// - User cannot drop receiver script (RLV blocks it)
+// - Error: "Cannot modify locked attachment"
+// - Solution: Use System 2 (In-Place Update) instead
+```
 
+**Solution 2 (Update)**: Lock is a **settings value**, update works anyway
 ```lsl
 // Lock state is stored in settings, not enforced by LSL permissions
-// During update:
+// During update (System 2):
 // 1. Lock state preserved in settings backup
-// 2. Update proceeds (scripts can be modified even when "locked")
-// 3. New scripts read lock state from restored settings
-// 4. Lock functionality resumes immediately
+// 2. Update proceeds via chat protocol (not inventory modification)
+// 3. Scripts transferred via llGiveInventory (works on locked attachments)
+// 4. New scripts read lock state from restored settings
+// 5. Lock functionality resumes immediately
 
-// No special handling needed - it's just a setting!
+// The collar THINKS it's locked, but scripts can still be updated
+// because the lock is a behavioral restriction, not a permission block
 ```
 
 ### Handling RLV Restrictions During Update
@@ -1155,14 +1421,51 @@ TOTAL: ~2 minutes
 
 ## Conclusion
 
-This installer system provides a **seamless, one-click solution** for installing and updating D/s Collar on any object. By separating the concerns into **donor** (transmitter) and **receiver** (listener), and using a robust **handshake protocol**, the system ensures reliable transfers even with LSL's limitations.
+This document describes **two complementary systems** for installing and updating D/s Collar:
+
+### System 1: Fresh Installation (Receiver-Based)
+For new collars, unworn and unlocked. Uses a receiver script that must be manually dropped into the target collar.
 
 **Key Benefits**:
-- ✅ One-click installation
-- ✅ No manual script copying
-- ✅ Automatic updates for existing collars
-- ✅ Safe (range-limited, owner-validated)
-- ✅ Robust (timeout handling, retry logic)
-- ✅ User-friendly (progress messages, error handling)
+- ✅ One-click installation for new collars
+- ✅ Simple receiver script (just drop it in)
+- ✅ No built-in update handler required
+- ✅ Useful for first-time collar setup
 
-The system can be implemented in phases, starting with basic script transfer and expanding to full automation with advanced features like version detection and selective updates.
+**Limitations**:
+- ❌ Cannot be used on worn collars (RLV blocks inventory modification)
+- ❌ Cannot be used on locked collars
+- ❌ Requires collar to be detached and unworn
+
+### System 2: In-Place Update (Chat-Based)
+For existing collars that may be worn, locked, or RLV-restricted. Uses built-in update handler with chat protocol.
+
+**Key Benefits**:
+- ✅ Works on worn, locked, RLV-restricted collars
+- ✅ No manual inventory modification required
+- ✅ Preserves all settings via linkset data
+- ✅ Hot-swap maintains collar functionality
+- ✅ Automatic RLV restriction management
+- ✅ Owner authorization and safety checks
+
+**Requirements**:
+- ✅ Collar must have built-in update handler (kernel or module)
+- ✅ Uses chat commands instead of inventory drops
+- ✅ More complex implementation but essential for production use
+
+### Why Two Systems?
+
+**RLV Constraint**: It is **impossible** to drop a receiver script into a worn or locked collar because RLV prevents inventory modification of locked attachments. Therefore:
+
+- **Fresh installations** = Use System 1 (receiver script)
+- **Updates to existing collars** = Use System 2 (chat-based update)
+
+**Both systems share similar concepts** (manifest exchange, chunked transfer, version checking) but use different communication methods to work around LSL and RLV limitations.
+
+### Implementation Priority
+
+1. **Implement System 2 first** - Most users need to update existing worn/locked collars
+2. **Implement System 1 second** - Useful for distribution to new users
+3. **Both systems can coexist** - Use whichever is appropriate for the situation
+
+The complete solution provides a **seamless experience** for both fresh installs and in-place updates, ensuring D/s Collar can be deployed and maintained regardless of worn/locked state.
