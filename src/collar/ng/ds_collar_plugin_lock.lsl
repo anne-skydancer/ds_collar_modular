@@ -1,10 +1,11 @@
 /*--------------------
 PLUGIN: ds_collar_plugin_lock.lsl
 VERSION: 1.00
-REVISION: 20
+REVISION: 21
 PURPOSE: Toggle collar lock and RLV detach control labels
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- CRITICAL FIX: Request settings on state_entry and register_now instead of hardcoding Locked = FALSE
 - Provides direct toggle logic without menu interactions
 - Restricts usage to Unowned and Primary Owner ACL levels
 - Updates kernel registration label to reflect current lock state
@@ -277,9 +278,10 @@ handle_acl_result(string msg, key expected_user) {
 
 default {
     state_entry() {
-        Locked = FALSE;
-        register_self();
-        apply_lock_state();
+        // Request settings to restore persisted lock state
+        llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
+            "type", "settings_get"
+        ]), NULL_KEY);
     }
     
     on_rez(integer start_param) {
@@ -298,7 +300,10 @@ default {
             string msg_type = llJsonGetValue(msg, ["type"]);
             
             if (msg_type == "register_now") {
-                register_self();
+                // Re-request settings after kernel reset to restore lock state
+                llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
+                    "type", "settings_get"
+                ]), NULL_KEY);
                 return;
             }
             
@@ -316,6 +321,7 @@ default {
             
             if (msg_type == "settings_sync") {
                 apply_settings_sync(msg);
+                register_self();  // Register after settings applied with correct state
                 return;
             }
             
