@@ -1,34 +1,32 @@
 /*--------------------
 SCRIPT: ds_collar_updater_coordinator.lsl
 VERSION: 1.00
-REVISION: 1
+REVISION: 2
 PURPOSE: Hot-swap coordinator for in-place collar updates
 USAGE: Transferred to collar during update, performs atomic script replacement
 ARCHITECTURE: System 2 coordinator - manages orderly shutdown and script replacement
 CHANGES:
-- Initial version for hot-swap coordination
-- Backs up settings to linkset data
-- Removes old scripts atomically
-- Activates new scripts
-- Restores settings
-- Self-destructs after completion
+- Rev 2: Redesigned update flow - remove all scripts/anims first, then receive new ones
+- Saves settings to linkset data SETTINGS.UPDATE
+- Clears inventory (except self and notecards)
+- Signals updater when ready for new content
+- Restores settings after update complete
 --------------------*/
 
 /* -------------------- CHANNELS -------------------- */
-integer KERNEL_LIFECYCLE = 500;
 integer SETTINGS_BUS = 800;
-
 integer EXTERNAL_ACL_REPLY_CHAN = -8675310;  // Report status to updater
 
 /* -------------------- STATE -------------------- */
 string SessionId = "";
 key UpdaterKey = NULL_KEY;
 
-list OldScripts = [];
-list NewScripts = [];
-integer RemovalIndex = 0;
+integer ExpectedScripts = 0;
+integer ExpectedAnimations = 0;
 
 integer BackupComplete = FALSE;
+integer InventoryCleared = FALSE;
+integer UpdateComplete = FALSE;
 
 integer DEBUG = TRUE;
 
@@ -47,11 +45,14 @@ integer json_has(string j, list path) {
 
 /* -------------------- COORDINATION PHASES -------------------- */
 
-start_coordination(string session, key updater) {
+start_coordination(string session, key updater, integer script_count, integer anim_count) {
     SessionId = session;
     UpdaterKey = updater;
+    ExpectedScripts = script_count;
+    ExpectedAnimations = anim_count;
     
     logd("Coordination started");
+    logd("Expecting " + (string)script_count + " scripts, " + (string)anim_count + " animations");
     logd("Phase 1: Backing up settings...");
     
     // Request settings backup
@@ -67,192 +68,175 @@ start_coordination(string session, key updater) {
 backup_settings(string kv_json) {
     logd("Settings backed up to linkset data");
     
-    // Store in linkset data for recovery
-    integer result = llLinksetDataWrite("backup_settings", kv_json);
+    // Store settings in linkset data with special key
+    integer result = llLinksetDataWrite("SETTINGS.UPDATE", kv_json);
     if (result < 0) {
         llOwnerSay("ERROR: Failed to backup settings!");
-        // Continue anyway - prefer update over aborting
-    }
-    
-    BackupComplete = TRUE;
-    
-    // Phase 2: Scan for old and new scripts
-    scan_scripts();
-}
-
-scan_scripts() {
-    logd("Phase 2: Scanning scripts...");
-    
-    OldScripts = [];
-    NewScripts = [];
-    
-    integer count = llGetInventoryNumber(INVENTORY_SCRIPT);
-    integer i = 0;
-    string self_name = llGetScriptName();
-    
-    while (i < count) {
-        string name = llGetInventoryName(INVENTORY_SCRIPT, i);
-        
-        // Skip self
-        if (name != self_name) {
-            if (llSubStringIndex(name, ".new") != -1) {
-                // New script
-                NewScripts += [name];
-            }
-            else {
-                // Old script (will be removed during update)
-                OldScripts += [name];
-            }
-        }
-        
-        i += 1;
-    }
-    
-    logd("Found " + (string)llGetListLength(OldScripts) + " old scripts");
-    logd("Found " + (string)llGetListLength(NewScripts) + " new scripts");
-    
-    // CRITICAL: Check for settings notecards - these must NEVER be removed
-    integer notecard_count = llGetInventoryNumber(INVENTORY_NOTECARD);
-    if (notecard_count > 0) {
-        logd("Preserving " + (string)notecard_count + " notecards (settings data)");
-    }
-    
-    if (llGetListLength(NewScripts) == 0) {
-        llOwnerSay("ERROR: No new scripts found!");
         abort_update();
         return;
     }
     
-    // Phase 3: Soft reset all scripts
-    soft_reset_all();
-}
-
-soft_reset_all() {
-    logd("Phase 3: Soft resetting all scripts...");
+    // CRITICAL: Also backup all ACL cache entries from linkset data
+    // ACL cache is stored as acl_cache_<uuid> keys
+    logd("Backing up ACL cache...");
     
-    string msg = llList2Json(JSON_OBJECT, [
-        "type", "soft_reset"
-    ]);
-    llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, msg, NULL_KEY);
+    list acl_keys = [];
+    list acl_values = [];
     
-    llSleep(2.0);  // Give scripts time to reset
-    
-    // Phase 4: Remove old scripts
-    remove_old_scripts();
-}
-
-remove_old_scripts() {
-    logd("Phase 4: Removing old scripts...");
-    
-    RemovalIndex = 0;
-    remove_next_old_script();
-}
-
-remove_next_old_script() {
-    if (RemovalIndex >= llGetListLength(OldScripts)) {
-        // All old scripts removed
-        activate_new_scripts();
-        return;
-    }
-    
-    string old_name = llList2String(OldScripts, RemovalIndex);
-    logd("Removing: " + old_name);
-    
-    // CRITICAL: Only remove scripts, never notecards
-    // Notecards contain settings data that kernel reads
-    // LSL cannot write notecards, so they must be preserved
-    if (llGetInventoryType(old_name) == INVENTORY_SCRIPT) {
-        llRemoveInventory(old_name);
-    }
-    else {
-        logd("WARNING: Skipping non-script item: " + old_name);
-    }
-    
-    RemovalIndex += 1;
-    
-    // Small delay to avoid inventory spam
-    llSleep(0.5);
-    remove_next_old_script();
-}
-
-activate_new_scripts() {
-    logd("Phase 5: Activating new scripts...");
-    
+    // Iterate through linkset data to find all acl_cache_* entries
+    list keys = llLinksetDataListKeys(0, 999);  // Get all keys
     integer i = 0;
-    integer count = llGetListLength(NewScripts);
+    integer count = llGetListLength(keys);
     
     while (i < count) {
-        string new_name = llList2String(NewScripts, i);
-        
-        // Remove ".new" suffix
-        string final_name = llGetSubString(new_name, 0, llStringLength(new_name) - 5);
-        
-        logd("Activating: " + final_name);
-        
-        // Set script to running
-        llSetScriptState(new_name, TRUE);
-        
-        llSleep(0.5);
+        string k = llList2String(keys, i);
+        if (llSubStringIndex(k, "acl_cache_") == 0) {
+            string v = llLinksetDataRead(k);
+            acl_keys += [k];
+            acl_values += [v];
+        }
         i += 1;
     }
     
-    // Phase 6: Restore settings
-    restore_settings();
-}
-
-restore_settings() {
-    logd("Phase 6: Restoring settings...");
+    logd("Found " + (string)llGetListLength(acl_keys) + " ACL cache entries");
     
-    llSleep(2.0);  // Give scripts time to initialize
-    
-    // Read from linkset data
-    string kv_json = llLinksetDataRead("backup_settings");
-    
-    if (kv_json == "" || kv_json == JSON_INVALID) {
-        llOwnerSay("WARNING: Could not restore settings backup.");
-        // Continue anyway
-        finalize_update();
-        return;
+    // Store ACL backup as JSON
+    if (llGetListLength(acl_keys) > 0) {
+        string acl_backup = llList2Json(JSON_OBJECT, [
+            "keys", llList2Json(JSON_ARRAY, acl_keys),
+            "values", llList2Json(JSON_ARRAY, acl_values)
+        ]);
+        
+        result = llLinksetDataWrite("ACL.UPDATE", acl_backup);
+        if (result < 0) {
+            llOwnerSay("WARNING: Failed to backup ACL cache!");
+        }
     }
     
-    // Broadcast restored settings
+    BackupComplete = TRUE;
+    
+    // Stop timeout timer
+    llSetTimerEvent(0.0);
+    
+    // Phase 2: Clear inventory
+    clear_inventory();
+}
+
+clear_inventory() {
+    logd("Phase 2: Clearing old inventory...");
+    
+    string self_name = llGetScriptName();
+    
+    // Soft reset all scripts first
+    logd("Soft resetting all scripts...");
     string msg = llList2Json(JSON_OBJECT, [
-        "type", "settings_sync",
-        "kv", kv_json
+        "type", "soft_reset_all"
     ]);
-    llMessageLinked(LINK_SET, SETTINGS_BUS, msg, NULL_KEY);
+    llMessageLinked(LINK_SET, 500, msg, NULL_KEY);  // KERNEL_LIFECYCLE
     
-    llSleep(1.0);
+    llSleep(2.0);
     
-    // Clean up linkset data
-    llLinksetDataDelete("backup_settings");
+    // Remove all scripts except self
+    logd("Removing old scripts...");
+    integer count = llGetInventoryNumber(INVENTORY_SCRIPT);
+    integer i = count - 1;  // Start from end
+    while (i >= 0) {
+        string name = llGetInventoryName(INVENTORY_SCRIPT, i);
+        if (name != self_name) {
+            llRemoveInventory(name);
+            llSleep(0.2);
+        }
+        i -= 1;
+    }
     
-    finalize_update();
+    // Remove all animations
+    logd("Removing old animations...");
+    count = llGetInventoryNumber(INVENTORY_ANIMATION);
+    i = count - 1;
+    while (i >= 0) {
+        string name = llGetInventoryName(INVENTORY_ANIMATION, i);
+        llRemoveInventory(name);
+        llSleep(0.2);
+        i -= 1;
+    }
+    
+    // CRITICAL: Verify notecards were NOT removed
+    integer notecard_count = llGetInventoryNumber(INVENTORY_NOTECARD);
+    if (notecard_count > 0) {
+        logd("Preserved " + (string)notecard_count + " notecards (settings data)");
+    }
+    
+    InventoryCleared = TRUE;
+    
+    // Phase 3: Signal updater we're ready for new content
+    signal_ready_for_content();
+}
+
+signal_ready_for_content() {
+    logd("Phase 3: Ready for new content transfer");
+    
+    string msg = llList2Json(JSON_OBJECT, [
+        "type", "inventory_cleared",
+        "session", SessionId
+    ]);
+    
+    llRegionSay(EXTERNAL_ACL_REPLY_CHAN, msg);
+    llOwnerSay("Old inventory cleared. Ready for update files...");
+}
+
+check_update_complete() {
+    // Check if we have all expected content
+    integer script_count = llGetInventoryNumber(INVENTORY_SCRIPT) - 1;  // Exclude self
+    integer anim_count = llGetInventoryNumber(INVENTORY_ANIMATION);
+    
+    logd("Current inventory: " + (string)script_count + " scripts, " + (string)anim_count + " animations");
+    
+    if (script_count >= ExpectedScripts && anim_count >= ExpectedAnimations) {
+        UpdateComplete = TRUE;
+        finalize_update();
+    }
 }
 
 finalize_update() {
-    logd("Phase 7: Finalization...");
+    logd("Phase 4: Finalizing update...");
     
-    // Notify updater of completion
-    string msg = llList2Json(JSON_OBJECT, [
-        "type", "update_complete",
-        "session", SessionId
-    ]);
-    llRegionSay(EXTERNAL_ACL_REPLY_CHAN, msg);
+    // Stop any timers
+    llSetTimerEvent(0.0);
     
-    llOwnerSay("=================================");
-    llOwnerSay("HOT-SWAP UPDATE COMPLETE");
-    llOwnerSay("All scripts updated");
-    llOwnerSay("All settings restored");
-    llOwnerSay("=================================");
+    llOwnerSay("All update files received. Restoring settings...");
     
-    // Self-destruct after delay
-    llSleep(5.0);
-    logd("Self-destructing...");
-    llRemoveInventory(llGetScriptName());
+    // Read settings from linkset data
+    string kv_json = llLinksetDataRead("SETTINGS.UPDATE");
+    
+    if (kv_json == "" || kv_json == JSON_INVALID) {
+        llOwnerSay("WARNING: Could not restore settings backup.");
+    }
+    else {
+        // Wait for activator to start scripts
+        logd("Settings ready for restore after activation");
+    }
+    
+    // Transfer control to activator shim
+    if (llGetInventoryType("ds_collar_activator_shim") == INVENTORY_SCRIPT) {
+        logd("Starting activator shim...");
+        llSetScriptState("ds_collar_activator_shim", TRUE);
+        
+        // Wait a moment for activator to start
+        llSleep(2.0);
+        
+        // Self-destruct
+        logd("Coordinator self-destructing...");
+        llRemoveInventory(llGetScriptName());
+    }
+    else {
+        llOwnerSay("ERROR: Activator shim not found! Manual script activation required.");
+        llSleep(2.0);
+        llRemoveInventory(llGetScriptName());
+    }
 }
 
 abort_update() {
+    llSetTimerEvent(0.0);
     llOwnerSay("UPDATE ABORTED - See coordinator log");
     
     // Notify updater
@@ -296,12 +280,15 @@ default {
             }
         }
         else if (num == 0) {
-            // Custom messages (future use)
+            // Custom messages
             if (msg_type == "start_coordination") {
-                if (json_has(msg, ["session"]) && json_has(msg, ["updater"])) {
+                if (json_has(msg, ["session"]) && json_has(msg, ["updater"]) && 
+                    json_has(msg, ["scripts"]) && json_has(msg, ["animations"])) {
                     string session = llJsonGetValue(msg, ["session"]);
                     key updater = (key)llJsonGetValue(msg, ["updater"]);
-                    start_coordination(session, updater);
+                    integer scripts = (integer)llJsonGetValue(msg, ["scripts"]);
+                    integer animations = (integer)llJsonGetValue(msg, ["animations"]);
+                    start_coordination(session, updater, scripts, animations);
                 }
             }
         }
@@ -316,26 +303,9 @@ default {
     
     changed(integer change) {
         if (change & CHANGED_INVENTORY) {
-            // Check if we should auto-start (all .new scripts present)
-            if (SessionId == "" && !BackupComplete) {
-                // Auto-start if we detect .new scripts
-                integer count = llGetInventoryNumber(INVENTORY_SCRIPT);
-                integer has_new = FALSE;
-                integer i = 0;
-                
-                while (i < count) {
-                    string name = llGetInventoryName(INVENTORY_SCRIPT, i);
-                    if (llSubStringIndex(name, ".new") != -1) {
-                        has_new = TRUE;
-                        i = count;  // Break
-                    }
-                    i += 1;
-                }
-                
-                if (has_new) {
-                    logd("Auto-starting coordination (new scripts detected)");
-                    start_coordination("auto_" + (string)llGetUnixTime(), NULL_KEY);
-                }
+            if (InventoryCleared && !UpdateComplete) {
+                // Check if update files arriving
+                check_update_complete();
             }
         }
     }
