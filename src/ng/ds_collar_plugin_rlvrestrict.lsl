@@ -1,10 +1,11 @@
 /*--------------------
 PLUGIN: ds_collar_plugin_rlvrestrict.lsl
 VERSION: 1.00
-REVISION: 20
+REVISION: 21
 PURPOSE: Manage RLV restriction toggles grouped by functional category
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- CRITICAL FIX: Re-request settings on register_now to reapply RLV restrictions after kernel/module resets
 - Organizes popular RLV restrictions into inventory, speech, travel, and other groups
 - Provides paginated dialogs with trustee ACL gating for restriction management
 - Persists active restriction list via settings sync and delta updates
@@ -520,6 +521,10 @@ default
         if (num == KERNEL_LIFECYCLE) {
             if (type == "register_now") {
                 register_self();
+                // CRITICAL FIX: Re-request settings after kernel reset to reapply RLV restrictions
+                llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
+                    "type", "settings_get"
+                ]), NULL_KEY);
             }
             else if (type == "ping") {
                 send_pong();

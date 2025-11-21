@@ -1,7 +1,7 @@
 /*--------------------
 PLUGIN: ds_collar_plugin_rlvrestrict.lsl
 VERSION: 1.00
-REVISION: 23
+REVISION: 22
 PURPOSE: Manage RLV restriction toggles grouped by functional category
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
