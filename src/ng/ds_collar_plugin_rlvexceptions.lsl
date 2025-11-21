@@ -1,10 +1,11 @@
 /*--------------------
 PLUGIN: ds_collar_plugin_rlvexceptions.lsl
 VERSION: 1.00
-REVISION: 20
+REVISION: 21
 PURPOSE: Manage RLV teleport and IM exceptions for owners and trustees
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- CRITICAL FIX: Re-request settings on register_now to reapply RLV exceptions after kernel/module resets
 - Provides toggleable owner and trustee TP/IM exception controls
 - Mirrors multi-owner and trustee rosters from settings synchronizations
 - Issues live @accepttp/@sendim updates when exceptions change
@@ -533,7 +534,13 @@ default {
         string type = llJsonGetValue(msg, ["type"]);
         
         if (num == KERNEL_LIFECYCLE) {
-            if (type == "register_now") register_self();
+            if (type == "register_now") {
+                register_self();
+                // CRITICAL FIX: Re-request settings after kernel reset to reapply RLV exceptions
+                llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
+                    "type", "settings_get"
+                ]), NULL_KEY);
+            }
             else if (type == "ping") send_pong();
         }
         else if (num == SETTINGS_BUS) {
