@@ -41,7 +41,6 @@ integer COLLAR_STRIDE = 2;
 float DETECTION_TIMEOUT = 5.0;  // Wait 5s for all collars to respond
 
 float TRANSFER_DELAY = 2.5;  // 2.5 seconds between items
-float TIMEOUT_RESPONSE = 30.0;
 float TIMEOUT_ITEM = 20.0;
 
 /* -------------------- HELPERS -------------------- */
@@ -175,7 +174,7 @@ handle_collar_present(string msg) {
     if (!json_has(msg, ["owner"])) return;
     if (!json_has(msg, ["wearer"])) return;
     
-    key collar_key = (key)llJsonGetValue(msg, ["collar"]);
+    key detected_collar = (key)llJsonGetValue(msg, ["collar"]);
     key collar_owner = (key)llJsonGetValue(msg, ["owner"]);
     key collar_wearer = (key)llJsonGetValue(msg, ["wearer"]);
     
@@ -190,7 +189,7 @@ handle_collar_present(string msg) {
     }
     
     // Check range
-    list details = llGetObjectDetails(collar_key, [OBJECT_POS]);
+    list details = llGetObjectDetails(detected_collar, [OBJECT_POS]);
     if (llGetListLength(details) == 0) {
         return;  // Collar not found
     }
@@ -208,10 +207,10 @@ handle_collar_present(string msg) {
     }
     
     // Add to detected collars list (avoid duplicates)
-    integer idx = llListFindList(DetectedCollars, [collar_key]);
+    integer idx = llListFindList(DetectedCollars, [detected_collar]);
     if (idx == -1) {
-        DetectedCollars += [collar_key, current_version];
-        llOwnerSay("Detected: Collar v" + current_version + " (" + llGetSubString((string)collar_key, 0, 7) + "...)");
+        DetectedCollars += [detected_collar, current_version];
+        llOwnerSay("Detected: Collar v" + current_version + " (" + llGetSubString((string)detected_collar, 0, 7) + "...)");
     }
 }
 
@@ -294,10 +293,9 @@ show_collar_selection_dialog() {
     integer collar_count = llGetListLength(DetectedCollars) / COLLAR_STRIDE;
     
     while (i < collar_count) {
-        key collar_key = llList2Key(DetectedCollars, i * COLLAR_STRIDE);
         string version = llList2String(DetectedCollars, (i * COLLAR_STRIDE) + 1);
         
-        // Create button with collar index and short UUID
+        // Create button with collar index and version
         string button_label = "#" + (string)(i + 1) + " v" + version;
         buttons += [button_label];
         

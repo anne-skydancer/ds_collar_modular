@@ -1,15 +1,14 @@
 /*--------------------
 MODULE: ds_collar_kmod_remote.lsl
 VERSION: 1.00
-REVISION: 21
+REVISION: 23
 PURPOSE: External HUD communication bridge for remote control workflows
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
-- Added ACL verification and range checks before honoring menu requests
-- Implemented per-user rate limiting for scan, ACL, and menu operations
-- Enforced pending query limits with 30-second timeout pruning
-- Added production-safe debug guard around remote logging helpers
-- Standardized external channel handling for HUD discovery and response
+- Added in-place update protocol handlers (update_discover, prepare_update, etc.)
+- Update messages separate from HUD protocol, use same channels
+- Support for multiple collar detection and selection
+- Hot-swap coordination with updater object
 --------------------*/
 
 
@@ -28,6 +27,15 @@ float MAX_DETECTION_RANGE = 20.0;  // Maximum range in meters for HUD detection
 /* -------------------- PROTOCOL MESSAGE TYPES -------------------- */
 string ROOT_CONTEXT = "core_root";
 string SOS_CONTEXT = "sos_root";
+
+/* -------------------- UPDATE PROTOCOL -------------------- */
+string CURRENT_COLLAR_VERSION = "2.0.23";  // Sync with revision
+
+key CurrentUpdater = NULL_KEY;
+string UpdateSession = "";
+integer ExpectedScripts = 0;
+integer ReceivedScripts = 0;
+integer UpdateInProgress = FALSE;
 
 /* -------------------- STATE -------------------- */
 integer AclQueryListenHandle = 0;
@@ -49,9 +57,6 @@ float QUERY_TIMEOUT = 30.0;  // 30 seconds
 
 /* Per-request-type rate limiting: [avatar_key, request_type, timestamp, ...] */
 list RateLimitTimestamps = [];
-integer RATE_LIMIT_STRIDE = 3;
-integer RATE_LIMIT_KEY = 0;
-integer RATE_LIMIT_TYPE = 1;
 integer RATE_LIMIT_TIME = 2;
 float REQUEST_COOLDOWN = 2.0;  // 2 seconds between requests per user per type
 
@@ -73,26 +78,20 @@ integer now() {
 
 /* -------------------- RATE LIMITING (per-request-type) -------------------- */
 
-integer check_rate_limit(key requester, integer request_type, string request_name) {
+integer check_rate_limit(key requester, integer request_type) {
     integer now_time = now();
 
     // Find this requester's last request of this type
-    integer idx = 0;
-    integer len = llGetListLength(RateLimitTimestamps);
-    while (idx < len) {
-        if (llList2Key(RateLimitTimestamps, idx + RATE_LIMIT_KEY) == requester &&
-            llList2Integer(RateLimitTimestamps, idx + RATE_LIMIT_TYPE) == request_type) {
-
-            integer last_request = llList2Integer(RateLimitTimestamps, idx + RATE_LIMIT_TIME);
-            if ((now_time - last_request) < REQUEST_COOLDOWN) {
-                return FALSE;
-            }
-
-            // Update timestamp
-            RateLimitTimestamps = llListReplaceList(RateLimitTimestamps, [now_time], idx + RATE_LIMIT_TIME, idx + RATE_LIMIT_TIME);
-            return TRUE;
+    integer idx = llListFindList(RateLimitTimestamps, [requester, request_type]);
+    if (idx != -1) {
+        integer last_request = llList2Integer(RateLimitTimestamps, idx + RATE_LIMIT_TIME);
+        if ((now_time - last_request) < REQUEST_COOLDOWN) {
+            return FALSE;
         }
-        idx += RATE_LIMIT_STRIDE;
+
+        // Update timestamp
+        RateLimitTimestamps = llListReplaceList(RateLimitTimestamps, [now_time], idx + RATE_LIMIT_TIME, idx + RATE_LIMIT_TIME);
+        return TRUE;
     }
 
     // First request of this type from this user
@@ -178,16 +177,7 @@ add_pending_query(key hud_wearer, key hud_object) {
 }
 
 integer find_pending_query(key hud_wearer) {
-    integer idx = 0;
-    integer list_len = llGetListLength(PendingQueries);
-    while (idx < list_len) {
-        key pending_wearer = llList2Key(PendingQueries, idx);
-        if (pending_wearer == hud_wearer) {
-            return idx;
-        }
-        idx += QUERY_STRIDE;
-    }
-    return -1;
+    return llListFindList(PendingQueries, [hud_wearer]);
 }
 
 remove_pending_query(key hud_wearer) {
@@ -247,7 +237,7 @@ handle_collar_scan(string message) {
     if (hud_wearer == NULL_KEY) return;
 
     // SECURITY: Rate limit check
-    if (!check_rate_limit(hud_wearer, REQUEST_TYPE_SCAN, "scan")) return;
+    if (!check_rate_limit(hud_wearer, REQUEST_TYPE_SCAN)) return;
     
     // Check distance to HUD wearer
     list agent_data = llGetObjectDetails(hud_wearer, [OBJECT_POS]);
@@ -288,7 +278,7 @@ handle_acl_query_external(string message) {
     if (target_avatar == NULL_KEY) return;
 
     // SECURITY: Rate limit check
-    if (!check_rate_limit(hud_wearer, REQUEST_TYPE_ACL_QUERY, "ACL query")) return;
+    if (!check_rate_limit(hud_wearer, REQUEST_TYPE_ACL_QUERY)) return;
     
     // Check if this query is for OUR collar (target matches our owner)
     if (target_avatar != CollarOwner) {
@@ -318,7 +308,7 @@ handle_menu_request_external(string message) {
 
 
     // SECURITY: Rate limit check
-    if (!check_rate_limit(hud_wearer, REQUEST_TYPE_MENU, "menu")) return;
+    if (!check_rate_limit(hud_wearer, REQUEST_TYPE_MENU)) return;
 
     // SECURITY: Check range
     list agent_data = llGetObjectDetails(hud_wearer, [OBJECT_POS]);
@@ -334,18 +324,96 @@ handle_menu_request_external(string message) {
     }
 
     // Check if already pending for this user
-    integer i = 0;
-    integer len = llGetListLength(PendingMenuRequests);
-    while (i < len) {
-        if (llList2Key(PendingMenuRequests, i) == hud_wearer) {
-            return;
-        }
-        i += MENU_REQUEST_STRIDE;
+    if (llListFindList(PendingMenuRequests, [hud_wearer]) != -1) {
+        return;
     }
 
     // SECURITY: Verify ACL before triggering menu
     PendingMenuRequests += [hud_wearer, context];
     request_internal_acl(hud_wearer);
+}
+
+/* -------------------- UPDATE PROTOCOL HANDLERS -------------------- */
+
+handle_update_discover(string message) {
+    // Only respond if not already updating
+    if (UpdateInProgress) return;
+    
+    if (!json_has(message, ["updater"])) return;
+    if (!json_has(message, ["session"])) return;
+    if (!json_has(message, ["version"])) return;
+    
+    key updater = (key)llJsonGetValue(message, ["updater"]);
+    string session = llJsonGetValue(message, ["session"]);
+    string new_version = llJsonGetValue(message, ["version"]);
+    
+    // Check range
+    list details = llGetObjectDetails(updater, [OBJECT_POS]);
+    if (llGetListLength(details) == 0) return;
+    
+    vector updater_pos = llList2Vector(details, 0);
+    float distance = llVecDist(llGetPos(), updater_pos);
+    
+    if (distance > MAX_DETECTION_RANGE) return;
+    
+    // Respond with collar presence
+    string response = llList2Json(JSON_OBJECT, [
+        "type", "collar_present",
+        "collar", (string)llGetKey(),
+        "owner", (string)CollarOwner,
+        "wearer", (string)llGetOwner(),
+        "current_version", CURRENT_COLLAR_VERSION,
+        "new_version", new_version,
+        "session", session
+    ]);
+    
+    llRegionSay(EXTERNAL_ACL_REPLY_CHAN, response);
+}
+
+handle_prepare_update(string message) {
+    if (!json_has(message, ["updater"])) return;
+    if (!json_has(message, ["session"])) return;
+    if (!json_has(message, ["manifest"])) return;
+    if (!json_has(message, ["total"])) return;
+    
+    key updater = (key)llJsonGetValue(message, ["updater"]);
+    string session = llJsonGetValue(message, ["session"]);
+    
+    // Validate this is for us (same updater, same session)
+    if (UpdateInProgress && updater != CurrentUpdater) return;
+    
+    CurrentUpdater = updater;
+    UpdateSession = session;
+    ExpectedScripts = (integer)llJsonGetValue(message, ["total"]);
+    ReceivedScripts = 0;
+    UpdateInProgress = TRUE;
+    
+    llOwnerSay("Preparing for update: " + (string)ExpectedScripts + " scripts");
+    
+    // Acknowledge ready
+    string response = llList2Json(JSON_OBJECT, [
+        "type", "ready_for_transfer",
+        "session", session
+    ]);
+    
+    llRegionSay(EXTERNAL_ACL_REPLY_CHAN, response);
+}
+
+handle_transfer_script(string message) {
+    if (!UpdateInProgress) return;
+    if (!json_has(message, ["session"])) return;
+    if (llJsonGetValue(message, ["session"]) != UpdateSession) return;
+    
+    // Script notification received - actual transfer happens via llGiveInventory
+    // We'll track via changed(CHANGED_INVENTORY) event
+}
+
+handle_transfer_coordinator(string message) {
+    if (!UpdateInProgress) return;
+    if (!json_has(message, ["session"])) return;
+    if (llJsonGetValue(message, ["session"]) != UpdateSession) return;
+    
+    llOwnerSay("Coordinator received. Hot-swap will begin automatically.");
 }
 
 /* -------------------- EVENTS -------------------- */
@@ -383,6 +451,35 @@ default {
         if (change_mask & CHANGED_OWNER) {
             llResetScript();
         }
+        
+        if (change_mask & CHANGED_INVENTORY) {
+            if (UpdateInProgress) {
+                // Check for new scripts with .new suffix
+                integer count = llGetInventoryNumber(INVENTORY_SCRIPT);
+                integer new_scripts = 0;
+                integer has_coordinator = FALSE;
+                integer i = 0;
+                
+                while (i < count) {
+                    string name = llGetInventoryName(INVENTORY_SCRIPT, i);
+                    if (llSubStringIndex(name, ".new") != -1) {
+                        new_scripts += 1;
+                    }
+                    if (name == "ds_collar_updater_coordinator") {
+                        has_coordinator = TRUE;
+                    }
+                    i += 1;
+                }
+                
+                // Check if update complete (all scripts + coordinator present)
+                if (new_scripts >= ExpectedScripts && has_coordinator) {
+                    llOwnerSay("All update files received. Hot-swap starting...");
+                    UpdateInProgress = FALSE;
+                    CurrentUpdater = NULL_KEY;
+                    UpdateSession = "";
+                }
+            }
+        }
     }
     
     timer() {
@@ -408,6 +505,12 @@ default {
                 return;
             }
             
+            // Handle update discovery
+            if (msg_type == "update_discover") {
+                handle_update_discover(message);
+                return;
+            }
+            
             return;
         }
         
@@ -416,9 +519,28 @@ default {
             if (!json_has(message, ["type"])) return;
             
             string msg_type = llJsonGetValue(message, ["type"]);
-            if (msg_type != "menu_request_external") return;
             
-            handle_menu_request_external(message);
+            if (msg_type == "menu_request_external") {
+                handle_menu_request_external(message);
+                return;
+            }
+            
+            // Handle update protocol messages
+            if (msg_type == "prepare_update") {
+                handle_prepare_update(message);
+                return;
+            }
+            
+            if (msg_type == "transfer_script") {
+                handle_transfer_script(message);
+                return;
+            }
+            
+            if (msg_type == "transfer_coordinator") {
+                handle_transfer_coordinator(message);
+                return;
+            }
+            
             return;
         }
     }
@@ -452,17 +574,13 @@ default {
             }
             
             // Check if this is a menu request ACL verification
-            integer menu_idx = 0;
-            integer len = llGetListLength(PendingMenuRequests);
             string requested_context = "";
+            integer menu_idx = llListFindList(PendingMenuRequests, [avatar_key]);
 
-            while (menu_idx < len) {
-                if (llList2Key(PendingMenuRequests, menu_idx) == avatar_key) {
-                    requested_context = llList2String(PendingMenuRequests, menu_idx + 1);
-                    PendingMenuRequests = llDeleteSubList(PendingMenuRequests, menu_idx, menu_idx + MENU_REQUEST_STRIDE - 1);
-                    jump found_menu_request;
-                }
-                menu_idx += MENU_REQUEST_STRIDE;
+            if (menu_idx != -1) {
+                requested_context = llList2String(PendingMenuRequests, menu_idx + 1);
+                PendingMenuRequests = llDeleteSubList(PendingMenuRequests, menu_idx, menu_idx + MENU_REQUEST_STRIDE - 1);
+                jump found_menu_request;
             }
             jump not_menu_request;
 
@@ -483,11 +601,8 @@ default {
                     final_context = ROOT_CONTEXT;
                     llRegionSayTo(avatar_key, 0, "Only the collar wearer can access the SOS menu. Showing main menu instead.");
                 }
-                else if (requested_context == SOS_CONTEXT) {
-                }
 
                 trigger_menu_for_external_user(avatar_key, final_context);
-            } else {
             }
             return;
 

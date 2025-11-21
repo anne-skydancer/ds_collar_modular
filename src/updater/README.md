@@ -38,17 +38,27 @@ Two separate systems are provided:
 ### Scripts
 - `ds_collar_updater_source.lsl` - Updater script (goes in updater object)
 - `ds_collar_updater_coordinator.lsl` - Coordinator script (transferred during update)
-- `ds_collar_kmod_update.lsl` - Update handler module (goes in target collar)
+- `ds_collar_activator_shim.lsl` - Activation shim (transferred during update)
+- **Note**: Uses existing `ds_collar_kmod_remote.lsl` in collar (no new module needed)
+
+### Architecture
+The in-place update system leverages the existing remote listener module (`ds_collar_kmod_remote.lsl`) which already listens on the update channels:
+- Channel -8675309: Update discovery (EXTERNAL_ACL_QUERY_CHAN)
+- Channel -8675310: Collar responses (EXTERNAL_ACL_REPLY_CHAN)  
+- Channel -8675311: Update commands (EXTERNAL_MENU_CHAN)
+
+The updater simply sends `update_discover` messages on these existing channels, and the collar's remote module will respond with `collar_present`. No additional scripts need to be dropped into the collar for updates to work.
 
 ### Usage
-1. Drop `ds_collar_kmod_update.lsl` into target collar
-2. Drop `ds_collar_updater_source.lsl` and `ds_collar_updater_coordinator.lsl` into updater object
-3. Add all updated scripts to updater object (excluding coordinator and updater source)
+1. Drop `ds_collar_updater_source.lsl`, `ds_collar_updater_coordinator.lsl`, and `ds_collar_activator_shim.lsl` into updater object
+2. Add all updated collar scripts to updater object (kernels, modules, plugins)
+3. Ensure target collar has `ds_collar_kmod_remote.lsl` module (standard in all collars)
 4. Wear the collar (can be locked or RLV-restricted)
 5. Touch updater object to initiate update
-6. Updater transfers scripts with ".new" suffix
-7. Coordinator performs hot-swap automatically
-8. Coordinator self-destructs after completion
+6. If multiple collars detected, select which collar to update from dialog
+7. Updater transfers scripts with ".new" suffix
+8. Coordinator and activator perform hot-swap automatically
+9. Coordinator and activator self-destruct after completion
 
 ### Protocol
 - Uses existing remote channels:
