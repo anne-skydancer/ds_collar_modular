@@ -10,7 +10,7 @@
 **REQUIRED:** Before any LSL coding session, install `lslint`:
 ```bash
 # Clone and build lslint
-git clone https://github.com/Makopo/lslint.git /tmp/lslint
+git clone https://github.com/anne-skydancer/lslint
 cd /tmp/lslint && make
 cp lslint /usr/local/bin/lslint
 ```
@@ -281,3 +281,4 @@ integer reset_listen() {
 **Document Version:** 2.0
 **Last Updated:** 2025-11-03
 **Maintained by:** DS Collar Modular Project
+
