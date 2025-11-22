@@ -65,7 +65,7 @@ list scan_update_inventory() {
         
         // Skip: self, coordinator, activator shim
         if (name != script_name && 
-            name != "ds_collar_updater_coordinator" && 
+            name != "ds_collar_update_coordinator" && 
             name != "ds_collar_activator_shim") {
             manifest += [name, (string)uuid];
         }
@@ -162,14 +162,14 @@ inject_coordinator() {
     llOwnerSay("Injecting update coordinator...");
     
     // Verify coordinator exists
-    if (llGetInventoryType("ds_collar_updater_coordinator") != INVENTORY_SCRIPT) {
+    if (llGetInventoryType("ds_collar_update_coordinator") != INVENTORY_SCRIPT) {
         llOwnerSay("ERROR: Coordinator script not found!");
         abort_update();
         return;
     }
     
     // Inject coordinator with PIN, running=TRUE, start_param=SecureChannel
-    llRemoteLoadScriptPin(CollarKey, "ds_collar_updater_coordinator", ScriptPin, TRUE, SecureChannel);
+    llRemoteLoadScriptPin(CollarKey, "ds_collar_update_coordinator", ScriptPin, TRUE, SecureChannel);
     
     llOwnerSay("Coordinator injected. Waiting for ready signal...");
     llSetTimerEvent(30.0);  // Timeout for coordinator to respond
