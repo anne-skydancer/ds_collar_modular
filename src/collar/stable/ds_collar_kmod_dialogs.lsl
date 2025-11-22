@@ -19,7 +19,7 @@ integer KERNEL_LIFECYCLE = 500;
 integer DIALOG_BUS = 950;
 
 /* -------------------- CONSTANTS -------------------- */
-integer CHANNEL_BASE = (integer)-8E07;
+float CHANNEL_BASE = -8E07;
 integer SESSION_MAX = 10;  // Maximum concurrent sessions
 
 /* Session list stride: [session_id, user_key, channel, listen_handle, timeout_unix, button_map] */
@@ -131,37 +131,11 @@ prune_expired_sessions() {
     }
 }
 
-// SECURITY FIX: Check if channel is already in use
-integer is_channel_in_use(integer channel) {
-    integer i = 0;
-    while (i < llGetListLength(Sessions)) {
-        if (llList2Integer(Sessions, i + SESSION_CHANNEL) == channel) {
-            return TRUE;
-        }
-        i += SESSION_STRIDE;
-    }
-    return FALSE;
-}
-
 integer get_next_channel() {
-    // SECURITY FIX: Try up to 100 times to find unused channel
-    integer attempts = 0;
-    integer channel;
-    
-    while (attempts < 100) {
-        channel = CHANNEL_BASE - NextChannelOffset;
-        NextChannelOffset += 1;
-        if (NextChannelOffset > 1000000) NextChannelOffset = 1;
-        
-        if (!is_channel_in_use(channel)) {
-            return channel;
-        }
-        
-        attempts += 1;
-    }
-    
-    // Fallback: use random channel (collision still possible but very unlikely)
-    return CHANNEL_BASE - (integer)llFrand(1000000);
+    integer channel = (integer)CHANNEL_BASE - NextChannelOffset;
+    NextChannelOffset += 1;
+    if (NextChannelOffset > 1000000) NextChannelOffset = 1;
+    return channel;
 }
 
 /* -------------------- BUTTON CONFIG MANAGEMENT -------------------- */
