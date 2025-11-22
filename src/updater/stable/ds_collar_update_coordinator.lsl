@@ -1,5 +1,5 @@
 /*--------------------
-SCRIPT: ds_collar_updater_coordinator.lsl
+SCRIPT: ds_collar_update_coordinator.lsl
 VERSION: 1.00
 REVISION: 5
 PURPOSE: Autonomous update coordinator injected via llRemoteLoadScriptPin
