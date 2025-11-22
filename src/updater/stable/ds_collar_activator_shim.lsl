@@ -126,9 +126,9 @@ default {
         llSetTimerEvent(0.0);
         
         // SAFETY: Only run if we're NOT in the updater object
-        // Dual check: object name OR presence of updater script
-        string object_name = llGetObjectName();
-        integer in_updater_object = (llToLower(object_name) == "updater");
+        // Dual check: object name contains "updater" OR presence of updater script
+        string object_name = llToLower(llGetObjectName());
+        integer in_updater_object = (llSubStringIndex(object_name, "updater") != -1);
         integer has_updater_script = (llGetInventoryType("ds_collar_updater") == INVENTORY_SCRIPT);
         
         if (in_updater_object || has_updater_script) {
