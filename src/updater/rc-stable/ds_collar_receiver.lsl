@@ -61,7 +61,7 @@ send_receiver_ready() {
         "mode", "fresh"
     ]);
     llRegionSay(INSTALL_CHANNEL, msg);
-    llOwnerSay("Installation receiver ready. Waiting for donor...");
+    llOwnerSay("Installation receiver ready. Waiting for installer...");
 }
 
 send_manifest_ack() {
@@ -110,7 +110,7 @@ handle_installer_hello(string msg) {
     // Validate range
     list details = llGetObjectDetails(DonorKey, [OBJECT_POS]);
     if (llGetListLength(details) == 0) {
-        llOwnerSay("ERROR: Donor not found");
+        llOwnerSay("ERROR: Installer not found");
         return;
     }
     
@@ -118,7 +118,7 @@ handle_installer_hello(string msg) {
     float distance = llVecDist(llGetPos(), donor_pos);
     
     if (distance > 10.0) {
-        llOwnerSay("ERROR: Donor too far away (" + (string)((integer)distance) + "m). Must be within 10m.");
+        llOwnerSay("ERROR: Installer too far away (" + (string)((integer)distance) + "m). Must be within 10m.");
         return;
     }
     
@@ -179,9 +179,9 @@ default {
         SessionId = generate_session_id();
         ListenHandle = llListen(INSTALL_CHANNEL, "", NULL_KEY, "");
         
-        llOwnerSay("=== D/s Collar Fresh Installation Receiver ===");
-        llOwnerSay("Ready to receive installation from donor collar.");
-        llOwnerSay("Have the installer touch their donor collar nearby.");
+        llOwnerSay("=== D/s Collar Installer ===");
+        llOwnerSay("Ready to receive scripts.");
+        llOwnerSay("Touch the installer prim to continue.");
         
         // No timeout yet - wait for installer hello
     }
