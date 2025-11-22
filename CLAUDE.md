@@ -1,4 +1,4 @@
-# AGENTS.md — LSL Technical Requirements & Coding Constraints
+# CLAUDE.md — LSL Technical Requirements & Coding Constraints
 
 > A practical reference for agents and assistants that generate or review **Linden Scripting Language (LSL)** code. This document covers TECHNICAL REQUIREMENTS ONLY. For style, documentation, and best practices, see `agents-style.md`.
 
@@ -9,10 +9,7 @@
 ### 0.1) Tool Installation
 **REQUIRED:** Before any LSL coding session, install `lslint`:
 ```bash
-# Clone and build lslint
-git clone https://github.com/anne-skydancer/lslint
-cd /tmp/lslint && make
-cp lslint /usr/local/bin/lslint
+# Install LSL linting and compilation tools from /scripts/setup-lsl-tools.sh
 ```
 
 ### 0.2) Code Analysis Before Coding
