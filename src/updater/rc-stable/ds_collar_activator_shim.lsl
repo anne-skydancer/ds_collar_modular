@@ -125,6 +125,13 @@ default {
         // Ensure no timers running
         llSetTimerEvent(0.0);
         
+        // SAFETY: Only run if we're in a collar (has ds_collar_kernel)
+        // This prevents accidental activation while in the updater
+        if (llGetInventoryType("ds_collar_kernel") != INVENTORY_SCRIPT) {
+            // Not in collar - stay dormant
+            return;
+        }
+        
         llInstantMessage(llGetOwner(), "Collar activation process underway...");
         // Give inventory time to settle
         llSleep(2.0);

@@ -66,15 +66,14 @@ A self-contained update system where the wearer **touches an updater object**, w
 3. **Update Protocol**
    - Touch-based initiation (wearer touches updater object)
    - Uses existing remote listener channels (same as HUD communication)
-     - Channel `-8675309`: ACL queries and update discovery
-     - Channel `-8675310`: Responses from collar
-     - Channel `-8675311`: Update commands
-   - Kernel/remote module processes update requests
-   - Temporarily releases RLV restrictions for update duration
-   - Downloads new scripts via llGiveInventory to existing collar
-   - Performs hot-swap using coordinator script
-   - Preserves all settings via linkset data
-   - Re-applies RLV restrictions after update
+     - Channel `-8675309`: Update discovery broadcast
+     - Channel `-8675310`: Collar responses (collar_ready with PIN)
+   - Collar generates random PIN and responds with secure channel
+   - Updater injects coordinator via llRemoteLoadScriptPin(pin, TRUE, secure_chan)
+   - Coordinator arrives RUNNING and manages entire update autonomously
+   - Coordinator backs up settings, clears inventory, receives scripts, restores settings
+   - All communication on secure channel between updater and coordinator
+   - No manual activation needed - coordinator handles everything
 
 ---
 
@@ -150,54 +149,49 @@ A self-contained update system where the wearer **touches an updater object**, w
 │   (Source)      │                    │   (WORN/LOCKED) │
 └────────┬────────┘                    └────────┬────────┘
          │                                      │
-         │  User touches updater or types       │
-         │  chat command: "/1update"             │
+         │  User touches updater                │
          │◄─────────────────────────────        │
          │                                      │
-         │  1. UPDATE_PING                      │
+         │  1. update_discover                  │
          │─────────────────────────────────────►│
-         │     (chat on channel -87654322)      │
-         │     "Who needs updates?"             │
+         │     (region say on -8675309)         │
+         │     Includes updater key + session   │
          │                                      │
-         │  2. UPDATE_READY                     │
+         │  Collar generates random PIN         │
+         │  llSetRemoteScriptAccessPin(pin)     │
+         │                                      │
+         │  2. collar_ready                     │
          │◄─────────────────────────────────────│
-         │     (collar responds with version)   │
-         │     Built-in handler in kernel       │
+         │     (region say on -8675310)         │
+         │     Includes PIN + secure channel    │
          │                                      │
-         │  3. PREPARE_UPDATE                   │
+         │  3. Inject coordinator via PIN       │
          │─────────────────────────────────────►│
-         │     Collar prepares for update       │
+         │     llRemoteLoadScriptPin(           │
+         │       pin, "coordinator", TRUE,      │
+         │       secure_chan                    │
+         │     )                                │
          │                                      │
-         │  Collar releases RLV restrictions    │
-         │  Collar backs up settings to         │
-         │  linkset data                        │
+         │  Coordinator arrives RUNNING         │
+         │  All updates happen autonomously:    │
          │                                      │
-         │  4. READY_FOR_TRANSFER               │
-         │◄─────────────────────────────────────│
-         │                                      │
-         │  5. Transfer new scripts via         │
-         │     llGiveInventory (not drops!)     │
+         │  4. begin_update (secure channel)    │
          │─────────────────────────────────────►│
-         │     Scripts arrive with ".new"       │
-         │     suffix in collar inventory       │
+         │     Coordinator backs up settings    │
+         │     Coordinator clears inventory     │
          │                                      │
-         │  6. Transfer coordinator script      │
+         │  5. Transfer scripts (secure chan)   │
          │─────────────────────────────────────►│
-         │     ds_collar_updater_coordinator    │
-         │     starts automatically             │
+         │     llRemoteLoadScriptPin per script │
          │                                      │
-         │  Coordinator performs hot-swap:      │
-         │  - Stops old scripts                 │
-         │  - Removes old scripts               │
-         │  - Activates new scripts             │
-         │  - Restores settings                 │
+         │  Coordinator restores settings       │
+         │  Coordinator self-destructs          │
          │                                      │
-         │  7. UPDATE_COMPLETE                  │
+         │  6. update_complete (secure channel) │
          │◄─────────────────────────────────────│
          │                                      │
-         │  Collar fully updated, settings      │
-         │  restored, RLV restrictions          │
-         │  re-applied, still worn/locked       │
+         │  Collar fully updated, still         │
+         │  worn/locked, settings preserved     │
          │                                      │
 ```
 
@@ -207,6 +201,107 @@ A self-contained update system where the wearer **touches an updater object**, w
 - Collar has built-in update handler (part of kernel or separate module)
 - llGiveInventory used (works on attachments) instead of requiring user to drop items
 - Hot-swap mechanism preserves worn/locked state
+
+---
+
+### Update Protocol Messages
+
+#### Discovery Phase (Region Channels)
+
+**Channel Selection**:
+- Discovery: `-8675309` (same as ACL query channel)
+- Response: `-8675310` (same as ACL reply channel)
+- Secure: Random negative channel generated by updater
+
+**Message Format**: All messages use JSON
+
+#### 1. update_discover
+Broadcast from updater when touched.
+
+```json
+{
+    "type": "update_discover",
+    "updater": "updater-object-key",
+    "session": "session-uuid"
+}
+```
+
+#### 2. collar_ready
+Sent by collar in response (includes PIN).
+
+```json
+{
+    "type": "collar_ready",
+    "collar": "collar-object-key",
+    "owner": "owner-avatar-key",
+    "wearer": "wearer-avatar-key",
+    "session": "session-uuid",
+    "pin": "12345678"
+}
+```
+
+#### Update Phase (Secure Channel)
+
+All subsequent messages use secure channel from updater.
+
+#### 3. begin_update
+Sent from updater to coordinator after injection.
+
+```json
+{
+    "type": "begin_update",
+    "session": "session-uuid",
+    "script_count": 27
+}
+```
+
+#### 4. script_ready
+Sent by updater before each script transfer.
+
+```json
+{
+    "type": "script_ready",
+    "session": "session-uuid",
+    "script_name": "ds_collar_kernel",
+    "index": 1,
+    "total": 27
+}
+```
+
+#### 5. script_received
+Sent by coordinator after script arrives.
+
+```json
+{
+    "type": "script_received",
+    "session": "session-uuid",
+    "script_name": "ds_collar_kernel",
+    "success": true
+}
+```
+
+#### 6. update_complete
+Sent by coordinator when finished.
+
+```json
+{
+    "type": "update_complete",
+    "session": "session-uuid",
+    "success": true,
+    "scripts_installed": 27
+}
+```
+
+#### 7. update_abort
+Sent by either party on error.
+
+```json
+{
+    "type": "update_abort",
+    "session": "session-uuid",
+    "reason": "error description"
+}
+```
 
 ---
 
@@ -472,17 +567,20 @@ Confirmation from receiver, triggers cleanup.
 
 2. **Initiate Update**
    - Wearer touches updater object (must be collar owner)
-   - Updater broadcasts UPDATE_DISCOVER on channel `-8675309`
-   - Collar's `kmod_remote` responds automatically
-   - Updater validates toucher is collar owner (security check)
+   - Updater broadcasts `update_discover` on channel `-8675309`
+   - Collar's `kmod_remote` generates random PIN
+   - Collar responds with `collar_ready` message containing PIN and secure channel
 
 3. **Automatic Update Process**
-   - Collar temporarily releases RLV restrictions
-   - Collar backs up settings to linkset data
-   - Updater transfers new scripts via llGiveInventory
-   - Coordinator performs hot-swap
-   - Settings restored, RLV re-applied
+   - Updater injects coordinator via `llRemoteLoadScriptPin(pin, "coordinator", TRUE, secure_chan)`
+   - Coordinator arrives RUNNING and manages entire update autonomously:
+     - Backs up settings to linkset data
+     - Clears old scripts from inventory
+     - Receives new scripts via PIN injection
+     - Restores settings from backup
+     - Self-destructs when complete
    - **Collar remains worn and locked throughout**
+   - **No manual activation needed** - coordinator handles everything
 
 4. **Completion**
    - "Update complete: Collar updated to v2.0"
@@ -520,20 +618,17 @@ Confirmation from receiver, triggers cleanup.
 
 **Progress Messages (Update)**:
 ```
-"Update initiated: Preparing collar..."
-"Releasing RLV restrictions temporarily..."
+"Update ready. PIN generated for secure transfer."
+"Coordinator injected. Starting autonomous update..."
 "Backing up settings..."
 "Settings backed up: 47 settings preserved"
-"Receiving new scripts: 1/27 (ds_collar_kernel.lsl.new)"
+"Clearing old scripts from inventory..."
+"Old scripts removed: 27/27"
+"Receiving new scripts: 1/27"
 "Receiving new scripts: 27/27 (complete)"
-"Coordinator received: Starting hot-swap..."
-"Stopping old scripts..."
-"Removing old scripts: 1/27..."
-"Removing old scripts: 27/27 (complete)"
-"Activating new scripts..."
 "Restoring settings..."
-"Re-applying RLV restrictions..."
-"Update complete! Collar updated to v2.0"
+"Settings restored."
+"Update complete! Coordinator cleaning up..."
 ```
 
 ---
@@ -589,10 +684,10 @@ Confirmation from receiver, triggers cleanup.
    - Error: "Cannot drop items into worn attachment. Use update system instead."
    - Solution: Direct user to touch-based update system
 
-2. **Update Handler Not Found**
-   - Updater broadcasts but no collar responds on remote channels
-   - Error: "No collar with remote listener found in range."
-   - Solution: Ensure collar has `ds_collar_kmod_remote.lsl` active
+2. **Collar Not Responding**
+   - Updater broadcasts `update_discover` but no collar responds
+   - Error: "No collar found in range."
+   - Solution: Ensure collar has `ds_collar_kmod_remote.lsl` active and within 20m range
 
 3. **Non-Owner Attempts Update**
    - Someone other than collar owner touches updater
@@ -604,25 +699,25 @@ Confirmation from receiver, triggers cleanup.
    - Error: "Out of range. Move closer to updater object."
    - Uses same range limits as HUD communication
 
-3. **RLV Release Failure**
-   - Collar cannot release RLV restrictions (relay restrictions from external source)
-   - Warning: "External RLV restrictions detected. Update may fail."
-   - Attempt update anyway, may require manual RLV safeword
-
-4. **Hot-Swap Failure**
-   - New scripts fail to start after old scripts removed
-   - Rollback: Re-activate old scripts from backup
-   - Error: "Update failed: Rolling back to previous version"
-
-5. **Settings Restoration Failure**
+3. **Settings Restoration Failure**
    - Linkset data corrupted or lost
    - Warning: "Settings backup lost. Using default settings."
    - User must reconfigure collar manually
 
+4. **Coordinator Injection Failure**
+   - llRemoteLoadScriptPin fails or times out
+   - Error: "Failed to inject coordinator. Aborting update."
+   - Solution: Retry update, ensure collar not at script limit
+
+5. **Script Transfer Failure**
+   - llRemoteLoadScriptPin fails for new scripts
+   - Coordinator reports: "Failed to transfer script: [name]"
+   - Update may be incomplete, manual intervention required
+
 6. **Owner Authorization**
    - Update initiated by non-owner
-   - Collar validates: Only owner or primary owner can approve updates
-   - Collar prompts owner: "Accept update to v2.0? [Yes] [No]"
+   - Updater validates: Only collar owner can touch updater
+   - Error: "Access denied. Only collar owner can initiate update."
 
 ---
 
@@ -655,12 +750,12 @@ Optional enhancement: Allow user to choose what to transfer
 - Installer only transfers selected categories
 - Useful for animation-only updates
 
-### Version Detection
+### No Version Checking
 
-- Donor includes version in INSTALLER_HELLO: `"version": "2.0"`
-- Receiver checks if it has version metadata
-- If donor version ≤ receiver version: "Already up to date. Installation cancelled."
-- Prevents downgrade accidents
+- **Design Decision**: No version checking implemented
+- **Rationale**: No reliable way to check versioning in LSL
+- **Policy**: Trust user intent - if they fire the updater, assume they have good reason
+- Version information may be displayed for user awareness but never blocks updates
 
 ### Backup/Rollback
 
@@ -699,37 +794,38 @@ Optional enhancement: Allow user to choose what to transfer
 ### System 2: In-Place Update
 
 #### Phase 1: Remote Listener Integration
-- [ ] Extend `ds_collar_kmod_remote.lsl` to handle update messages
-  - [ ] Add update message handlers on existing channels
-  - [ ] Respond to UPDATE_DISCOVER with collar info
-  - [ ] Handle PREPARE_UPDATE command
-  - [ ] Temporarily release RLV restrictions
-  - [ ] Backup settings to linkset data
-  - [ ] Accept incoming scripts via llGiveInventory
-- [ ] Alternative: Create separate `ds_collar_kmod_update.lsl` module
-  - [ ] Listen on same remote channels as kmod_remote
-  - [ ] Coordinate with kmod_remote for protocol
-  - [ ] Handle update-specific logic separately
+- [x] Extend `ds_collar_kmod_remote.lsl` to handle update messages (Rev 24)
+  - [x] Listen for `update_discover` on channel `-8675309`
+  - [x] Generate random PIN via llFrand()
+  - [x] Call llSetRemoteScriptAccessPin(pin)
+  - [x] Respond with `collar_ready` on channel `-8675310`
+  - [x] Include PIN and secure channel in response
+  - [x] Range validation (20m limit, same as HUD)
+  - [x] No version checking - trust user intent
 
 #### Phase 2: Updater Source
-- [ ] Create `ds_collar_updater_source.lsl`
-  - [ ] Handle touch events (owner validation)
-  - [ ] Scan updater inventory for new scripts
-  - [ ] Broadcast UPDATE_DISCOVER on channel `-8675309`
-  - [ ] Listen for responses on channel `-8675310`
-  - [ ] Validate toucher is collar owner (security)
-  - [ ] Send commands on channel `-8675311`
-  - [ ] Transfer scripts with ".new" suffix via llGiveInventory
-  - [ ] Transfer coordinator script
+- [x] Create `ds_collar_updater_source.lsl` (Rev 2)
+  - [x] Handle touch events with owner validation
+  - [x] Scan updater inventory for scripts to transfer
+  - [x] Broadcast `update_discover` on channel `-8675309`
+  - [x] Listen for `collar_ready` on channel `-8675310`
+  - [x] Extract PIN and secure channel from response
+  - [x] Validate toucher is collar owner (security)
+  - [x] Inject coordinator via llRemoteLoadScriptPin(pin, TRUE, secure_chan)
+  - [x] Transfer scripts sequentially via llRemoteLoadScriptPin
+  - [x] All subsequent communication on secure channel
+  - [x] Handle completion and cleanup
 
-#### Phase 3: Hot-Swap Coordinator
-- [ ] Create `ds_collar_updater_coordinator.lsl`
-  - [ ] Stop old scripts gracefully
-  - [ ] Remove old scripts one by one
-  - [ ] Activate new scripts with ".new" suffix
-  - [ ] Restore settings from linkset data
-  - [ ] Re-apply RLV restrictions
-  - [ ] Self-destruct after success
+#### Phase 3: Autonomous Coordinator
+- [x] Create `ds_collar_updater_coordinator.lsl` (Rev 3)
+  - [x] Injected via llRemoteLoadScriptPin with running=TRUE
+  - [x] Arrives running, manages entire update autonomously
+  - [x] Backs up settings to linkset data
+  - [x] Clears old scripts from inventory
+  - [x] Receives new scripts via PIN injection
+  - [x] Restores settings from linkset data
+  - [x] Self-destructs after success
+  - [x] All communication on secure channel with updater source
 
 #### Phase 4: Testing & Safety
 - [ ] Test update on worn collar

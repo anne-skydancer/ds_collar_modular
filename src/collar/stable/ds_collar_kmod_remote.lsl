@@ -1,14 +1,13 @@
 /*--------------------
 MODULE: ds_collar_kmod_remote.lsl
 VERSION: 1.00
-REVISION: 23
+REVISION: 24
 PURPOSE: External HUD communication bridge for remote control workflows
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
-- Added in-place update protocol handlers (update_discover, prepare_update, etc.)
-- Update messages separate from HUD protocol, use same channels
-- Support for multiple collar detection and selection
-- Hot-swap coordination with updater object
+- Simplified update protocol: Generate PIN, send to updater
+- Coordinator injected via llRemoteLoadScriptPin handles update autonomously
+- Removed complex inventory tracking and coordination logic
 --------------------*/
 
 
@@ -27,15 +26,6 @@ float MAX_DETECTION_RANGE = 20.0;  // Maximum range in meters for HUD detection
 /* -------------------- PROTOCOL MESSAGE TYPES -------------------- */
 string ROOT_CONTEXT = "core_root";
 string SOS_CONTEXT = "sos_root";
-
-/* -------------------- UPDATE PROTOCOL -------------------- */
-string CURRENT_COLLAR_VERSION = "2.0.23";  // Sync with revision
-
-key CurrentUpdater = NULL_KEY;
-string UpdateSession = "";
-integer ExpectedScripts = 0;
-integer ReceivedScripts = 0;
-integer UpdateInProgress = FALSE;
 
 /* -------------------- STATE -------------------- */
 integer AclQueryListenHandle = 0;
@@ -336,16 +326,11 @@ handle_menu_request_external(string message) {
 /* -------------------- UPDATE PROTOCOL HANDLERS -------------------- */
 
 handle_update_discover(string message) {
-    // Only respond if not already updating
-    if (UpdateInProgress) return;
-    
     if (!json_has(message, ["updater"])) return;
     if (!json_has(message, ["session"])) return;
-    if (!json_has(message, ["version"])) return;
     
     key updater = (key)llJsonGetValue(message, ["updater"]);
     string session = llJsonGetValue(message, ["session"]);
-    string new_version = llJsonGetValue(message, ["version"]);
     
     // Check range
     list details = llGetObjectDetails(updater, [OBJECT_POS]);
@@ -356,64 +341,22 @@ handle_update_discover(string message) {
     
     if (distance > MAX_DETECTION_RANGE) return;
     
-    // Respond with collar presence
+    // Generate random PIN for script transfer
+    integer script_pin = (integer)(llFrand(99999998.0) + 1);
+    llSetRemoteScriptAccessPin(script_pin);
+    
+    // Respond with collar presence and PIN
     string response = llList2Json(JSON_OBJECT, [
-        "type", "collar_present",
+        "type", "collar_ready",
         "collar", (string)llGetKey(),
         "owner", (string)CollarOwner,
         "wearer", (string)llGetOwner(),
-        "current_version", CURRENT_COLLAR_VERSION,
-        "new_version", new_version,
-        "session", session
+        "session", session,
+        "pin", (string)script_pin
     ]);
     
     llRegionSay(EXTERNAL_ACL_REPLY_CHAN, response);
-}
-
-handle_prepare_update(string message) {
-    if (!json_has(message, ["updater"])) return;
-    if (!json_has(message, ["session"])) return;
-    if (!json_has(message, ["manifest"])) return;
-    if (!json_has(message, ["total"])) return;
-    
-    key updater = (key)llJsonGetValue(message, ["updater"]);
-    string session = llJsonGetValue(message, ["session"]);
-    
-    // Validate this is for us (same updater, same session)
-    if (UpdateInProgress && updater != CurrentUpdater) return;
-    
-    CurrentUpdater = updater;
-    UpdateSession = session;
-    ExpectedScripts = (integer)llJsonGetValue(message, ["total"]);
-    ReceivedScripts = 0;
-    UpdateInProgress = TRUE;
-    
-    llOwnerSay("Preparing for update: " + (string)ExpectedScripts + " scripts");
-    
-    // Acknowledge ready
-    string response = llList2Json(JSON_OBJECT, [
-        "type", "ready_for_transfer",
-        "session", session
-    ]);
-    
-    llRegionSay(EXTERNAL_ACL_REPLY_CHAN, response);
-}
-
-handle_transfer_script(string message) {
-    if (!UpdateInProgress) return;
-    if (!json_has(message, ["session"])) return;
-    if (llJsonGetValue(message, ["session"]) != UpdateSession) return;
-    
-    // Script notification received - actual transfer happens via llGiveInventory
-    // We'll track via changed(CHANGED_INVENTORY) event
-}
-
-handle_transfer_coordinator(string message) {
-    if (!UpdateInProgress) return;
-    if (!json_has(message, ["session"])) return;
-    if (llJsonGetValue(message, ["session"]) != UpdateSession) return;
-    
-    llOwnerSay("Coordinator received. Hot-swap will begin automatically.");
+    llOwnerSay("Update ready. PIN generated for secure transfer.");
 }
 
 /* -------------------- EVENTS -------------------- */
@@ -450,35 +393,6 @@ default {
     changed(integer change_mask) {
         if (change_mask & CHANGED_OWNER) {
             llResetScript();
-        }
-        
-        if (change_mask & CHANGED_INVENTORY) {
-            if (UpdateInProgress) {
-                // Check for new scripts with .new suffix
-                integer count = llGetInventoryNumber(INVENTORY_SCRIPT);
-                integer new_scripts = 0;
-                integer has_coordinator = FALSE;
-                integer i = 0;
-                
-                while (i < count) {
-                    string name = llGetInventoryName(INVENTORY_SCRIPT, i);
-                    if (llSubStringIndex(name, ".new") != -1) {
-                        new_scripts += 1;
-                    }
-                    if (name == "ds_collar_updater_coordinator") {
-                        has_coordinator = TRUE;
-                    }
-                    i += 1;
-                }
-                
-                // Check if update complete (all scripts + coordinator present)
-                if (new_scripts >= ExpectedScripts && has_coordinator) {
-                    llOwnerSay("All update files received. Hot-swap starting...");
-                    UpdateInProgress = FALSE;
-                    CurrentUpdater = NULL_KEY;
-                    UpdateSession = "";
-                }
-            }
         }
     }
     
@@ -522,22 +436,6 @@ default {
             
             if (msg_type == "menu_request_external") {
                 handle_menu_request_external(message);
-                return;
-            }
-            
-            // Handle update protocol messages
-            if (msg_type == "prepare_update") {
-                handle_prepare_update(message);
-                return;
-            }
-            
-            if (msg_type == "transfer_script") {
-                handle_transfer_script(message);
-                return;
-            }
-            
-            if (msg_type == "transfer_coordinator") {
-                handle_transfer_coordinator(message);
                 return;
             }
             

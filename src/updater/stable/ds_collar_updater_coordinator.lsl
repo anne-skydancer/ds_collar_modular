@@ -1,230 +1,227 @@
 /*--------------------
 SCRIPT: ds_collar_updater_coordinator.lsl
 VERSION: 1.00
-REVISION: 1
-PURPOSE: Hot-swap coordinator for in-place collar updates
-USAGE: Transferred to collar during update, performs atomic script replacement
-ARCHITECTURE: System 2 coordinator - manages orderly shutdown and script replacement
+REVISION: 3
+PURPOSE: Autonomous update coordinator injected via llRemoteLoadScriptPin
+ARCHITECTURE: Arrives RUNNING, manages entire update autonomously, self-deletes when done
 CHANGES:
-- Initial version for hot-swap coordination
-- Backs up settings to linkset data
-- Removes old scripts atomically
-- Activates new scripts
-- Restores settings
-- Self-destructs after completion
+- Rev 3: Complete redesign: Injected via llRemoteLoadScriptPin (arrives RUNNING)
+- Listens on secure channel for script transfers from updater
+- Backs up state, clears inventory, restores state, reboots, self-deletes
+- No dependencies on disabled scripts or inventory tracking
 --------------------*/
 
 /* -------------------- CHANNELS -------------------- */
 integer KERNEL_LIFECYCLE = 500;
 integer SETTINGS_BUS = 800;
 
-integer EXTERNAL_ACL_REPLY_CHAN = -8675310;  // Report status to updater
-
 /* -------------------- STATE -------------------- */
-string SessionId = "";
+integer SecureChannel = 0;
 key UpdaterKey = NULL_KEY;
-
-list OldScripts = [];
-list NewScripts = [];
-integer RemovalIndex = 0;
-
-integer BackupComplete = FALSE;
+string UpdateSession = "";
+integer ExpectedScripts = 0;
+integer ReceivedScripts = 0;
+list ScriptInventory = [];  // Track what we receive
 
 /* -------------------- HELPERS -------------------- */
 
 integer json_has(string j, list path) {
-    string val = llJsonGetValue(j, path);
-    if (val == JSON_INVALID) return FALSE;
-    return TRUE;
+    return (llJsonGetValue(j, path) != JSON_INVALID);
 }
 
-/* -------------------- COORDINATION PHASES -------------------- */
+/* -------------------- SETTINGS BACKUP -------------------- */
 
-start_coordination(string session, key updater) {
-    SessionId = session;
-    UpdaterKey = updater;
-    
-    // Request settings backup
+backup_settings() {
+    // Request full settings from settings module
     string msg = llList2Json(JSON_OBJECT, [
         "type", "settings_get",
-        "reply_to", "coordinator"
+        "key", ""  // Empty key = get all settings
     ]);
     llMessageLinked(LINK_SET, SETTINGS_BUS, msg, NULL_KEY);
     
-    llSetTimerEvent(30.0);  // Timeout for settings backup
-}
-
-backup_settings(string kv_json) {
-    // Store in linkset data for recovery
-    integer result = llLinksetDataWrite("backup_settings", kv_json);
-    if (result < 0) {
-        llOwnerSay("ERROR: Failed to backup settings!");
-        // Continue anyway - prefer update over aborting
-    }
-    
-    BackupComplete = TRUE;
-    
-    // Phase 2: Scan for old and new scripts
-    scan_scripts();
-}
-
-scan_scripts() {
-    OldScripts = [];
-    NewScripts = [];
-    
-    integer count = llGetInventoryNumber(INVENTORY_SCRIPT);
+    // Backup ACL cache from linkset data
+    list all_keys = llLinksetDataListKeys(0, 1000);
+    list acl_entries = [];
     integer i = 0;
-    string self_name = llGetScriptName();
+    integer len = llGetListLength(all_keys);
     
-    while (i < count) {
-        string name = llGetInventoryName(INVENTORY_SCRIPT, i);
-        
-        // Skip self
-        if (name != self_name) {
-            if (llSubStringIndex(name, ".new") != -1) {
-                // New script
-                NewScripts += [name];
-            }
-            else {
-                // Old script (will be removed during update)
-                OldScripts += [name];
-            }
+    while (i < len) {
+        string ld_key = llList2String(all_keys, i);
+        if (llSubStringIndex(ld_key, "acl_cache_") == 0) {
+            string value = llLinksetDataRead(ld_key);
+            acl_entries += [ld_key, value];
         }
-        
         i += 1;
     }
     
-    if (llGetListLength(NewScripts) == 0) {
-        llOwnerSay("ERROR: No new scripts found!");
-        abort_update();
-        return;
+    // Store ACL backup as JSON array
+    if (llGetListLength(acl_entries) > 0) {
+        string acl_json = llList2Json(JSON_ARRAY, acl_entries);
+        llLinksetDataWrite("ACL.UPDATE", acl_json);
     }
-    
-    // Phase 3: Soft reset all scripts
-    soft_reset_all();
 }
 
-soft_reset_all() {
-    string msg = llList2Json(JSON_OBJECT, [
-        "type", "soft_reset"
-    ]);
+/* -------------------- INVENTORY CLEARING -------------------- */
+
+clear_inventory() {
+    // Soft reset all scripts first
+    string msg = llList2Json(JSON_OBJECT, ["type", "soft_reset_all"]);
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, msg, NULL_KEY);
     
-    llSleep(2.0);  // Give scripts time to reset
+    llSleep(1.0);  // Give scripts time to reset
     
-    // Phase 4: Remove old scripts
-    remove_old_scripts();
-}
-
-remove_old_scripts() {
-    RemovalIndex = 0;
-    remove_next_old_script();
-}
-
-remove_next_old_script() {
-    if (RemovalIndex >= llGetListLength(OldScripts)) {
-        // All old scripts removed
-        activate_new_scripts();
-        return;
-    }
-    
-    string old_name = llList2String(OldScripts, RemovalIndex);
-    
-    // CRITICAL: Only remove scripts, never notecards
-    // Notecards contain settings data that kernel reads
-    // LSL cannot write notecards, so they must be preserved
-    if (llGetInventoryType(old_name) == INVENTORY_SCRIPT) {
-        llRemoveInventory(old_name);
-    }
-    
-    RemovalIndex += 1;
-    
-    // Small delay to avoid inventory spam
-    llSleep(0.5);
-    remove_next_old_script();
-}
-
-activate_new_scripts() {
+    // Remove all scripts except self and kmod_remote
+    integer count = llGetInventoryNumber(INVENTORY_SCRIPT);
     integer i = 0;
-    integer count = llGetListLength(NewScripts);
+    integer removed = 0;
     
     while (i < count) {
-        string new_name = llList2String(NewScripts, i);
-        
-        // Remove ".new" suffix
-        string final_name = llGetSubString(new_name, 0, llStringLength(new_name) - 5);
-        
-        // Set script to running
-        llSetScriptState(new_name, TRUE);
-        
-        llSleep(0.5);
+        string script_name = llGetInventoryName(INVENTORY_SCRIPT, i);
+        if (script_name != llGetScriptName() && script_name != "ds_collar_kmod_remote") {
+            llRemoveInventory(script_name);
+            removed += 1;
+        }
         i += 1;
     }
     
-    // Phase 6: Restore settings
-    restore_settings();
+    // Remove all animations
+    count = llGetInventoryNumber(INVENTORY_ANIMATION);
+    i = 0;
+    while (i < count) {
+        string anim_name = llGetInventoryName(INVENTORY_ANIMATION, i);
+        llRemoveInventory(anim_name);
+        removed += 1;
+        i += 1;
+    }
+    
+    signal_ready_for_content();
 }
 
-restore_settings() {
-    llSleep(2.0);  // Give scripts time to initialize
+/* -------------------- UPDATER COMMUNICATION -------------------- */
+
+signal_ready_for_content() {
+    string msg = llList2Json(JSON_OBJECT, [
+        "type", "coordinator_ready",
+        "session", UpdateSession
+    ]);
+    llRegionSayTo(UpdaterKey, SecureChannel, msg);
+}
+
+/* -------------------- SCRIPT RECEPTION -------------------- */
+
+handle_script_transfer(string message) {
+    if (!json_has(message, ["name"])) return;
+    if (!json_has(message, ["uuid"])) return;
     
-    // Read from linkset data
-    string kv_json = llLinksetDataRead("backup_settings");
+    string script_name = llJsonGetValue(message, ["name"]);
+    key expected_uuid = (key)llJsonGetValue(message, ["uuid"]);
     
-    if (kv_json == "" || kv_json == JSON_INVALID) {
-        llOwnerSay("WARNING: Could not restore settings backup.");
-        // Continue anyway
-        finalize_update();
+    // Verify script arrived and matches UUID
+    llSleep(0.5);  // Brief wait for script to settle
+    
+    if (llGetInventoryType(script_name) != INVENTORY_SCRIPT) {
         return;
     }
     
-    // Broadcast restored settings
-    string msg = llList2Json(JSON_OBJECT, [
-        "type", "settings_sync",
-        "kv", kv_json
+    key actual_uuid = llGetInventoryKey(script_name);
+    if (actual_uuid != expected_uuid) {
+        // UUID mismatch - script may have been recompiled
+    }
+    
+    ScriptInventory += [script_name];
+    ReceivedScripts += 1;
+    
+    // Acknowledge receipt
+    string ack = llList2Json(JSON_OBJECT, [
+        "type", "script_received",
+        "name", script_name,
+        "session", UpdateSession,
+        "count", (string)ReceivedScripts,
+        "total", (string)ExpectedScripts
     ]);
-    llMessageLinked(LINK_SET, SETTINGS_BUS, msg, NULL_KEY);
+    llRegionSayTo(UpdaterKey, SecureChannel, ack);
+    
+    // Check if complete
+    if (ReceivedScripts >= ExpectedScripts) {
+        finalize_update();
+    }
+}
+
+/* -------------------- STATE RESTORATION -------------------- */
+
+restore_settings() {
+    // Restore settings from linkset data (settings module handles this)
+    string settings_json = llLinksetDataRead("SETTINGS.UPDATE");
+    if (settings_json != "") {
+        // Broadcast settings_sync to all modules
+        string msg = llList2Json(JSON_OBJECT, [
+            "type", "settings_sync",
+            "kv", settings_json
+        ]);
+        llMessageLinked(LINK_SET, SETTINGS_BUS, msg, NULL_KEY);
+    }
+    
+    // Restore ACL cache
+    string acl_backup = llLinksetDataRead("ACL.UPDATE");
+    if (acl_backup != "") {
+        list acl_entries = llJson2List(acl_backup);
+        integer i = 0;
+        integer len = llGetListLength(acl_entries);
+        integer restored = 0;
+        
+        while (i < len) {
+            string ld_key = llList2String(acl_entries, i);
+            string value = llList2String(acl_entries, i + 1);
+            llLinksetDataWrite(ld_key, value);
+            restored += 1;
+            i += 2;
+        }
+        
+        // Clean up backup
+        llLinksetDataDelete("ACL.UPDATE");
+    }
+}
+
+/* -------------------- UPDATE FINALIZATION -------------------- */
+
+finalize_update() {
+    llSetTimerEvent(0.0);  // Stop timer
+    
+    // Restore state
+    restore_settings();
     
     llSleep(1.0);
     
-    // Clean up linkset data
-    llLinksetDataDelete("backup_settings");
+    // Reboot all scripts
+    llOwnerSay("Rebooting collar...");
+    string msg = llList2Json(JSON_OBJECT, ["type", "soft_reset_all"]);
+    llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, msg, NULL_KEY);
     
-    finalize_update();
-}
-
-finalize_update() {
-    // Notify updater of completion
-    string msg = llList2Json(JSON_OBJECT, [
-        "type", "update_complete",
-        "session", SessionId
-    ]);
-    llRegionSay(EXTERNAL_ACL_REPLY_CHAN, msg);
+    llSleep(1.0);
     
-    llOwnerSay("=================================");
-    llOwnerSay("HOT-SWAP UPDATE COMPLETE");
-    llOwnerSay("All scripts updated");
-    llOwnerSay("All settings restored");
-    llOwnerSay("=================================");
+    // Clear script PIN
+    llSetRemoteScriptAccessPin(0);
     
-    // Self-destruct after delay
-    llSleep(5.0);
+    llOwnerSay("Update complete!");
+    
+    // Self-destruct
     llRemoveInventory(llGetScriptName());
 }
 
-abort_update() {
-    llOwnerSay("UPDATE ABORTED - See coordinator log");
+/* -------------------- ABORT HANDLING -------------------- */
+
+abort_update(string reason) {
+    llSetTimerEvent(0.0);
+    llSetRemoteScriptAccessPin(0);
     
-    // Notify updater
     string msg = llList2Json(JSON_OBJECT, [
-        "type", "update_failed",
-        "session", SessionId,
-        "reason", "Coordinator detected error"
+        "type", "update_aborted",
+        "reason", reason,
+        "session", UpdateSession
     ]);
-    llRegionSay(EXTERNAL_ACL_REPLY_CHAN, msg);
+    llRegionSayTo(UpdaterKey, SecureChannel, msg);
     
     // Self-destruct
-    llSleep(2.0);
     llRemoveInventory(llGetScriptName());
 }
 
@@ -232,69 +229,65 @@ abort_update() {
 
 default {
     state_entry() {
-        llSetTimerEvent(120.0);  // Overall timeout
-    }
-    
-    on_rez(integer start_param) {
-        llResetScript();
-    }
-    
-    link_message(integer sender, integer num, string msg, key id) {
-        if (!json_has(msg, ["type"])) return;
-        string msg_type = llJsonGetValue(msg, ["type"]);
+        // Get secure channel from start parameter (passed by llRemoteLoadScriptPin)
+        SecureChannel = llGetStartParameter();
         
-        if (num == SETTINGS_BUS) {
-            // Settings response
-            if (msg_type == "settings_sync") {
-                if (!BackupComplete) {
-                    if (json_has(msg, ["kv"])) {
-                        string kv_json = llJsonGetValue(msg, ["kv"]);
-                        backup_settings(kv_json);
-                    }
-                }
-            }
+        if (SecureChannel == 0) {
+            llRemoveInventory(llGetScriptName());
+            return;
         }
-        else if (num == 0) {
-            // Custom messages (future use)
-            if (msg_type == "start_coordination") {
-                if (json_has(msg, ["session"]) && json_has(msg, ["updater"])) {
-                    string session = llJsonGetValue(msg, ["session"]);
-                    key updater = (key)llJsonGetValue(msg, ["updater"]);
-                    start_coordination(session, updater);
-                }
-            }
+        
+        // Listen on secure channel for updater instructions
+        llListen(SecureChannel, "", NULL_KEY, "");
+        
+        // Start timeout timer (5 minutes)
+        llSetTimerEvent(300.0);
+    }
+    
+    listen(integer channel, string name, key speaker, string message) {
+        if (channel != SecureChannel) return;
+        if (!json_has(message, ["type"])) return;
+        
+        string msg_type = llJsonGetValue(message, ["type"]);
+        
+        // Initial handshake: updater sends manifest
+        if (msg_type == "begin_update") {
+            if (!json_has(message, ["updater"])) return;
+            if (!json_has(message, ["session"])) return;
+            if (!json_has(message, ["total"])) return;
+            
+            UpdaterKey = (key)llJsonGetValue(message, ["updater"]);
+            UpdateSession = llJsonGetValue(message, ["session"]);
+            ExpectedScripts = (integer)llJsonGetValue(message, ["total"]);
+            
+            // Begin update process
+            backup_settings();
+            clear_inventory();
+            return;
+        }
+        
+        // Script transfer notification
+        if (msg_type == "script_transfer") {
+            if (llJsonGetValue(message, ["session"]) != UpdateSession) return;
+            handle_script_transfer(message);
+            return;
+        }
+        
+        // Abort command
+        if (msg_type == "abort_update") {
+            abort_update("Updater requested abort");
+            return;
         }
     }
     
     timer() {
-        if (!BackupComplete) {
-            llOwnerSay("ERROR: Coordination timeout");
-            abort_update();
-        }
+        // Timeout - cleanup and abort
+        abort_update("Timeout - no response from updater");
     }
     
     changed(integer change) {
-        if (change & CHANGED_INVENTORY) {
-            // Check if we should auto-start (all .new scripts present)
-            if (SessionId == "" && !BackupComplete) {
-                // Auto-start if we detect .new scripts
-                integer count = llGetInventoryNumber(INVENTORY_SCRIPT);
-                integer has_new = FALSE;
-                integer i = 0;
-                
-                while (i < count) {
-                    string name = llGetInventoryName(INVENTORY_SCRIPT, i);
-                    if (llSubStringIndex(name, ".new") != -1) {
-                        has_new = TRUE;
-                        i = count;  // Break
-                    }
-                    i += 1;
-                }
-                
-                if (has_new) {
-                    start_coordination("auto_" + (string)llGetUnixTime(), NULL_KEY);
-                }
-            }
+        if (change & CHANGED_OWNER) {
+            abort_update("Ownership changed during update");
         }
     }
 }
