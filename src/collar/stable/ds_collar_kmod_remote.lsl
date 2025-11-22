@@ -341,18 +341,24 @@ handle_update_discover(string message) {
     
     if (distance > MAX_DETECTION_RANGE) return;
     
+    // Check inventory status for install/update determination
+    integer has_kernel = (llGetInventoryType("ds_collar_kernel") == INVENTORY_SCRIPT);
+    integer has_receiver = (llGetInventoryType("ds_collar_receiver") == INVENTORY_SCRIPT);
+    
     // Generate random PIN for script transfer
-    integer script_pin = (integer)(llFrand(99999998.0) + 1);
+    integer script_pin = (integer)(llFrand(1E08));
     llSetRemoteScriptAccessPin(script_pin);
     
-    // Respond with collar presence and PIN
+    // Respond with collar presence, PIN, and inventory status
     string response = llList2Json(JSON_OBJECT, [
         "type", "collar_ready",
         "collar", (string)llGetKey(),
         "owner", (string)CollarOwner,
         "wearer", (string)llGetOwner(),
         "session", session,
-        "pin", (string)script_pin
+        "pin", (string)script_pin,
+        "has_kernel", (string)has_kernel,
+        "has_receiver", (string)has_receiver
     ]);
     
     llRegionSay(EXTERNAL_ACL_REPLY_CHAN, response);

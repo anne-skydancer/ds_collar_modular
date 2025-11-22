@@ -1,14 +1,14 @@
 /*--------------------
 SCRIPT: ds_collar_updater_coordinator.lsl
 VERSION: 1.00
-REVISION: 3
+REVISION: 4
 PURPOSE: Autonomous update coordinator injected via llRemoteLoadScriptPin
-ARCHITECTURE: Arrives RUNNING, manages entire update autonomously, self-deletes when done
+ARCHITECCTURE: Arrives RUNNING, orchestrates update, then triggers activator shim
 CHANGES:
-- Rev 3: Complete redesign: Injected via llRemoteLoadScriptPin (arrives RUNNING)
-- Listens on secure channel for script transfers from updater
-- Backs up state, clears inventory, restores state, reboots, self-deletes
-- No dependencies on disabled scripts or inventory tracking
+- Rev 4: Simplified flow - backs up settings, clears inventory, signals updater for activator shim injection
+- Activator shim (injected last) handles script activation and settings restoration
+- Coordinator self-destructs after triggering activator injection
+- No script activation or settings restoration in coordinator
 --------------------*/
 
 /* -------------------- CHANNELS -------------------- */
@@ -111,21 +111,14 @@ signal_ready_for_content() {
 
 handle_script_transfer(string message) {
     if (!json_has(message, ["name"])) return;
-    if (!json_has(message, ["uuid"])) return;
     
     string script_name = llJsonGetValue(message, ["name"]);
-    key expected_uuid = (key)llJsonGetValue(message, ["uuid"]);
     
-    // Verify script arrived and matches UUID
-    llSleep(0.5);  // Brief wait for script to settle
+    // Wait for script to settle in inventory
+    llSleep(0.5);
     
     if (llGetInventoryType(script_name) != INVENTORY_SCRIPT) {
         return;
-    }
-    
-    key actual_uuid = llGetInventoryKey(script_name);
-    if (actual_uuid != expected_uuid) {
-        // UUID mismatch - script may have been recompiled
     }
     
     ScriptInventory += [script_name];
@@ -147,39 +140,15 @@ handle_script_transfer(string message) {
     }
 }
 
-/* -------------------- STATE RESTORATION -------------------- */
+/* -------------------- ACTIVATOR SHIM TRIGGER -------------------- */
 
-restore_settings() {
-    // Restore settings from linkset data (settings module handles this)
-    string settings_json = llLinksetDataRead("SETTINGS.UPDATE");
-    if (settings_json != "") {
-        // Broadcast settings_sync to all modules
-        string msg = llList2Json(JSON_OBJECT, [
-            "type", "settings_sync",
-            "kv", settings_json
-        ]);
-        llMessageLinked(LINK_SET, SETTINGS_BUS, msg, NULL_KEY);
-    }
-    
-    // Restore ACL cache
-    string acl_backup = llLinksetDataRead("ACL.UPDATE");
-    if (acl_backup != "") {
-        list acl_entries = llJson2List(acl_backup);
-        integer i = 0;
-        integer len = llGetListLength(acl_entries);
-        integer restored = 0;
-        
-        while (i < len) {
-            string ld_key = llList2String(acl_entries, i);
-            string value = llList2String(acl_entries, i + 1);
-            llLinksetDataWrite(ld_key, value);
-            restored += 1;
-            i += 2;
-        }
-        
-        // Clean up backup
-        llLinksetDataDelete("ACL.UPDATE");
-    }
+trigger_activator() {
+    // Signal updater to inject activator shim as final step
+    string msg = llList2Json(JSON_OBJECT, [
+        "type", "ready_for_activator",
+        "session", UpdateSession
+    ]);
+    llRegionSayTo(UpdaterKey, SecureChannel, msg);
 }
 
 /* -------------------- UPDATE FINALIZATION -------------------- */
@@ -187,24 +156,17 @@ restore_settings() {
 finalize_update() {
     llSetTimerEvent(0.0);  // Stop timer
     
-    // Restore state
-    restore_settings();
+    llOwnerSay("All scripts received. Preparing for activation...");
     
-    llSleep(1.0);
+    // Signal updater to inject activator shim
+    trigger_activator();
     
-    // Reboot all scripts
-    llOwnerSay("Rebooting collar...");
-    string msg = llList2Json(JSON_OBJECT, ["type", "soft_reset_all"]);
-    llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, msg, NULL_KEY);
-    
-    llSleep(1.0);
+    llSleep(2.0);  // Brief wait for activator injection message to send
     
     // Clear script PIN
     llSetRemoteScriptAccessPin(0);
     
-    llOwnerSay("Update complete!");
-    
-    // Self-destruct
+    // Self-destruct - activator shim will handle the rest
     llRemoveInventory(llGetScriptName());
 }
 

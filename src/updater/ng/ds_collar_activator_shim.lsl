@@ -125,10 +125,11 @@ default {
         // Ensure no timers running
         llSetTimerEvent(0.0);
         
-        // SAFETY: Only run if we're in a collar (has ds_collar_kernel)
-        // This prevents accidental activation while in the updater
-        if (llGetInventoryType("ds_collar_kernel") != INVENTORY_SCRIPT) {
-            // Not in collar - stay dormant
+        // SAFETY: Only run if we're NOT in the updater object
+        // Check object name to prevent activation while in updater
+        string object_name = llGetObjectName();
+        if (llSubStringIndex(llToLower(object_name), "updater") != -1) {
+            // We're in an updater object - stay dormant
             return;
         }
         

@@ -1,22 +1,20 @@
 /*--------------------
 SCRIPT: ds_collar_updater_source.lsl
 VERSION: 1.00
-REVISION: 2
+REVISION: 3
 PURPOSE: PIN-based update transmitter using llRemoteLoadScriptPin
-ARCHITECTURE: Touch-activated, injects coordinator via PIN, transfers all scripts via PIN
+ARCHITECTURE: Touch-activated, orchestrates complete update flow
 CHANGES:
-- Rev 2: Complete redesign for PIN-based protocol
-- Handles collar_ready response with PIN
-- Injects coordinator via llRemoteLoadScriptPin(pin, TRUE, secure_channel)
-- Transfers all scripts via llRemoteLoadScriptPin (not llGiveInventory)
-- No activator shim needed
+- Rev 3: Updated for activator shim pattern
+- Coordinator injected first via PIN (arrives running)
+- Collar scripts transferred via llGiveInventory (arrive inactive)
+- Activator shim injected last via PIN (arrives running, activates scripts)
+- Three-phase update: coordinator → collar scripts → activator shim
 --------------------*/
 
 /* -------------------- REMOTE PROTOCOL CHANNELS -------------------- */
 integer EXTERNAL_ACL_QUERY_CHAN = -8675309;  // Update discovery
 integer EXTERNAL_ACL_REPLY_CHAN = -8675310;  // Collar responses
-
-float MAX_DETECTION_RANGE = 20.0;
 
 /* -------------------- STATE -------------------- */
 string SessionId = "";
@@ -57,15 +55,17 @@ list scan_update_inventory() {
     list manifest = [];
     string script_name = llGetScriptName();
     
-    // Scan all scripts except self and coordinator
+    // Scan all collar scripts (exclude updater scripts)
     integer count = llGetInventoryNumber(INVENTORY_SCRIPT);
     integer i = 0;
     while (i < count) {
         string name = llGetInventoryName(INVENTORY_SCRIPT, i);
         key uuid = llGetInventoryKey(name);
         
-        // Skip self and coordinator (coordinator is transferred first, separately)
-        if (name != script_name && name != "ds_collar_updater_coordinator") {
+        // Skip: self, coordinator, activator shim
+        if (name != script_name && 
+            name != "ds_collar_updater_coordinator" && 
+            name != "ds_collar_activator_shim") {
             manifest += [name, (string)uuid];
         }
         i += 1;
@@ -194,15 +194,31 @@ handle_script_received(string msg) {
         llSleep(TRANSFER_DELAY);
         transfer_next_script();
     }
-    else {
-        // All done
-        llOwnerSay("=================================");
-        llOwnerSay("UPDATE COMPLETE!");
-        llOwnerSay("All settings preserved.");
-        llOwnerSay("=================================");
-        
-        cleanup();
+    // Note: Don't mark complete here - wait for ready_for_activator signal
+}
+
+handle_ready_for_activator(string msg) {
+    if (!json_has(msg, ["session"])) return;
+    if (llJsonGetValue(msg, ["session"]) != SessionId) return;
+    
+    llOwnerSay("All scripts transferred. Injecting activator...");
+    
+    // Verify activator shim exists
+    if (llGetInventoryType("ds_collar_activator_shim") != INVENTORY_SCRIPT) {
+        llOwnerSay("ERROR: Activator shim not found!");
+        abort_update();
+        return;
     }
+    
+    // Inject activator shim with PIN, running=TRUE
+    llRemoteLoadScriptPin(CollarKey, "ds_collar_activator_shim", ScriptPin, TRUE, 0);
+    
+    llOwnerSay("=================================");
+    llOwnerSay("UPDATE COMPLETE!");
+    llOwnerSay("Activator will restore settings.");
+    llOwnerSay("=================================");
+    
+    cleanup();
 }
 
 transfer_next_script() {
@@ -224,8 +240,8 @@ transfer_next_script() {
     ]);
     llRegionSayTo(CollarKey, SecureChannel, notify);
     
-    // Transfer script via PIN (running=FALSE for collar scripts)
-    llRemoteLoadScriptPin(CollarKey, script_name, ScriptPin, FALSE, 0);
+    // Transfer script via llGiveInventory (arrives INACTIVE)
+    llGiveInventory(CollarKey, script_name);
     
     TransferIndex += 1;
 }
@@ -314,6 +330,9 @@ default {
             }
             else if (msg_type == "script_received") {
                 handle_script_received(msg);
+            }
+            else if (msg_type == "ready_for_activator") {
+                handle_ready_for_activator(msg);
             }
             else if (msg_type == "update_aborted") {
                 llOwnerSay("Coordinator aborted update: " + llJsonGetValue(msg, ["reason"]));

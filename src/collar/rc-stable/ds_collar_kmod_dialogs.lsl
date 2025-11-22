@@ -19,7 +19,7 @@ integer KERNEL_LIFECYCLE = 500;
 integer DIALOG_BUS = 950;
 
 /* -------------------- CONSTANTS -------------------- */
-integer CHANNEL_BASE = -8000000;
+integer CHANNEL_BASE = (integer)-8E07;
 integer SESSION_MAX = 10;  // Maximum concurrent sessions
 
 /* Session list stride: [session_id, user_key, channel, listen_handle, timeout_unix, button_map] */
