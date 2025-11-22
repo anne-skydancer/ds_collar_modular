@@ -1,7 +1,7 @@
 /*--------------------
 MODULE: ds_collar_menu.lsl
 VERSION: 1.00
-REVISION: 11
+REVISION: 12
 PURPOSE: Menu rendering and visual presentation service
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
@@ -34,8 +34,7 @@ string get_msg_type(string msg) {
 // Returns TRUE if all fields present, FALSE if any missing
 integer validate_required_fields(string json_str, list field_names) {
     integer i = 0;
-    integer len = llGetListLength(field_names);
-    while (i < len) {
+    while (i < llGetListLength(field_names)) {
         string field = llList2String(field_names, i);
         if (!json_has(json_str, [field])) {
             return FALSE;

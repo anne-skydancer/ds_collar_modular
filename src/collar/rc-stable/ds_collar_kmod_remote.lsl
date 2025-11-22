@@ -1,7 +1,7 @@
 /*--------------------
 MODULE: ds_collar_kmod_remote.lsl
 VERSION: 1.00
-REVISION: 24
+REVISION: 25
 PURPOSE: External HUD communication bridge for remote control workflows
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
@@ -69,7 +69,7 @@ integer now() {
 /* -------------------- RATE LIMITING (per-request-type) -------------------- */
 
 integer check_rate_limit(key requester, integer request_type) {
-    integer now_time = now();
+    integer now_time = llGetUnixTime();
 
     // Find this requester's last request of this type
     integer idx = llListFindList(RateLimitTimestamps, [requester, request_type]);
@@ -123,7 +123,7 @@ prune_expired_queries(integer now_time) {
 /* -------------------- QUERY MANAGEMENT -------------------- */
 
 add_pending_query(key hud_wearer, key hud_object) {
-    integer now_time = now();
+    integer now_time = llGetUnixTime();
     
     // Check if query already pending for this HUD wearer
     integer idx = 0;
@@ -346,7 +346,7 @@ handle_update_discover(string message) {
     integer has_receiver = (llGetInventoryType("ds_collar_receiver") == INVENTORY_SCRIPT);
     
     // Generate random PIN for script transfer
-    integer script_pin = (integer)(llFrand(99999998.0) + 1);
+    integer script_pin = (integer)(llFrand(1E08));
     llSetRemoteScriptAccessPin(script_pin);
     
     // Respond with collar presence, PIN, and inventory status

@@ -1,7 +1,7 @@
 /*--------------------
 PLUGIN: ds_collar_plugin_rlvexceptions.lsl
 VERSION: 1.00
-REVISION: 22
+REVISION: 23
 PURPOSE: Manage RLV teleport and IM exceptions for owners and trustees
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
@@ -95,9 +95,8 @@ reconcile_all() {
     
     // Owner exceptions
     if (MultiOwnerMode) {
-        integer i;
-        integer len = llGetListLength(OwnerKeys);
-        while (i < len) {
+        integer i = 0;
+        while (i < llGetListLength(OwnerKeys)) {
             key k = (key)llList2String(OwnerKeys, i);
             apply_tp_exception(k, ExOwnerTp);
             apply_im_exception(k, ExOwnerIm);
@@ -110,9 +109,8 @@ reconcile_all() {
     }
     
     // Trustee exceptions
-    integer i;
-    integer len = llGetListLength(TrusteeKeys);
-    while (i < len) {
+    integer i = 0;
+    while (i < llGetListLength(TrusteeKeys)) {
         key k = (key)llList2String(TrusteeKeys, i);
         apply_tp_exception(k, ExTrusteeTp);
         apply_im_exception(k, ExTrusteeIm);

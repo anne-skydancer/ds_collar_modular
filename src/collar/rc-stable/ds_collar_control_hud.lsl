@@ -1,7 +1,7 @@
 /*--------------------
 SCRIPT: ds_collar_control_hud.lsl
 VERSION: 1.00
-REVISION: 6
+REVISION: 7
 PURPOSE: Auto-detect nearby collars and connect automatically
 ARCHITECTURE: RLV relay-style broadcast and listen workflow
 CHANGES:
@@ -33,6 +33,7 @@ float QUERY_TIMEOUT_SEC = 3.0;
 float COLLAR_SCAN_TIME = 2.0;
 integer DIALOG_CHANNEL = -98765;
 float LONG_TOUCH_THRESHOLD = 1.5;
+integer MAX_DIALOG_BUTTONS = 12;  // llDialog button limit
 
 /* -------------------- CONSTANTS -------------------- */
 string ROOT_CONTEXT = "core_root";
@@ -159,8 +160,7 @@ process_scan_results() {
 /* -------------------- COLLAR SELECTION DIALOG -------------------- */
 
 show_collar_selection_dialog() {
-    integer len = llGetListLength(DetectedCollars);
-    integer num_collars = len / COLLAR_STRIDE;
+    integer num_collars = llGetListLength(DetectedCollars) / COLLAR_STRIDE;
     
     if (num_collars == 0) return;
     
@@ -174,14 +174,15 @@ show_collar_selection_dialog() {
     string text = "Multiple collars found. Select one:\n\n";
     list buttons = [];
     integer i = 0;
+    integer collar_count = llGetListLength(DetectedCollars);
     
-    while (i < len && (i / COLLAR_STRIDE) < 12) {
+    while (i < collar_count && (i / COLLAR_STRIDE) < MAX_DIALOG_BUTTONS) {
         string avatar_name = llList2String(DetectedCollars, i + 2);
         buttons += [avatar_name];
         i += COLLAR_STRIDE;
     }
     
-    if (llGetListLength(buttons) < 12) {
+    if (llGetListLength(buttons) < MAX_DIALOG_BUTTONS) {
         buttons += ["Cancel"];
     }
     
@@ -356,13 +357,12 @@ default {
             
             // Find selected collar by name
             integer i = 0;
-            integer len = llGetListLength(DetectedCollars);
             key selected_avatar = NULL_KEY;
-            while (i < len) {
+            while (i < llGetListLength(DetectedCollars)) {
                 string avatar_name = llList2String(DetectedCollars, i + 2);
                 if (avatar_name == message) {
                     selected_avatar = llList2Key(DetectedCollars, i);
-                    i = len;  // Exit loop
+                    i = llGetListLength(DetectedCollars);  // Exit loop
                 }
                 else {
                     i += COLLAR_STRIDE;

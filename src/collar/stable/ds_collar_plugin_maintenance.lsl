@@ -1,7 +1,7 @@
 /*--------------------
 PLUGIN: ds_collar_plugin_maintenance.lsl
 VERSION: 1.00
-REVISION: 21
+REVISION: 22
 PURPOSE: Maintenance and utility functions for collar management
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
@@ -206,9 +206,8 @@ do_view_settings() {
     
     // Iterate through ALL known settings
     integer i = 0;
-    integer len = llGetListLength(ALL_SETTINGS);
     
-    while (i < len) {
+    while (i < llGetListLength(ALL_SETTINGS)) {
         string setting_key = llList2String(ALL_SETTINGS, i);
         string value = llJsonGetValue(CachedSettings, [setting_key]);
         

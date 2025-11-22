@@ -1,7 +1,7 @@
 /*--------------------
 MODULE: ds_collar_kmod_auth.lsl
 VERSION: 1.00
-REVISION: 25
+REVISION: 26
 PURPOSE: Authoritative ACL and policy engine - OPTIMIZED
 ARCHITECTURE: Dispatch table pattern with linkset data cache and JSON templates
 CHANGES:
@@ -292,9 +292,8 @@ clear_acl_query_cache() {
     // Note: LSL doesn't have pattern deletion, so we iterate
     list all_keys = llLinksetDataListKeys(0, llLinksetDataCountKeys());
     integer i = 0;
-    integer len = llGetListLength(all_keys);
     
-    while (i < len) {
+    while (i < llGetListLength(all_keys)) {
         string k = llList2String(all_keys, i);
         if (llSubStringIndex(k, "acl_cache_") == 0) {
             llLinksetDataDelete(k);
@@ -508,9 +507,8 @@ register_plugin_acl(string context, integer min_acl) {
 broadcast_plugin_acl_list() {
     list acl_data = [];
     integer i = 0;
-    integer len = llGetListLength(PluginAclRegistry);
 
-    while (i < len) {
+    while (i < llGetListLength(PluginAclRegistry)) {
         string context = llList2String(PluginAclRegistry, i + PLUGIN_ACL_CONTEXT);
         integer min_acl = llList2Integer(PluginAclRegistry, i + PLUGIN_ACL_MIN_ACL);
 
@@ -554,8 +552,7 @@ list filter_plugins_for_user(key user, list plugin_contexts) {
     integer user_acl = compute_acl_level(user);
 
     integer i = 0;
-    integer len = llGetListLength(plugin_contexts);
-    while (i < len) {
+    while (i < llGetListLength(plugin_contexts)) {
         string context = llList2String(plugin_contexts, i);
 
         integer idx = llListFindList(PluginAclRegistry, [context]);
@@ -681,8 +678,7 @@ apply_settings_sync(string msg) {
     broadcast_acl_change("global", NULL_KEY);
     
     integer i = 0;
-    integer len = llGetListLength(PendingQueries);
-    while (i < len) {
+    while (i < llGetListLength(PendingQueries)) {
         key av = llList2Key(PendingQueries, i);
         string corr_id = llList2String(PendingQueries, i + 1);
         route_acl_query(av, corr_id);

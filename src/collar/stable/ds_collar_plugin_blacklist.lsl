@@ -1,7 +1,7 @@
 /*--------------------
 PLUGIN: ds_collar_plugin_blacklist.lsl
 VERSION: 1.00
-REVISION: 21
+REVISION: 22
 PURPOSE: Blacklist management with sensor-based avatar selection
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
@@ -24,6 +24,9 @@ integer DIALOG_BUS = 950;
 string PLUGIN_CONTEXT = "core_blacklist";
 string PLUGIN_LABEL = "Blacklist";
 integer PLUGIN_MIN_ACL = 2;  // Owned minimum
+
+/* -------------------- CONSTANTS -------------------- */
+integer MAX_NUMBERED_LIST_ITEMS = 11;  // 12 dialog buttons - 1 Back button
 
 /* ACL levels for reference:
    -1 = Blacklisted
@@ -312,8 +315,7 @@ show_add_candidates() {
     // Build list of names
     list names = [];
     integer i = 0;
-    integer len = llGetListLength(CandidateKeys);
-    while (i < len && i < 11) {
+    while (i < llGetListLength(CandidateKeys) && i < MAX_NUMBERED_LIST_ITEMS) {
         key k = (key)llList2String(CandidateKeys, i);
         string name = llGetDisplayName(k);
         if (name == "") name = (string)k;

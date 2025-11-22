@@ -1,7 +1,7 @@
 /*--------------------
 MODULE: ds_collar_kmod_settings.lsl
 VERSION: 1.00
-REVISION: 25
+REVISION: 26
 PURPOSE: Persistent key-value store with notecard loading and delta updates
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
@@ -392,9 +392,8 @@ parse_notecard_line(string line) {
         // Apply guards for special lists
         if (key_name == KEY_OWNER_KEYS) {
             integer i = 0;
-            integer len = llGetListLength(parsed_list);
             list validated_list = [];
-            while (i < len) {
+            while (i < llGetListLength(parsed_list)) {
                 string owner = llList2String(parsed_list, i);
                 if (apply_owner_set_guard(owner)) {
                     validated_list += [owner];
@@ -412,8 +411,7 @@ parse_notecard_line(string line) {
         // SECURITY FIX: Add blacklist guards for notecard
         else if (key_name == KEY_BLACKLIST) {
             integer i = 0;
-            integer len = llGetListLength(parsed_list);
-            while (i < len) {
+            while (i < llGetListLength(parsed_list)) {
                 apply_blacklist_add_guard(llList2String(parsed_list, i));
                 i += 1;
             }
@@ -486,9 +484,8 @@ handle_set(string msg) {
             
             if (key_name == KEY_OWNER_KEYS) {
                 integer i = 0;
-                integer len = llGetListLength(new_list);
                 list validated_list = [];
-                while (i < len) {
+                while (i < llGetListLength(new_list)) {
                     string owner = llList2String(new_list, i);
                     if (apply_owner_set_guard(owner)) {
                         validated_list += [owner];
@@ -505,8 +502,7 @@ handle_set(string msg) {
             }
             else if (key_name == KEY_BLACKLIST) {
                 integer i = 0;
-                integer len = llGetListLength(new_list);
-                while (i < len) {
+                while (i < llGetListLength(new_list)) {
                     apply_blacklist_add_guard(llList2String(new_list, i));
                     i += 1;
                 }

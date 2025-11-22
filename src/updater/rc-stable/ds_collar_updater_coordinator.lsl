@@ -1,7 +1,7 @@
 /*--------------------
 SCRIPT: ds_collar_updater_coordinator.lsl
 VERSION: 1.00
-REVISION: 4
+REVISION: 5
 PURPOSE: Autonomous update coordinator injected via llRemoteLoadScriptPin
 ARCHITECCTURE: Arrives RUNNING, orchestrates update, then triggers activator shim
 CHANGES:
@@ -43,9 +43,8 @@ backup_settings() {
     list all_keys = llLinksetDataListKeys(0, 1000);
     list acl_entries = [];
     integer i = 0;
-    integer len = llGetListLength(all_keys);
     
-    while (i < len) {
+    while (i < llGetListLength(all_keys)) {
         string ld_key = llList2String(all_keys, i);
         if (llSubStringIndex(ld_key, "acl_cache_") == 0) {
             string value = llLinksetDataRead(ld_key);

@@ -1,7 +1,7 @@
 /*--------------------
 PLUGIN: ds_collar_plugin_access.lsl
 VERSION: 1.00
-REVISION: 21
+REVISION: 22
 PURPOSE: Owner, trustee, and honorific management workflows
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
@@ -24,6 +24,9 @@ integer DIALOG_BUS = 950;
 string PLUGIN_CONTEXT = "core_owner";
 string PLUGIN_LABEL = "Access";
 integer PLUGIN_MIN_ACL = 2;
+
+/* -------------------- CONSTANTS -------------------- */
+integer MAX_NUMBERED_LIST_ITEMS = 11;  // 12 dialog buttons - 1 Back button
 
 /* -------------------- SETTINGS KEYS -------------------- */
 string KEY_MULTI_OWNER_MODE = "multi_owner_mode";
@@ -343,9 +346,8 @@ show_candidates(string context, string title, string prompt) {
     }
     
     list names = [];
-    integer i;
-    integer len = llGetListLength(CandidateKeys);
-    while (i < len && i < 11) {
+    integer i = 0;
+    while (i < llGetListLength(CandidateKeys) && i < MAX_NUMBERED_LIST_ITEMS) {
         names += [get_name((key)llList2String(CandidateKeys, i))];
         i++;
     }
@@ -405,10 +407,9 @@ show_remove_trustee() {
     }
     
     list names = [];
-    integer i;
-    integer len = llGetListLength(TrusteeKeys);
+    integer i = 0;
     integer hon_len = llGetListLength(TrusteeHonorifics);
-    while (i < len && i < 11) {
+    while (i < llGetListLength(TrusteeKeys) && i < MAX_NUMBERED_LIST_ITEMS) {
         string name = get_name((key)llList2String(TrusteeKeys, i));
         if (i < hon_len) {
             name += " (" + llList2String(TrusteeHonorifics, i) + ")";

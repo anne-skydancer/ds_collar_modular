@@ -1,7 +1,7 @@
 /*--------------------
 MODULE: ds_collar_kmod_ui.lsl
 VERSION: 1.00
-REVISION: 41
+REVISION: 42
 PURPOSE: Session management, ACL filtering, and plugin list orchestration
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
@@ -109,8 +109,7 @@ string get_msg_type(string msg) {
 // MEMORY OPTIMIZATION: Compact field validation helper
 integer validate_required_fields(string json_str, list field_names) {
     integer i = 0;
-    integer len = llGetListLength(field_names);
-    while (i < len) {
+    while (i < llGetListLength(field_names)) {
         string field = llList2String(field_names, i);
         if (!json_has(json_str, [field])) {
             return FALSE;
@@ -129,8 +128,7 @@ string generate_session_id(key user) {
 
 integer find_plugin_state_idx(string context) {
     integer i = 0;
-    integer len = llGetListLength(PluginStates);
-    while (i < len) {
+    while (i < llGetListLength(PluginStates)) {
         if (llList2String(PluginStates, i + PLUGIN_STATE_CONTEXT) == context) {
             return i;
         }
@@ -274,8 +272,7 @@ integer find_pending_acl_idx(key avatar_key) {
 
 integer find_session_idx(key user) {
     integer i = 0;
-    integer len = llGetListLength(Sessions);
-    while (i < len) {
+    while (i < llGetListLength(Sessions)) {
         if (llList2Key(Sessions, i + SESSION_USER) == user) {
             return i;
         }
@@ -360,9 +357,8 @@ create_session(key user, integer acl, integer is_blacklisted, string context_fil
     // Build filtered list based on ACL and context (SOS vs root)
     list filtered = [];
     integer i = 0;
-    integer len = llGetListLength(AllPlugins);
 
-    while (i < len) {
+    while (i < llGetListLength(AllPlugins)) {
         string context = llList2String(AllPlugins, i + PLUGIN_CONTEXT);
         string label = llList2String(AllPlugins, i + PLUGIN_LABEL);
         integer min_acl = llList2Integer(AllPlugins, i + PLUGIN_MIN_ACL);
@@ -469,8 +465,7 @@ apply_plugin_acl_list(string acl_json) {
             // OPTIMIZATION: Jump to next_acl after match (acts as break)
             // Each context appears at most once, so no need to continue searching
             integer j = 0;
-            integer len = llGetListLength(AllPlugins);
-            while (j < len) {
+            while (j < llGetListLength(AllPlugins)) {
                 if (llList2String(AllPlugins, j + PLUGIN_CONTEXT) == context) {
                     AllPlugins = llListReplaceList(AllPlugins, [min_acl], j + PLUGIN_MIN_ACL, j + PLUGIN_MIN_ACL);
                     jump next_acl;  // Break after match (each context is unique)
@@ -635,8 +630,7 @@ handle_button_click(key user, string button, string context) {
     if (context != "") {
         // Find plugin by context
         integer i = 0;
-        integer len = llGetListLength(AllPlugins);
-        while (i < len) {
+        while (i < llGetListLength(AllPlugins)) {
             if (llList2String(AllPlugins, i + PLUGIN_CONTEXT) == context) {
                 integer min_acl = llList2Integer(AllPlugins, i + PLUGIN_MIN_ACL);
                 integer user_acl = llList2Integer(Sessions, session_idx + SESSION_ACL);
@@ -666,9 +660,8 @@ handle_button_click(key user, string button, string context) {
 
 update_plugin_label(string context, string new_label) {
     integer i = 0;
-    integer len = llGetListLength(AllPlugins);
     
-    while (i < len) {
+    while (i < llGetListLength(AllPlugins)) {
         string all_context = llList2String(AllPlugins, i + PLUGIN_CONTEXT);
         if (all_context == context) {
             AllPlugins = llListReplaceList(AllPlugins, [new_label], i + PLUGIN_LABEL, i + PLUGIN_LABEL);
@@ -951,9 +944,8 @@ default
 
             // Record touch start time
             integer j = 0;
-            integer len = llGetListLength(TouchData);
 
-            while (j < len) {
+            while (j < llGetListLength(TouchData)) {
                 if (llList2Key(TouchData, j + TOUCH_DATA_KEY) == toucher) {
                     TouchData = llListReplaceList(TouchData, [llGetTime()], j + TOUCH_DATA_START_TIME, j + TOUCH_DATA_START_TIME);
                     jump recorded;
@@ -979,9 +971,8 @@ default
             key toucher = llDetectedKey(i);
 
             integer j = 0;
-            integer len = llGetListLength(TouchData);
 
-            while (j < len) {
+            while (j < llGetListLength(TouchData)) {
                 if (llList2Key(TouchData, j + TOUCH_DATA_KEY) == toucher) {
                     float start_time = llList2Float(TouchData, j + TOUCH_DATA_START_TIME);
                     float duration = llGetTime() - start_time;

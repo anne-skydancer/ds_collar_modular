@@ -1,7 +1,7 @@
 /*--------------------
 MODULE: ds_collar_kmod_particles.lsl
 VERSION: 1.00
-REVISION: 24
+REVISION: 25
 PURPOSE: Visual connection renderer with Lockmeister compatibility
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
@@ -78,7 +78,7 @@ close_lm_listen() {
 lm_ping() {
     if (!LmActive || LmController == NULL_KEY) return;
     
-    integer t = now();
+    integer t = llGetUnixTime();
     if ((t - LmLastPing) < LM_PING_INTERVAL) return;
     LmLastPing = t;
     

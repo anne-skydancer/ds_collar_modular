@@ -1,7 +1,7 @@
 /*--------------------
 MODULE: ds_collar_kmod_leash.lsl
 VERSION: 1.00
-REVISION: 26
+REVISION: 27
 PURPOSE: Leashing engine providing leash services to plugins
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
@@ -500,7 +500,7 @@ advanceHolderStateMachine() {
 checkLeasherPresence() {
     if (!Leashed || Leasher == NULL_KEY) return;
     
-    integer now_time = now();
+    integer now_time = llGetUnixTime();
     
     // Y2038 protection
     if (now_time < 0 || OffsimStartTime < 0) {
@@ -949,7 +949,7 @@ default
                 // Yank only works for current leasher (with rate limiting)
                 if (action == "yank") {
                     if (user == Leasher) {
-                        integer now_time = now();
+                        integer now_time = llGetUnixTime();
                         if ((now_time - LastYankTime) < YANK_COOLDOWN) {
                             integer wait_time = (integer)(YANK_COOLDOWN - (now_time - LastYankTime));
                             llRegionSayTo(user, 0, "Yank on cooldown. Wait " + (string)wait_time + "s.");

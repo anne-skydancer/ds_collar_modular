@@ -2,7 +2,7 @@
 /*--------------------
 MODULE: ds_collar_kmod_dialogs.lsl
 VERSION: 1.00
-REVISION: 22
+REVISION: 23
 PURPOSE: Centralized dialog management for shared listener handling
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
@@ -105,13 +105,12 @@ close_session(string session_id) {
 }
 
 prune_expired_sessions() {
-    integer now_unix = now();
     integer i = 0;
     
     while (i < llGetListLength(Sessions)) {
         integer timeout = llList2Integer(Sessions, i + SESSION_TIMEOUT);
         
-        if (timeout > 0 && now_unix >= timeout) {
+        if (timeout > 0 && now() >= timeout) {
             // Session expired, send timeout message
             string session_id = llList2String(Sessions, i + SESSION_ID);
             key user = llList2Key(Sessions, i + SESSION_USER);
@@ -169,8 +168,7 @@ integer get_next_channel() {
 
 integer find_button_config_idx(string context) {
     integer i = 0;
-    integer len = llGetListLength(ButtonConfigs);
-    while (i < len) {
+    while (i < llGetListLength(ButtonConfigs)) {
         if (llList2String(ButtonConfigs, i + BUTTON_CONTEXT) == context) {
             return i;
         }
@@ -235,8 +233,7 @@ handle_dialog_open(string msg) {
 
         // Resolve button labels from config+state and build mapping
         integer i = 0;
-        integer len = llGetListLength(button_data_list);
-        while (i < len) {
+        while (i < llGetListLength(button_data_list)) {
             string item = llList2String(button_data_list, i);
             string button_text = "";
             string button_context = "";
@@ -455,9 +452,8 @@ default
     listen(integer channel, string name, key id, string message) {
         // Find session for this channel
         integer i = 0;
-        integer len = llGetListLength(Sessions);
         
-        while (i < len) {
+        while (i < llGetListLength(Sessions)) {
             integer session_channel = llList2Integer(Sessions, i + SESSION_CHANNEL);
 
             if (session_channel == channel) {

@@ -1,7 +1,7 @@
 /*--------------------
 MODULE: ds_collar_kmod_bootstrap.lsl
 VERSION: 1.00
-REVISION: 27
+REVISION: 28
 PURPOSE: Startup coordination, RLV detection, owner name resolution
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
@@ -144,8 +144,7 @@ addProbeChannel(integer ch) {
 
 clearProbeChannels() {
     integer i = 0;
-    integer len = llGetListLength(RlvListenHandles);
-    while (i < len) {
+    while (i < llGetListLength(RlvListenHandles)) {
         integer handle = llList2Integer(RlvListenHandles, i);
         if (handle) llListenRemove(handle);
         i += 1;
@@ -156,8 +155,7 @@ clearProbeChannels() {
 
 sendRlvQueries() {
     integer i = 0;
-    integer len = llGetListLength(RlvChannels);
-    while (i < len) {
+    while (i < llGetListLength(RlvChannels)) {
         integer ch = llList2Integer(RlvChannels, i);
         llOwnerSay("@versionnew=" + (string)ch);
         i += 1;
@@ -271,7 +269,7 @@ apply_settings_sync(string msg) {
 
 // Process next queued display name request (rate-limited)
 process_next_name_request() {
-    integer current_time = now();
+    integer current_time = llGetUnixTime();
     if (current_time == 0) return;  // Overflow protection
 
     // Check if we have any pending requests
@@ -323,7 +321,7 @@ start_name_resolution() {
     PendingNameRequests = [];
     NextNameRequestTime = 0;
 
-    integer current_time = now();
+    integer current_time = llGetUnixTime();
     if (current_time > 0) {
         integer deadline = current_time + NAME_RESOLUTION_TIMEOUT_SEC;
         if (deadline > current_time) {
@@ -337,8 +335,7 @@ start_name_resolution() {
     if (MultiOwnerMode) {
         // Multi-owner: queue all owner keys for rate-limited requests
         integer i = 0;
-        integer len = llGetListLength(OwnerKeys);
-        while (i < len) {
+        while (i < llGetListLength(OwnerKeys)) {
             string owner_str = llList2String(OwnerKeys, i);
             key owner = (key)owner_str;
             if (owner != NULL_KEY) {
@@ -513,7 +510,7 @@ default
     }
     
     timer() {
-        integer current_time = now();
+        integer current_time = llGetUnixTime();
         if (current_time == 0) return; // Overflow protection
 
         // Handle RLV probe retries

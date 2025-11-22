@@ -1,7 +1,7 @@
 /*--------------------
 MODULE: ds_collar_kernel.lsl
 VERSION: 1.00
-REVISION: 35
+REVISION: 36
 PURPOSE: Plugin registry, lifecycle management, heartbeat monitoring
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
@@ -104,8 +104,7 @@ integer queue_add(string op_type, string context, string label, string script, i
     // Remove any existing queue entry for this context (newest operation wins)
     list new_queue = [];
     integer i = 0;
-    integer len = llGetListLength(RegistrationQueue);
-    while (i < len) {
+    while (i < llGetListLength(RegistrationQueue)) {
         string queued_context = llList2String(RegistrationQueue, i + QUEUE_CONTEXT);
         if (queued_context != context) {
             new_queue += llList2List(RegistrationQueue, i, i + QUEUE_STRIDE - 1);
@@ -144,10 +143,9 @@ integer process_queue() {
 
     integer changes_made = FALSE;
     integer i = 0;
-    integer len = llGetListLength(RegistrationQueue);
 
 
-    while (i < len) {
+    while (i < llGetListLength(RegistrationQueue)) {
         string op_type = llList2String(RegistrationQueue, i + QUEUE_OP_TYPE);
         string context = llList2String(RegistrationQueue, i + QUEUE_CONTEXT);
         string label = llList2String(RegistrationQueue, i + QUEUE_LABEL);
@@ -182,8 +180,7 @@ integer process_queue() {
 // Find plugin index in registry by context
 integer registry_find(string context) {
     integer i = 0;
-    integer len = llGetListLength(PluginRegistry);
-    while (i < len) {
+    while (i < llGetListLength(PluginRegistry)) {
         if (llList2String(PluginRegistry, i + REG_CONTEXT) == context) {
             return i;
         }
@@ -194,8 +191,7 @@ integer registry_find(string context) {
 
 integer registry_find_by_script(string script_name) {
     integer i = 0;
-    integer len = llGetListLength(PluginRegistry);
-    while (i < len) {
+    while (i < llGetListLength(PluginRegistry)) {
         if (llList2String(PluginRegistry, i + REG_SCRIPT) == script_name) {
             return i;
         }
@@ -209,7 +205,6 @@ integer registry_find_by_script(string script_name) {
 // Returns FALSE only if re-registering with identical UUID
 integer registry_upsert(string context, string label, string script, integer min_acl) {
     integer idx = registry_find(context);
-    integer now_unix = now();
 
     // Get script UUID - changes when script is recompiled/replaced
     // PERFORMANCE NOTE: llGetInventoryKey() is called on every upsert (intentional):
@@ -221,7 +216,7 @@ integer registry_upsert(string context, string label, string script, integer min
 
     if (idx == -1) {
         // New plugin - add to registry
-        PluginRegistry += [context, label, script, script_uuid, now_unix, min_acl];
+        PluginRegistry += [context, label, script, script_uuid, now(), min_acl];
         return TRUE;
     }
     else {
@@ -232,7 +227,7 @@ integer registry_upsert(string context, string label, string script, integer min
 
         // Update registry (timestamp and min_acl always update) - batched for performance
         PluginRegistry = llListReplaceList(PluginRegistry,
-            [label, script, script_uuid, now_unix, min_acl],
+            [label, script, script_uuid, now(), min_acl],
             idx + REG_LABEL,
             idx + REG_MIN_ACL);
 
@@ -257,8 +252,7 @@ integer registry_remove(string context) {
 integer update_last_seen(string context) {
     integer idx = registry_find(context);
     if (idx != -1) {
-        integer now_unix = now();
-        PluginRegistry = llListReplaceList(PluginRegistry, [now_unix], idx + REG_LAST_SEEN, idx + REG_LAST_SEEN);
+        PluginRegistry = llListReplaceList(PluginRegistry, [now()], idx + REG_LAST_SEEN, idx + REG_LAST_SEEN);
     }
 
     return 1;
@@ -266,7 +260,7 @@ integer update_last_seen(string context) {
 
 // Remove dead plugins (haven't responded to ping in PING_TIMEOUT_SEC)
 integer prune_dead_plugins() {
-    integer now_unix = now();
+    integer now_unix = llGetUnixTime();
     if (now_unix == 0) return 0; // Overflow protection
     
     integer cutoff = now_unix - PING_TIMEOUT_SEC;
@@ -276,9 +270,8 @@ integer prune_dead_plugins() {
     
     list new_registry = [];
     integer i = 0;
-    integer len = llGetListLength(PluginRegistry);
     
-    while (i < len) {
+    while (i < llGetListLength(PluginRegistry)) {
         integer last_seen = llList2Integer(PluginRegistry, i + REG_LAST_SEEN);
         
         if (last_seen >= cutoff) {
@@ -302,9 +295,8 @@ integer prune_missing_scripts() {
     list new_registry = [];
     integer pruned = 0;
     integer i = 0;
-    integer len = llGetListLength(PluginRegistry);
     
-    while (i < len) {
+    while (i < llGetListLength(PluginRegistry)) {
         string script = llList2String(PluginRegistry, i + REG_SCRIPT);
         
         if (llGetInventoryType(script) == INVENTORY_SCRIPT) {
@@ -387,9 +379,8 @@ broadcast_ping() {
 broadcast_plugin_list() {
     list plugins = [];
     integer i = 0;
-    integer len = llGetListLength(PluginRegistry);
 
-    while (i < len) {
+    while (i < llGetListLength(PluginRegistry)) {
         string context = llList2String(PluginRegistry, i + REG_CONTEXT);
         string label = llList2String(PluginRegistry, i + REG_LABEL);
 
@@ -570,9 +561,8 @@ handle_acl_registry_request() {
     // Send all ACL data from kernel's registry
 
     integer i = 0;
-    integer len = llGetListLength(PluginRegistry);
 
-    while (i < len) {
+    while (i < llGetListLength(PluginRegistry)) {
         string context = llList2String(PluginRegistry, i + REG_CONTEXT);
         integer min_acl = llList2Integer(PluginRegistry, i + REG_MIN_ACL);
 
@@ -622,8 +612,8 @@ default
     }
     
     timer() {
-        integer now_unix = now();
-        if (now_unix == 0) return; // Overflow protection
+        integer t = llGetUnixTime();
+        if (t == 0) return; // Overflow protection
 
         // DUAL-MODE TIMER: Batch mode (0.1s) or Heartbeat mode (5s)
         if (PendingBatchTimer) {
@@ -639,7 +629,7 @@ default
         }
         else {
             // Heartbeat mode: Periodic maintenance only
-            integer ping_elapsed = now_unix - LastPingUnix;
+            integer ping_elapsed = t - LastPingUnix;
             if (ping_elapsed < 0) ping_elapsed = 0; // Overflow protection
 
             if (ping_elapsed >= PING_INTERVAL_SEC) {
@@ -651,11 +641,11 @@ default
                     broadcast_plugin_list();
                 }
 
-                LastPingUnix = now_unix;
+                LastPingUnix = t;
             }
 
             // Periodic inventory sweep
-            integer inv_elapsed = now_unix - LastInvSweepUnix;
+            integer inv_elapsed = t - LastInvSweepUnix;
             if (inv_elapsed < 0) inv_elapsed = 0; // Overflow protection
 
             if (inv_elapsed >= INV_SWEEP_INTERVAL) {
@@ -665,17 +655,17 @@ default
                     broadcast_plugin_list();
                 }
 
-                LastInvSweepUnix = now_unix;
+                LastInvSweepUnix = t;
             }
 
             // Periodic active plugin discovery
-            integer discovery_elapsed = now_unix - LastDiscoveryUnix;
+            integer discovery_elapsed = t - LastDiscoveryUnix;
             if (discovery_elapsed < 0) discovery_elapsed = 0; // Overflow protection
 
             if (discovery_elapsed >= DISCOVERY_INTERVAL_SEC) {
                 // Discover new/changed plugins (triggers register_now if found)
                 discover_plugins();
-                LastDiscoveryUnix = now_unix;
+                LastDiscoveryUnix = t;
             }
         }
     }
