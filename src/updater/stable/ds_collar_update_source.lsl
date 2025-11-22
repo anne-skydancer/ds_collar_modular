@@ -1,5 +1,5 @@
 /*--------------------
-SCRIPT: ds_collar_updater_source.lsl
+SCRIPT: ds_collar_update_source.lsl
 VERSION: 1.00
 REVISION: 3
 PURPOSE: PIN-based update transmitter using llRemoteLoadScriptPin
