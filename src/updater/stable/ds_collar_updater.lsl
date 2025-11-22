@@ -1,15 +1,16 @@
 /*--------------------
-SCRIPT: ds_collar_updater_source.lsl
+SCRIPT: ds_collar_update_source.lsl
 VERSION: 1.00
-REVISION: 3
+REVISION: 4
 PURPOSE: PIN-based update transmitter using llRemoteLoadScriptPin
 ARCHITECTURE: Touch-activated, orchestrates complete update flow
 CHANGES:
+- Rev 4: Added object transfer support (control HUD, leash holder)
 - Rev 3: Updated for activator shim pattern
 - Coordinator injected first via PIN (arrives running)
-- Collar scripts transferred via llGiveInventory (arrive inactive)
+- Collar scripts and objects transferred via llGiveInventory (scripts arrive inactive)
 - Activator shim injected last via PIN (arrives running, activates scripts)
-- Three-phase update: coordinator → collar scripts → activator shim
+- Three-phase update: coordinator → collar items (scripts + objects) → activator shim
 --------------------*/
 
 /* -------------------- REMOTE PROTOCOL CHANNELS -------------------- */
@@ -28,7 +29,7 @@ integer ScriptPin = 0;
 list Manifest = [];  // [name, uuid, name, uuid, ...]
 integer MANIFEST_STRIDE = 2;
 integer TransferIndex = 0;
-integer TotalScripts = 0;
+integer TotalItems = 0;
 
 integer Updating = FALSE;
 
@@ -68,6 +69,16 @@ list scan_update_inventory() {
             name != "ds_collar_activator_shim") {
             manifest += [name, (string)uuid];
         }
+        i += 1;
+    }
+    
+    // Scan objects (control HUD, leash holder)
+    count = llGetInventoryNumber(INVENTORY_OBJECT);
+    i = 0;
+    while (i < count) {
+        string name = llGetInventoryName(INVENTORY_OBJECT, i);
+        key uuid = llGetInventoryKey(name);
+        manifest += [name, (string)uuid];
         i += 1;
     }
     
@@ -170,34 +181,42 @@ handle_coordinator_ready(string msg) {
     if (!json_has(msg, ["session"])) return;
     if (llJsonGetValue(msg, ["session"]) != SessionId) return;
     
-    llOwnerSay("Coordinator ready. Preparing manifest...");
-    
-    // Scan inventory
-    Manifest = scan_update_inventory();
-    TotalScripts = llGetListLength(Manifest) / MANIFEST_STRIDE;
-    
-    if (TotalScripts == 0) {
-        llOwnerSay("ERROR: No scripts to transfer!");
-        abort_update();
-        return;
+    // First coordinator_ready: send manifest
+    if (llGetListLength(Manifest) == 0) {
+        llOwnerSay("Coordinator ready. Preparing manifest...");
+        
+        // Scan inventory
+        Manifest = scan_update_inventory();
+        TotalItems = llGetListLength(Manifest) / MANIFEST_STRIDE;
+        
+        if (TotalItems == 0) {
+            llOwnerSay("ERROR: No items to transfer!");
+            abort_update();
+            return;
+        }
+        
+        // Send manifest to coordinator
+        string manifest_msg = llList2Json(JSON_OBJECT, [
+            "type", "begin_update",
+            "updater", (string)llGetKey(),
+            "session", SessionId,
+            "total", TotalItems
+        ]);
+        llRegionSayTo(CollarKey, SecureChannel, manifest_msg);
+        
+        llOwnerSay("Starting transfer of " + (string)TotalItems + " items...");
+        llSetTimerEvent(0.0);
+        
+        // Wait for coordinator to clear inventory and signal ready again
     }
-    
-    // Send manifest to coordinator
-    string manifest_msg = llList2Json(JSON_OBJECT, [
-        "type", "begin_update",
-        "updater", (string)llGetKey(),
-        "session", SessionId,
-        "total", TotalScripts
-    ]);
-    llRegionSayTo(CollarKey, SecureChannel, manifest_msg);
-    
-    llOwnerSay("Starting transfer of " + (string)TotalScripts + " scripts...");
-    llSetTimerEvent(0.0);
-    
-    // Wait for coordinator to clear inventory and signal ready
+    // Second coordinator_ready: start transfers
+    else {
+        llOwnerSay("Coordinator ready for content. Starting transfers...");
+        transfer_next_item();
+    }
 }
 
-handle_script_received(string msg) {
+handle_item_received(string msg) {
     if (!json_has(msg, ["session"])) return;
     if (llJsonGetValue(msg, ["session"]) != SessionId) return;
     if (!json_has(msg, ["count"])) return;
@@ -206,12 +225,12 @@ handle_script_received(string msg) {
     integer received = (integer)llJsonGetValue(msg, ["count"]);
     integer total = (integer)llJsonGetValue(msg, ["total"]);
     
-    llOwnerSay("Progress: " + (string)received + "/" + (string)total + " scripts");
+    llOwnerSay("Progress: " + (string)received + "/" + (string)total + " items");
     
-    // Transfer next script
+    // Transfer next item
     if (received < total) {
         llSleep(TRANSFER_DELAY);
-        transfer_next_script();
+        transfer_next_item();
     }
     // Note: Don't mark complete here - wait for ready_for_activator signal
 }
@@ -220,7 +239,7 @@ handle_ready_for_activator(string msg) {
     if (!json_has(msg, ["session"])) return;
     if (llJsonGetValue(msg, ["session"]) != SessionId) return;
     
-    llOwnerSay("All scripts transferred. Injecting activator...");
+    llOwnerSay("All items transferred. Injecting activator...");
     
     // Verify activator shim exists
     if (llGetInventoryType("ds_collar_activator_shim") != INVENTORY_SCRIPT) {
@@ -240,27 +259,27 @@ handle_ready_for_activator(string msg) {
     cleanup();
 }
 
-transfer_next_script() {
+transfer_next_item() {
     if (TransferIndex >= (llGetListLength(Manifest) / MANIFEST_STRIDE)) {
-        return;  // No more scripts
+        return;  // No more items
     }
     
-    string script_name = llList2String(Manifest, TransferIndex * MANIFEST_STRIDE);
-    key script_uuid = (key)llList2String(Manifest, (TransferIndex * MANIFEST_STRIDE) + 1);
+    string item_name = llList2String(Manifest, TransferIndex * MANIFEST_STRIDE);
+    key item_uuid = (key)llList2String(Manifest, (TransferIndex * MANIFEST_STRIDE) + 1);
     
-    llOwnerSay("Transferring: " + script_name);
+    llOwnerSay("Transferring: " + item_name);
     
-    // Notify coordinator script is coming
+    // Notify coordinator item is coming
     string notify = llList2Json(JSON_OBJECT, [
-        "type", "script_transfer",
+        "type", "item_transfer",
         "session", SessionId,
-        "name", script_name,
-        "uuid", (string)script_uuid
+        "name", item_name,
+        "uuid", (string)item_uuid
     ]);
     llRegionSayTo(CollarKey, SecureChannel, notify);
     
-    // Transfer script via llGiveInventory (arrives INACTIVE)
-    llGiveInventory(CollarKey, script_name);
+    // Transfer item via llGiveInventory (scripts arrive INACTIVE, objects arrive active)
+    llGiveInventory(CollarKey, item_name);
     
     TransferIndex += 1;
 }
@@ -347,8 +366,8 @@ default {
             if (msg_type == "coordinator_ready") {
                 handle_coordinator_ready(msg);
             }
-            else if (msg_type == "script_received") {
-                handle_script_received(msg);
+            else if (msg_type == "item_received") {
+                handle_item_received(msg);
             }
             else if (msg_type == "ready_for_activator") {
                 handle_ready_for_activator(msg);

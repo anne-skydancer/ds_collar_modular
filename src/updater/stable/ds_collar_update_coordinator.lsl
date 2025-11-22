@@ -1,10 +1,12 @@
 /*--------------------
 SCRIPT: ds_collar_update_coordinator.lsl
 VERSION: 1.00
-REVISION: 5
+REVISION: 6
 PURPOSE: Autonomous update coordinator injected via llRemoteLoadScriptPin
 ARCHITECCTURE: Arrives RUNNING, orchestrates update, then triggers activator shim
 CHANGES:
+- Rev 6: Added support for object transfers (control HUD, leash holder)
+- Rev 5: Removed unnecessary len variable optimizations
 - Rev 4: Simplified flow - backs up settings, clears inventory, signals updater for activator shim injection
 - Activator shim (injected last) handles script activation and settings restoration
 - Coordinator self-destructs after triggering activator injection
@@ -19,9 +21,9 @@ integer SETTINGS_BUS = 800;
 integer SecureChannel = 0;
 key UpdaterKey = NULL_KEY;
 string UpdateSession = "";
-integer ExpectedScripts = 0;
-integer ReceivedScripts = 0;
-list ScriptInventory = [];  // Track what we receive
+integer ExpectedItems = 0;
+integer ReceivedItems = 0;
+list ItemInventory = [];  // Track what we receive
 
 /* -------------------- HELPERS -------------------- */
 
@@ -93,6 +95,16 @@ clear_inventory() {
         i += 1;
     }
     
+    // Remove all objects (except those we're about to receive)
+    count = llGetInventoryNumber(INVENTORY_OBJECT);
+    i = 0;
+    while (i < count) {
+        string obj_name = llGetInventoryName(INVENTORY_OBJECT, i);
+        llRemoveInventory(obj_name);
+        removed += 1;
+        i += 1;
+    }
+    
     signal_ready_for_content();
 }
 
@@ -106,35 +118,37 @@ signal_ready_for_content() {
     llRegionSayTo(UpdaterKey, SecureChannel, msg);
 }
 
-/* -------------------- SCRIPT RECEPTION -------------------- */
+/* -------------------- ITEM RECEPTION -------------------- */
 
-handle_script_transfer(string message) {
+handle_item_transfer(string message) {
     if (!json_has(message, ["name"])) return;
     
-    string script_name = llJsonGetValue(message, ["name"]);
+    string item_name = llJsonGetValue(message, ["name"]);
     
-    // Wait for script to settle in inventory
+    // Wait for item to settle in inventory
     llSleep(0.5);
     
-    if (llGetInventoryType(script_name) != INVENTORY_SCRIPT) {
-        return;
+    // Track item (scripts or objects)
+    integer item_type = llGetInventoryType(item_name);
+    if (item_type != INVENTORY_SCRIPT && item_type != INVENTORY_OBJECT) {
+        return;  // Unknown type
     }
     
-    ScriptInventory += [script_name];
-    ReceivedScripts += 1;
+    ItemInventory += [item_name];
+    ReceivedItems += 1;
     
     // Acknowledge receipt
     string ack = llList2Json(JSON_OBJECT, [
-        "type", "script_received",
-        "name", script_name,
+        "type", "item_received",
+        "name", item_name,
         "session", UpdateSession,
-        "count", (string)ReceivedScripts,
-        "total", (string)ExpectedScripts
+        "count", (string)ReceivedItems,
+        "total", (string)ExpectedItems
     ]);
     llRegionSayTo(UpdaterKey, SecureChannel, ack);
     
     // Check if complete
-    if (ReceivedScripts >= ExpectedScripts) {
+    if (ReceivedItems >= ExpectedItems) {
         finalize_update();
     }
 }
@@ -155,7 +169,7 @@ trigger_activator() {
 finalize_update() {
     llSetTimerEvent(0.0);  // Stop timer
     
-    llOwnerSay("All scripts received. Preparing for activation...");
+    llOwnerSay("All items received. Preparing for activation...");
     
     // Signal updater to inject activator shim
     trigger_activator();
@@ -219,7 +233,7 @@ default {
             
             UpdaterKey = (key)llJsonGetValue(message, ["updater"]);
             UpdateSession = llJsonGetValue(message, ["session"]);
-            ExpectedScripts = (integer)llJsonGetValue(message, ["total"]);
+            ExpectedItems = (integer)llJsonGetValue(message, ["total"]);
             
             // Begin update process
             backup_settings();
@@ -227,10 +241,10 @@ default {
             return;
         }
         
-        // Script transfer notification
-        if (msg_type == "script_transfer") {
+        // Item transfer notification
+        if (msg_type == "item_transfer") {
             if (llJsonGetValue(message, ["session"]) != UpdateSession) return;
-            handle_script_transfer(message);
+            handle_item_transfer(message);
             return;
         }
         
