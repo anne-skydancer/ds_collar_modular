@@ -1,10 +1,11 @@
 /*--------------------
 SCRIPT: ds_collar_update.lsl
 VERSION: 1.00
-REVISION: 4
+REVISION: 5
 PURPOSE: PIN-based update transmitter using llRemoteLoadScriptPin
 ARCHITECTURE: Touch-activated, orchestrates complete update flow
 CHANGES:
+- Rev 5: Fixed root prim targeting, owner/wearer validation, duplicate response handling
 - Rev 4: Added object transfer support (control HUD, leash holder)
 - Rev 3: Updated for activator shim pattern
 - Coordinator injected first via PIN (arrives running)
@@ -105,22 +106,65 @@ send_update_discover() {
 /* -------------------- MESSAGE HANDLING -------------------- */
 
 handle_collar_ready(string msg) {
-    if (!json_has(msg, ["collar"])) return;
-    if (!json_has(msg, ["pin"])) return;
-    if (!json_has(msg, ["session"])) return;
+    llOwnerSay("DEBUG: handle_collar_ready called");
+    if (!json_has(msg, ["collar"])) {
+        llOwnerSay("DEBUG: Missing collar field");
+        return;
+    }
+    if (!json_has(msg, ["pin"])) {
+        llOwnerSay("DEBUG: Missing pin field");
+        return;
+    }
+    if (!json_has(msg, ["session"])) {
+        llOwnerSay("DEBUG: Missing session field");
+        return;
+    }
     
-    if (llJsonGetValue(msg, ["session"]) != SessionId) return;
+    string msg_session = llJsonGetValue(msg, ["session"]);
+    llOwnerSay("DEBUG: Message session: " + msg_session + ", Expected: " + SessionId);
+    if (msg_session != SessionId) return;
     
+    // Guard: Only process first valid collar response
+    if (CollarKey != NULL_KEY) {
+        llOwnerSay("DEBUG: Already have CollarKey, ignoring duplicate");
+        return;
+    }
+    
+    llOwnerSay("DEBUG: Processing collar response");
     key detected_collar = (key)llJsonGetValue(msg, ["collar"]);
     
-    // Validate it's the wearer's collar
+    // Validate it's the wearer's collar and get ROOT prim
     list details = llGetObjectDetails(detected_collar, [OBJECT_ROOT]);
-    if (llGetListLength(details) == 0) return;
+    if (llGetListLength(details) == 0) {
+        llOwnerSay("DEBUG: Failed to get object details");
+        return;
+    }
     
     key root = llList2Key(details, 0);
-    list avatar_details = llGetObjectDetails(root, [OBJECT_ATTACHED_POINT]);
-    if (llGetListLength(avatar_details) == 0 || llList2Integer(avatar_details, 0) == 0) {
-        return;  // Not an attachment
+    llOwnerSay("DEBUG: Got root prim: " + (string)root);
+    
+    // CRITICAL: Verify collar is either worn by toucher OR owned by toucher
+    list collar_details = llGetObjectDetails(root, [OBJECT_ATTACHED_POINT, OBJECT_OWNER]);
+    if (llGetListLength(collar_details) < 2) return;
+    
+    integer attach_point = llList2Integer(collar_details, 0);
+    key collar_owner = llList2Key(collar_details, 1);
+    
+    if (attach_point > 0) {
+        // Worn: verify wearer is toucher
+        if (collar_owner != Wearer) {
+            llRegionSayTo(Wearer, 0, "Cannot update: collar not worn by you.");
+            cleanup();
+            return;
+        }
+    }
+    else {
+        // Rezzed: verify owner is toucher
+        if (collar_owner != Wearer) {
+            llRegionSayTo(Wearer, 0, "Cannot update: collar not owned by you.");
+            cleanup();
+            return;
+        }
     }
     
     // CRITICAL: Verify this is an UPDATE scenario, not INSTALL
@@ -142,7 +186,8 @@ handle_collar_ready(string msg) {
         return;
     }
     
-    CollarKey = detected_collar;
+    // CRITICAL: Use ROOT prim key, not child prim
+    CollarKey = root;
     ScriptPin = (integer)llJsonGetValue(msg, ["pin"]);
     
     llOwnerSay("Collar found and ready for update!");
@@ -354,6 +399,7 @@ default {
         if (!Updating) return;
         
         string msg_type = llJsonGetValue(msg, ["type"]);
+        llOwnerSay("DEBUG: Received message type: " + msg_type + " on channel: " + (string)channel);
         
         if (channel == EXTERNAL_ACL_REPLY_CHAN) {
             // Collar ready with PIN

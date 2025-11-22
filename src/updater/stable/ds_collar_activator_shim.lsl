@@ -1,11 +1,12 @@
 /*--------------------
 SCRIPT: ds_collar_activator_shim.lsl
 VERSION: 1.00
-REVISION: 2
+REVISION: 3
 PURPOSE: Script activation shim for hot-swap updates
 USAGE: Transferred during update, activates new scripts and restores settings
 ARCHITECTURE: Lightweight shim that runs after coordinator
 CHANGES:
+- Rev 3: Updated guard to check for ds_collar_update instead of ds_collar_updater
 - Rev 2: Redesigned to activate all scripts and restore settings from linkset data
 - Reads SETTINGS.UPDATE from linkset data
 - Activates all scripts except self
@@ -129,7 +130,7 @@ default {
         // Dual check: object name contains "updater" OR presence of updater script
         string object_name = llToLower(llGetObjectName());
         integer in_updater_object = (llSubStringIndex(object_name, "updater") != -1);
-        integer has_updater_script = (llGetInventoryType("ds_collar_updater") == INVENTORY_SCRIPT);
+        integer has_updater_script = (llGetInventoryType("ds_collar_update") == INVENTORY_SCRIPT || llGetInventoryType("ds_collar_update_source") == INVENTORY_SCRIPT);
         
         if (in_updater_object || has_updater_script) {
             // We're in an updater object - stay dormant

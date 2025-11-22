@@ -1,15 +1,18 @@
 /*--------------------
 SCRIPT: ds_collar_update_coordinator.lsl
 VERSION: 1.00
-REVISION: 6
+REVISION: 8
 PURPOSE: Autonomous update coordinator injected via llRemoteLoadScriptPin
 ARCHITECCTURE: Arrives RUNNING, orchestrates update, then triggers activator shim
 CHANGES:
+- Rev 8: Coordinator stays dormant in updater inventory (SecureChannel == 0)
+  When injected via PIN into collar, activates and self-destructs from collar when done
+- Rev 7: Fixed missing initial coordinator_ready signal after injection
 - Rev 6: Added support for object transfers (control HUD, leash holder)
 - Rev 5: Removed unnecessary len variable optimizations
 - Rev 4: Simplified flow - backs up settings, clears inventory, signals updater for activator shim injection
 - Activator shim (injected last) handles script activation and settings restoration
-- Coordinator self-destructs after triggering activator injection
+- Coordinator self-destructs from COLLAR after triggering activator injection
 - No script activation or settings restoration in coordinator
 --------------------*/
 
@@ -204,16 +207,36 @@ abort_update(string reason) {
 
 default {
     state_entry() {
-        // Get secure channel from start parameter (passed by llRemoteLoadScriptPin)
-        SecureChannel = llGetStartParameter();
+        // Guard: Check if we're in an updater object (stay dormant if so)
+        string object_name = llToLower(llGetObjectName());
+        integer in_updater_object = (llSubStringIndex(object_name, "updater") != -1);
+        integer has_updater_script = (llGetInventoryType("ds_collar_update") == INVENTORY_SCRIPT || llGetInventoryType("ds_collar_update_source") == INVENTORY_SCRIPT);
         
-        if (SecureChannel == 0) {
-            llRemoveInventory(llGetScriptName());
+        if (in_updater_object || has_updater_script) {
+            // We're in an updater object - stay dormant
             return;
         }
         
+        // Get secure channel from start parameter (passed by llRemoteLoadScriptPin)
+        SecureChannel = llGetStartParameter();
+        
+        // If not injected via PIN (SecureChannel == 0), remain dormant
+        if (SecureChannel == 0) {
+            return;  // Stay dormant
+        }
+        
+        // Injected into collar via PIN - activate
+        
         // Listen on secure channel for updater instructions
         llListen(SecureChannel, "", NULL_KEY, "");
+        
+        // Signal updater that we're ready for manifest
+        // (We don't know UpdaterKey or UpdateSession yet, so use llRegionSay)
+        string ready_msg = llList2Json(JSON_OBJECT, [
+            "type", "coordinator_ready",
+            "session", ""  // Will be set when we receive begin_update
+        ]);
+        llRegionSay(SecureChannel, ready_msg);
         
         // Start timeout timer (5 minutes)
         llSetTimerEvent(300.0);

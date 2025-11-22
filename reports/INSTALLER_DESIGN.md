@@ -51,7 +51,7 @@ A self-contained update system where the wearer **touches an updater object**, w
 
 1. **Updater Object** (Donor/Source)
    - Separate rezzed object (box, sphere, etc.) containing update package
-   - Contains `ds_collar_updater_source.lsl` (transmitter script)
+   - Contains `ds_collar_update_source.lsl` (transmitter script)
    - Contains all new scripts, animations, objects, notecards
    - Wearer touches updater to initiate update
    - Communicates on existing remote listener channels (not inventory drops)
@@ -561,7 +561,7 @@ Confirmation from receiver, triggers cleanup.
 
 1. **Prepare Updater Object**
    - Create or rez updater object (box, sphere, or any shape)
-   - Add `ds_collar_updater_source.lsl` script
+   - Add `ds_collar_update_source.lsl` script
    - Add all new scripts, animations, objects, notecards
    - Position updater where wearer can touch it
 
@@ -804,7 +804,7 @@ Optional enhancement: Allow user to choose what to transfer
   - [x] No version checking - trust user intent
 
 #### Phase 2: Updater Source
-- [x] Create `ds_collar_updater_source.lsl` (Rev 2)
+- [x] Create `ds_collar_update_source.lsl` (Rev 2)
   - [x] Handle touch events with owner validation
   - [x] Scan updater inventory for scripts to transfer
   - [x] Broadcast `update_discover` on channel `-8675309`
@@ -817,7 +817,7 @@ Optional enhancement: Allow user to choose what to transfer
   - [x] Handle completion and cleanup
 
 #### Phase 3: Autonomous Coordinator
-- [x] Create `ds_collar_updater_coordinator.lsl` (Rev 3)
+- [x] Create `ds_collar_update_coordinator.lsl` (Rev 3)
   - [x] Injected via llRemoteLoadScriptPin with running=TRUE
   - [x] Arrives running, manages entire update autonomously
   - [x] Backs up settings to linkset data
@@ -1138,7 +1138,7 @@ atomic_swap_script(string old_name, string new_name) {
 **Better Approach**: Use a dedicated **coordinator script** for the swap:
 
 ```
-ds_collar_updater_coordinator.lsl (temporary script)
+ds_collar_update_coordinator.lsl (temporary script)
 
 Responsibilities:
 1. Transferred as part of update package
@@ -1165,7 +1165,7 @@ Responsibilities:
 │  Phase 2: Transfer New Scripts                              │
 ├─────────────────────────────────────────────────────────────┤
 │  1. Transfer all new scripts with ".update" suffix          │
-│  2. Transfer ds_collar_updater_coordinator.lsl              │
+│  2. Transfer ds_collar_update_coordinator.lsl               │
 │  3. Coordinator script starts automatically                 │
 │  4. All scripts present: old (running) + new (dormant)      │
 └─────────────────────────────────────────────────────────────┘

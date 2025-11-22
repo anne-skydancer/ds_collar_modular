@@ -1,10 +1,11 @@
 /*--------------------
 SCRIPT: ds_collar_update.lsl
 VERSION: 1.00
-REVISION: 3
+REVISION: 4
 PURPOSE: PIN-based update transmitter using llRemoteLoadScriptPin
 ARCHITECTURE: Touch-activated, orchestrates complete update flow
 CHANGES:
+- Rev 4: Fixed root prim targeting, owner/wearer validation, duplicate response handling
 - Rev 3: Updated for activator shim pattern
 - Coordinator injected first via PIN (arrives running)
 - Collar scripts transferred via llGiveInventory (arrive inactive)
@@ -100,16 +101,39 @@ handle_collar_ready(string msg) {
     
     if (llJsonGetValue(msg, ["session"]) != SessionId) return;
     
+    // Guard: Only process first valid collar response
+    if (CollarKey != NULL_KEY) return;
+    
     key detected_collar = (key)llJsonGetValue(msg, ["collar"]);
     
-    // Validate it's the wearer's collar
+    // Validate it's the wearer's collar and get ROOT prim
     list details = llGetObjectDetails(detected_collar, [OBJECT_ROOT]);
     if (llGetListLength(details) == 0) return;
     
     key root = llList2Key(details, 0);
-    list avatar_details = llGetObjectDetails(root, [OBJECT_ATTACHED_POINT]);
-    if (llGetListLength(avatar_details) == 0 || llList2Integer(avatar_details, 0) == 0) {
-        return;  // Not an attachment
+    
+    // CRITICAL: Verify collar is either worn by toucher OR owned by toucher
+    list collar_details = llGetObjectDetails(root, [OBJECT_ATTACHED_POINT, OBJECT_OWNER]);
+    if (llGetListLength(collar_details) < 2) return;
+    
+    integer attach_point = llList2Integer(collar_details, 0);
+    key collar_owner = llList2Key(collar_details, 1);
+    
+    if (attach_point > 0) {
+        // Worn: verify wearer is toucher
+        if (collar_owner != Wearer) {
+            llRegionSayTo(Wearer, 0, "Cannot update: collar not worn by you.");
+            cleanup();
+            return;
+        }
+    }
+    else {
+        // Rezzed: verify owner is toucher
+        if (collar_owner != Wearer) {
+            llRegionSayTo(Wearer, 0, "Cannot update: collar not owned by you.");
+            cleanup();
+            return;
+        }
     }
     
     // CRITICAL: Verify this is an UPDATE scenario, not INSTALL
@@ -131,7 +155,8 @@ handle_collar_ready(string msg) {
         return;
     }
     
-    CollarKey = detected_collar;
+    // CRITICAL: Use ROOT prim key, not child prim
+    CollarKey = root;
     ScriptPin = (integer)llJsonGetValue(msg, ["pin"]);
     
     llOwnerSay("Collar found and ready for update!");

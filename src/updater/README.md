@@ -36,8 +36,8 @@ Two separate systems are provided:
 ## System 2: In-Place Update
 
 ### Scripts
-- `ds_collar_updater_source.lsl` - Updater script (goes in updater object)
-- `ds_collar_updater_coordinator.lsl` - Coordinator script (transferred during update)
+- `ds_collar_update_source.lsl` - Updater script (goes in updater object)
+- `ds_collar_update_coordinator.lsl` - Coordinator script (transferred during update)
 - `ds_collar_activator_shim.lsl` - Activation shim (transferred during update)
 - **Note**: Uses existing `ds_collar_kmod_remote.lsl` in collar (no new module needed)
 
@@ -50,7 +50,7 @@ The in-place update system leverages the existing remote listener module (`ds_co
 The updater simply sends `update_discover` messages on these existing channels, and the collar's remote module will respond with `collar_present`. No additional scripts need to be dropped into the collar for updates to work.
 
 ### Usage
-1. Drop `ds_collar_updater_source.lsl`, `ds_collar_updater_coordinator.lsl`, and `ds_collar_activator_shim.lsl` into updater object
+1. Drop `ds_collar_update_source.lsl`, `ds_collar_update_coordinator.lsl`, and `ds_collar_activator_shim.lsl` into updater object
 2. Add all updated collar scripts to updater object (kernels, modules, plugins)
 3. Ensure target collar has `ds_collar_kmod_remote.lsl` module (standard in all collars)
 4. Wear the collar (can be locked or RLV-restricted)
@@ -105,8 +105,8 @@ All scripts validated with lslint:
 ```
 ds_collar_receiver.lsl:              0 errors, 0 warnings
 ds_collar_installer.lsl:             0 errors, 0 warnings
-ds_collar_updater_source.lsl:        0 errors, 0 warnings
-ds_collar_updater_coordinator.lsl:   0 errors, 1 warning (benign)
+ds_collar_update_source.lsl:         0 errors, 0 warnings
+ds_collar_update_coordinator.lsl:    0 errors, 1 warning (benign)
 ds_collar_kmod_update.lsl:           0 errors, 1 warning (benign)
 ```
 
