@@ -1,8 +1,7 @@
-
 /*--------------------
 MODULE: ds_collar_kmod_dialogs.lsl
 VERSION: 1.00
-REVISION: 23
+REVISION: 24
 PURPOSE: Centralized dialog management for shared listener handling
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
@@ -19,7 +18,7 @@ integer KERNEL_LIFECYCLE = 500;
 integer DIALOG_BUS = 950;
 
 /* -------------------- CONSTANTS -------------------- */
-integer CHANNEL_BASE = (integer)-8E07;
+float CHANNEL_BASE = -8E07;
 integer SESSION_MAX = 10;  // Maximum concurrent sessions
 
 /* Session list stride: [session_id, user_key, channel, listen_handle, timeout_unix, button_map] */
@@ -132,7 +131,7 @@ prune_expired_sessions() {
 }
 
 integer get_next_channel() {
-    integer channel = CHANNEL_BASE - NextChannelOffset;
+    integer channel = (integer)CHANNEL_BASE - NextChannelOffset;
     NextChannelOffset += 1;
     if (NextChannelOffset > 1000000) NextChannelOffset = 1;
     return channel;
