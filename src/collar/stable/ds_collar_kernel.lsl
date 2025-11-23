@@ -1,7 +1,7 @@
 /*--------------------
 MODULE: ds_collar_kernel.lsl
 VERSION: 1.00
-REVISION: 36
+REVISION: 38
 PURPOSE: Plugin registry, lifecycle management, heartbeat monitoring
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
@@ -42,7 +42,7 @@ integer QUEUE_SCRIPT = 3;
 integer QUEUE_MIN_ACL = 4;    // Stored for auth module recovery (not used for decisions)
 
 /* Authorized senders for privileged operations */
-list AUTHORIZED_RESET_SENDERS = ["bootstrap", "maintenance", "coordinator"];
+list AUTHORIZED_RESET_SENDERS = ["bootstrap", "maintenance", "coordinator", "activator"];
 
 /* -------------------- STATE -------------------- */
 list PluginRegistry = [];           // Active plugin registry
