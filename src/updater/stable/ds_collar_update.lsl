@@ -1,10 +1,16 @@
 /*--------------------
 SCRIPT: ds_collar_update.lsl
 VERSION: 1.00
-REVISION: 6
+REVISION: 10
 PURPOSE: Unified installer and updater with automatic mode detection
 ARCHITECTURE: Touch → query kmod_remote → auto-select Install or Update mode
 CHANGES:
+- Rev 10: Included ds_collar_kmod_remote in update manifest to ensure restoration
+- Rev 10: Changed install mode to give "Collar Receiver" object instead of script
+- Rev 10: Explicitly excluded ds_collar_receiver from update manifest
+- Rev 9: Added installer timeout - fail gracefully if installer script doesn't respond
+- Rev 8: Exclude ds_collar_kmod_remote from manifest (only needed for injection, not operation)
+- Rev 7: Added animations to manifest, fixed llGiveInventory to use root prim (CollarKey)
 - Rev 6: Auto-detect mode based on kmod_remote presence
   - Touch sends query to kmod_remote on EXTERNAL_ACL_QUERY_CHAN
   - Response received = Update mode (existing collar with kmod_remote)
@@ -18,7 +24,6 @@ CHANGES:
 /* -------------------- REMOTE PROTOCOL CHANNELS -------------------- */
 integer EXTERNAL_ACL_QUERY_CHAN = -8675309;  // Update discovery
 integer EXTERNAL_ACL_REPLY_CHAN = -8675310;  // Collar responses
-integer INSTALL_CHANNEL = -87654321;          // Installation protocol
 
 /* -------------------- STATE -------------------- */
 // Mode detection
@@ -71,20 +76,32 @@ list scan_update_inventory() {
     list manifest = [];
     string script_name = llGetScriptName();
     
-    // Scan all collar scripts (exclude updater/installer scripts)
+    // Scan all collar scripts (exclude updater/installer scripts and kmod_remote)
     integer count = llGetInventoryNumber(INVENTORY_SCRIPT);
     integer i = 0;
     while (i < count) {
         string name = llGetInventoryName(INVENTORY_SCRIPT, i);
         key uuid = llGetInventoryKey(name);
         
-        // Skip: self, installer, coordinator, activator shim
+        // Skip: self, installer, coordinator, activator shim, receiver
+        // Note: ds_collar_kmod_remote MUST be included so it is restored in the collar
         if (name != script_name && 
             name != "ds_collar_installer" &&
             name != "ds_collar_update_coordinator" && 
-            name != "ds_collar_activator_shim") {
+            name != "ds_collar_activator_shim" &&
+            name != "ds_collar_receiver") {
             manifest += [name, (string)uuid];
         }
+        i += 1;
+    }
+    
+    // Scan animations
+    count = llGetInventoryNumber(INVENTORY_ANIMATION);
+    i = 0;
+    while (i < count) {
+        string name = llGetInventoryName(INVENTORY_ANIMATION, i);
+        key uuid = llGetInventoryKey(name);
+        manifest += [name, (string)uuid];
         i += 1;
     }
     
@@ -366,7 +383,8 @@ transfer_next_item() {
     ]);
     llRegionSayTo(CollarKey, SecureChannel, notify);
     
-    // Transfer item via llGiveInventory (scripts arrive INACTIVE, objects arrive active)
+    // Transfer item to ROOT PRIM of collar (CollarKey is already root)
+    // Scripts arrive INACTIVE, objects/anims arrive active
     llGiveInventory(CollarKey, item_name);
     
     TransferIndex += 1;
@@ -480,15 +498,29 @@ default {
             // Give Collar Receiver object to user
             if (llGetInventoryType("Collar Receiver") == INVENTORY_OBJECT) {
                 llGiveInventory(Wearer, "Collar Receiver");
-                llRegionSayTo(Wearer, 0, "Collar Receiver object given. Rez it near the empty collar and wait...");
+                llRegionSayTo(Wearer, 0, "Collar Receiver object given. Please open it, extract the 'ds_collar_receiver' script, and drop it into the empty collar.");
             }
             else {
                 llOwnerSay("ERROR: Collar Receiver object not found in inventory!");
+                cleanup();
+                return;
             }
             
             // Wake up installer script and let it proceed automatically
             Installing = TRUE;
             llMessageLinked(LINK_THIS, 1, "start_install", Wearer);
+            
+            // Set timeout for installer response (300 seconds / 5 minutes)
+            // This covers user setup time + installation time
+            llSetTimerEvent(300.0);
+            return;
+        }
+        
+        // Install mode timeout - installer didn't respond
+        if (Installing) {
+            llOwnerSay("ERROR: Installer timeout - process took too long.");
+            llRegionSayTo(Wearer, 0, "Installation failed or timed out. Please try again.");
+            cleanup();
             return;
         }
         

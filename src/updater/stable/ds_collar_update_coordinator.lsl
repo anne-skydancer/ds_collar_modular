@@ -1,10 +1,19 @@
 /*--------------------
 SCRIPT: ds_collar_update_coordinator.lsl
 VERSION: 1.00
-REVISION: 8
+REVISION: 15
 PURPOSE: Autonomous update coordinator injected via llRemoteLoadScriptPin
-ARCHITECCTURE: Arrives RUNNING, orchestrates update, then triggers activator shim
+ARCHITECTURE: Arrives RUNNING, orchestrates update, then triggers activator shim
 CHANGES:
+- Rev 15: Fixed self-destruct on rez/reset (added on_rez and guarded changed event)
+- Rev 15: Fixed ACL backup format to match activator expectations (JSON object with keys/values)
+- Rev 14: Don't self-destruct in abort_update() unless actually injected (prevents deletion from updater)
+- Rev 13: Store expected item count in linkset data for activator verification
+- Rev 12: Only accept negative start params as SecureChannel (distinguish injection from object rez)
+- Rev 11: Simplified dormancy check - only check SecureChannel (if 0, we're in updater not injected)
+- Rev 10: Delete kmod_remote immediately (only needed for injection), fix item count (script_count - 1)
+- Rev 9: Build deletion lists BEFORE removing any items to avoid "Missing inventory item" errors
+  Increased sleep to 3.0s to ensure kernel fully initializes before deletion
 - Rev 8: Coordinator stays dormant in updater inventory (SecureChannel == 0)
   When injected via PIN into collar, activates and self-destructs from collar when done
 - Rev 7: Fixed missing initial coordinator_ready signal after injection
@@ -26,7 +35,6 @@ key UpdaterKey = NULL_KEY;
 string UpdateSession = "";
 integer ExpectedItems = 0;
 integer ReceivedItems = 0;
-list ItemInventory = [];  // Track what we receive
 
 /* -------------------- HELPERS -------------------- */
 
@@ -46,21 +54,26 @@ backup_settings() {
     
     // Backup ACL cache from linkset data
     list all_keys = llLinksetDataListKeys(0, 1000);
-    list acl_entries = [];
+    list acl_keys = [];
+    list acl_values = [];
     integer i = 0;
     
     while (i < llGetListLength(all_keys)) {
         string ld_key = llList2String(all_keys, i);
         if (llSubStringIndex(ld_key, "acl_cache_") == 0) {
             string value = llLinksetDataRead(ld_key);
-            acl_entries += [ld_key, value];
+            acl_keys += [ld_key];
+            acl_values += [value];
         }
         i += 1;
     }
     
-    // Store ACL backup as JSON array
-    if (llGetListLength(acl_entries) > 0) {
-        string acl_json = llList2Json(JSON_ARRAY, acl_entries);
+    // Store ACL backup as JSON object with keys/values arrays
+    if (llGetListLength(acl_keys) > 0) {
+        string acl_json = llList2Json(JSON_OBJECT, [
+            "keys", llList2Json(JSON_ARRAY, acl_keys),
+            "values", llList2Json(JSON_ARRAY, acl_values)
+        ]);
         llLinksetDataWrite("ACL.UPDATE", acl_json);
     }
 }
@@ -72,37 +85,63 @@ clear_inventory() {
     string msg = llList2Json(JSON_OBJECT, ["type", "soft_reset_all", "from", "coordinator"]);
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, msg, NULL_KEY);
     
-    llSleep(2.0);  // Give scripts time to reset and stop
+    llSleep(3.0);  // Give scripts time to reset and stop (increased for kernel init)
     
-    // Remove all scripts except self and kmod_remote
-    // Use reverse loop to avoid index shifting issues
+    // Build list of items to remove FIRST (before any deletion)
+    list scripts_to_remove = [];
+    list anims_to_remove = [];
+    list objects_to_remove = [];
+    
+    // Collect script names (including kmod_remote - no longer needed)
     integer count = llGetInventoryNumber(INVENTORY_SCRIPT);
-    integer i = count - 1;
-    
-    while (i >= 0) {
+    integer i = 0;
+    while (i < count) {
         string script_name = llGetInventoryName(INVENTORY_SCRIPT, i);
-        if (script_name != llGetScriptName() && script_name != "ds_collar_kmod_remote") {
-            llRemoveInventory(script_name);
+        if (script_name != "" && script_name != llGetScriptName()) {
+            scripts_to_remove += [script_name];
         }
-        i -= 1;
+        i += 1;
     }
     
-    // Remove all animations (reverse loop)
+    // Collect animation names
     count = llGetInventoryNumber(INVENTORY_ANIMATION);
-    i = count - 1;
-    while (i >= 0) {
+    i = 0;
+    while (i < count) {
         string anim_name = llGetInventoryName(INVENTORY_ANIMATION, i);
-        llRemoveInventory(anim_name);
-        i -= 1;
+        if (anim_name != "") {
+            anims_to_remove += [anim_name];
+        }
+        i += 1;
     }
     
-    // Remove all objects (reverse loop)
+    // Collect object names
     count = llGetInventoryNumber(INVENTORY_OBJECT);
-    i = count - 1;
-    while (i >= 0) {
+    i = 0;
+    while (i < count) {
         string obj_name = llGetInventoryName(INVENTORY_OBJECT, i);
-        llRemoveInventory(obj_name);
-        i -= 1;
+        if (obj_name != "") {
+            objects_to_remove += [obj_name];
+        }
+        i += 1;
+    }
+    
+    // Now delete using the collected lists (safe from index shifting)
+    i = 0;
+    while (i < llGetListLength(scripts_to_remove)) {
+        llRemoveInventory(llList2String(scripts_to_remove, i));
+        i += 1;
+    }
+    
+    i = 0;
+    while (i < llGetListLength(anims_to_remove)) {
+        llRemoveInventory(llList2String(anims_to_remove, i));
+        i += 1;
+    }
+    
+    i = 0;
+    while (i < llGetListLength(objects_to_remove)) {
+        llRemoveInventory(llList2String(objects_to_remove, i));
+        i += 1;
     }
     
     // DO NOT remove notecards - they contain settings data
@@ -122,13 +161,10 @@ signal_ready_for_content() {
 
 /* -------------------- ITEM RECEPTION -------------------- */
 
-handle_item_transfer(string message) {
-    if (!json_has(message, ["name"])) return;
-    
-    string item_name = llJsonGetValue(message, ["name"]);
-    
-    // Just note that we're expecting this item - actual confirmation happens in changed()
-    // This prevents acknowledging before the item actually arrives
+handle_item_transfer() {
+    // Item transfer notification received
+    // Actual confirmation happens in changed() event when item arrives
+    // This prevents acknowledging before the item actually exists in inventory
 }
 
 /* -------------------- ACTIVATOR SHIM TRIGGER -------------------- */
@@ -149,6 +185,9 @@ finalize_update() {
     
     llOwnerSay("All items received. Preparing for activation...");
     
+    // Store expected item count for activator verification
+    llLinksetDataWrite("EXPECTED_ITEMS", (string)ExpectedItems);
+    
     // Signal updater to inject activator shim
     trigger_activator();
     
@@ -167,37 +206,37 @@ abort_update(string reason) {
     llSetTimerEvent(0.0);
     llSetRemoteScriptAccessPin(0);
     
-    string msg = llList2Json(JSON_OBJECT, [
-        "type", "update_aborted",
-        "reason", reason,
-        "session", UpdateSession
-    ]);
-    llRegionSayTo(UpdaterKey, SecureChannel, msg);
-    
-    // Self-destruct
-    llRemoveInventory(llGetScriptName());
+    // Only send abort message if we're actually in an update (have updater key and channel)
+    if (UpdaterKey != NULL_KEY && SecureChannel != 0) {
+        string msg = llList2Json(JSON_OBJECT, [
+            "type", "update_aborted",
+            "reason", reason,
+            "session", UpdateSession
+        ]);
+        llRegionSayTo(UpdaterKey, SecureChannel, msg);
+        
+        // Self-destruct ONLY if we're injected (in collar doing update)
+        llRemoveInventory(llGetScriptName());
+    }
+    // If dormant in updater (no UpdaterKey), do nothing - stay dormant
 }
 
 /* -------------------- EVENTS -------------------- */
 
 default {
     state_entry() {
-        // Guard: Check if we're in an updater object (stay dormant if so)
-        string object_name = llToLower(llGetObjectName());
-        integer in_updater_object = (llSubStringIndex(object_name, "updater") != -1);
-        integer has_updater_script = (llGetInventoryType("ds_collar_update") == INVENTORY_SCRIPT || llGetInventoryType("ds_collar_update_source") == INVENTORY_SCRIPT);
+        // Get start parameter (could be from llRemoteLoadScriptPin OR object rez)
+        integer start = llGetStartParameter();
         
-        if (in_updater_object || has_updater_script) {
-            // We're in an updater object - stay dormant
-            return;
+        // Only accept negative channels (secure channels from injection)
+        // Object rez params are typically 0 or positive
+        if (start < 0) {
+            SecureChannel = start;
         }
         
-        // Get secure channel from start parameter (passed by llRemoteLoadScriptPin)
-        SecureChannel = llGetStartParameter();
-        
-        // If not injected via PIN (SecureChannel == 0), remain dormant
+        // If SecureChannel still 0, we're dormant in updater
         if (SecureChannel == 0) {
-            return;  // Stay dormant
+            return;  // Stay dormant - not injected via PIN
         }
         
         // Injected into collar via PIN - activate
@@ -242,7 +281,7 @@ default {
         // Item transfer notification
         if (msg_type == "item_transfer") {
             if (llJsonGetValue(message, ["session"]) != UpdateSession) return;
-            handle_item_transfer(message);
+            handle_item_transfer();
             return;
         }
         
@@ -258,18 +297,26 @@ default {
         abort_update("Timeout - no response from updater");
     }
     
+    on_rez(integer start_param) {
+        llResetScript();
+    }
+    
     changed(integer change) {
         if (change & CHANGED_OWNER) {
             abort_update("Ownership changed during update");
         }
         
         if (change & CHANGED_INVENTORY) {
-            // Item arrived - count scripts and objects (not coordinator or kmod_remote)
+            // Guard: Only process if we are in an active update
+            if (SecureChannel == 0 || UpdaterKey == NULL_KEY) return;
+
+            // Item arrived - count scripts, animations, and objects (excluding only coordinator)
             integer script_count = llGetInventoryNumber(INVENTORY_SCRIPT);
+            integer anim_count = llGetInventoryNumber(INVENTORY_ANIMATION);
             integer object_count = llGetInventoryNumber(INVENTORY_OBJECT);
             
-            // Subtract coordinator and kmod_remote from count
-            integer current_items = script_count + object_count - 2;
+            // Subtract only coordinator from script count (kmod_remote was deleted)
+            integer current_items = (script_count - 1) + anim_count + object_count;
             
             if (current_items > ReceivedItems) {
                 ReceivedItems = current_items;
