@@ -69,44 +69,43 @@ backup_settings() {
 
 clear_inventory() {
     // Soft reset all scripts first
-    string msg = llList2Json(JSON_OBJECT, ["type", "soft_reset_all"]);
+    string msg = llList2Json(JSON_OBJECT, ["type", "soft_reset_all", "from", "coordinator"]);
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, msg, NULL_KEY);
     
-    llSleep(1.0);  // Give scripts time to reset
+    llSleep(2.0);  // Give scripts time to reset and stop
     
     // Remove all scripts except self and kmod_remote
+    // Use reverse loop to avoid index shifting issues
     integer count = llGetInventoryNumber(INVENTORY_SCRIPT);
-    integer i = 0;
-    integer removed = 0;
+    integer i = count - 1;
     
-    while (i < count) {
+    while (i >= 0) {
         string script_name = llGetInventoryName(INVENTORY_SCRIPT, i);
         if (script_name != llGetScriptName() && script_name != "ds_collar_kmod_remote") {
             llRemoveInventory(script_name);
-            removed += 1;
         }
-        i += 1;
+        i -= 1;
     }
     
-    // Remove all animations
+    // Remove all animations (reverse loop)
     count = llGetInventoryNumber(INVENTORY_ANIMATION);
-    i = 0;
-    while (i < count) {
+    i = count - 1;
+    while (i >= 0) {
         string anim_name = llGetInventoryName(INVENTORY_ANIMATION, i);
         llRemoveInventory(anim_name);
-        removed += 1;
-        i += 1;
+        i -= 1;
     }
     
-    // Remove all objects (except those we're about to receive)
+    // Remove all objects (reverse loop)
     count = llGetInventoryNumber(INVENTORY_OBJECT);
-    i = 0;
-    while (i < count) {
+    i = count - 1;
+    while (i >= 0) {
         string obj_name = llGetInventoryName(INVENTORY_OBJECT, i);
         llRemoveInventory(obj_name);
-        removed += 1;
-        i += 1;
+        i -= 1;
     }
+    
+    // DO NOT remove notecards - they contain settings data
     
     signal_ready_for_content();
 }
@@ -128,32 +127,8 @@ handle_item_transfer(string message) {
     
     string item_name = llJsonGetValue(message, ["name"]);
     
-    // Wait for item to settle in inventory
-    llSleep(0.5);
-    
-    // Track item (scripts or objects)
-    integer item_type = llGetInventoryType(item_name);
-    if (item_type != INVENTORY_SCRIPT && item_type != INVENTORY_OBJECT) {
-        return;  // Unknown type
-    }
-    
-    ItemInventory += [item_name];
-    ReceivedItems += 1;
-    
-    // Acknowledge receipt
-    string ack = llList2Json(JSON_OBJECT, [
-        "type", "item_received",
-        "name", item_name,
-        "session", UpdateSession,
-        "count", (string)ReceivedItems,
-        "total", (string)ExpectedItems
-    ]);
-    llRegionSayTo(UpdaterKey, SecureChannel, ack);
-    
-    // Check if complete
-    if (ReceivedItems >= ExpectedItems) {
-        finalize_update();
-    }
+    // Just note that we're expecting this item - actual confirmation happens in changed()
+    // This prevents acknowledging before the item actually arrives
 }
 
 /* -------------------- ACTIVATOR SHIM TRIGGER -------------------- */
@@ -286,6 +261,33 @@ default {
     changed(integer change) {
         if (change & CHANGED_OWNER) {
             abort_update("Ownership changed during update");
+        }
+        
+        if (change & CHANGED_INVENTORY) {
+            // Item arrived - count scripts and objects (not coordinator or kmod_remote)
+            integer script_count = llGetInventoryNumber(INVENTORY_SCRIPT);
+            integer object_count = llGetInventoryNumber(INVENTORY_OBJECT);
+            
+            // Subtract coordinator and kmod_remote from count
+            integer current_items = script_count + object_count - 2;
+            
+            if (current_items > ReceivedItems) {
+                ReceivedItems = current_items;
+                
+                // Acknowledge receipt
+                string ack = llList2Json(JSON_OBJECT, [
+                    "type", "item_received",
+                    "session", UpdateSession,
+                    "count", (string)ReceivedItems,
+                    "total", (string)ExpectedItems
+                ]);
+                llRegionSayTo(UpdaterKey, SecureChannel, ack);
+                
+                // Check if complete
+                if (ReceivedItems >= ExpectedItems) {
+                    finalize_update();
+                }
+            }
         }
     }
 }

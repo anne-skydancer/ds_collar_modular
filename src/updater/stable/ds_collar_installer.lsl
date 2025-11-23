@@ -1,11 +1,13 @@
 /*--------------------
 SCRIPT: ds_collar_installer.lsl
 VERSION: 1.00
-REVISION: 1
-PURPOSE: Fresh installation transmitter for donor collar
-USAGE: Drop in donor collar, touch to initiate installation to nearby receiver
-ARCHITECTURE: Standalone installer for System 1 (Fresh Install)
+REVISION: 3
+PURPOSE: Fresh installation transmitter (dormant until activated)
+USAGE: Stays dormant until ds_collar_update.lsl detects no kmod_remote and sends link_message
+ARCHITECTURE: Activated by link_message("start_install") from updater script
 CHANGES:
+- Rev 3: Automatic installation flow - starts immediately when activated, no second touch needed
+- Rev 2: Dormant mode - only activates when updater detects Install mode needed
 - Initial version for fresh collar installations
 - Broadcasts on installation channel -87654321
 - Scans inventory and transfers all assets
@@ -19,6 +21,7 @@ float TIMEOUT_ITEM = 15.0;      // 15 seconds per item transfer
 float TRANSFER_DELAY = 2.0;     // 2 seconds between items
 
 /* -------------------- STATE -------------------- */
+integer Active = FALSE;  // TRUE when activated by updater
 string SessionId = "";
 key TargetKey = NULL_KEY;
 key TargetOwner = NULL_KEY;
@@ -255,28 +258,37 @@ handle_item_ack(string msg) {
 
 default {
     state_entry() {
+        // Stay dormant until activated by updater
+        Active = FALSE;
         ListenHandle = llListen(INSTALL_CHANNEL, "", NULL_KEY, "");
-        
-        llOwnerSay("=== D/s Collar Fresh Installation Transmitter ===");
-        llOwnerSay("Touch to initiate installation to nearby receiver.");
-        llOwnerSay("Receiver must drop ds_collar_receiver.lsl in their unworn collar first.");
+    }
+    
+    link_message(integer sender, integer num, string str, key id) {
+        // Activated by updater when Install mode detected
+        if (str == "start_install") {
+            Active = TRUE;
+            key wearer = id;
+            
+            llOwnerSay("=== D/s Collar Fresh Installation Mode ===");
+            llOwnerSay("Broadcasting installation offer...");
+            
+            // Immediately start installation flow
+            if (Installing) {
+                llOwnerSay("Installation already in progress!");
+                return;
+            }
+            
+            Installing = TRUE;
+            send_installer_hello();
+            llSetTimerEvent(TIMEOUT_RESPONSE);
+        }
     }
     
     touch_start(integer num) {
-        key toucher = llDetectedKey(0);
-        
-        if (toucher != llGetOwner()) {
-            llRegionSayTo(toucher, 0, "Only the donor owner can initiate installation.");
-            return;
+        // Installation starts automatically - touch only shows status
+        if (Active && Installing) {
+            llRegionSayTo(llDetectedKey(0), 0, "Installation in progress...");
         }
-        
-        if (Installing) {
-            llOwnerSay("Installation already in progress!");
-            return;
-        }
-        
-        Installing = TRUE;
-        send_installer_hello();
     }
     
     on_rez(integer start_param) {
@@ -284,6 +296,7 @@ default {
     }
     
     listen(integer channel, string name, key id, string msg) {
+        if (!Active || !Installing) return;  // Only process during active installation
         if (channel != INSTALL_CHANNEL) return;
         if (!json_has(msg, ["type"])) return;
         if (!Installing) return;

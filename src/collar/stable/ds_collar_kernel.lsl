@@ -42,7 +42,7 @@ integer QUEUE_SCRIPT = 3;
 integer QUEUE_MIN_ACL = 4;    // Stored for auth module recovery (not used for decisions)
 
 /* Authorized senders for privileged operations */
-list AUTHORIZED_RESET_SENDERS = ["bootstrap", "maintenance"];
+list AUTHORIZED_RESET_SENDERS = ["bootstrap", "maintenance", "coordinator"];
 
 /* -------------------- STATE -------------------- */
 list PluginRegistry = [];           // Active plugin registry

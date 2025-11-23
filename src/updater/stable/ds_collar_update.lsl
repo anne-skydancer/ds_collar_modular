@@ -1,24 +1,30 @@
 /*--------------------
 SCRIPT: ds_collar_update.lsl
 VERSION: 1.00
-REVISION: 5
-PURPOSE: PIN-based update transmitter using llRemoteLoadScriptPin
-ARCHITECTURE: Touch-activated, orchestrates complete update flow
+REVISION: 6
+PURPOSE: Unified installer and updater with automatic mode detection
+ARCHITECTURE: Touch → query kmod_remote → auto-select Install or Update mode
 CHANGES:
+- Rev 6: Auto-detect mode based on kmod_remote presence
+  - Touch sends query to kmod_remote on EXTERNAL_ACL_QUERY_CHAN
+  - Response received = Update mode (existing collar with kmod_remote)
+  - No response (timeout) = Install mode (empty collar, no kmod_remote)
+  - Installer path handled via link_message to ds_collar_installer.lsl
 - Rev 5: Fixed root prim targeting, owner/wearer validation, duplicate response handling
 - Rev 4: Added object transfer support (control HUD, leash holder)
 - Rev 3: Updated for activator shim pattern
-- Coordinator injected first via PIN (arrives running)
-- Collar scripts and objects transferred via llGiveInventory (scripts arrive inactive)
-- Activator shim injected last via PIN (arrives running, activates scripts)
-- Three-phase update: coordinator → collar items (scripts + objects) → activator shim
 --------------------*/
 
 /* -------------------- REMOTE PROTOCOL CHANNELS -------------------- */
 integer EXTERNAL_ACL_QUERY_CHAN = -8675309;  // Update discovery
 integer EXTERNAL_ACL_REPLY_CHAN = -8675310;  // Collar responses
+integer INSTALL_CHANNEL = -87654321;          // Installation protocol
 
 /* -------------------- STATE -------------------- */
+// Mode detection
+integer DetectingMode = FALSE;  // TRUE while waiting for kmod_remote response
+
+// Common state
 string SessionId = "";
 key CollarKey = NULL_KEY;
 key Wearer = NULL_KEY;
@@ -32,7 +38,9 @@ integer MANIFEST_STRIDE = 2;
 integer TransferIndex = 0;
 integer TotalItems = 0;
 
+// Mode flags
 integer Updating = FALSE;
+integer Installing = FALSE;
 
 float DETECTION_TIMEOUT = 5.0;
 float TRANSFER_DELAY = 1.0;
@@ -47,8 +55,14 @@ string generate_session_id() {
     return "update_" + (string)llGetUnixTime();
 }
 
-integer generate_secure_channel() {
-    return -2000000 - (integer)llFrand(1000000);
+integer generate_secure_channel(string session) {
+    // Hash session ID to generate deterministic secure channel
+    string hash = llMD5String(session, 0);
+    // Convert first 8 hex chars to negative integer
+    integer chan = (integer)("0x" + llGetSubString(hash, 0, 7));
+    // Ensure negative and in valid range
+    if (chan > 0) chan = -chan;
+    return chan;
 }
 
 /* -------------------- INVENTORY SCANNING -------------------- */
@@ -57,15 +71,16 @@ list scan_update_inventory() {
     list manifest = [];
     string script_name = llGetScriptName();
     
-    // Scan all collar scripts (exclude updater scripts)
+    // Scan all collar scripts (exclude updater/installer scripts)
     integer count = llGetInventoryNumber(INVENTORY_SCRIPT);
     integer i = 0;
     while (i < count) {
         string name = llGetInventoryName(INVENTORY_SCRIPT, i);
         key uuid = llGetInventoryKey(name);
         
-        // Skip: self, coordinator, activator shim
+        // Skip: self, installer, coordinator, activator shim
         if (name != script_name && 
+            name != "ds_collar_installer" &&
             name != "ds_collar_update_coordinator" && 
             name != "ds_collar_activator_shim") {
             manifest += [name, (string)uuid];
@@ -73,23 +88,28 @@ list scan_update_inventory() {
         i += 1;
     }
     
-    // Scan objects (control HUD, leash holder)
+    // Scan objects - EXCLUDE "Collar Receiver" (updater object)
     count = llGetInventoryNumber(INVENTORY_OBJECT);
     i = 0;
     while (i < count) {
         string name = llGetInventoryName(INVENTORY_OBJECT, i);
         key uuid = llGetInventoryKey(name);
-        manifest += [name, (string)uuid];
+        
+        // Only include collar objects, not updater objects
+        if (name != "Collar Receiver") {
+            manifest += [name, (string)uuid];
+        }
         i += 1;
     }
     
     return manifest;
 }
 
-/* -------------------- UPDATE DISCOVERY -------------------- */
+/* -------------------- MODE DETECTION -------------------- */
 
-send_update_discover() {
+send_mode_detect_query() {
     SessionId = generate_session_id();
+    DetectingMode = TRUE;
     
     string msg = llList2Json(JSON_OBJECT, [
         "type", "update_discover",
@@ -98,7 +118,7 @@ send_update_discover() {
     ]);
     
     llRegionSay(EXTERNAL_ACL_QUERY_CHAN, msg);
-    llOwnerSay("Discovering collar...");
+    llOwnerSay("Detecting collar mode...");
     
     llSetTimerEvent(DETECTION_TIMEOUT);
 }
@@ -107,6 +127,7 @@ send_update_discover() {
 
 handle_collar_ready(string msg) {
     llOwnerSay("DEBUG: handle_collar_ready called");
+    
     if (!json_has(msg, ["collar"])) {
         llOwnerSay("DEBUG: Missing collar field");
         return;
@@ -123,6 +144,14 @@ handle_collar_ready(string msg) {
     string msg_session = llJsonGetValue(msg, ["session"]);
     llOwnerSay("DEBUG: Message session: " + msg_session + ", Expected: " + SessionId);
     if (msg_session != SessionId) return;
+    
+    // CRITICAL: Set Updating flag EARLY so listen() will process subsequent messages
+    if (DetectingMode) {
+        DetectingMode = FALSE;
+        llSetTimerEvent(0.0);
+        llOwnerSay("Collar detected with kmod_remote - Update mode");
+        Updating = TRUE;
+    }
     
     // Guard: Only process first valid collar response
     if (CollarKey != NULL_KEY) {
@@ -193,8 +222,8 @@ handle_collar_ready(string msg) {
     llOwnerSay("Collar found and ready for update!");
     llSetTimerEvent(0.0);
     
-    // Generate secure channel and set up listener
-    SecureChannel = generate_secure_channel();
+    // Generate secure channel from session ID and set up listener
+    SecureChannel = generate_secure_channel(SessionId);
     SecureListenHandle = llListen(SecureChannel, "", NULL_KEY, "");
     
     // Inject coordinator
@@ -223,8 +252,22 @@ inject_coordinator() {
 /* -------------------- UPDATE FLOW -------------------- */
 
 handle_coordinator_ready(string msg) {
-    if (!json_has(msg, ["session"])) return;
-    if (llJsonGetValue(msg, ["session"]) != SessionId) return;
+    llOwnerSay("DEBUG: handle_coordinator_ready called");
+    
+    if (!json_has(msg, ["session"])) {
+        llOwnerSay("DEBUG: coordinator_ready missing session");
+        return;
+    }
+    
+    string msg_session = llJsonGetValue(msg, ["session"]);
+    llOwnerSay("DEBUG: Coordinator session: " + msg_session + ", Expected: " + SessionId);
+    
+    // First coordinator_ready has empty session (coordinator doesn't know it yet)
+    // Subsequent coordinator_ready messages must match session
+    if (msg_session != "" && msg_session != SessionId) {
+        llOwnerSay("DEBUG: Session mismatch, ignoring");
+        return;
+    }
     
     // First coordinator_ready: send manifest
     if (llGetListLength(Manifest) == 0) {
@@ -379,15 +422,14 @@ default {
         key toucher = llDetectedKey(0);
         Wearer = toucher;
         
-        if (Updating) {
-            llRegionSayTo(toucher, 0, "Update already in progress!");
+        if (Updating || Installing || DetectingMode) {
+            llRegionSayTo(toucher, 0, "Operation already in progress!");
             return;
         }
         
-        Updating = TRUE;
-        llRegionSayTo(toucher, 0, "Initiating collar update...");
+        llRegionSayTo(toucher, 0, "Initiating...");
         
-        send_update_discover();
+        send_mode_detect_query();
     }
     
     on_rez(integer start_param) {
@@ -396,19 +438,20 @@ default {
     
     listen(integer channel, string name, key id, string msg) {
         if (!json_has(msg, ["type"])) return;
-        if (!Updating) return;
         
         string msg_type = llJsonGetValue(msg, ["type"]);
         llOwnerSay("DEBUG: Received message type: " + msg_type + " on channel: " + (string)channel);
         
         if (channel == EXTERNAL_ACL_REPLY_CHAN) {
-            // Collar ready with PIN
+            // Collar ready with PIN - process during detection OR update mode
             if (msg_type == "collar_ready") {
                 handle_collar_ready(msg);
             }
         }
         else if (channel == SecureChannel) {
-            // Coordinator responses
+            // Coordinator responses - only process during update mode
+            if (!Updating) return;
+            
             if (msg_type == "coordinator_ready") {
                 handle_coordinator_ready(msg);
             }
@@ -426,7 +469,33 @@ default {
     }
     
     timer() {
-        llOwnerSay("ERROR: Update timeout.");
-        abort_update();
+        llSetTimerEvent(0.0);
+        
+        // Detection mode timeout = no kmod_remote response = Install mode
+        if (DetectingMode) {
+            DetectingMode = FALSE;
+            llOwnerSay("No kmod_remote detected - Install mode");
+            llOwnerSay("Activating installer...");
+            
+            // Give Collar Receiver object to user
+            if (llGetInventoryType("Collar Receiver") == INVENTORY_OBJECT) {
+                llGiveInventory(Wearer, "Collar Receiver");
+                llRegionSayTo(Wearer, 0, "Collar Receiver object given. Rez it near the empty collar and wait...");
+            }
+            else {
+                llOwnerSay("ERROR: Collar Receiver object not found in inventory!");
+            }
+            
+            // Wake up installer script and let it proceed automatically
+            Installing = TRUE;
+            llMessageLinked(LINK_THIS, 1, "start_install", Wearer);
+            return;
+        }
+        
+        // Update mode timeout
+        if (Updating) {
+            llOwnerSay("ERROR: Update timeout.");
+            abort_update();
+        }
     }
 }
