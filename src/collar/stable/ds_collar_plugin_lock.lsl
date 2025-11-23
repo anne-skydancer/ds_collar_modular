@@ -1,11 +1,14 @@
 /*--------------------
 PLUGIN: ds_collar_plugin_lock.lsl
 VERSION: 1.00
-REVISION: 22
+REVISION: 23
 PURPOSE: Toggle collar lock and RLV detach control labels
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
-- CRITICAL FIX: Request settings on state_entry and register_now instead of hardcoding Locked = FALSE
+- Rev 23: Secure defaults - always revert to unlocked when settings missing/deleted
+  Visual state now synced to logical state on all settings operations
+  Prevents locked-looking collar with unlocked logic after update failures
+- Rev 22: Request settings on state_entry and register_now instead of hardcoding Locked = FALSE
 - Provides direct toggle logic without menu interactions
 - Restricts usage to Unowned and Primary Owner ACL levels
 - Updates kernel registration label to reflect current lock state
@@ -86,16 +89,21 @@ apply_settings_sync(string msg) {
     string kv_json = llJsonGetValue(msg, ["kv"]);
     
     integer old_locked = Locked;
-    Locked = FALSE;
+    Locked = FALSE;  // Secure default: unlocked if no settings
     
     if (json_has(kv_json, [KEY_LOCKED])) {
         Locked = (integer)llJsonGetValue(kv_json, [KEY_LOCKED]);
     }
     
+    // Always sync visual state to logical state
+    // This ensures visual consistency even if no change detected
     if (old_locked != Locked) {
         apply_lock_state();
     }
-    
+    else {
+        // Even if state unchanged, force visual sync (recovery from corrupted state)
+        apply_lock_state();
+    }
 }
 
 apply_settings_delta(string msg) {
@@ -125,7 +133,28 @@ apply_settings_delta(string msg) {
                 ]);
                 llMessageLinked(LINK_SET, UI_BUS, label_msg, NULL_KEY);
             }
-            
+        }
+    }
+    else if (op == "delete") {
+        // SECURE DEFAULT: If lock setting is deleted, revert to unlocked
+        if (!json_has(msg, ["key"])) return;
+        string deleted_key = llJsonGetValue(msg, ["key"]);
+        
+        if (deleted_key == KEY_LOCKED) {
+            if (Locked) {
+                // Was locked, now reverting to unlocked
+                Locked = FALSE;
+                apply_lock_state();
+                llOwnerSay("Lock setting deleted - reverting to unlocked state");
+                
+                // Update UI label
+                string label_msg = llList2Json(JSON_OBJECT, [
+                    "type", "update_label",
+                    "context", PLUGIN_CONTEXT,
+                    "label", PLUGIN_LABEL_UNLOCKED
+                ]);
+                llMessageLinked(LINK_SET, UI_BUS, label_msg, NULL_KEY);
+            }
         }
     }
 }
