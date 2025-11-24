@@ -154,12 +154,18 @@ apply_settings_sync(string msg) {
     MultiOwnerMode = FALSE;
     
     // Load exception settings
+    integer has_owner_tp = FALSE;
     if (json_has(kv, [KEY_EX_OWNER_TP])) {
         ExOwnerTp = (integer)llJsonGetValue(kv, [KEY_EX_OWNER_TP]);
+        has_owner_tp = TRUE;
     }
+    
+    integer has_owner_im = FALSE;
     if (json_has(kv, [KEY_EX_OWNER_IM])) {
         ExOwnerIm = (integer)llJsonGetValue(kv, [KEY_EX_OWNER_IM]);
+        has_owner_im = TRUE;
     }
+    
     if (json_has(kv, [KEY_EX_TRUSTEE_TP])) {
         ExTrusteeTp = (integer)llJsonGetValue(kv, [KEY_EX_TRUSTEE_TP]);
     }
@@ -189,6 +195,14 @@ apply_settings_sync(string msg) {
         if (llGetSubString(arr, 0, 0) == "[") TrusteeKeys = llJson2List(arr);
     }
     
+    // Auto-initialize settings if owners exist but settings don't
+    integer owners_exist = (MultiOwnerMode && llGetListLength(OwnerKeys) > 0) || (!MultiOwnerMode && OwnerKey != NULL_KEY);
+    
+    if (owners_exist) {
+        if (!has_owner_tp) persist_setting(KEY_EX_OWNER_TP, TRUE);
+        if (!has_owner_im) persist_setting(KEY_EX_OWNER_IM, TRUE);
+    }
+    
     // Apply RLV commands
     reconcile_all();
 }
@@ -215,6 +229,12 @@ apply_settings_delta(string msg) {
         }
         if (json_has(changes, [KEY_EX_TRUSTEE_IM])) {
             ExTrusteeIm = (integer)llJsonGetValue(changes, [KEY_EX_TRUSTEE_IM]);
+            reconcile_all();
+        }
+        
+        // Handle multi_owner_mode changes
+        if (json_has(changes, [KEY_MULTI_OWNER_MODE])) {
+            MultiOwnerMode = (integer)llJsonGetValue(changes, [KEY_MULTI_OWNER_MODE]);
             reconcile_all();
         }
         
