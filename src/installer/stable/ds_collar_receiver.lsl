@@ -1,12 +1,13 @@
 /*--------------------
 SCRIPT: ds_collar_receiver.lsl
 VERSION: 1.00
-REVISION: 1
+REVISION: 2
 PURPOSE: Fresh installation receiver for unworn/unlocked collars
 USAGE: Drop this script into an empty collar, installer will transfer all assets
 ARCHITECTURE: Standalone receiver for System 1 (Fresh Install)
 CHANGES:
-- Initial version for fresh collar installations
+- Rev 2: Support for lightweight manifest (count only)
+- Rev 1: Initial version for fresh collar installations
 - Listens on installation channel -87654321
 - Tracks inventory changes and acknowledges transfers
 - Self-destructs after successful installation
@@ -61,7 +62,7 @@ send_receiver_ready() {
         "mode", "fresh"
     ]);
     llRegionSay(INSTALL_CHANNEL, msg);
-    llOwnerSay("Installation receiver ready. Waiting for donor...");
+    llOwnerSay("Installation receiver ready. Waiting for installer...");
 }
 
 send_manifest_ack() {
@@ -110,7 +111,7 @@ handle_installer_hello(string msg) {
     // Validate range
     list details = llGetObjectDetails(DonorKey, [OBJECT_POS]);
     if (llGetListLength(details) == 0) {
-        llOwnerSay("ERROR: Donor not found");
+        llOwnerSay("ERROR: Installer not found");
         return;
     }
     
@@ -118,7 +119,7 @@ handle_installer_hello(string msg) {
     float distance = llVecDist(llGetPos(), donor_pos);
     
     if (distance > 10.0) {
-        llOwnerSay("ERROR: Donor too far away (" + (string)((integer)distance) + "m). Must be within 10m.");
+        llOwnerSay("ERROR: Installer too far away (" + (string)((integer)distance) + "m). Must be within 10m.");
         return;
     }
     
@@ -130,11 +131,22 @@ handle_manifest(string msg) {
     if (!json_has(msg, ["session"])) return;
     if (llJsonGetValue(msg, ["session"]) != SessionId) return;
     
-    if (!json_has(msg, ["items"])) return;
+    // Note: Manifest might not contain "items" list if it was too large
+    // We rely on "total" count
+    if (json_has(msg, ["total"])) {
+        TotalItems = (integer)llJsonGetValue(msg, ["total"]);
+    } else {
+        // Fallback if total missing (shouldn't happen)
+        TotalItems = 0;
+    }
     
-    string items_json = llJsonGetValue(msg, ["items"]);
-    ExpectedManifest = llJson2List(items_json);
-    TotalItems = llGetListLength(ExpectedManifest) / MANIFEST_STRIDE;
+    // If items list is present, we can use it, but it's optional now
+    if (json_has(msg, ["items"])) {
+        string items_json = llJsonGetValue(msg, ["items"]);
+        ExpectedManifest = llJson2List(items_json);
+    } else {
+        ExpectedManifest = [];
+    }
     
     send_manifest_ack();
 }
@@ -179,9 +191,9 @@ default {
         SessionId = generate_session_id();
         ListenHandle = llListen(INSTALL_CHANNEL, "", NULL_KEY, "");
         
-        llOwnerSay("=== D/s Collar Fresh Installation Receiver ===");
-        llOwnerSay("Ready to receive installation from donor collar.");
-        llOwnerSay("Have the installer touch their donor collar nearby.");
+        llOwnerSay("=== D/s Collar Installer ===");
+        llOwnerSay("Ready to receive scripts.");
+        llOwnerSay("Touch the installer prim to continue.");
         
         // No timeout yet - wait for installer hello
     }

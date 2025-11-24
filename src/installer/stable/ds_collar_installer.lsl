@@ -1,11 +1,16 @@
 /*--------------------
 SCRIPT: ds_collar_installer.lsl
 VERSION: 1.00
-REVISION: 1
-PURPOSE: Fresh installation transmitter for donor collar
-USAGE: Drop in donor collar, touch to initiate installation to nearby receiver
-ARCHITECTURE: Standalone installer for System 1 (Fresh Install)
+REVISION: 4
+PURPOSE: Fresh installation transmitter (dormant until activated)
+USAGE: Stays dormant until ds_collar_update.lsl detects no kmod_remote and sends link_message
+ARCHITECTURE: Activated by link_message("start_install") from updater script
 CHANGES:
+- Rev 4: Implemented lightweight manifest (count only) to avoid message size limits
+- Rev 4: Added retry loop for installer_hello and transfer steps
+- Rev 4: Increased timeouts to handle user setup time
+- Rev 3: Automatic installation flow - starts immediately when activated, no second touch needed
+- Rev 2: Dormant mode - only activates when updater detects Install mode needed
 - Initial version for fresh collar installations
 - Broadcasts on installation channel -87654321
 - Scans inventory and transfers all assets
@@ -14,11 +19,13 @@ CHANGES:
 
 /* -------------------- INSTALLATION PROTOCOL -------------------- */
 integer INSTALL_CHANNEL = -87654321;
-float TIMEOUT_RESPONSE = 30.0;  // 30 seconds for receiver response
+float TIMEOUT_RESPONSE = 5.0;   // 5 seconds loop for hello
 float TIMEOUT_ITEM = 15.0;      // 15 seconds per item transfer
 float TRANSFER_DELAY = 2.0;     // 2 seconds between items
+float MAX_INSTALL_TIME = 300.0; // 5 minutes max total time
 
 /* -------------------- STATE -------------------- */
+integer Active = FALSE;  // TRUE when activated by updater
 string SessionId = "";
 key TargetKey = NULL_KEY;
 key TargetOwner = NULL_KEY;
@@ -30,6 +37,7 @@ integer TransferIndex = 0;
 integer TotalItems = 0;
 
 integer Installing = FALSE;
+float InstallStartTime = 0.0;
 
 /* -------------------- HELPERS -------------------- */
 
@@ -91,7 +99,8 @@ list scan_inventory() {
 /* -------------------- MESSAGE SENDING -------------------- */
 
 send_installer_hello() {
-    SessionId = generate_session_id();
+    // Only generate session ID once at start
+    if (SessionId == "") SessionId = generate_session_id();
     
     string msg = llList2Json(JSON_OBJECT, [
         "type", "installer_hello",
@@ -107,17 +116,18 @@ send_installer_hello() {
 }
 
 send_manifest() {
-    string items_json = llList2Json(JSON_ARRAY, Manifest);
-    
+    // Send lightweight manifest (count only) to avoid message size limits
     string msg = llList2Json(JSON_OBJECT, [
         "type", "manifest",
         "session", SessionId,
-        "items", items_json,
         "total", TotalItems
     ]);
     
     llRegionSay(INSTALL_CHANNEL, msg);
     llOwnerSay("Sending manifest: " + (string)TotalItems + " items");
+    
+    // Set timer for manifest ack
+    llSetTimerEvent(TIMEOUT_ITEM);
 }
 
 send_transfer_item() {
@@ -255,28 +265,38 @@ handle_item_ack(string msg) {
 
 default {
     state_entry() {
+        // Stay dormant until activated by updater
+        Active = FALSE;
         ListenHandle = llListen(INSTALL_CHANNEL, "", NULL_KEY, "");
-        
-        llOwnerSay("=== D/s Collar Fresh Installation Transmitter ===");
-        llOwnerSay("Touch to initiate installation to nearby receiver.");
-        llOwnerSay("Receiver must drop ds_collar_receiver.lsl in their unworn collar first.");
+    }
+    
+    link_message(integer sender, integer num, string str, key id) {
+        // Activated by updater when Install mode detected
+        if (str == "start_install") {
+            Active = TRUE;
+            key wearer = id;
+            
+            llOwnerSay("=== D/s Collar Fresh Installation Mode ===");
+            llOwnerSay("Broadcasting installation offer...");
+            
+            // Immediately start installation flow
+            if (Installing) {
+                llOwnerSay("Installation already in progress!");
+                return;
+            }
+            
+            Installing = TRUE;
+            InstallStartTime = llGetTime();
+            SessionId = ""; // Reset session ID
+            send_installer_hello();
+        }
     }
     
     touch_start(integer num) {
-        key toucher = llDetectedKey(0);
-        
-        if (toucher != llGetOwner()) {
-            llRegionSayTo(toucher, 0, "Only the donor owner can initiate installation.");
-            return;
+        // Installation starts automatically - touch only shows status
+        if (Active && Installing) {
+            llRegionSayTo(llDetectedKey(0), 0, "Installation in progress...");
         }
-        
-        if (Installing) {
-            llOwnerSay("Installation already in progress!");
-            return;
-        }
-        
-        Installing = TRUE;
-        send_installer_hello();
     }
     
     on_rez(integer start_param) {
@@ -284,6 +304,7 @@ default {
     }
     
     listen(integer channel, string name, key id, string msg) {
+        if (!Active || !Installing) return;  // Only process during active installation
         if (channel != INSTALL_CHANNEL) return;
         if (!json_has(msg, ["type"])) return;
         if (!Installing) return;
@@ -309,10 +330,32 @@ default {
     }
     
     timer() {
-        llOwnerSay("ERROR: Installation timeout. No response from receiver.");
-        Installing = FALSE;
-        TransferIndex = 0;
-        TargetKey = NULL_KEY;
-        llSetTimerEvent(0.0);
+        // Check total timeout
+        if (llGetTime() - InstallStartTime > MAX_INSTALL_TIME) {
+            llOwnerSay("ERROR: Installation timeout. Process took too long.");
+            Installing = FALSE;
+            TransferIndex = 0;
+            TargetKey = NULL_KEY;
+            llSetTimerEvent(0.0);
+            return;
+        }
+
+        // If we don't have a target yet, keep broadcasting hello
+        if (TargetKey == NULL_KEY) {
+            send_installer_hello();
+            return;
+        }
+
+        // If we have a target but timed out waiting for ACK
+        llOwnerSay("WARNING: Timeout waiting for response from receiver. Retrying...");
+        
+        // Retry logic based on state
+        if (TransferIndex == 0) {
+            // Timed out waiting for manifest ack
+            send_manifest();
+        } else {
+            // Timed out waiting for item ack
+            send_transfer_item();
+        }
     }
 }

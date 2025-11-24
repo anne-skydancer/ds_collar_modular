@@ -1,10 +1,11 @@
 /*--------------------
 SCRIPT: ds_collar_update_coordinator.lsl
 VERSION: 1.00
-REVISION: 15
+REVISION: 16
 PURPOSE: Autonomous update coordinator injected via llRemoteLoadScriptPin
 ARCHITECTURE: Arrives RUNNING, orchestrates update, then triggers activator shim
 CHANGES:
+- Rev 16: Integrated settings restoration (removed activator shim dependency)
 - Rev 15: Fixed self-destruct on rez/reset (added on_rez and guarded changed event)
 - Rev 15: Fixed ACL backup format to match activator expectations (JSON object with keys/values)
 - Rev 14: Don't self-destruct in abort_update() unless actually injected (prevents deletion from updater)
@@ -33,6 +34,7 @@ integer SETTINGS_BUS = 800;
 integer SecureChannel = 0;
 key UpdaterKey = NULL_KEY;
 string UpdateSession = "";
+string PendingItem = "";
 integer ExpectedItems = 0;
 integer ReceivedItems = 0;
 
@@ -161,21 +163,74 @@ signal_ready_for_content() {
 
 /* -------------------- ITEM RECEPTION -------------------- */
 
-handle_item_transfer() {
-    // Item transfer notification received
-    // Actual confirmation happens in changed() event when item arrives
-    // This prevents acknowledging before the item actually exists in inventory
+handle_item_transfer(string msg) {
+    if (!json_has(msg, ["name"])) return;
+    PendingItem = llJsonGetValue(msg, ["name"]);
+    
+    // Robustness: If item already exists (e.g. retry), delete it first to avoid duplicates
+    if (llGetInventoryType(PendingItem) != INVENTORY_NONE) {
+        llRemoveInventory(PendingItem);
+    }
 }
 
-/* -------------------- ACTIVATOR SHIM TRIGGER -------------------- */
+/* -------------------- SETTINGS RESTORATION -------------------- */
 
-trigger_activator() {
-    // Signal updater to inject activator shim as final step
+restore_settings() {
+    llOwnerSay("Restoring settings...");
+    
+    // Read settings from linkset data
+    string kv_json = llLinksetDataRead("SETTINGS.UPDATE");
+    
+    if (kv_json == "" || kv_json == JSON_INVALID) {
+        llOwnerSay("WARNING: Could not restore settings backup.");
+        return;
+    }
+    
+    // Broadcast settings to all scripts
     string msg = llList2Json(JSON_OBJECT, [
-        "type", "ready_for_activator",
-        "session", UpdateSession
+        "type", "settings_sync",
+        "kv", kv_json
     ]);
-    llRegionSayTo(UpdaterKey, SecureChannel, msg);
+    llMessageLinked(LINK_SET, SETTINGS_BUS, msg, NULL_KEY);
+    
+    llSleep(1.0);
+    
+    // Clean up settings backup
+    llLinksetDataDelete("SETTINGS.UPDATE");
+    
+    // CRITICAL: Restore ACL cache entries
+    llOwnerSay("Restoring ACL cache...");
+    
+    string acl_backup = llLinksetDataRead("ACL.UPDATE");
+    if (acl_backup != "" && acl_backup != JSON_INVALID) {
+        // Parse ACL backup
+        string keys_json = llJsonGetValue(acl_backup, ["keys"]);
+        string values_json = llJsonGetValue(acl_backup, ["values"]);
+        
+        if (llJsonValueType(keys_json, []) == JSON_ARRAY && 
+            llJsonValueType(values_json, []) == JSON_ARRAY) {
+            
+            list acl_keys = llJson2List(keys_json);
+            list acl_values = llJson2List(values_json);
+            
+            integer i = 0;
+            integer count = llGetListLength(acl_keys);
+            
+            while (i < count) {
+                string k = llList2String(acl_keys, i);
+                string v = llList2String(acl_values, i);
+                llLinksetDataWrite(k, v);
+                i += 1;
+            }
+            
+            llOwnerSay("Restored " + (string)count + " ACL entries.");
+        }
+        
+        // Clean up ACL backup
+        llLinksetDataDelete("ACL.UPDATE");
+    }
+    
+    llOwnerSay("Settings restored.");
 }
 
 /* -------------------- UPDATE FINALIZATION -------------------- */
@@ -183,20 +238,20 @@ trigger_activator() {
 finalize_update() {
     llSetTimerEvent(0.0);  // Stop timer
     
-    llOwnerSay("All items received. Preparing for activation...");
+    llOwnerSay("All items received. Restoring configuration...");
     
-    // Store expected item count for activator verification
-    llLinksetDataWrite("EXPECTED_ITEMS", (string)ExpectedItems);
+    // Wait a moment for scripts to initialize
+    llSleep(3.0);
     
-    // Signal updater to inject activator shim
-    trigger_activator();
-    
-    llSleep(2.0);  // Brief wait for activator injection message to send
+    // Restore settings
+    restore_settings();
     
     // Clear script PIN
     llSetRemoteScriptAccessPin(0);
     
-    // Self-destruct - activator shim will handle the rest
+    llOwnerSay("Update Complete!");
+    
+    // Self-destruct
     llRemoveInventory(llGetScriptName());
 }
 
@@ -281,7 +336,7 @@ default {
         // Item transfer notification
         if (msg_type == "item_transfer") {
             if (llJsonGetValue(message, ["session"]) != UpdateSession) return;
-            handle_item_transfer();
+            handle_item_transfer(message);
             return;
         }
         
@@ -310,16 +365,16 @@ default {
             // Guard: Only process if we are in an active update
             if (SecureChannel == 0 || UpdaterKey == NULL_KEY) return;
 
-            // Item arrived - count scripts, animations, and objects (excluding only coordinator)
-            integer script_count = llGetInventoryNumber(INVENTORY_SCRIPT);
-            integer anim_count = llGetInventoryNumber(INVENTORY_ANIMATION);
-            integer object_count = llGetInventoryNumber(INVENTORY_OBJECT);
-            
-            // Subtract only coordinator from script count (kmod_remote was deleted)
-            integer current_items = (script_count - 1) + anim_count + object_count;
-            
-            if (current_items > ReceivedItems) {
-                ReceivedItems = current_items;
+            // Check if PendingItem has arrived
+            if (PendingItem != "" && llGetInventoryType(PendingItem) != INVENTORY_NONE) {
+                
+                // Update count
+                integer script_count = llGetInventoryNumber(INVENTORY_SCRIPT);
+                integer anim_count = llGetInventoryNumber(INVENTORY_ANIMATION);
+                integer object_count = llGetInventoryNumber(INVENTORY_OBJECT);
+                
+                // Subtract only coordinator from script count
+                ReceivedItems = (script_count - 1) + anim_count + object_count;
                 
                 // Acknowledge receipt
                 string ack = llList2Json(JSON_OBJECT, [
@@ -329,6 +384,9 @@ default {
                     "total", (string)ExpectedItems
                 ]);
                 llRegionSayTo(UpdaterKey, SecureChannel, ack);
+                
+                // Clear pending
+                PendingItem = "";
                 
                 // Check if complete
                 if (ReceivedItems >= ExpectedItems) {
