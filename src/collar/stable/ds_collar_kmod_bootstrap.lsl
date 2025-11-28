@@ -1,7 +1,7 @@
 /*--------------------
 MODULE: ds_collar_kmod_bootstrap.lsl
 VERSION: 1.00
-REVISION: 31
+REVISION: 33
 PURPOSE: Startup coordination, RLV detection, owner name resolution
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
@@ -10,6 +10,7 @@ CHANGES:
 - Soft reset handling now validates authorized senders before acting
 - Multi-channel RLV detection listens on 4711 and relay channels
 - Startup workflow delivers IM status updates during initialization
+- Delayed settings request to allow linkset data and notecard loading
 --------------------*/
 
 
@@ -43,6 +44,7 @@ string KEY_OWNER_HONS = "owner_honorifics";
 integer BOOTSTRAP_TIMEOUT_SEC = 90;
 integer SETTINGS_RETRY_INTERVAL_SEC = 5;
 integer SETTINGS_MAX_RETRIES = 3;
+integer SETTINGS_INITIAL_DELAY_SEC = 5; // Wait for linkset data + notecard load
 
 /* -------------------- STATE -------------------- */
 integer BootstrapComplete = FALSE;
@@ -408,8 +410,10 @@ start_bootstrap() {
     sendIM("DS Collar starting up. Please wait...");
     
     start_rlv_probe();
-    request_settings();
-    SettingsNextRetry = now() + SETTINGS_RETRY_INTERVAL_SEC;
+    
+    // OPTIMIZATION: Delay initial settings request to allow notecard loading
+    // This prevents "double bootstrap" where we get defaults then reset on notecard_loaded
+    SettingsNextRetry = now() + SETTINGS_INITIAL_DELAY_SEC;
     
     llSetTimerEvent(1.0);
 }
