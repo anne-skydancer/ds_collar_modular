@@ -1,7 +1,7 @@
 /*--------------------
 MODULE: ds_collar_kmod_bootstrap.lsl
 VERSION: 1.00
-REVISION: 29
+REVISION: 30
 PURPOSE: Startup coordination, RLV detection, owner name resolution
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
@@ -210,13 +210,6 @@ stop_rlv_probe() {
     clearProbeChannels();
     RlvProbing = FALSE;
     RlvReady = TRUE;
-    
-    if (RlvActive) {
-        sendIM("RLV: " + RlvVersion);
-    }
-    else {
-        sendIM("RLV: Not detected");
-    }
 }
 
 /* -------------------- SETTINGS LOADING -------------------- */
@@ -439,6 +432,14 @@ check_bootstrap_complete() {
 }
 
 announce_status() {
+    // RLV Status
+    if (RlvActive) {
+        sendIM("RLV: " + RlvVersion);
+    }
+    else {
+        sendIM("RLV: Not detected");
+    }
+
     // Mode notification
     if (!SettingsReceived) {
         sendIM("WARNING: Settings timed out. Using defaults.");
