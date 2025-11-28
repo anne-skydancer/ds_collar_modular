@@ -1,10 +1,13 @@
 /*--------------------
 MODULE: ds_collar_kmod_dialogs.lsl
 VERSION: 1.00
-REVISION: 24
+REVISION: 25
 PURPOSE: Centralized dialog management for shared listener handling
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- OPTIMIZATION: Replaced strided lists with Parallel Lists for O(1) lookups
+- OPTIMIZATION: Removed internal JSON serialization for button maps (Hot Path)
+- OPTIMIZATION: Implemented delimited string storage for session button maps
 - Centralized dialog sessions remove per-plugin listen management
 - Dedicated dialog bus coordinates all open and timeout events
 - Channel collision detection mitigates negative channel reuse conflicts
@@ -21,33 +24,28 @@ integer DIALOG_BUS = 950;
 float CHANNEL_BASE = -8E07;
 integer SESSION_MAX = 10;  // Maximum concurrent sessions
 
-/* Session list stride: [session_id, user_key, channel, listen_handle, timeout_unix, button_map] */
-integer SESSION_STRIDE = 6;
-integer SESSION_ID = 0;
-integer SESSION_USER = 1;
-integer SESSION_CHANNEL = 2;
-integer SESSION_LISTEN = 3;
-integer SESSION_TIMEOUT = 4;
-integer SESSION_BUTTON_MAP = 5;  // List of [button_text, context] pairs
-
 /* -------------------- STATE -------------------- */
-list Sessions = [];
+// Parallel Lists for Sessions
+list SessionIDs;        // [session_id]
+list SessionUsers;      // [user_key]
+list SessionChannels;   // [channel]
+list SessionListens;    // [listen_handle]
+list SessionTimeouts;   // [timeout_unix]
+list SessionButtonMaps; // [delimited_string] "btn|ctx|btn|ctx..."
+
 integer NextChannelOffset = 1;
 
-/* Button config list stride: [context, button_a_label, button_b_label] */
-integer BUTTON_CONFIG_STRIDE = 3;
-integer BUTTON_CONTEXT = 0;
-integer BUTTON_A_LABEL = 1;
-integer BUTTON_B_LABEL = 2;
-
-list ButtonConfigs = [];
+// Parallel Lists for Button Configs
+list ButtonConfigContexts; // [context]
+list ButtonConfigLabelsA;  // [button_a_label]
+list ButtonConfigLabelsB;  // [button_b_label]
 
 /* -------------------- HELPERS -------------------- */
-
 
 integer json_has(string j, list path) {
     return (llJsonGetValue(j, path) != JSON_INVALID);
 }
+
 string get_msg_type(string msg) {
     if (!json_has(msg, ["type"])) return "";
     return llJsonGetValue(msg, ["type"]);
@@ -74,26 +72,23 @@ integer now() {
 /* -------------------- SESSION MANAGEMENT -------------------- */
 
 integer find_session_idx(string session_id) {
-    integer i = 0;
-    integer len = llGetListLength(Sessions);
-    while (i < len) {
-        if (llList2String(Sessions, i + SESSION_ID) == session_id) {
-            return i;
-        }
-        i += SESSION_STRIDE;
-    }
-    return -1;
+    return llListFindList(SessionIDs, [session_id]);
 }
 
 close_session_at_idx(integer idx) {
     if (idx < 0) return;
     
-    integer listen_handle = llList2Integer(Sessions, idx + SESSION_LISTEN);
+    integer listen_handle = llList2Integer(SessionListens, idx);
     if (listen_handle != 0) {
         llListenRemove(listen_handle);
     }
     
-    Sessions = llDeleteSubList(Sessions, idx, idx + SESSION_STRIDE - 1);
+    SessionIDs = llDeleteSubList(SessionIDs, idx, idx);
+    SessionUsers = llDeleteSubList(SessionUsers, idx, idx);
+    SessionChannels = llDeleteSubList(SessionChannels, idx, idx);
+    SessionListens = llDeleteSubList(SessionListens, idx, idx);
+    SessionTimeouts = llDeleteSubList(SessionTimeouts, idx, idx);
+    SessionButtonMaps = llDeleteSubList(SessionButtonMaps, idx, idx);
 }
 
 close_session(string session_id) {
@@ -105,14 +100,17 @@ close_session(string session_id) {
 
 prune_expired_sessions() {
     integer i = 0;
+    integer now_time = now();
     
-    while (i < llGetListLength(Sessions)) {
-        integer timeout = llList2Integer(Sessions, i + SESSION_TIMEOUT);
+    // Iterate backwards to safely delete
+    integer len = llGetListLength(SessionTimeouts);
+    for (i = len - 1; i >= 0; i--) {
+        integer timeout = llList2Integer(SessionTimeouts, i);
         
-        if (timeout > 0 && now() >= timeout) {
+        if (timeout > 0 && now_time >= timeout) {
             // Session expired, send timeout message
-            string session_id = llList2String(Sessions, i + SESSION_ID);
-            key user = llList2Key(Sessions, i + SESSION_USER);
+            string session_id = llList2String(SessionIDs, i);
+            key user = llList2Key(SessionUsers, i);
             
             string timeout_msg = llList2Json(JSON_OBJECT, [
                 "type", "dialog_timeout",
@@ -122,10 +120,6 @@ prune_expired_sessions() {
             llMessageLinked(LINK_SET, DIALOG_BUS, timeout_msg, NULL_KEY);
             
             close_session_at_idx(i);
-            // Don't increment i, list shifted
-        }
-        else {
-            i += SESSION_STRIDE;
         }
     }
 }
@@ -140,14 +134,7 @@ integer get_next_channel() {
 /* -------------------- BUTTON CONFIG MANAGEMENT -------------------- */
 
 integer find_button_config_idx(string context) {
-    integer i = 0;
-    while (i < llGetListLength(ButtonConfigs)) {
-        if (llList2String(ButtonConfigs, i + BUTTON_CONTEXT) == context) {
-            return i;
-        }
-        i += BUTTON_CONFIG_STRIDE;
-    }
-    return -1;
+    return llListFindList(ButtonConfigContexts, [context]);
 }
 
 register_button_config(string context, string button_a, string button_b) {
@@ -155,11 +142,14 @@ register_button_config(string context, string button_a, string button_b) {
 
     if (idx != -1) {
         // Update existing config
-        ButtonConfigs = llListReplaceList(ButtonConfigs, [context, button_a, button_b], idx, idx + BUTTON_CONFIG_STRIDE - 1);
+        ButtonConfigLabelsA = llListReplaceList(ButtonConfigLabelsA, [button_a], idx, idx);
+        ButtonConfigLabelsB = llListReplaceList(ButtonConfigLabelsB, [button_b], idx, idx);
     }
     else {
         // Add new config
-        ButtonConfigs += [context, button_a, button_b];
+        ButtonConfigContexts += [context];
+        ButtonConfigLabelsA += [button_a];
+        ButtonConfigLabelsB += [button_b];
     }
 }
 
@@ -172,10 +162,10 @@ string get_button_label(string context, integer button_state) {
     }
 
     if (button_state == 0) {
-        return llList2String(ButtonConfigs, idx + BUTTON_A_LABEL);
+        return llList2String(ButtonConfigLabelsA, idx);
     }
     else {
-        return llList2String(ButtonConfigs, idx + BUTTON_B_LABEL);
+        return llList2String(ButtonConfigLabelsB, idx);
     }
 }
 
@@ -197,7 +187,7 @@ handle_dialog_open(string msg) {
 
     // Standard dialog - check for button_data (new format) or buttons (old format)
     list buttons = [];
-    list button_map = [];  // Maps button_text -> context
+    string button_map_str = ""; // Delimited string: "btn|ctx|btn|ctx"
 
     if (json_has(msg, ["button_data"])) {
         // New format: button_data contains mixed array of strings and objects
@@ -206,7 +196,8 @@ handle_dialog_open(string msg) {
 
         // Resolve button labels from config+state and build mapping
         integer i = 0;
-        while (i < llGetListLength(button_data_list)) {
+        integer len = llGetListLength(button_data_list);
+        while (i < len) {
             string item = llList2String(button_data_list, i);
             string button_text = "";
             string button_context = "";
@@ -246,7 +237,10 @@ handle_dialog_open(string msg) {
             }
 
             buttons += [button_text];
-            button_map += [button_text, button_context];
+            // Append to delimited string
+            if (button_map_str != "") button_map_str += "|";
+            button_map_str += button_text + "|" + button_context;
+            
             i++;
         }
     }
@@ -257,8 +251,11 @@ handle_dialog_open(string msg) {
 
         // Build empty button_map for old format
         integer i = 0;
-        while (i < llGetListLength(buttons)) {
-            button_map += [llList2String(buttons, i), ""];
+        integer len = llGetListLength(buttons);
+        while (i < len) {
+            string btn = llList2String(buttons, i);
+            if (button_map_str != "") button_map_str += "|";
+            button_map_str += btn + "|"; // Empty context
             i++;
         }
     }
@@ -290,7 +287,7 @@ handle_dialog_open(string msg) {
     }
 
     // Enforce session limit
-    if (llGetListLength(Sessions) / SESSION_STRIDE >= SESSION_MAX) {
+    if (llGetListLength(SessionIDs) >= SESSION_MAX) {
         // Close oldest session
         close_session_at_idx(0);
     }
@@ -305,8 +302,13 @@ handle_dialog_open(string msg) {
         timeout_unix = now() + timeout;
     }
 
-    // Add to sessions (serialize button_map as JSON to maintain SESSION_STRIDE)
-    Sessions += [session_id, user, channel, listen_handle, timeout_unix, llList2Json(JSON_ARRAY, button_map)];
+    // Add to sessions
+    SessionIDs += [session_id];
+    SessionUsers += [user];
+    SessionChannels += [channel];
+    SessionListens += [listen_handle];
+    SessionTimeouts += [timeout_unix];
+    SessionButtonMaps += [button_map_str];
 
     // Show dialog
     llDialog(user, title + "\n\n" + message, buttons, channel);
@@ -368,7 +370,7 @@ handle_numbered_list_dialog(string msg, string session_id, key user) {
     }
     
     // Enforce session limit
-    if (llGetListLength(Sessions) / SESSION_STRIDE >= SESSION_MAX) {
+    if (llGetListLength(SessionIDs) >= SESSION_MAX) {
         close_session_at_idx(0);
     }
     
@@ -383,15 +385,23 @@ handle_numbered_list_dialog(string msg, string session_id, key user) {
     }
 
     // Build button_map for numbered list (buttons have no context)
-    list button_map = [];
+    string button_map_str = "";
     integer j = 0;
-    while (j < llGetListLength(buttons)) {
-        button_map += [llList2String(buttons, j), ""];
+    integer btn_len = llGetListLength(buttons);
+    while (j < btn_len) {
+        string btn = llList2String(buttons, j);
+        if (button_map_str != "") button_map_str += "|";
+        button_map_str += btn + "|"; // Empty context
         j++;
     }
 
-    // Add to sessions (serialize button_map as JSON to maintain SESSION_STRIDE)
-    Sessions += [session_id, user, channel, listen_handle, timeout_unix, llList2Json(JSON_ARRAY, button_map)];
+    // Add to sessions
+    SessionIDs += [session_id];
+    SessionUsers += [user];
+    SessionChannels += [channel];
+    SessionListens += [listen_handle];
+    SessionTimeouts += [timeout_unix];
+    SessionButtonMaps += [button_map_str];
 
     // Show dialog
     llDialog(user, title + "\n\n" + body, buttons, channel);
@@ -410,9 +420,18 @@ handle_dialog_close(string msg) {
 default
 {
     state_entry() {
-        Sessions = [];
+        SessionIDs = [];
+        SessionUsers = [];
+        SessionChannels = [];
+        SessionListens = [];
+        SessionTimeouts = [];
+        SessionButtonMaps = [];
+        
         NextChannelOffset = 1;
-        ButtonConfigs = [];
+        
+        ButtonConfigContexts = [];
+        ButtonConfigLabelsA = [];
+        ButtonConfigLabelsB = [];
 
         // Start timer for session cleanup
         llSetTimerEvent(5.0);
@@ -423,53 +442,50 @@ default
     }
     
     listen(integer channel, string name, key id, string message) {
-        // Find session for this channel
-        integer i = 0;
+        // Find session for this channel using Parallel List lookup
+        integer i = llListFindList(SessionChannels, [channel]);
         
-        while (i < llGetListLength(Sessions)) {
-            integer session_channel = llList2Integer(Sessions, i + SESSION_CHANNEL);
+        if (i != -1) {
+            key session_user = llList2Key(SessionUsers, i);
 
-            if (session_channel == channel) {
-                key session_user = llList2Key(Sessions, i + SESSION_USER);
+            // Verify speaker matches session user
+            if (id == session_user) {
+                string session_id = llList2String(SessionIDs, i);
+                
+                // Retrieve delimited button map string
+                string button_map_str = llList2String(SessionButtonMaps, i);
+                
+                // Parse delimited string: "btn|ctx|btn|ctx"
+                list button_map = llParseString2List(button_map_str, ["|"], []);
 
-                // Verify speaker matches session user
-                if (id == session_user) {
-                    string session_id = llList2String(Sessions, i + SESSION_ID);
-                    // Deserialize button_map from JSON
-                    string button_map_json = llList2String(Sessions, i + SESSION_BUTTON_MAP);
-                    list button_map = llJson2List(button_map_json);
-
-                    // Look up context for this button
-                    string clicked_context = "";
-                    integer j = 0;
-                    integer map_len = llGetListLength(button_map);
-                    while (j < map_len) {
-                        if (llList2String(button_map, j) == message) {
-                            clicked_context = llList2String(button_map, j + 1);
-                            jump found_context;
-                        }
-                        j += 2;
+                // Look up context for this button
+                string clicked_context = "";
+                integer j = 0;
+                integer map_len = llGetListLength(button_map);
+                while (j < map_len) {
+                    if (llList2String(button_map, j) == message) {
+                        clicked_context = llList2String(button_map, j + 1);
+                        jump found_context;
                     }
-                    @found_context;
-
-                    // Send response message with context
-                    string response = llList2Json(JSON_OBJECT, [
-                        "type", "dialog_response",
-                        "session_id", session_id,
-                        "user", (string)id,
-                        "button", message,
-                        "context", clicked_context
-                    ]);
-                    llMessageLinked(LINK_SET, DIALOG_BUS, response, NULL_KEY);
-
-
-                    // Close session after response
-                    close_session_at_idx(i);
-                    return;
+                    j += 2;
                 }
-            }
+                @found_context;
 
-            i += SESSION_STRIDE;
+                // Send response message with context
+                string response = llList2Json(JSON_OBJECT, [
+                    "type", "dialog_response",
+                    "session_id", session_id,
+                    "user", (string)id,
+                    "button", message,
+                    "context", clicked_context
+                ]);
+                llMessageLinked(LINK_SET, DIALOG_BUS, response, NULL_KEY);
+
+
+                // Close session after response
+                close_session_at_idx(i);
+                return;
+            }
         }
     }
     

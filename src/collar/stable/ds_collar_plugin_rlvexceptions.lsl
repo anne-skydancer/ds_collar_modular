@@ -1,11 +1,12 @@
 /*--------------------
 PLUGIN: ds_collar_plugin_rlvexceptions.lsl
 VERSION: 1.00
-REVISION: 23
+REVISION: 25
 PURPOSE: Manage RLV teleport and IM exceptions for owners and trustees
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
-- CRITICAL FIX: Re-request settings on register_now to reapply RLV exceptions after kernel/module resets
+- FIX: Timer-based delay before applying RLV exceptions after settings load
+- This fixes exceptions not working when only this plugin resets
 - Provides toggleable owner and trustee TP/IM exception controls
 - Mirrors multi-owner and trustee rosters from settings synchronizations
 - Issues live @accepttp/@sendim updates when exceptions change
@@ -52,6 +53,8 @@ integer UserAcl = -999;
 string SessionId;
 string MenuContext;
 
+integer PendingReconcile = FALSE;
+
 /* -------------------- HELPERS -------------------- */
 
 
@@ -92,6 +95,11 @@ apply_im_exception(key k, integer allow) {
 }
 
 reconcile_all() {
+    // Check if there are any owners/trustees to apply exceptions for
+    integer has_owners = (MultiOwnerMode && llGetListLength(OwnerKeys) > 0) || (!MultiOwnerMode && OwnerKey != NULL_KEY);
+    integer has_trustees = llGetListLength(TrusteeKeys) > 0;
+    
+    if (!has_owners && !has_trustees) return;
     
     // Owner exceptions
     if (MultiOwnerMode) {
@@ -203,8 +211,9 @@ apply_settings_sync(string msg) {
         if (!has_owner_im) persist_setting(KEY_EX_OWNER_IM, TRUE);
     }
     
-    // Apply RLV commands
-    reconcile_all();
+    // Apply RLV commands after short delay to ensure RLV viewer is ready
+    PendingReconcile = TRUE;
+    llSetTimerEvent(1.0);
 }
 
 apply_settings_delta(string msg) {
@@ -523,6 +532,8 @@ handle_button(string btn) {
 /* -------------------- CLEANUP -------------------- */
 
 cleanup() {
+    llSetTimerEvent(0.0);
+    PendingReconcile = FALSE;
     CurrentUser = NULL_KEY;
     UserAcl = -999;
     SessionId = "";
@@ -548,6 +559,14 @@ default {
         if (c & CHANGED_OWNER) llResetScript();
     }
     
+    timer() {
+        llSetTimerEvent(0.0);
+        if (PendingReconcile) {
+            PendingReconcile = FALSE;
+            reconcile_all();
+        }
+    }
+    
     link_message(integer sender, integer num, string msg, key id) {
         if (!json_has(msg, ["type"])) return;
         string type = llJsonGetValue(msg, ["type"]);
@@ -555,12 +574,17 @@ default {
         if (num == KERNEL_LIFECYCLE) {
             if (type == "register_now") {
                 register_self();
-                // CRITICAL FIX: Re-request settings after kernel reset to reapply RLV exceptions
+                // Re-request settings after kernel reset to reapply RLV exceptions
                 llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
                     "type", "settings_get"
                 ]), NULL_KEY);
             }
             else if (type == "ping") send_pong();
+            else if (type == "soft_reset" || type == "soft_reset_all") {
+                // On soft reset, reapply RLV exceptions with same delay as settings_sync
+                PendingReconcile = TRUE;
+                llSetTimerEvent(1.0);
+            }
         }
         else if (num == SETTINGS_BUS) {
             if (type == "settings_sync") apply_settings_sync(msg);

@@ -1,7 +1,7 @@
 /*--------------------
 MODULE: ds_collar_kmod_bootstrap.lsl
 VERSION: 1.00
-REVISION: 28
+REVISION: 29
 PURPOSE: Startup coordination, RLV detection, owner name resolution
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
@@ -39,8 +39,14 @@ string KEY_OWNER_KEYS = "owner_keys";
 string KEY_OWNER_HON = "owner_hon";
 string KEY_OWNER_HONS = "owner_honorifics";
 
+/* -------------------- BOOTSTRAP CONFIG -------------------- */
+integer BOOTSTRAP_TIMEOUT_SEC = 90;
+integer SETTINGS_RETRY_INTERVAL_SEC = 5;
+integer SETTINGS_MAX_RETRIES = 3;
+
 /* -------------------- STATE -------------------- */
 integer BootstrapComplete = FALSE;
+integer BootstrapDeadline = 0;
 
 // Owner tracking
 key LastOwner = NULL_KEY;
@@ -58,6 +64,8 @@ integer RlvReady = FALSE;
 
 // Settings
 integer SettingsReceived = FALSE;
+integer SettingsRetryCount = 0;
+integer SettingsNextRetry = 0;
 integer MultiOwnerMode = FALSE;
 key OwnerKey = NULL_KEY;
 list OwnerKeys = [];
@@ -397,14 +405,18 @@ handle_dataserver_name(key query_id, string name) {
 start_bootstrap() {
     BootstrapComplete = FALSE;
     SettingsReceived = FALSE;
+    SettingsRetryCount = 0;
     NameResolutionDeadline = 0;
     PendingNameRequests = [];
     NextNameRequestTime = 0;
+    
+    BootstrapDeadline = now() + BOOTSTRAP_TIMEOUT_SEC;
     
     sendIM("DS Collar starting up. Please wait...");
     
     start_rlv_probe();
     request_settings();
+    SettingsNextRetry = now() + SETTINGS_RETRY_INTERVAL_SEC;
     
     llSetTimerEvent(1.0);
 }
@@ -428,6 +440,10 @@ check_bootstrap_complete() {
 
 announce_status() {
     // Mode notification
+    if (!SettingsReceived) {
+        sendIM("WARNING: Settings timed out. Using defaults.");
+    }
+
     if (MultiOwnerMode) {
         integer owner_count = llGetListLength(OwnerKeys);
         sendIM("Mode: Multi-Owner (" + (string)owner_count + ")");
@@ -495,6 +511,13 @@ default
 
         LastOwner = llGetOwner();
         
+        state starting;
+    }
+}
+
+state starting
+{
+    state_entry() {
         start_bootstrap();
     }
 
@@ -512,6 +535,37 @@ default
     timer() {
         integer current_time = llGetUnixTime();
         if (current_time == 0) return; // Overflow protection
+
+        // GLOBAL TIMEOUT CHECK
+        if (!BootstrapComplete && BootstrapDeadline > 0 && current_time >= BootstrapDeadline) {
+            sendIM("WARNING: Bootstrap timed out. Forcing completion.");
+            
+            // Force completion of pending tasks
+            if (!RlvReady) stop_rlv_probe();
+            if (!SettingsReceived) {
+                SettingsReceived = TRUE; // Assume defaults
+                // Start name resolution with defaults (likely just wearer if unowned)
+                start_name_resolution(); 
+            }
+            
+            // Clear pending name queries
+            OwnerNameQueries = [];
+            PendingNameRequests = [];
+            
+            BootstrapComplete = TRUE;
+            announce_status();
+            state running;
+            return;
+        }
+
+        // Handle Settings Retries
+        if (!SettingsReceived && current_time >= SettingsNextRetry) {
+            if (SettingsRetryCount < SETTINGS_MAX_RETRIES) {
+                request_settings();
+                SettingsRetryCount++;
+                SettingsNextRetry = current_time + SETTINGS_RETRY_INTERVAL_SEC;
+            }
+        }
 
         // Handle RLV probe retries
         if (RlvProbing && !RlvReady) {
@@ -550,7 +604,7 @@ default
         if (BootstrapComplete && !RlvProbing &&
             llGetListLength(OwnerNameQueries) == 0 &&
             llGetListLength(PendingNameRequests) == 0) {
-            llSetTimerEvent(0.0);
+            state running;
         }
     }
     
@@ -611,6 +665,45 @@ default
         }
     }
     
+    changed(integer change) {
+        if (change & CHANGED_OWNER) {
+            check_owner_changed();
+        }
+    }
+}
+
+state running
+{
+    state_entry() {
+        llSetTimerEvent(0.0);
+    }
+
+    on_rez(integer start_param) {
+        check_owner_changed();
+    }
+
+    attach(key id) {
+        if (id == NULL_KEY) return;
+        llResetScript();
+    }
+
+    link_message(integer sender, integer num, string msg, key id) {
+        string msg_type = get_msg_type(msg);
+        if (msg_type == "") return;
+        
+        if (num == KERNEL_LIFECYCLE) {
+            if (msg_type == "notecard_loaded") {
+                llResetScript();
+            }
+            else if (msg_type == "soft_reset" || msg_type == "soft_reset_all") {
+                if (!json_has(msg, ["from"])) return;
+                string from = llJsonGetValue(msg, ["from"]);
+                if (!is_authorized_reset_sender(from)) return;
+                llResetScript();
+            }
+        }
+    }
+
     changed(integer change) {
         if (change & CHANGED_OWNER) {
             check_owner_changed();

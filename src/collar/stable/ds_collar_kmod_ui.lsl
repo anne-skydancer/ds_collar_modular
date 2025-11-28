@@ -1,10 +1,12 @@
 /*--------------------
 MODULE: ds_collar_kmod_ui.lsl
 VERSION: 1.00
-REVISION: 43
+REVISION: 44
 PURPOSE: Session management, ACL filtering, and plugin list orchestration
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- OPTIMIZATION: Replaced strided lists with Parallel Lists for O(1) lookups
+- OPTIMIZATION: Implemented index-based filtering to reduce memory usage
 - Improved module performance
 - Split UI logic from menu rendering to delegate visuals to ds_collar_menu.lsl
 - Added UUID-based plugin change detection to avoid registration races
@@ -28,41 +30,12 @@ integer MAX_FUNC_BTNS = 9;
 float TOUCH_RANGE_M = 5.0;
 float LONG_TOUCH_THRESHOLD = 1.5;
 
-/* Plugin list stride */
+/* Plugin list stride (Temporary for sorting) */
 integer PLUGIN_STRIDE = 3;
-integer PLUGIN_CONTEXT = 0;
 integer PLUGIN_LABEL = 1;
-integer PLUGIN_MIN_ACL = 2;
-
-/* Session list stride - SECURITY FIX: Added SESSION_CREATED_TIME */
-integer SESSION_STRIDE = 9;
-integer SESSION_USER = 0;
-integer SESSION_ACL = 1;
-integer SESSION_IS_BLACKLISTED = 2;
-integer SESSION_PAGE = 3;
-integer SESSION_TOTAL_PAGES = 4;
-integer SESSION_ID = 5;
-integer SESSION_FILTERED_START = 6;
-integer SESSION_CREATED_TIME = 7;  // SECURITY FIX: Timestamp for ACL refresh
-integer SESSION_CONTEXT = 8;  // Context filter for this session (root or sos)
-
-/* Plugin state list stride: [context, state] */
-integer PLUGIN_STATE_STRIDE = 2;
-integer PLUGIN_STATE_CONTEXT = 0;
-integer PLUGIN_STATE_VALUE = 1;
 
 integer MAX_SESSIONS = 5;
 integer SESSION_MAX_AGE = 60;  // Seconds before ACL refresh required
-
-/* Touch tracking stride */
-integer TOUCH_DATA_STRIDE = 2;
-integer TOUCH_DATA_KEY = 0;
-integer TOUCH_DATA_START_TIME = 1;
-
-/* Pending ACL stride - tracks avatar and requested context */
-integer PENDING_ACL_STRIDE = 2;
-integer PENDING_ACL_AVATAR = 0;
-integer PENDING_ACL_CONTEXT = 1;
 
 /* ACL levels (mirrors auth module) */
 integer ACL_BLACKLIST = -1;
@@ -82,12 +55,39 @@ string LSD_KEY_ACL_TPE       = "ACL.TPE";
 string LSD_KEY_ACL_TIMESTAMP = "ACL.TIMESTAMP";
 
 /* -------------------- STATE -------------------- */
-list AllPlugins = [];
-list Sessions = [];
-list FilteredPluginsData = [];
-list PendingAcl = [];
-list TouchData = [];
-list PluginStates = [];  // Stores toggle button states [context, state]
+// Parallel Lists for Plugins
+list PluginContexts;
+list PluginLabels;
+list PluginMinACLs;
+
+// Parallel Lists for Sessions
+list SessionUsers;
+list SessionACLs;
+list SessionBlacklisted;
+list SessionPages;
+list SessionTotalPages;
+list SessionIDs;
+list SessionFilteredStarts;
+list SessionFilteredCounts;
+list SessionCreatedTimes;
+list SessionContexts;
+
+// Filtered Data (Stores indices into Plugin lists)
+list FilteredPluginIndices;
+
+// Parallel Lists for Pending ACL
+list PendingAclAvatars;
+list PendingAclContexts;
+
+// Parallel Lists for Touch Data
+list TouchKeys;
+list TouchStartTimes;
+
+// Parallel Lists for Plugin States
+list PluginStateContexts;
+list PluginStateValues;
+
+// Cache
 list CachedOwners = [];
 list CachedTrustees = [];
 list CachedBlacklist = [];
@@ -109,7 +109,8 @@ string get_msg_type(string msg) {
 // MEMORY OPTIMIZATION: Compact field validation helper
 integer validate_required_fields(string json_str, list field_names) {
     integer i = 0;
-    while (i < llGetListLength(field_names)) {
+    integer len = llGetListLength(field_names);
+    while (i < len) {
         string field = llList2String(field_names, i);
         if (!json_has(json_str, [field])) {
             return FALSE;
@@ -126,14 +127,7 @@ string generate_session_id(key user) {
 /* -------------------- PLUGIN STATE MANAGEMENT -------------------- */
 
 integer find_plugin_state_idx(string context) {
-    integer i = 0;
-    while (i < llGetListLength(PluginStates)) {
-        if (llList2String(PluginStates, i + PLUGIN_STATE_CONTEXT) == context) {
-            return i;
-        }
-        i += PLUGIN_STATE_STRIDE;
-    }
-    return -1;
+    return llListFindList(PluginStateContexts, [context]);
 }
 
 integer get_plugin_state(string context) {
@@ -141,7 +135,7 @@ integer get_plugin_state(string context) {
     if (idx == -1) {
         return 0;  // Default state
     }
-    return llList2Integer(PluginStates, idx + PLUGIN_STATE_VALUE);
+    return llList2Integer(PluginStateValues, idx);
 }
 
 set_plugin_state(string context, integer button_state) {
@@ -149,16 +143,12 @@ set_plugin_state(string context, integer button_state) {
 
     if (idx != -1) {
         // Update existing state
-        PluginStates = llListReplaceList(
-            PluginStates,
-            [button_state],
-            idx + PLUGIN_STATE_VALUE,
-            idx + PLUGIN_STATE_VALUE
-        );
+        PluginStateValues = llListReplaceList(PluginStateValues, [button_state], idx, idx);
     }
     else {
         // Add new state
-        PluginStates += [context, button_state];
+        PluginStateContexts += [context];
+        PluginStateValues += [button_state];
     }
 }
 
@@ -266,57 +256,21 @@ integer try_cached_session(key user_key, string context_filter) {
 }
 
 integer find_pending_acl_idx(key avatar_key) {
-    if (llGetListLength(PendingAcl) == 0) {
-        return -1;
-    }
-    return llListFindStrided(
-        PendingAcl,
-        [avatar_key],
-        PENDING_ACL_AVATAR,
-        -1,
-        PENDING_ACL_STRIDE
-    );
+    return llListFindList(PendingAclAvatars, [avatar_key]);
 }
 
 /* -------------------- SESSION MANAGEMENT -------------------- */
 
 integer find_session_idx(key user) {
-    integer i = 0;
-    while (i < llGetListLength(Sessions)) {
-        if (llList2Key(Sessions, i + SESSION_USER) == user) {
-            return i;
-        }
-        i += SESSION_STRIDE;
-    }
-    return -1;
+    return llListFindList(SessionUsers, [user]);
 }
 
-integer get_session_filtered_start(integer session_idx) {
-    return llList2Integer(Sessions, session_idx + SESSION_FILTERED_START);
-}
-
-integer get_session_filtered_count(integer session_idx) {
-    integer start = get_session_filtered_start(session_idx);
-    integer next_session_idx = session_idx + SESSION_STRIDE;
+list get_session_filtered_indices(integer session_idx) {
+    integer start = llList2Integer(SessionFilteredStarts, session_idx);
+    integer count = llList2Integer(SessionFilteredCounts, session_idx);
     
-    integer end;
-    if (next_session_idx < llGetListLength(Sessions)) {
-        end = llList2Integer(Sessions, next_session_idx + SESSION_FILTERED_START);
-    }
-    else {
-        end = llGetListLength(FilteredPluginsData);
-    }
-    
-    return (end - start) / PLUGIN_STRIDE;
-}
-
-list get_session_filtered_plugins(integer session_idx) {
-    integer start = get_session_filtered_start(session_idx);
-    integer count = get_session_filtered_count(session_idx);
-    integer end = start + (count * PLUGIN_STRIDE);
-    
-    if (end > start) {
-        return llList2List(FilteredPluginsData, start, end - 1);
+    if (count > 0) {
+        return llList2List(FilteredPluginIndices, start, start + count - 1);
     }
     return [];
 }
@@ -326,35 +280,40 @@ cleanup_session(key user) {
     if (idx == -1) return;
 
     // BUGFIX: Close dialog before cleaning up session
-    string session_id = llList2String(Sessions, idx + SESSION_ID);
+    string session_id = llList2String(SessionIDs, idx);
     string close_msg = llList2Json(JSON_OBJECT, [
         "type", "dialog_close",
         "session_id", session_id
     ]);
     llMessageLinked(LINK_SET, DIALOG_BUS, close_msg, NULL_KEY);
 
-    integer start = get_session_filtered_start(idx);
-    integer count = get_session_filtered_count(idx);
-    integer end = start + (count * PLUGIN_STRIDE);
+    integer start = llList2Integer(SessionFilteredStarts, idx);
+    integer count = llList2Integer(SessionFilteredCounts, idx);
 
     if (count > 0) {
-        FilteredPluginsData = llDeleteSubList(FilteredPluginsData, start, end - 1);
+        FilteredPluginIndices = llDeleteSubList(FilteredPluginIndices, start, start + count - 1);
     }
 
-    integer shift_amount = count * PLUGIN_STRIDE;
-    integer i = idx + SESSION_STRIDE;
-    while (i < llGetListLength(Sessions)) {
-        integer old_start = llList2Integer(Sessions, i + SESSION_FILTERED_START);
-        Sessions = llListReplaceList(
-            Sessions,
-            [old_start - shift_amount],
-            i + SESSION_FILTERED_START,
-            i + SESSION_FILTERED_START
-        );
-        i += SESSION_STRIDE;
+    // Shift subsequent session start indices
+    integer i = idx + 1;
+    integer len = llGetListLength(SessionUsers);
+    while (i < len) {
+        integer old_start = llList2Integer(SessionFilteredStarts, i);
+        SessionFilteredStarts = llListReplaceList(SessionFilteredStarts, [old_start - count], i, i);
+        i++;
     }
 
-    Sessions = llDeleteSubList(Sessions, idx, idx + SESSION_STRIDE - 1);
+    // Remove session from parallel lists
+    SessionUsers = llDeleteSubList(SessionUsers, idx, idx);
+    SessionACLs = llDeleteSubList(SessionACLs, idx, idx);
+    SessionBlacklisted = llDeleteSubList(SessionBlacklisted, idx, idx);
+    SessionPages = llDeleteSubList(SessionPages, idx, idx);
+    SessionTotalPages = llDeleteSubList(SessionTotalPages, idx, idx);
+    SessionIDs = llDeleteSubList(SessionIDs, idx, idx);
+    SessionFilteredStarts = llDeleteSubList(SessionFilteredStarts, idx, idx);
+    SessionFilteredCounts = llDeleteSubList(SessionFilteredCounts, idx, idx);
+    SessionCreatedTimes = llDeleteSubList(SessionCreatedTimes, idx, idx);
+    SessionContexts = llDeleteSubList(SessionContexts, idx, idx);
 }
 
 create_session(key user, integer acl, integer is_blacklisted, string context_filter) {
@@ -363,19 +322,20 @@ create_session(key user, integer acl, integer is_blacklisted, string context_fil
         cleanup_session(user);
     }
 
-    if (llGetListLength(Sessions) / SESSION_STRIDE >= MAX_SESSIONS) {
-        key oldest_user = llList2Key(Sessions, SESSION_USER);
+    if (llGetListLength(SessionUsers) >= MAX_SESSIONS) {
+        key oldest_user = llList2Key(SessionUsers, 0);
         cleanup_session(oldest_user);
     }
 
     // Build filtered list based on ACL and context (SOS vs root)
-    list filtered = [];
+    list filtered_indices = [];
     integer i = 0;
+    integer len = llGetListLength(PluginContexts);
 
-    while (i < llGetListLength(AllPlugins)) {
-        string context = llList2String(AllPlugins, i + PLUGIN_CONTEXT);
-        string label = llList2String(AllPlugins, i + PLUGIN_LABEL);
-        integer min_acl = llList2Integer(AllPlugins, i + PLUGIN_MIN_ACL);
+    while (i < len) {
+        string context = llList2String(PluginContexts, i);
+        // Label not needed for filtering
+        integer min_acl = llList2Integer(PluginMinACLs, i);
 
         integer should_include = FALSE;
         integer is_sos_plugin = (llSubStringIndex(context, SOS_PREFIX) == 0);
@@ -392,29 +352,46 @@ create_session(key user, integer acl, integer is_blacklisted, string context_fil
         }
 
         if (should_include) {
-            filtered += [context, label, min_acl];
+            filtered_indices += [i];
         }
 
-        i += PLUGIN_STRIDE;
+        i++;
     }
 
-    integer filtered_start = llGetListLength(FilteredPluginsData);
-    FilteredPluginsData += filtered;
+    integer filtered_start = llGetListLength(FilteredPluginIndices);
+    integer filtered_count = llGetListLength(filtered_indices);
+    FilteredPluginIndices += filtered_indices;
 
     // SECURITY FIX: Add timestamp to session
     string session_id = generate_session_id(user);
     integer created_time = llGetUnixTime();
-    Sessions += [user, acl, is_blacklisted, 0, 0, session_id, filtered_start, created_time, context_filter];
+    
+    SessionUsers += [user];
+    SessionACLs += [acl];
+    SessionBlacklisted += [is_blacklisted];
+    SessionPages += [0];
+    SessionTotalPages += [0];
+    SessionIDs += [session_id];
+    SessionFilteredStarts += [filtered_start];
+    SessionFilteredCounts += [filtered_count];
+    SessionCreatedTimes += [created_time];
+    SessionContexts += [context_filter];
 }
 
 /* -------------------- PLUGIN LIST MANAGEMENT -------------------- */
 
 apply_plugin_list(string plugins_json) {
-    AllPlugins = [];
+    // Clear parallel lists
+    PluginContexts = [];
+    PluginLabels = [];
+    PluginMinACLs = [];
 
     if (llJsonValueType(plugins_json, []) != JSON_ARRAY) {
         return;
     }
+    
+    // Temporary strided list for sorting
+    list temp_plugins = [];
     
     integer count = 0;
     while (llJsonValueType(plugins_json, [count]) != JSON_INVALID) {
@@ -432,16 +409,25 @@ apply_plugin_list(string plugins_json) {
             string label = llJsonGetValue(plugin_obj, ["label"]);
 
             // Add with default min_acl=0 (will be updated when ACL list arrives)
-            AllPlugins += [context, label, 0];
+            temp_plugins += [context, label, 0];
         }
 
         i += 1;
     }
 
     // Sort once to avoid per-session sorting overhead
-    integer plugin_count = llGetListLength(AllPlugins) / PLUGIN_STRIDE;
-    if (plugin_count > 1) {
-        AllPlugins = llListSortStrided(AllPlugins, PLUGIN_STRIDE, PLUGIN_LABEL, TRUE);
+    if (llGetListLength(temp_plugins) > PLUGIN_STRIDE) {
+        temp_plugins = llListSortStrided(temp_plugins, PLUGIN_STRIDE, PLUGIN_LABEL, TRUE);
+    }
+    
+    // Split into parallel lists
+    i = 0;
+    integer len = llGetListLength(temp_plugins);
+    while (i < len) {
+        PluginContexts += [llList2String(temp_plugins, i)];
+        PluginLabels += [llList2String(temp_plugins, i + 1)];
+        PluginMinACLs += [llList2Integer(temp_plugins, i + 2)];
+        i += PLUGIN_STRIDE;
     }
 
     // Request ACL data from auth module
@@ -468,24 +454,11 @@ apply_plugin_acl_list(string acl_json) {
             string context = llJsonGetValue(acl_obj, ["context"]);
             integer min_acl = (integer)llJsonGetValue(acl_obj, ["min_acl"]);
 
-            // Find this context in AllPlugins and update min_acl
-            // OPTIMIZATION: Jump to next_acl after match (acts as break)
-            // Each context appears at most once, so no need to continue searching
-            integer j = 0;
-            while (j < llGetListLength(AllPlugins)) {
-                if (llList2String(AllPlugins, j + PLUGIN_CONTEXT) == context) {
-                    AllPlugins = llListReplaceList(
-                        AllPlugins,
-                        [min_acl],
-                        j + PLUGIN_MIN_ACL,
-                        j + PLUGIN_MIN_ACL
-                    );
-                    jump next_acl;  // Break after match (each context is unique)
-                }
-                j += PLUGIN_STRIDE;
+            // Find this context in PluginContexts and update min_acl
+            integer idx = llListFindList(PluginContexts, [context]);
+            if (idx != -1) {
+                PluginMinACLs = llListReplaceList(PluginMinACLs, [min_acl], idx, idx);
             }
-
-            @next_acl;
         }
 
         i += 1;
@@ -509,12 +482,12 @@ send_render_menu(key user, string menu_type) {
         return;
     }
 
-    list filtered = get_session_filtered_plugins(session_idx);
-    integer plugin_count = llGetListLength(filtered) / PLUGIN_STRIDE;
+    list filtered_indices = get_session_filtered_indices(session_idx);
+    integer plugin_count = llGetListLength(filtered_indices);
 
     if (plugin_count == 0) {
-        integer user_acl = llList2Integer(Sessions, session_idx + SESSION_ACL);
-        integer is_blacklisted = llList2Integer(Sessions, session_idx + SESSION_IS_BLACKLISTED);
+        integer user_acl = llList2Integer(SessionACLs, session_idx);
+        integer is_blacklisted = llList2Integer(SessionBlacklisted, session_idx);
 
         if (menu_type == SOS_CONTEXT) {
             send_message(user, "No emergency options are currently available.");
@@ -540,32 +513,30 @@ send_render_menu(key user, string menu_type) {
         return;
     }
 
-    integer current_page = llList2Integer(Sessions, session_idx + SESSION_PAGE);
+    integer current_page = llList2Integer(SessionPages, session_idx);
 
     integer total_pages = (plugin_count + MAX_FUNC_BTNS - 1) / MAX_FUNC_BTNS;
     if (current_page >= total_pages) current_page = 0;
     if (current_page < 0) current_page = total_pages - 1;
 
-    // Batch update for performance (SESSION_PAGE=3, SESSION_TOTAL_PAGES=4 are consecutive)
-    Sessions = llListReplaceList(
-        Sessions,
-        [current_page, total_pages],
-        session_idx + SESSION_PAGE,
-        session_idx + SESSION_TOTAL_PAGES
-    );
+    // Update session state
+    SessionPages = llListReplaceList(SessionPages, [current_page], session_idx, session_idx);
+    SessionTotalPages = llListReplaceList(SessionTotalPages, [total_pages], session_idx, session_idx);
 
     // Build button data with context and state
     list button_data = [];
-    integer start_idx = current_page * MAX_FUNC_BTNS * PLUGIN_STRIDE;
-    integer end_idx = start_idx + (MAX_FUNC_BTNS * PLUGIN_STRIDE);
-    if (end_idx > llGetListLength(filtered)) {
-        end_idx = llGetListLength(filtered);
+    integer start_idx = current_page * MAX_FUNC_BTNS;
+    integer end_idx = start_idx + MAX_FUNC_BTNS;
+    if (end_idx > plugin_count) {
+        end_idx = plugin_count;
     }
 
     integer i = start_idx;
     while (i < end_idx) {
-        string context = llList2String(filtered, i + PLUGIN_CONTEXT);
-        string label = llList2String(filtered, i + PLUGIN_LABEL);
+        integer plugin_idx = llList2Integer(filtered_indices, i);
+        
+        string context = llList2String(PluginContexts, plugin_idx);
+        string label = llList2String(PluginLabels, plugin_idx);
         integer button_state = get_plugin_state(context);
 
         // Create button data object with context, label, and state
@@ -575,11 +546,11 @@ send_render_menu(key user, string menu_type) {
             "state", button_state
         ]);
         button_data += [btn_obj];
-        i += PLUGIN_STRIDE;
+        i++;
     }
 
     string buttons_json = llList2Json(JSON_ARRAY, button_data);
-    string session_id = llList2String(Sessions, session_idx + SESSION_ID);
+    string session_id = llList2String(SessionIDs, session_idx);
 
     // DESIGN DECISION: Navigation row is ALWAYS present (DO NOT CHANGE)
     integer has_nav = 1;
@@ -607,27 +578,22 @@ handle_button_click(key user, string button, string context) {
     }
 
     // SECURITY FIX: Check blacklist status
-    integer is_blacklisted = llList2Integer(Sessions, session_idx + SESSION_IS_BLACKLISTED);
+    integer is_blacklisted = llList2Integer(SessionBlacklisted, session_idx);
     if (is_blacklisted) {
         send_message(user, "You have been barred from using this collar.");
         cleanup_session(user);
         return;
     }
 
-    integer current_page = llList2Integer(Sessions, session_idx + SESSION_PAGE);
-    integer total_pages = llList2Integer(Sessions, session_idx + SESSION_TOTAL_PAGES);
-    string session_context = llList2String(Sessions, session_idx + SESSION_CONTEXT);
+    integer current_page = llList2Integer(SessionPages, session_idx);
+    integer total_pages = llList2Integer(SessionTotalPages, session_idx);
+    string session_context = llList2String(SessionContexts, session_idx);
 
     // Handle navigation buttons (no context)
     if (button == "<<") {
         current_page -= 1;
         if (current_page < 0) current_page = total_pages - 1;
-        Sessions = llListReplaceList(
-            Sessions,
-            [current_page],
-            session_idx + SESSION_PAGE,
-            session_idx + SESSION_PAGE
-        );
+        SessionPages = llListReplaceList(SessionPages, [current_page], session_idx, session_idx);
         send_render_menu(user, session_context);
         return;
     }
@@ -640,12 +606,7 @@ handle_button_click(key user, string button, string context) {
     if (button == ">>") {
         current_page += 1;
         if (current_page >= total_pages) current_page = 0;
-        Sessions = llListReplaceList(
-            Sessions,
-            [current_page],
-            session_idx + SESSION_PAGE,
-            session_idx + SESSION_PAGE
-        );
+        SessionPages = llListReplaceList(SessionPages, [current_page], session_idx, session_idx);
         send_render_menu(user, session_context);
         return;
     }
@@ -653,28 +614,25 @@ handle_button_click(key user, string button, string context) {
     // Plugin button clicked - use context directly for fast lookup
     if (context != "") {
         // Find plugin by context
-        integer i = 0;
-        while (i < llGetListLength(AllPlugins)) {
-            if (llList2String(AllPlugins, i + PLUGIN_CONTEXT) == context) {
-                integer min_acl = llList2Integer(AllPlugins, i + PLUGIN_MIN_ACL);
-                integer user_acl = llList2Integer(Sessions, session_idx + SESSION_ACL);
+        integer i = llListFindList(PluginContexts, [context]);
+        if (i != -1) {
+            integer min_acl = llList2Integer(PluginMinACLs, i);
+            integer user_acl = llList2Integer(SessionACLs, session_idx);
 
-                // ACL check - CRITICAL for collar security
-                if (user_acl < min_acl) {
-                    send_message(user, "Access denied.");
-                    return;
-                }
-
-                string msg = llList2Json(JSON_OBJECT, [
-                    "type", "start",
-                    "context", context,
-                    "user", (string)user
-                ]);
-
-                llMessageLinked(LINK_SET, UI_BUS, msg, user);
+            // ACL check - CRITICAL for collar security
+            if (user_acl < min_acl) {
+                send_message(user, "Access denied.");
                 return;
             }
-            i += PLUGIN_STRIDE;
+
+            string msg = llList2Json(JSON_OBJECT, [
+                "type", "start",
+                "context", context,
+                "user", (string)user
+            ]);
+
+            llMessageLinked(LINK_SET, UI_BUS, msg, user);
+            return;
         }
         return;
     }
@@ -683,35 +641,11 @@ handle_button_click(key user, string button, string context) {
 /* -------------------- PLUGIN LABEL UPDATE -------------------- */
 
 update_plugin_label(string context, string new_label) {
-    integer i = 0;
+    integer i = llListFindList(PluginContexts, [context]);
     
-    while (i < llGetListLength(AllPlugins)) {
-        string all_context = llList2String(AllPlugins, i + PLUGIN_CONTEXT);
-        if (all_context == context) {
-            AllPlugins = llListReplaceList(
-                AllPlugins,
-                [new_label],
-                i + PLUGIN_LABEL,
-                i + PLUGIN_LABEL
-            );
-            
-            integer j = 0;
-            while (j < llGetListLength(FilteredPluginsData)) {
-                string filtered_context = llList2String(FilteredPluginsData, j + PLUGIN_CONTEXT);
-                if (filtered_context == context) {
-                    FilteredPluginsData = llListReplaceList(
-                        FilteredPluginsData,
-                        [new_label],
-                        j + PLUGIN_LABEL,
-                        j + PLUGIN_LABEL
-                    );
-                }
-                j += PLUGIN_STRIDE;
-            }
-            return;
-        }
-        
-        i += PLUGIN_STRIDE;
+    if (i != -1) {
+        PluginLabels = llListReplaceList(PluginLabels, [new_label], i, i);
+        return;
     }
 }
 
@@ -726,22 +660,34 @@ handle_plugin_list(string msg) {
     apply_plugin_list(plugins_json);
 
     // Invalidate all sessions when plugin list changes
-    if (llGetListLength(Sessions) > 0) {
+    if (llGetListLength(SessionUsers) > 0) {
         // Close all dialogs before clearing sessions
         integer i = 0;
-        while (i < llGetListLength(Sessions)) {
-            string session_id = llList2String(Sessions, i + SESSION_ID);
+        integer len = llGetListLength(SessionIDs);
+        while (i < len) {
+            string session_id = llList2String(SessionIDs, i);
             string close_msg = llList2Json(JSON_OBJECT, [
                 "type", "dialog_close",
                 "session_id", session_id
             ]);
             llMessageLinked(LINK_SET, DIALOG_BUS, close_msg, NULL_KEY);
-            i += SESSION_STRIDE;
+            i++;
         }
 
-        Sessions = [];
-        FilteredPluginsData = [];
-        PendingAcl = [];
+        SessionUsers = [];
+        SessionACLs = [];
+        SessionBlacklisted = [];
+        SessionPages = [];
+        SessionTotalPages = [];
+        SessionIDs = [];
+        SessionFilteredStarts = [];
+        SessionFilteredCounts = [];
+        SessionCreatedTimes = [];
+        SessionContexts = [];
+        
+        FilteredPluginIndices = [];
+        PendingAclAvatars = [];
+        PendingAclContexts = [];
     }
 }
 
@@ -767,8 +713,10 @@ handle_acl_result(string msg) {
     integer idx = find_pending_acl_idx(avatar);
     if (idx == -1) return;
 
-    string requested_context = llList2String(PendingAcl, idx + PENDING_ACL_CONTEXT);
-    PendingAcl = llDeleteSubList(PendingAcl, idx, idx + PENDING_ACL_STRIDE - 1);
+    string requested_context = llList2String(PendingAclContexts, idx);
+    
+    PendingAclAvatars = llDeleteSubList(PendingAclAvatars, idx, idx);
+    PendingAclContexts = llDeleteSubList(PendingAclContexts, idx, idx);
 
     create_session(avatar, level, is_blacklisted, requested_context);
     send_render_menu(avatar, requested_context);
@@ -801,7 +749,8 @@ start_root_session(key user_key) {
         return;
     }
 
-    PendingAcl += [user_key, ROOT_CONTEXT];
+    PendingAclAvatars += [user_key];
+    PendingAclContexts += [ROOT_CONTEXT];
 
     string acl_query = llList2Json(JSON_OBJECT, [
         "type", "acl_query",
@@ -818,7 +767,8 @@ start_sos_session(key user_key) {
         return;
     }
 
-    PendingAcl += [user_key, SOS_CONTEXT];
+    PendingAclAvatars += [user_key];
+    PendingAclContexts += [SOS_CONTEXT];
 
     string acl_query = llList2Json(JSON_OBJECT, [
         "type", "acl_query",
@@ -835,11 +785,11 @@ handle_return(string msg) {
     // SECURITY FIX: Check session age and re-validate if stale
     integer session_idx = find_session_idx(user_key);
     if (session_idx != -1) {
-        integer created_time = llList2Integer(Sessions, session_idx + SESSION_CREATED_TIME);
+        integer created_time = llList2Integer(SessionCreatedTimes, session_idx);
         integer age = llGetUnixTime() - created_time;
 
         if (age > SESSION_MAX_AGE) {
-            string session_context = llList2String(Sessions, session_idx + SESSION_CONTEXT);
+            string session_context = llList2String(SessionContexts, session_idx);
             cleanup_session(user_key);
 
             if (session_context == SOS_CONTEXT) {
@@ -850,7 +800,7 @@ handle_return(string msg) {
             }
         }
         else {
-            string session_context = llList2String(Sessions, session_idx + SESSION_CONTEXT);
+            string session_context = llList2String(SessionContexts, session_idx);
             send_render_menu(user_key, session_context);
         }
     }
@@ -884,10 +834,21 @@ handle_plugin_acl_bus(string msg) {
     apply_plugin_acl_list(acl_json);
 
     // Invalidate all sessions when ACL data changes
-    if (llGetListLength(Sessions) > 0) {
-        Sessions = [];
-        FilteredPluginsData = [];
-        PendingAcl = [];
+    if (llGetListLength(SessionUsers) > 0) {
+        SessionUsers = [];
+        SessionACLs = [];
+        SessionBlacklisted = [];
+        SessionPages = [];
+        SessionTotalPages = [];
+        SessionIDs = [];
+        SessionFilteredStarts = [];
+        SessionFilteredCounts = [];
+        SessionCreatedTimes = [];
+        SessionContexts = [];
+        
+        FilteredPluginIndices = [];
+        PendingAclAvatars = [];
+        PendingAclContexts = [];
     }
 }
 
@@ -904,8 +865,8 @@ handle_dialog_response(string msg) {
         context = llJsonGetValue(msg, ["context"]);
     }
 
-    integer idx = llListFindList(Sessions, [session_id]);
-    if (idx != -1 && idx % SESSION_STRIDE == SESSION_ID) {
+    integer idx = llListFindList(SessionIDs, [session_id]);
+    if (idx != -1) {
         handle_button_click(user, button, context);
         return;
     }
@@ -917,8 +878,8 @@ handle_dialog_timeout(string msg) {
     string session_id = llJsonGetValue(msg, ["session_id"]);
     key user = (key)llJsonGetValue(msg, ["user"]);
 
-    integer idx = llListFindList(Sessions, [session_id]);
-    if (idx != -1 && idx % SESSION_STRIDE == SESSION_ID) {
+    integer idx = llListFindList(SessionIDs, [session_id]);
+    if (idx != -1) {
         cleanup_session(user);
     }
 }
@@ -928,12 +889,32 @@ handle_dialog_timeout(string msg) {
 default
 {
     state_entry() {
-        AllPlugins = [];
-        Sessions = [];
-        FilteredPluginsData = [];
-        PendingAcl = [];
-        TouchData = [];
-        PluginStates = [];
+        PluginContexts = [];
+        PluginLabels = [];
+        PluginMinACLs = [];
+        
+        SessionUsers = [];
+        SessionACLs = [];
+        SessionBlacklisted = [];
+        SessionPages = [];
+        SessionTotalPages = [];
+        SessionIDs = [];
+        SessionFilteredStarts = [];
+        SessionFilteredCounts = [];
+        SessionCreatedTimes = [];
+        SessionContexts = [];
+        
+        FilteredPluginIndices = [];
+        
+        PendingAclAvatars = [];
+        PendingAclContexts = [];
+        
+        TouchKeys = [];
+        TouchStartTimes = [];
+        
+        PluginStateContexts = [];
+        PluginStateValues = [];
+        
         CachedOwners = [];
         CachedTrustees = [];
         CachedBlacklist = [];
@@ -969,25 +950,13 @@ default
             }
 
             // Record touch start time
-            integer j = 0;
-
-            while (j < llGetListLength(TouchData)) {
-                if (llList2Key(TouchData, j + TOUCH_DATA_KEY) == toucher) {
-                    TouchData = llListReplaceList(
-                        TouchData,
-                        [llGetTime()],
-                        j + TOUCH_DATA_START_TIME,
-                        j + TOUCH_DATA_START_TIME
-                    );
-                    jump recorded;
-                }
-                j += TOUCH_DATA_STRIDE;
+            integer idx = llListFindList(TouchKeys, [toucher]);
+            if (idx != -1) {
+                TouchStartTimes = llListReplaceList(TouchStartTimes, [llGetTime()], idx, idx);
+            } else {
+                TouchKeys += [toucher];
+                TouchStartTimes += [llGetTime()];
             }
-
-            // If we reach here, toucher was not found in TouchData
-            TouchData += [toucher, llGetTime()];
-
-            @recorded;
 
             @next_touch;
             i += 1;
@@ -1001,32 +970,26 @@ default
         while (i < num_detected) {
             key toucher = llDetectedKey(i);
 
-            integer j = 0;
+            integer idx = llListFindList(TouchKeys, [toucher]);
+            if (idx != -1) {
+                float start_time = llList2Float(TouchStartTimes, idx);
+                float duration = llGetTime() - start_time;
 
-            while (j < llGetListLength(TouchData)) {
-                if (llList2Key(TouchData, j + TOUCH_DATA_KEY) == toucher) {
-                    float start_time = llList2Float(TouchData, j + TOUCH_DATA_START_TIME);
-                    float duration = llGetTime() - start_time;
+                TouchKeys = llDeleteSubList(TouchKeys, idx, idx);
+                TouchStartTimes = llDeleteSubList(TouchStartTimes, idx, idx);
 
-                    TouchData = llDeleteSubList(TouchData, j, j + TOUCH_DATA_STRIDE - 1);
-
-                    if (duration >= LONG_TOUCH_THRESHOLD && toucher == wearer) {
-                        start_sos_session(toucher);
-                    }
-                    else {
-                        // Provide feedback if non-wearer attempted long-touch (SOS is wearer-only)
-                        if (duration >= LONG_TOUCH_THRESHOLD && toucher != wearer) {
-                            send_message(toucher, "Long-touch SOS is only available to the wearer.");
-                        }
-                        start_root_session(toucher);
-                    }
-
-                    jump next_toucher;
+                if (duration >= LONG_TOUCH_THRESHOLD && toucher == wearer) {
+                    start_sos_session(toucher);
                 }
-                j += TOUCH_DATA_STRIDE;
+                else {
+                    // Provide feedback if non-wearer attempted long-touch (SOS is wearer-only)
+                    if (duration >= LONG_TOUCH_THRESHOLD && toucher != wearer) {
+                        send_message(toucher, "Long-touch SOS is only available to the wearer.");
+                    }
+                    start_root_session(toucher);
+                }
             }
 
-            @next_toucher;
             i += 1;
         }
     }

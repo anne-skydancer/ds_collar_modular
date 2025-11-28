@@ -1,12 +1,10 @@
 /*--------------------
 MODULE: ds_collar_menu.lsl
 VERSION: 1.00
-REVISION: 14
+REVISION: 13
 PURPOSE: Menu rendering and visual presentation service
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
-- OPTIMIZATION: Replaced iterative list building with bulk llList2List operations
-- OPTIMIZATION: Disabled profiling by default to reduce overhead
 - Improved menu performance 
 - Receives render requests from ds_collar_kmod_ui via UI bus messages
 - Constructs dialog layouts with correct bottom-to-top button ordering
@@ -20,6 +18,26 @@ CHANGES:
 integer UI_BUS = 900;
 integer DIALOG_BUS = 950;
 
+/* -------------------- PROFILING -------------------- */
+
+integer MENU_PROF_ENABLE = TRUE;
+float   MENU_PROF_LAST = 0.0;
+
+menu_profile(string tag, key user)
+{
+    if (!MENU_PROF_ENABLE) return;
+
+    float now = llGetTime();
+    float dt = 0.0;
+    if (MENU_PROF_LAST != 0.0) dt = now - MENU_PROF_LAST;
+    MENU_PROF_LAST = now;
+
+    string who = (string)user;
+    if (who == NULL_KEY) who = "<none>";
+
+    llOwnerSay("[MENU PROF] " + tag + " user=" + who + " dt=" + (string)dt);
+}
+
 /* -------------------- HELPERS -------------------- */
 
 integer json_has(string j, list path) {
@@ -32,8 +50,7 @@ string get_msg_type(string msg) {
 
 integer validate_required_fields(string json_str, list field_names) {
     integer i = 0;
-    integer len = llGetListLength(field_names);
-    while (i < len) {
+    while (i < llGetListLength(field_names)) {
         string field = llList2String(field_names, i);
         if (!json_has(json_str, [field])) {
             return FALSE;
@@ -54,8 +71,11 @@ list reverse_complete_rows(list button_list, integer row_size) {
     integer row = num_rows - 1;
     while (row >= 0) {
         integer row_start = row * row_size;
-        // OPTIMIZATION: Bulk copy row instead of iterating
-        reordered += llList2List(button_list, row_start, row_start + row_size - 1);
+        integer j = 0;
+        while (j < row_size) {
+            reordered += [llList2String(button_list, row_start + j)];
+            j = j + 1;
+        }
         row = row - 1;
     }
     return reordered;
@@ -88,6 +108,7 @@ render_menu(string msg) {
     }
 
     key user = (key)llJsonGetValue(msg, ["user"]);
+    menu_profile("render_menu entry", user);
 
     string session_id = llJsonGetValue(msg, ["session_id"]);
     string menu_type = llJsonGetValue(msg, ["menu_type"]);
@@ -145,6 +166,7 @@ render_menu(string msg) {
         "timeout", 60
     ]);
 
+    menu_profile("render_menu -> dialog_open", user);
     llMessageLinked(LINK_SET, DIALOG_BUS, dialog_msg, NULL_KEY);
 }
 
@@ -156,6 +178,7 @@ show_message(string msg) {
     key user = (key)llJsonGetValue(msg, ["user"]);
     string message_text = llJsonGetValue(msg, ["message"]);
 
+    menu_profile("show_message", user);
     llRegionSayTo(user, 0, message_text);
 }
 
@@ -164,6 +187,8 @@ show_message(string msg) {
 default
 {
     state_entry() {
+        llResetTime();
+        MENU_PROF_LAST = 0.0;
     }
 
     link_message(integer sender_num, integer num, string msg, key id) {

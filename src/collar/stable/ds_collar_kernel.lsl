@@ -1,7 +1,7 @@
 /*--------------------
 MODULE: ds_collar_kernel.lsl
 VERSION: 1.00
-REVISION: 38
+REVISION: 39
 PURPOSE: Plugin registry, lifecycle management, heartbeat monitoring
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
@@ -46,6 +46,8 @@ list AUTHORIZED_RESET_SENDERS = ["bootstrap", "maintenance", "coordinator", "act
 
 /* -------------------- STATE -------------------- */
 list PluginRegistry = [];           // Active plugin registry
+list PluginContexts = [];           // Parallel list for O(1) context lookups
+list PluginScripts = [];            // Parallel list for O(1) script lookups
 list RegistrationQueue = [];        // Pending operations queue (Unix modprobe style)
 integer PendingBatchTimer = FALSE;  // TRUE if batch timer is active
 integer PendingPluginListRequest = FALSE;  // TRUE if plugin_list_request received during batch
@@ -179,23 +181,17 @@ integer process_queue() {
 
 // Find plugin index in registry by context
 integer registry_find(string context) {
-    integer i = 0;
-    while (i < llGetListLength(PluginRegistry)) {
-        if (llList2String(PluginRegistry, i + REG_CONTEXT) == context) {
-            return i;
-        }
-        i += REG_STRIDE;
+    integer idx = llListFindList(PluginContexts, [context]);
+    if (idx != -1) {
+        return idx * REG_STRIDE;
     }
     return -1;
 }
 
 integer registry_find_by_script(string script_name) {
-    integer i = 0;
-    while (i < llGetListLength(PluginRegistry)) {
-        if (llList2String(PluginRegistry, i + REG_SCRIPT) == script_name) {
-            return i;
-        }
-        i += REG_STRIDE;
+    integer idx = llListFindList(PluginScripts, [script_name]);
+    if (idx != -1) {
+        return idx * REG_STRIDE;
     }
     return -1;
 }
@@ -217,6 +213,8 @@ integer registry_upsert(string context, string label, string script, integer min
     if (idx == -1) {
         // New plugin - add to registry
         PluginRegistry += [context, label, script, script_uuid, now(), min_acl];
+        PluginContexts += [context];
+        PluginScripts += [script];
         return TRUE;
     }
     else {
@@ -230,6 +228,10 @@ integer registry_upsert(string context, string label, string script, integer min
             [label, script, script_uuid, now(), min_acl],
             idx + REG_LABEL,
             idx + REG_MIN_ACL);
+            
+        // Update parallel script list (in case script name changed for same context, though unlikely)
+        integer list_idx = idx / REG_STRIDE;
+        PluginScripts = llListReplaceList(PluginScripts, [script], list_idx, list_idx);
 
         // Note: uuid_changed tracked but not logged to reduce spam
 
@@ -244,6 +246,11 @@ integer registry_remove(string context) {
     if (idx == -1) return FALSE;
 
     PluginRegistry = llDeleteSubList(PluginRegistry, idx, idx + REG_STRIDE - 1);
+    
+    integer list_idx = idx / REG_STRIDE;
+    PluginContexts = llDeleteSubList(PluginContexts, list_idx, list_idx);
+    PluginScripts = llDeleteSubList(PluginScripts, list_idx, list_idx);
+    
     return TRUE;
 }
 
@@ -269,6 +276,8 @@ integer prune_dead_plugins() {
     integer pruned = 0;
     
     list new_registry = [];
+    list new_contexts = [];
+    list new_scripts = [];
     integer i = 0;
     
     while (i < llGetListLength(PluginRegistry)) {
@@ -277,6 +286,8 @@ integer prune_dead_plugins() {
         if (last_seen >= cutoff) {
             // Keep this plugin
             new_registry += llList2List(PluginRegistry, i, i + REG_STRIDE - 1);
+            new_contexts += [llList2String(PluginRegistry, i + REG_CONTEXT)];
+            new_scripts += [llList2String(PluginRegistry, i + REG_SCRIPT)];
         }
         else {
             // Prune dead plugin
@@ -287,12 +298,16 @@ integer prune_dead_plugins() {
     }
     
     PluginRegistry = new_registry;
+    PluginContexts = new_contexts;
+    PluginScripts = new_scripts;
     return pruned;
 }
 
 // Remove plugins whose scripts no longer exist in inventory
 integer prune_missing_scripts() {
     list new_registry = [];
+    list new_contexts = [];
+    list new_scripts = [];
     integer pruned = 0;
     integer i = 0;
     
@@ -302,6 +317,8 @@ integer prune_missing_scripts() {
         if (llGetInventoryType(script) == INVENTORY_SCRIPT) {
             // Script still exists, keep plugin
             new_registry += llList2List(PluginRegistry, i, i + REG_STRIDE - 1);
+            new_contexts += [llList2String(PluginRegistry, i + REG_CONTEXT)];
+            new_scripts += [script];
         }
         else {
             // Script missing, prune plugin
@@ -312,6 +329,8 @@ integer prune_missing_scripts() {
     }
     
     PluginRegistry = new_registry;
+    PluginContexts = new_contexts;
+    PluginScripts = new_scripts;
     return pruned;
 }
 
@@ -546,6 +565,8 @@ handle_soft_reset(string msg) {
 
     // Authorized - proceed with reset
     PluginRegistry = [];
+    PluginContexts = [];
+    PluginScripts = [];
     RegistrationQueue = [];
     PendingBatchTimer = FALSE;
     PendingPluginListRequest = FALSE;
@@ -586,6 +607,8 @@ default
     state_entry() {
         LastOwner = llGetOwner();
         PluginRegistry = [];
+        PluginContexts = [];
+        PluginScripts = [];
         RegistrationQueue = [];
         PendingBatchTimer = FALSE;
         PendingPluginListRequest = FALSE;
@@ -709,6 +732,8 @@ default
 
                 // Clear registry and queue, trigger re-registration
                 PluginRegistry = [];
+                PluginContexts = [];
+                PluginScripts = [];
                 RegistrationQueue = [];
                 PendingBatchTimer = FALSE;
                 PendingPluginListRequest = FALSE;

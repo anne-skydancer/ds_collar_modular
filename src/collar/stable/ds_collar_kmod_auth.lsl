@@ -1,7 +1,7 @@
 /*--------------------
 MODULE: ds_collar_kmod_auth.lsl
 VERSION: 1.00
-REVISION: 26
+REVISION: 27
 PURPOSE: Authoritative ACL and policy engine - OPTIMIZED
 ARCHITECTURE: Dispatch table pattern with linkset data cache and JSON templates
 CHANGES:
@@ -79,11 +79,9 @@ list PendingQueries = [];  // [avatar_key, correlation_id, avatar_key, correlati
 integer PENDING_STRIDE = 2;
 integer MAX_PENDING_QUERIES = 50;
 
-/* Plugin ACL registry: [context, min_acl, context, min_acl, ...] */
-list PluginAclRegistry = [];
-integer PLUGIN_ACL_STRIDE = 2;
-integer PLUGIN_ACL_CONTEXT = 0;
-integer PLUGIN_ACL_MIN_ACL = 1;
+/* Plugin ACL registry - Parallel Lists for O(1) lookups */
+list PluginAclContexts = []; // [context1, context2, ...]
+list PluginAclLevels = [];   // [min_acl1, min_acl2, ...]
 
 /* -------------------- HELPER FUNCTIONS -------------------- */
 
@@ -288,17 +286,13 @@ store_cached_acl(key avatar, integer level) {
 
 // Clear all cached ACL query results
 clear_acl_query_cache() {
-    // Iterate through all linkset data keys and delete acl_cache_* entries
-    // Note: LSL doesn't have pattern deletion, so we iterate
-    list all_keys = llLinksetDataListKeys(0, llLinksetDataCountKeys());
+    // OPTIMIZED: Use regex search instead of iterating all keys
+    // This pushes the search workload to the simulator (C++)
+    list keys = llLinksetDataFindKeys("^acl_cache_", 0, 0); 
     integer i = 0;
-    
-    while (i < llGetListLength(all_keys)) {
-        string k = llList2String(all_keys, i);
-        if (llSubStringIndex(k, "acl_cache_") == 0) {
-            llLinksetDataDelete(k);
-        }
-        i = i + 1;
+    while (i < llGetListLength(keys)) {
+        llLinksetDataDelete(llList2String(keys, i));
+        i++;
     }
 }
 
@@ -495,22 +489,25 @@ broadcast_acl_change(string scope, key avatar) {
 /* -------------------- PLUGIN ACL MANAGEMENT -------------------- */
 
 register_plugin_acl(string context, integer min_acl) {
-    integer idx = llListFindList(PluginAclRegistry, [context]);
+    integer idx = llListFindList(PluginAclContexts, [context]);
     if (idx != -1) {
-        PluginAclRegistry = llListReplaceList(PluginAclRegistry, [min_acl],
-            idx + PLUGIN_ACL_MIN_ACL, idx + PLUGIN_ACL_MIN_ACL);
+        // Update existing - only level changes
+        PluginAclLevels = llListReplaceList(PluginAclLevels, [min_acl], idx, idx);
         return;
     }
-    PluginAclRegistry += [context, min_acl];
+    // Add new - append to both lists to maintain sync
+    PluginAclContexts += [context];
+    PluginAclLevels += [min_acl];
 }
 
 broadcast_plugin_acl_list() {
     list acl_data = [];
     integer i = 0;
+    integer len = llGetListLength(PluginAclContexts);
 
-    while (i < llGetListLength(PluginAclRegistry)) {
-        string context = llList2String(PluginAclRegistry, i + PLUGIN_ACL_CONTEXT);
-        integer min_acl = llList2Integer(PluginAclRegistry, i + PLUGIN_ACL_MIN_ACL);
+    while (i < len) {
+        string context = llList2String(PluginAclContexts, i);
+        integer min_acl = llList2Integer(PluginAclLevels, i);
 
         string acl_obj = llList2Json(JSON_OBJECT, [
             "context", context,
@@ -518,7 +515,7 @@ broadcast_plugin_acl_list() {
         ]);
 
         acl_data += [acl_obj];
-        i += PLUGIN_ACL_STRIDE;
+        i++;
     }
 
     string acl_array = "[" + llDumpList2String(acl_data, ",") + "]";
@@ -552,12 +549,14 @@ list filter_plugins_for_user(key user, list plugin_contexts) {
     integer user_acl = compute_acl_level(user);
 
     integer i = 0;
-    while (i < llGetListLength(plugin_contexts)) {
+    integer len = llGetListLength(plugin_contexts);
+    while (i < len) {
         string context = llList2String(plugin_contexts, i);
 
-        integer idx = llListFindList(PluginAclRegistry, [context]);
+        // Optimized lookup using parallel list
+        integer idx = llListFindList(PluginAclContexts, [context]);
         if (idx != -1) {
-            integer required_acl = llList2Integer(PluginAclRegistry, idx + PLUGIN_ACL_MIN_ACL);
+            integer required_acl = llList2Integer(PluginAclLevels, idx);
             if (user_acl >= required_acl) {
                 accessible += [context];
             }
@@ -859,7 +858,8 @@ default
     state_entry() {
         SettingsReady = FALSE;
         PendingQueries = [];
-        PluginAclRegistry = [];
+        PluginAclContexts = [];
+        PluginAclLevels = [];
         
         // Initialize JSON templates for fast response construction
         init_json_templates();
