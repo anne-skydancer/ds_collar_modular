@@ -1,7 +1,7 @@
 /*--------------------
 MODULE: ds_collar_kmod_bootstrap.lsl
 VERSION: 1.00
-REVISION: 30
+REVISION: 31
 PURPOSE: Startup coordination, RLV detection, owner name resolution
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
@@ -18,10 +18,10 @@ integer KERNEL_LIFECYCLE = 500;
 integer SETTINGS_BUS = 800;
 
 /* -------------------- RLV DETECTION CONFIG -------------------- */
-integer RLV_PROBE_TIMEOUT_SEC = 30;
+integer RLV_PROBE_TIMEOUT_SEC = 60;
 integer RLV_RETRY_INTERVAL_SEC = 4;
 integer RLV_MAX_RETRIES = 8;
-integer RLV_INITIAL_DELAY_SEC = 1;
+integer RLV_INITIAL_DELAY_SEC = 30;
 
 // Probe multiple channels for better compatibility
 integer UseFixed4711;
