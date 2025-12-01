@@ -1,10 +1,11 @@
 /*--------------------
 SCRIPT: ds_collar_update_coordinator.lsl
 VERSION: 1.00
-REVISION: 16
+REVISION: 17
 PURPOSE: Autonomous update coordinator injected via llRemoteLoadScriptPin
 ARCHITECTURE: Arrives RUNNING, orchestrates update, then triggers activator shim
 CHANGES:
+- Rev 17: Added helper function get_installed_items() to scan collar inventory
 - Rev 16: Integrated settings restoration (removed activator shim dependency)
 - Rev 15: Fixed self-destruct on rez/reset (added on_rez and guarded changed event)
 - Rev 15: Fixed ACL backup format to match activator expectations (JSON object with keys/values)
@@ -37,11 +38,43 @@ string UpdateSession = "";
 string PendingItem = "";
 integer ExpectedItems = 0;
 integer ReceivedItems = 0;
+integer SettingsBackedUp = FALSE;
 
 /* -------------------- HELPERS -------------------- */
 
 integer json_has(string j, list path) {
     return (llJsonGetValue(j, path) != JSON_INVALID);
+}
+
+list get_installed_items() {
+    list items = [];
+    
+    // Scripts
+    integer count = llGetInventoryNumber(INVENTORY_SCRIPT);
+    integer i = 0;
+    while (i < count) {
+        string name = llGetInventoryName(INVENTORY_SCRIPT, i);
+        if (name != llGetScriptName()) items += [name];
+        i++;
+    }
+    
+    // Animations
+    count = llGetInventoryNumber(INVENTORY_ANIMATION);
+    i = 0;
+    while (i < count) {
+        items += [llGetInventoryName(INVENTORY_ANIMATION, i)];
+        i++;
+    }
+    
+    // Objects
+    count = llGetInventoryNumber(INVENTORY_OBJECT);
+    i = 0;
+    while (i < count) {
+        items += [llGetInventoryName(INVENTORY_OBJECT, i)];
+        i++;
+    }
+    
+    return items;
 }
 
 /* -------------------- SETTINGS BACKUP -------------------- */
@@ -188,7 +221,7 @@ restore_settings() {
     
     // Broadcast settings to all scripts
     string msg = llList2Json(JSON_OBJECT, [
-        "type", "settings_sync",
+        "type", "settings_restore",
         "kv", kv_json
     ]);
     llMessageLinked(LINK_SET, SETTINGS_BUS, msg, NULL_KEY);
@@ -301,9 +334,14 @@ default {
         
         // Signal updater that we're ready for manifest
         // (We don't know UpdaterKey or UpdateSession yet, so use llRegionSay)
+        
+        list installed = get_installed_items();
+        string installed_json = llList2Json(JSON_ARRAY, installed);
+        
         string ready_msg = llList2Json(JSON_OBJECT, [
             "type", "coordinator_ready",
-            "session", ""  // Will be set when we receive begin_update
+            "session", "",  // Will be set when we receive begin_update
+            "installed", installed_json
         ]);
         llRegionSay(SecureChannel, ready_msg);
         
@@ -329,7 +367,7 @@ default {
             
             // Begin update process
             backup_settings();
-            clear_inventory();
+            // clear_inventory(); // Moved to link_message after settings are secured
             return;
         }
         
@@ -352,6 +390,22 @@ default {
         abort_update("Timeout - no response from updater");
     }
     
+    link_message(integer sender, integer num, string msg, key id) {
+        if (num == SETTINGS_BUS) {
+            if (json_has(msg, ["type"]) && llJsonGetValue(msg, ["type"]) == "settings_sync") {
+                // Only process settings sync during the backup phase
+                if (!SettingsBackedUp && json_has(msg, ["kv"])) {
+                    string kv_json = llJsonGetValue(msg, ["kv"]);
+                    llLinksetDataWrite("SETTINGS.UPDATE", kv_json);
+                    SettingsBackedUp = TRUE;
+                    
+                    // Settings secured, now proceed to clear inventory
+                    clear_inventory();
+                }
+            }
+        }
+    }
+
     on_rez(integer start_param) {
         llResetScript();
     }

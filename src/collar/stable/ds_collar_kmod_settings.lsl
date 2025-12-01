@@ -603,6 +603,15 @@ handle_list_remove(string msg) {
     }
 }
 
+handle_settings_restore(string msg) {
+    if (!json_has(msg, ["kv"])) return;
+    
+    KvJson = llJsonGetValue(msg, ["kv"]);
+    
+    // After restoring state, broadcast full sync to all other modules
+    broadcast_full_sync();
+}
+
 /* -------------------- EVENTS -------------------- */
 
 default
@@ -699,6 +708,9 @@ default
         }
         else if (msg_type == "list_remove") {
             handle_list_remove(msg);
+        }
+        else if (msg_type == "settings_restore") {
+            handle_settings_restore(msg);
         }
     }
 }

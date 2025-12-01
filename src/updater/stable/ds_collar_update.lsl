@@ -1,10 +1,11 @@
 /*--------------------
 SCRIPT: ds_collar_update.lsl
 VERSION: 1.00
-REVISION: 13
+REVISION: 14
 PURPOSE: Unified updater for D/s Collar
 ARCHITECTURE: State-based (Idle -> Detecting -> Updating)
 CHANGES:
+- Rev 14: Added is_core_component() helper to identify mandatory scripts (Kernel, Menu, Modules)
 - Rev 13: Refactored into LSL states for robustness
 - Rev 12: Use llRemoteLoadScriptPin for all scripts to ensure they arrive RUNNING
 - Rev 11: REMOVED Installer mode. This script is now UPDATER ONLY.
@@ -54,6 +55,14 @@ integer generate_secure_channel(string session) {
     // Ensure negative and in valid range
     if (chan > 0) chan = -chan;
     return chan;
+}
+
+integer is_core_component(string name) {
+    if (name == "ds_collar_kernel") return TRUE;
+    if (name == "ds_collar_menu") return TRUE;
+    // kmod_ prefix indicates a kernel module (Core)
+    if (llSubStringIndex(name, "ds_collar_kmod_") == 0) return TRUE;
+    return FALSE;
 }
 
 /* -------------------- INVENTORY SCANNING -------------------- */
@@ -304,11 +313,32 @@ state updating {
             // Coordinator is ready
             if (llGetListLength(Manifest) == 0) {
                 // First ready signal - send manifest
-                Manifest = scan_update_inventory();
+                list full_manifest = scan_update_inventory();
+                Manifest = [];
+                
+                list installed = [];
+                if (json_has(msg, ["installed"])) {
+                    installed = llJson2List(llJsonGetValue(msg, ["installed"]));
+                }
+                
+                // Filter: Include Core components AND installed items
+                integer i = 0;
+                integer len = llGetListLength(full_manifest);
+                while (i < len) {
+                    string item_name = llList2String(full_manifest, i);
+                    string item_uuid = llList2String(full_manifest, i + 1);
+                    
+                    // Update if Core (Kernel/Modules) OR if already installed (Plugins/Assets)
+                    if (is_core_component(item_name) || llListFindList(installed, [item_name]) != -1) {
+                        Manifest += [item_name, item_uuid];
+                    }
+                    i += MANIFEST_STRIDE;
+                }
+                
                 TotalItems = llGetListLength(Manifest) / MANIFEST_STRIDE;
                 
                 if (TotalItems == 0) {
-                    llOwnerSay("ERROR: No items to transfer!");
+                    llOwnerSay("ERROR: No matching items to update!");
                     abort_update();
                     state default;
                 }
