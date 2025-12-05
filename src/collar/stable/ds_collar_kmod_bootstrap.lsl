@@ -1,10 +1,11 @@
 /*--------------------
 MODULE: ds_collar_kmod_bootstrap.lsl
 VERSION: 1.00
-REVISION: 33
+REVISION: 34
 PURPOSE: Startup coordination, RLV detection, owner name resolution
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- Corected the collar name
 - Rate-limited display name requests to avoid viewer throttling
 - Owner change detection prevents bootstrap on teleports and region crossings
 - Soft reset handling now validates authorized senders before acting
@@ -407,7 +408,7 @@ start_bootstrap() {
     
     BootstrapDeadline = now() + BOOTSTRAP_TIMEOUT_SEC;
     
-    sendIM("DS Collar starting up. Please wait...");
+    sendIM("D/s Collar starting up. Please wait...");
     
     start_rlv_probe();
     
