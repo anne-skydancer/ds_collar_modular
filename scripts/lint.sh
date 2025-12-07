@@ -4,6 +4,9 @@
 # If no argument is provided, lints all .lsl files in src/
 
 LSLINT="lslint"
+if [ -f "./scripts/lslint/lslint" ]; then
+    LSLINT="./scripts/lslint/lslint"
+fi
 LSLINT_FLAGS="-m -p"  # Mono mode, show file paths
 
 # Color output

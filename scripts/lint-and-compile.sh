@@ -6,9 +6,15 @@ set -e  # Exit on error
 
 # Set tool paths
 LSLCOMP="$HOME/.local/bin/lslcomp"
+LSLINT="lslint"
+
+# Check for local lslint
+if [ -f "./scripts/lslint/lslint" ]; then
+    LSLINT="./scripts/lslint/lslint"
+fi
 
 # Check if lslint exists
-if ! command -v lslint &> /dev/null; then
+if [ "$LSLINT" = "lslint" ] && ! command -v lslint &> /dev/null; then
     echo "Error: lslint not found. Run setup-lslint.sh first."
     exit 1
 fi
@@ -47,11 +53,11 @@ for FILE in "$@"; do
     
     # Run lslint
     echo -n "  [LINT] "
-    if lslint "$FILE" 2>&1 | grep -q "Errors: 0  Warnings: 0"; then
+    if $LSLINT "$FILE" 2>&1 | grep -q "Errors: 0  Warnings: 0"; then
         echo "✓ Passed"
     else
         echo "✗ Failed"
-        lslint "$FILE" 2>&1 | tail -1
+        $LSLINT "$FILE" 2>&1 | tail -1
         LINT_ERRORS=$((LINT_ERRORS + 1))
         ALL_PASSED=false
     fi
