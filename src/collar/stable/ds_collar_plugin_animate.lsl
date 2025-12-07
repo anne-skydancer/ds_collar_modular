@@ -1,7 +1,7 @@
 /*--------------------
 PLUGIN: ds_collar_plugin_animate.lsl
 VERSION: 1.00
-REVISION: 21
+REVISION: 25
 PURPOSE: Paginated animation menu driven by inventory contents
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
@@ -219,33 +219,55 @@ show_animation_menu(integer page) {
     integer end_idx = start_idx + PAGE_SIZE - 1;
     if (end_idx >= total_anims) end_idx = total_anims - 1;
     
-    // Build animation buttons for this page (up to 8 animations)
-    list buttons = [];
+    // Fixed layout: 
+    // Indices 0-2: Navigation (<<, >>, Back)
+    // Index 3: [Stop]
+    // Indices 4+: Animations (Sorted Top-to-Bottom, Left-to-Right)
+    
+    // 1. Extract animations for this page
+    list page_anims = [];
     integer i;
     for (i = start_idx; i <= end_idx; i++) {
-        buttons += [llList2String(AnimationList, i)];
+        page_anims += [llList2String(AnimationList, i)];
     }
     
-    // llDialog builds 3x4 grid bottom-right to top-left
-    // We want visual layout:
-    // [Anim 1] [Anim 2] [Anim 3]    
-    // [Anim 4] [Anim 5] [Anim 6] 
-    // [Anim 7] [Anim 8] [Stop]
-    // [Back]   [>>]     [<<]
-    //
-    // Button array indices:
-    // 0=<<, 1=>>, 2=Back, 3=[Stop], 4-11=animations (reversed)
+    integer count = llGetListLength(page_anims);
+    integer total_buttons = 4 + count;
     
-    // Reverse the animations so they display top-left to bottom-right
-    list reversed_anims = [];
-    i = llGetListLength(buttons) - 1;
-    while (i >= 0) {
-        reversed_anims += [llList2String(buttons, i)];
-        i = i - 1;
+    // 2. Initialize button list with placeholders
+    list final_buttons = ["<<", ">>", "Back", "[Stop]"];
+    integer p;
+    for (p = 0; p < count; p++) {
+        final_buttons += [""];
     }
     
-    // Build final array
-    list final_buttons = ["<<", ">>", "Back", "[Stop]"] + reversed_anims;
+    // 3. Define visual rows (Top to Bottom)
+    // Row 4: 9, 10, 11
+    // Row 3: 6, 7, 8
+    // Row 2: 4, 5 (Index 3 is Stop)
+    
+    list target_slots = [];
+    
+    // Row 4
+    if (total_buttons > 9) target_slots += [9];
+    if (total_buttons > 10) target_slots += [10];
+    if (total_buttons > 11) target_slots += [11];
+    
+    // Row 3
+    if (total_buttons > 6) target_slots += [6];
+    if (total_buttons > 7) target_slots += [7];
+    if (total_buttons > 8) target_slots += [8];
+    
+    // Row 2
+    if (total_buttons > 4) target_slots += [4];
+    if (total_buttons > 5) target_slots += [5];
+    
+    // 4. Map animations to slots
+    for (i = 0; i < count; i++) {
+        integer slot = llList2Integer(target_slots, i);
+        string anim = llList2String(page_anims, i);
+        final_buttons = llListReplaceList(final_buttons, [anim], slot, slot);
+    }
     
     string buttons_json = llList2Json(JSON_ARRAY, final_buttons);
     

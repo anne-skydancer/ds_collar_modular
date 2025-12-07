@@ -5,7 +5,7 @@
 set -e  # Exit on error
 
 # Set tool paths
-LSLCOMP="/home/anne/.local/bin/lslcomp"
+LSLCOMP="$HOME/.local/bin/lslcomp"
 
 # Check if lslint exists
 if ! command -v lslint &> /dev/null; then
