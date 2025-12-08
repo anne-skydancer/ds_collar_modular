@@ -840,7 +840,7 @@ If problems persist:
    - Exact steps to reproduce
    - Error messages from console
    - Viewer version and RLV status
-   - Collar version (shown in Status menu)
+   - Collar revision (check script headers if possible)
 4. **Community Support:** Contact the collar creator or community
 
 ---
@@ -935,7 +935,7 @@ A: Each LSL script has 64KB memory limit. The collar kernel and modules are opti
 A: Yes. The collar is open source. All scripts are available at: https://github.com/anne-skydancer/ds_collar_modular
 
 **Q: How do I update to a new version?**
-A: Replace old scripts with new scripts from the latest release. The kernel version compatibility ensures plugins work across versions. Always backup your settings notecard first.
+A: Replace old scripts with new scripts from the latest release. The kernel compatibility ensures plugins work across revisions. Always backup your settings notecard first.
 
 **Q: How does the collar implement menus?**
 A: The collar uses llDialog extensively. All menus are standard SL dialog boxes. The centralized dialog system (channel 950) ensures efficient dialog management across all plugins.
@@ -964,12 +964,16 @@ A: Modify `kmod_ui.lsl` for main menu structure. Individual plugin menus are in 
 
 ## Version Information
 
-This user guide corresponds to:
-- **Kernel Version:** v3.4
-- **Module Versions:** v2.1 - v3.2
-- **Plugin Versions:** v2.0+
+The DS Collar Modular system uses a **Revision-based** versioning scheme.
+- **System Version:** Currently **1.0**
+- **Revision:** Increments with each update.
 
-Check your collar version: Touch collar → **Maintenance** → **View Settings** (look for version information in console output).
+This user guide corresponds to:
+- **Kernel Revision:** 39
+- **Module Revisions:** 26 - 44
+- **Plugin Revisions:** 22 - 25
+
+The revision number can be found in the header of each script.
 
 ---
 
