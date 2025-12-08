@@ -1,6 +1,6 @@
-# DS Collar Modular - User Guide
+# D/s Collar Modular - User Guide
 
-Welcome to the DS Collar Modular system! This guide will help you understand and use all features of your collar, whether you're a collar wearer or an owner/dominant.
+Welcome to the D/s Collar system! This guide will help you understand and use all features of your collar, whether you're a collar wearer or an owner/dominant.
 
 ---
 
@@ -24,7 +24,7 @@ Welcome to the DS Collar Modular system! This guide will help you understand and
 
 ## Introduction
 
-**DS Collar Modular** is a modern, lightweight D/s (Dominant/submissive) collar system for Second Life. It provides comprehensive control features including:
+**D/s Collar Modular** is a modern, lightweight D/s (Dominant/submissive) collar system for Second Life. It provides comprehensive control features including:
 
 - Owner and trustee management
 - Multi-mode leashing system
@@ -102,7 +102,6 @@ The collar controls who can do what based on roles and relationships:
 
 **Blacklisted Users**
 - Complete denial of access - cannot interact with collar at all
-- Blacklist always takes precedence over other permissions
 
 ---
 
@@ -122,7 +121,7 @@ The collar controls who can do what based on roles and relationships:
 - **✗ CLOSE:** Close all menus
 - **Timeout:** Menus automatically close after 60 seconds of inactivity
 
-### Menu Structure
+### Menu Structure (assuming a D/s Collar installation with all plugins installed)
 
 ```
 Main Menu
@@ -156,7 +155,7 @@ Main Menu
 4. Owner clicks **Accept** to claim ownership
 5. Ownership is established
 
-**Important:** Once owned, the wearer loses the ability to change ownership without owner permission.
+**Important:** Once a primary owner is set, the wearer loses the ability to change owners.
 
 ### Releasing Ownership
 
@@ -172,8 +171,7 @@ Main Menu
 - Disabling runaway requires wearer consent (wearer receives confirmation dialog)
 - Enabling runaway requires no consent (owner decision only)
 - When available: Touch collar → **Owner** → **Runaway** (if button shown)
-- Immediate self-release without owner confirmation
-- Use responsibly - this is for emergency situations
+- Immediate self-release without confirmation
 
 ### Transferring Ownership
 
@@ -196,11 +194,6 @@ Trustees have elevated permissions but cannot change ownership.
 1. Owner: Touch collar → **Owner** → **Trustee-**
 2. Select trustee from list
 3. They are immediately removed
-
-**Setting Trustee Honorifics:**
-1. Touch collar → **Owner** → **Trustee Hon**
-2. Select the trustee from list
-3. Choose honorific: Master, Mistress, Daddy, Mommy, King, Queen, or None
 
 ### Multi-Owner Mode
 
@@ -238,7 +231,7 @@ Blacklisted users (ACL -1) are completely blocked from collar interaction.
 
 ## Leash System
 
-The DS Collar Modular features a sophisticated multi-mode leashing system supporting three different leash types.
+The D/s Collar Modular features a sophisticated multi-mode leashing system supporting three different leash types.
 
 ### Leash Modes
 
@@ -266,7 +259,7 @@ Leash one collar to another collar (collar-to-collar).
 
 **Requirements:**
 - Trustee or Owner only
-- Both avatars wearing DS Collar Modular
+- Both avatars wearing D/s Collar Modular
 
 **To Create Coffle:**
 1. Touch first collar → **Leash** → **Mode** → **Coffle**
@@ -308,15 +301,14 @@ Leash wearer to a fixed object or position.
 
 The collar supports multiple leashing protocols for compatibility:
 
-- **DS Holder** - Native DS collar holder protocol
+- **D/s Holder** - Native D/s collar holder protocol
 - **OpenCollar 8.x** - Compatible with OpenCollar holders
-- **Avatar Direct** - Direct avatar-to-avatar leashing
-- **Lockmeister** - Classic Lockmeister chain protocol
+Both modes support the Lockmeister chain protocol.
 
 ### Who Can Leash?
 
-- **Avatar Mode:** Public users (if public mode enabled), Trustees, or Owners
-- **Coffle Mode:** Trustees or Owners only
+- **Leash to Avatar:** Public users (if public mode enabled), Trustees, or Owners
+- **Collar-to-collar:** Trustees or Owners only
 - **Post Mode:** Public users (if public mode enabled), Trustees, or Owners
 
 ---
@@ -572,7 +564,7 @@ TPE mode gives complete control to the owner by removing wearer's collar access.
 
 ## Control HUD (Remote Control)
 
-The DS Collar Control HUD allows owners/trustees to control the collar from a distance.
+The D/s Collar Control HUD allows owners/trustees to control the collar from a distance.
 
 ### Setting Up the HUD
 
@@ -584,7 +576,7 @@ The DS Collar Control HUD allows owners/trustees to control the collar from a di
 ### Using the HUD
 
 **Auto-Detection:**
-- HUD automatically scans for nearby DS Collars
+- HUD automatically scans for nearby D/s Collars
 - If one collar found: Auto-connects
 - If multiple collars found: Shows selection menu
 
@@ -624,7 +616,7 @@ The collar supports pre-configuration via a notecard named **"settings"** in the
 **Settings Notecard Format:**
 
 ```
-# DS Collar Settings
+# D/s Collar Settings
 # Lines starting with # are comments
 # Format: key=value
 # Lists use comma-separated UUIDs in brackets: key=[uuid1,uuid2,uuid3]
@@ -994,5 +986,6 @@ For support:
 
 ---
 
-*DS Collar Modular - A modern, secure, and extensible D/s collar system for Second Life.*
+*D/s Collar Modular - A modern, secure, and extensible D/s collar system for Second Life.*
 *Licensed under MIT License - See LICENSE file for details.*
+
