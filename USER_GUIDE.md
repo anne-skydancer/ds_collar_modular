@@ -989,6 +989,4 @@ For support:
 ---
 
 *D/s Collar Modular - A modern, secure, and extensible D/s collar system for Second Life.*
-*Licensed under MIT License - See LICENSE file for details.*
-
-
+*Licensed as open source software under MIT License
