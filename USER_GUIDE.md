@@ -1,4 +1,4 @@
-# D/s Collar Modular - User Guide
+# D/s Collar - User Guide
 
 Welcome to the D/s Collar system! This guide will help you understand and use all features of your collar, whether you're a collar wearer or an owner/dominant.
 
@@ -988,4 +988,5 @@ For support:
 
 *D/s Collar Modular - A modern, secure, and extensible D/s collar system for Second Life.*
 *Licensed under MIT License - See LICENSE file for details.*
+
 
