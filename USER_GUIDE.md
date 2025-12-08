@@ -246,7 +246,7 @@ The DS Collar Modular features a sophisticated multi-mode leashing system suppor
 Leash the wearer to follow another avatar.
 
 **To Leash (Avatar Mode):**
-1. Touch collar → **Leash** → **Grab**
+1. Touch collar → **Leash** → **Clip**
 2. You are now holding the leash
 3. Wearer will follow you automatically
 
@@ -269,10 +269,9 @@ Leash one collar to another collar (collar-to-collar).
 - Both avatars wearing DS Collar Modular
 
 **To Create Coffle:**
-1. Touch first collar → **Leash** → **Mode** → **Coffle**
-2. Touch first collar → **Leash** → **Grab**
-3. Touch second avatar's collar
-4. Coffle is established
+1. Touch first collar → **Leash** → **Coffle**
+2. Select the second avatar's collar from the menu list
+3. Coffle is established
 
 **Use Case:** Chain multiple submissives together in a train.
 
@@ -280,10 +279,9 @@ Leash one collar to another collar (collar-to-collar).
 Leash wearer to a fixed object or position.
 
 **To Leash to Post:**
-1. Touch collar → **Leash** → **Mode** → **Post**
-2. Touch collar → **Leash** → **Grab**
-3. Touch the object or point to leash to
-4. Wearer is anchored to that position
+1. Touch collar → **Leash** → **Post**
+2. Select the object to leash to from the menu list
+3. Wearer is anchored to that position
 
 **Use Case:** Tether submissive to furniture, poles, or fixed locations.
 
