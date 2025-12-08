@@ -149,6 +149,16 @@ locked = true        # Also valid, normalized to 1
 
 **Invalid Lines:** Skipped with a warning in chat
 
+### Syntax Rules (CRITICAL)
+
+*   **No Quotes:** Do **NOT** enclose UUIDs or strings in quotes. The system reads values literally.
+    *   ✅ `owner_key = 12345678-1234-1234-1234-123456789abc`
+    *   ❌ `owner_key = "12345678-1234-1234-1234-123456789abc"`
+*   **Lists:** Enclosed in brackets `[]`, comma-separated. Quotes are optional but recommended to be omitted for consistency.
+    *   ✅ `trustees = [uuid1, uuid2]`
+*   **Case Sensitivity:** Keys are case-sensitive (e.g., `owner_key`, not `Owner_Key`).
+*   **Whitespace:** Spaces around `=` are optional but recommended for readability.
+
 ### Configuration Patterns
 
 #### Pattern A: Single Owner (Default)
@@ -223,7 +233,7 @@ tpe_mode = 1
 **Symptom:** Owner is denied access to certain features
 
 **Solutions:**
-1. Verify `owner_key` is set correctly in single-owner mode
+1. Verify `owner_key` is set correctly in single-owner mode (ensure NO quotes around UUID)
 2. In multi-owner mode, ensure UUID is in `owner_keys` list
 3. Check owner is not in the `blacklist`
 4. Confirm the menu's ACL requirement (some features require ACL level 5)
@@ -284,7 +294,7 @@ owner_key = 12345678-1234-1234-1234-123456789abc
 1. Ensure list exists in notecard as `key = []` or `key = [item1,item2]`
 2. Check list hasn't reached maximum size (64 items)
 3. Verify target element exists before removing
-4. Confirm proper JSON array format: `[uuid1,uuid2]` not `uuid1,uuid2`
+4. Confirm proper JSON array format: `[uuid1,uuid2]` not `uuid1,uuid2` (no quotes needed)
 
 ### Notecard Changes Not Detected
 

@@ -59,7 +59,7 @@ The collar uses a modular architecture with a central kernel and plugins, making
 ### For Owners/Dominants
 
 1. **Touch the collar** - Open the main menu
-2. **Select "Owner"** - Access owner management
+2. **Select "Access"** - Access owner management
 3. **Claim ownership** - Set yourself as owner
 4. **Explore features** - Leash, RLV, animations, and more
 5. **Configure settings** - Customize lock, TPE, public access
@@ -125,16 +125,16 @@ The collar controls who can do what based on roles and relationships:
 
 ```
 Main Menu
-├── Owner          (Owner & trustee management)
+├── Access         (Owner & trustee management)
 ├── Leash          (Leashing controls)
 ├── RLV Relay      (RLV relay settings)
-├── RLV Restrict   (RLV restrictions)
-├── RLV Exceptions (RLV bypass rules)
+├── Restrict       (RLV restrictions)
+├── Exceptions     (RLV bypass rules)
 ├── Animate        (Animation menu)
 ├── Bell           (Bell settings)
-├── Lock           (Lock/unlock toggle)
-├── Public         (Public access toggle)
-├── TPE            (Total Power Exchange mode)
+├── Locked: Y/N    (Lock/unlock toggle)
+├── Public: Y/N    (Public access toggle)
+├── TPE: Y/N       (Total Power Exchange mode)
 ├── Status         (View collar status)
 ├── Blacklist      (Manage blocked users)
 ├── Maintenance    (View settings)
@@ -149,33 +149,34 @@ Main Menu
 
 **For Unowned Wearers:**
 
-1. Touch collar → **Owner**
-2. Select **Set Owner**
-3. Owner will receive a confirmation dialog
-4. Owner clicks **Accept** to claim ownership
-5. Ownership is established
+1. Touch collar → **Access**
+2. Select **Add Owner**
+3. Select the new owner from the list
+4. Owner will receive a confirmation dialog
+5. Owner clicks **Accept** to claim ownership
+6. Ownership is established
 
 **Important:** Once a primary owner is set, the wearer loses the ability to change owners.
 
 ### Releasing Ownership
 
 **Owner-Initiated Release:**
-1. Touch collar → **Owner** → **Release**
+1. Touch collar → **Access** → **Release**
 2. Both owner and wearer receive confirmation dialogs
 3. Both must accept to complete the release
 4. Wearer returns to unowned status (full self-control)
 
 **Wearer Self-Release (Runaway):**
 - Allows wearer to release themselves without owner permission
-- Owner can enable/disable this feature: Touch collar → **Owner** (as owner) → **Runaway: On/Off**
+- Owner can enable/disable this feature: Touch collar → **Access** (as owner) → **Runaway: On/Off**
 - Disabling runaway requires wearer consent (wearer receives confirmation dialog)
 - Enabling runaway requires no consent (owner decision only)
-- When available: Touch collar → **Owner** → **Runaway** (if button shown)
+- When available: Touch collar → **Access** → **Runaway** (if button shown)
 - Immediate self-release without confirmation
 
 ### Transferring Ownership
 
-1. Current owner: Touch collar → **Owner** → **Transfer**
+1. Current owner: Touch collar → **Access** → **Transfer**
 2. Touch the new owner avatar
 3. New owner receives offer dialog
 4. Current owner and new owner must both accept
@@ -186,12 +187,14 @@ Main Menu
 Trustees have elevated permissions but cannot change ownership.
 
 **Adding a Trustee:**
-1. Owner: Touch collar → **Owner** → **Trustee+**
-2. Touch the person you want to add
-3. They are immediately added as trustee
+1. Owner: Touch collar → **Access** → **Add Trustee**
+2. Select the person you want to add from the list
+3. The selected person receives a dialog to accept the role
+4. If they accept, they choose their honorific
+5. Once chosen, they are added as a trustee
 
 **Removing a Trustee:**
-1. Owner: Touch collar → **Owner** → **Trustee-**
+1. Owner: Touch collar → **Access** → **Rem Trustee**
 2. Select trustee from list
 3. They are immediately removed
 
@@ -205,7 +208,7 @@ The collar supports multiple owners sharing equal owner access.
 - Cannot be changed through collar menus - this is intentional for stability
 
 **Adding Additional Owners:**
-- Use the Owner menu to add owners (they receive full owner access)
+- Use the **Access** menu to add owners (they receive full owner access)
 - All owners have equal control
 - Any owner can add/remove other owners
 
@@ -326,15 +329,10 @@ The RLV Relay allows scripted objects (furniture, traps, cages) to send RLV comm
 3. **HARDCORE** - Relay enabled, but wearer cannot use safeword. Only owners/trustees can release
 
 **Setting Relay Mode:**
-1. Touch collar → **RLV Relay**
-2. Select: **OFF**, **ON**, or **HARDCORE**
-3. Mode persists across sessions
-
-**How It Works:**
-- When enabled, furniture sends relay commands on special channel
-- Collar receives commands and applies them to your viewer
-- The relay doesn't create restrictions itself - it relays commands from furniture
-- Works with ORG relay specification
+1. Touch collar → **RLV Relay** → **Mode**
+2. Select: **OFF** or **ON**
+3. Owners and Trustees can also enable **Hardcore** mode
+4. Mode persists across sessions
 
 ### RLV Restrictions
 
@@ -368,7 +366,7 @@ RLV Restrictions directly limit what the wearer can do in Second Life.
 - **Show Names** - Hide avatar names (anonymity)
 
 **Applying Restrictions:**
-1. Touch collar → **RLV Restrict**
+1. Touch collar → **Restrict**
 2. Select category: **Inventory**, **Speech**, **Travel**, **Other**
 3. Select specific restriction
 4. Restriction applies immediately
@@ -379,7 +377,7 @@ RLV Restrictions directly limit what the wearer can do in Second Life.
 3. Click active restriction to remove it
 
 **Clearing All Restrictions:**
-- Touch collar → **RLV Restrict** → **Clear All**
+- Touch collar → **Restrict** → **Clear All**
 - Or use SOS menu → **Clear RLV**
 
 ### RLV Exceptions
@@ -494,8 +492,8 @@ All bell preferences are saved and restored after logout/login.
 The lock prevents unauthorized removal of the collar.
 
 **Locking the Collar:**
-1. Touch collar → **Lock**
-2. Collar locks immediately
+1. Touch collar → **Locked: N** (to lock) or **Locked: Y** (to unlock)
+2. Collar locks/unlocks immediately
 3. If RLV enabled: Prevents detaching collar
 4. Lock state persists
 
@@ -617,6 +615,7 @@ The collar supports pre-configuration via a notecard named **"settings"** in the
 # D/s Collar Settings
 # Lines starting with # are comments
 # Format: key=value
+# IMPORTANT: Do NOT use quotes around UUIDs!
 # Lists use comma-separated UUIDs in brackets: key=[uuid1,uuid2,uuid3]
 
 # Ownership
@@ -812,6 +811,7 @@ default {
 #### "Invalid UUID"
 - Avatar UUID format incorrect in settings
 - Verify UUID format: `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`
+- Ensure NO quotes are used around the UUID
 - Check for typos in settings notecard
 
 ### Performance Issues
