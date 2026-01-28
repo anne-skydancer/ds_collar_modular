@@ -1,10 +1,14 @@
 /*--------------------
 PLUGIN: ds_collar_plugin_rlvrestrict.lsl
 VERSION: 1.00
-REVISION: 23
+REVISION: 24
 PURPOSE: Manage RLV restriction toggles grouped by functional category
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- ADD: Force Sit functionality - scans nearby objects and presents numbered list for selection
+- ADD: Force Unsit functionality - immediately forces wearer to stand
+- Uses sensor() for object detection within configurable range (default 10m)
+- Paginated numbered list dialog with up to 9 items per page
 - CRITICAL FIX: Re-request settings on register_now to reapply RLV restrictions after kernel/module resets
 - Organizes popular RLV restrictions into inventory, speech, travel, and other groups
 - Provides paginated dialogs with trustee ACL gating for restriction management
@@ -65,6 +69,12 @@ string CurrentCategory = "";
 integer CurrentPage = 0;
 
 integer DIALOG_PAGE_SIZE = 9;  // 9 items + 3 nav buttons = 12 total
+
+/* -------------------- FORCE SIT STATE -------------------- */
+
+list SitCandidates = [];  // Stride list: [name, key, name, key, ...]
+integer SitPage = 0;
+float SIT_SCAN_RANGE = 10.0;  // Scan range in meters
 
 /* -------------------- HELPER FUNCTIONS -------------------- */
 
@@ -282,12 +292,92 @@ string label_to_command(string btn_label, list cat_cmds, list cat_labels) {
     if (llGetSubString(btn_label, 0, 3) == "[X] " || llGetSubString(btn_label, 0, 3) == "[ ] ") {
         clean_label = llGetSubString(btn_label, 4, -1);
     }
-    
+
     integer label_idx = llListFindList(cat_labels, [clean_label]);
     if (label_idx != -1) {
         return llList2String(cat_cmds, label_idx);
     }
     return "";
+}
+
+/* -------------------- FORCE SIT/UNSIT -------------------- */
+
+start_sit_scan() {
+    SitCandidates = [];
+    SitPage = 0;
+    MenuContext = "sit_scan";
+
+    llRegionSayTo(CurrentUser, 0, "Scanning for sittable objects...");
+    llSensor("", NULL_KEY, PASSIVE | ACTIVE | SCRIPTED, SIT_SCAN_RANGE, PI);
+}
+
+display_sit_targets() {
+    integer total_items = llGetListLength(SitCandidates) / 2;
+
+    if (total_items == 0) {
+        llRegionSayTo(CurrentUser, 0, "No sittable objects found nearby.");
+        show_main();
+        return;
+    }
+
+    SessionId = generate_session_id();
+    MenuContext = "sit_select";
+
+    // Calculate pagination (9 items per page to leave room for nav buttons)
+    integer items_per_page = 9;
+    integer total_pages = (total_items + items_per_page - 1) / items_per_page;
+    integer start_idx = SitPage * items_per_page;
+    integer end_idx = start_idx + items_per_page;
+    if (end_idx > total_items) end_idx = total_items;
+
+    // Build numbered list body
+    string body = "Select object to sit on:\n\n";
+    integer i = start_idx;
+    integer display_num = 1;
+    while (i < end_idx) {
+        string obj_name = llList2String(SitCandidates, i * 2);
+        // Truncate long names for display
+        if (llStringLength(obj_name) > 20) {
+            obj_name = llGetSubString(obj_name, 0, 17) + "...";
+        }
+        body += (string)display_num + ". " + obj_name + "\n";
+        display_num = display_num + 1;
+        i = i + 1;
+    }
+
+    if (total_pages > 1) {
+        body += "\nPage " + (string)(SitPage + 1) + "/" + (string)total_pages;
+    }
+
+    // Build buttons: Back, <<, >>, then numbered buttons
+    list buttons = ["Back", "<<", ">>"];
+    i = 1;
+    while (i <= (end_idx - start_idx)) {
+        buttons += [(string)i];
+        i = i + 1;
+    }
+
+    llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
+        "type", "dialog_open",
+        "session_id", SessionId,
+        "user", (string)CurrentUser,
+        "title", "Force Sit",
+        "body", body,
+        "buttons", llList2Json(JSON_ARRAY, buttons),
+        "timeout", 60
+    ]), NULL_KEY);
+}
+
+force_sit_on(key target) {
+    if (target == NULL_KEY) return;
+
+    llOwnerSay("@sit:" + (string)target + "=force");
+    llRegionSayTo(CurrentUser, 0, "Forcing sit...");
+}
+
+force_unsit() {
+    llOwnerSay("@unsit=force");
+    llRegionSayTo(CurrentUser, 0, "Forcing unsit...");
 }
 
 /* -------------------- UI NAVIGATION -------------------- */
@@ -316,7 +406,9 @@ show_main() {
         CAT_NAME_SPEECH,
         CAT_NAME_TRAVEL,
         CAT_NAME_OTHER,
-        "Clear all"
+        "Clear all",
+        "Force Sit",
+        "Force Unsit"
     ];
     
     llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
@@ -423,7 +515,7 @@ handle_dialog_response(string msg) {
         if (button == "Back") {
             return_to_root();
         }
-        else if (button == CAT_NAME_INVENTORY || button == CAT_NAME_SPEECH || 
+        else if (button == CAT_NAME_INVENTORY || button == CAT_NAME_SPEECH ||
                  button == CAT_NAME_TRAVEL || button == CAT_NAME_OTHER) {
             show_category_menu(button, 0);
         }
@@ -431,6 +523,60 @@ handle_dialog_response(string msg) {
             remove_all_restrictions();
             llRegionSayTo(CurrentUser, 0, "All restrictions removed.");
             show_main();
+        }
+        else if (button == "Force Sit") {
+            start_sit_scan();
+        }
+        else if (button == "Force Unsit") {
+            force_unsit();
+            show_main();
+        }
+    }
+    // Sit selection menu
+    else if (MenuContext == "sit_select") {
+        if (button == "Back") {
+            show_main();
+        }
+        else if (button == "<<") {
+            integer total_items = llGetListLength(SitCandidates) / 2;
+            integer items_per_page = 9;
+            integer max_page = (total_items - 1) / items_per_page;
+
+            if (SitPage == 0) {
+                SitPage = max_page;
+            }
+            else {
+                SitPage = SitPage - 1;
+            }
+            display_sit_targets();
+        }
+        else if (button == ">>") {
+            integer total_items = llGetListLength(SitCandidates) / 2;
+            integer items_per_page = 9;
+            integer max_page = (total_items - 1) / items_per_page;
+
+            if (SitPage >= max_page) {
+                SitPage = 0;
+            }
+            else {
+                SitPage = SitPage + 1;
+            }
+            display_sit_targets();
+        }
+        else {
+            // Numbered button selection
+            integer button_num = (integer)button;
+            if (button_num >= 1 && button_num <= 9) {
+                integer items_per_page = 9;
+                integer actual_idx = (SitPage * items_per_page) + (button_num - 1);
+                integer list_idx = actual_idx * 2;  // Stride list: [name, key, ...]
+
+                if (list_idx + 1 < llGetListLength(SitCandidates)) {
+                    key target = (key)llList2String(SitCandidates, list_idx + 1);
+                    force_sit_on(target);
+                    show_main();
+                }
+            }
         }
     }
     // Category menu
@@ -569,5 +715,34 @@ default
                 handle_dialog_timeout(msg);
             }
         }
+    }
+
+    sensor(integer num_detected) {
+        if (MenuContext != "sit_scan") return;
+        if (CurrentUser == NULL_KEY) return;
+
+        key wearer = llGetOwner();
+        key my_key = llGetKey();
+        SitCandidates = [];
+
+        integer i = 0;
+        while (i < num_detected) {
+            key detected_key = llDetectedKey(i);
+            // Exclude self (collar) and wearer
+            if (detected_key != my_key && detected_key != wearer) {
+                string detected_name = llDetectedName(i);
+                SitCandidates += [detected_name, detected_key];
+            }
+            i = i + 1;
+        }
+
+        display_sit_targets();
+    }
+
+    no_sensor() {
+        if (MenuContext != "sit_scan") return;
+
+        llRegionSayTo(CurrentUser, 0, "No sittable objects found within " + (string)((integer)SIT_SCAN_RANGE) + "m.");
+        show_main();
     }
 }
