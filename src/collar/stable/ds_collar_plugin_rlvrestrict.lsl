@@ -1,11 +1,14 @@
 /*--------------------
 PLUGIN: ds_collar_plugin_rlvrestrict.lsl
 VERSION: 1.00
-REVISION: 25
+REVISION: 26
 PURPOSE: Manage RLV restriction toggles grouped by functional category
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
-- ACL: Plugin now accessible to Public (ACL 2+), restrictions require Trustee+ (ACL 3+)
+- FIX: Race condition guard - scan results now tied to initiating user via ScanInitiator
+- FIX: Added NULL_KEY guard in no_sensor() event handler
+- FIX: Corrected ACL comments (Owned+ not Public+)
+- ACL: Plugin now accessible to Owned (ACL 2+), restrictions require Trustee+ (ACL 3+)
 - ADD: Force Sit functionality - scans nearby objects and presents numbered list for selection
 - ADD: Force Unsit functionality - immediately forces wearer to stand
 - Uses sensor() for object detection within configurable range (default 10m)
@@ -31,7 +34,7 @@ integer DIALOG_BUS       = 950;  // Centralized dialog management
 
 string  PLUGIN_CONTEXT = "core_rlvrestrict";
 string  PLUGIN_LABEL   = "Restrict";
-integer PLUGIN_MIN_ACL = 2;  // Public+ (restrictions require Trustee+)
+integer PLUGIN_MIN_ACL = 2;  // Owned+ (restrictions require Trustee+)
 integer RESTRICT_MIN_ACL = 3;  // Trustee+ for restriction management
 
 /* -------------------- SETTINGS KEYS -------------------- */
@@ -77,6 +80,7 @@ integer DIALOG_PAGE_SIZE = 9;  // 9 items + 3 nav buttons = 12 total
 list SitCandidates = [];  // Stride list: [name, key, name, key, ...]
 integer SitPage = 0;
 float SIT_SCAN_RANGE = 10.0;  // Scan range in meters
+key ScanInitiator = NULL_KEY;  // Track who initiated the scan to prevent race conditions
 
 /* -------------------- HELPER FUNCTIONS -------------------- */
 
@@ -308,8 +312,9 @@ start_sit_scan() {
     SitCandidates = [];
     SitPage = 0;
     MenuContext = "sit_scan";
+    ScanInitiator = CurrentUser;  // Lock scan to this user
 
-    llRegionSayTo(CurrentUser, 0, "Scanning for sittable objects...");
+    llRegionSayTo(CurrentUser, 0, "Scanning for nearby objects...");
     llSensor("", NULL_KEY, PASSIVE | ACTIVE | SCRIPTED, SIT_SCAN_RANGE, PI);
 }
 
@@ -317,7 +322,7 @@ display_sit_targets() {
     integer total_items = llGetListLength(SitCandidates) / 2;
 
     if (total_items == 0) {
-        llRegionSayTo(CurrentUser, 0, "No sittable objects found nearby.");
+        llRegionSayTo(CurrentUser, 0, "No objects found nearby.");
         show_main();
         return;
     }
@@ -417,7 +422,7 @@ show_main() {
             "Force Unsit"
         ];
     }
-    // Public sees only Force Sit/Unsit
+    // Owned (non-Trustee) sees only Force Sit/Unsit
     else {
         body = "RLV Actions\n\nForce sit or unsit the wearer.";
         buttons = [
@@ -748,6 +753,8 @@ default
     sensor(integer num_detected) {
         if (MenuContext != "sit_scan") return;
         if (CurrentUser == NULL_KEY) return;
+        // Verify scan belongs to the user who initiated it (race condition guard)
+        if (CurrentUser != ScanInitiator) return;
 
         key wearer = llGetOwner();
         key my_key = llGetKey();
@@ -769,8 +776,11 @@ default
 
     no_sensor() {
         if (MenuContext != "sit_scan") return;
+        if (CurrentUser == NULL_KEY) return;
+        // Verify scan belongs to the user who initiated it (race condition guard)
+        if (CurrentUser != ScanInitiator) return;
 
-        llRegionSayTo(CurrentUser, 0, "No sittable objects found within " + (string)((integer)SIT_SCAN_RANGE) + "m.");
+        llRegionSayTo(CurrentUser, 0, "No objects found within " + (string)((integer)SIT_SCAN_RANGE) + "m.");
         show_main();
     }
 }
