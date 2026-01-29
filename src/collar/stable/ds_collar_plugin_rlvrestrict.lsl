@@ -7,8 +7,7 @@ ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
 - FIX: Race condition guard - scan results now tied to initiating user via ScanInitiator
 - FIX: Added NULL_KEY guard in no_sensor() event handler
-- FIX: Corrected ACL comments (Owned+ not Public+)
-- ACL: Plugin now accessible to Owned (ACL 2+), restrictions require Trustee+ (ACL 3+)
+- ACL: Plugin now accessible to Public (ACL 1+), restrictions require Trustee+ (ACL 3+)
 - ADD: Force Sit functionality - scans nearby objects and presents numbered list for selection
 - ADD: Force Unsit functionality - immediately forces wearer to stand
 - Uses sensor() for object detection within configurable range (default 10m)
@@ -34,7 +33,7 @@ integer DIALOG_BUS       = 950;  // Centralized dialog management
 
 string  PLUGIN_CONTEXT = "core_rlvrestrict";
 string  PLUGIN_LABEL   = "Restrict";
-integer PLUGIN_MIN_ACL = 2;  // Owned+ (restrictions require Trustee+)
+integer PLUGIN_MIN_ACL = 1;  // Public (restrictions require Trustee+)
 integer RESTRICT_MIN_ACL = 3;  // Trustee+ for restriction management
 
 /* -------------------- SETTINGS KEYS -------------------- */
@@ -422,7 +421,7 @@ show_main() {
             "Force Unsit"
         ];
     }
-    // Owned (non-Trustee) sees only Force Sit/Unsit
+    // Public/Owned (non-Trustee) sees only Force Sit/Unsit
     else {
         body = "RLV Actions\n\nForce sit or unsit the wearer.";
         buttons = [
