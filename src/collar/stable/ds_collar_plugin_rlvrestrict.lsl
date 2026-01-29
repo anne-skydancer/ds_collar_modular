@@ -1,10 +1,11 @@
 /*--------------------
 PLUGIN: ds_collar_plugin_rlvrestrict.lsl
 VERSION: 1.00
-REVISION: 24
+REVISION: 25
 PURPOSE: Manage RLV restriction toggles grouped by functional category
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- ACL: Plugin now accessible to Public (ACL 2+), restrictions require Trustee+ (ACL 3+)
 - ADD: Force Sit functionality - scans nearby objects and presents numbered list for selection
 - ADD: Force Unsit functionality - immediately forces wearer to stand
 - Uses sensor() for object detection within configurable range (default 10m)
@@ -30,7 +31,8 @@ integer DIALOG_BUS       = 950;  // Centralized dialog management
 
 string  PLUGIN_CONTEXT = "core_rlvrestrict";
 string  PLUGIN_LABEL   = "Restrict";
-integer PLUGIN_MIN_ACL = 3;  // Trustee+
+integer PLUGIN_MIN_ACL = 2;  // Public+ (restrictions require Trustee+)
+integer RESTRICT_MIN_ACL = 3;  // Trustee+ for restriction management
 
 /* -------------------- SETTINGS KEYS -------------------- */
 
@@ -397,20 +399,34 @@ return_to_root() {
 show_main() {
     SessionId = generate_session_id();
     MenuContext = "main";
-    
-    string body = "RLV Restrictions\n\nActive: " + (string)llGetListLength(Restrictions) + "/" + (string)MAX_RESTRICTIONS;
-    
-    list buttons = [
-        "Back",
-        CAT_NAME_INVENTORY,
-        CAT_NAME_SPEECH,
-        CAT_NAME_TRAVEL,
-        CAT_NAME_OTHER,
-        "Clear all",
-        "Force Sit",
-        "Force Unsit"
-    ];
-    
+
+    string body;
+    list buttons;
+
+    // Trustee+ sees full menu with restrictions
+    if (UserAcl >= RESTRICT_MIN_ACL) {
+        body = "RLV Restrictions\n\nActive: " + (string)llGetListLength(Restrictions) + "/" + (string)MAX_RESTRICTIONS;
+        buttons = [
+            "Back",
+            CAT_NAME_INVENTORY,
+            CAT_NAME_SPEECH,
+            CAT_NAME_TRAVEL,
+            CAT_NAME_OTHER,
+            "Clear all",
+            "Force Sit",
+            "Force Unsit"
+        ];
+    }
+    // Public sees only Force Sit/Unsit
+    else {
+        body = "RLV Actions\n\nForce sit or unsit the wearer.";
+        buttons = [
+            "Back",
+            "Force Sit",
+            "Force Unsit"
+        ];
+    }
+
     llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
         "type", "dialog_open",
         "session_id", SessionId,
@@ -517,9 +533,21 @@ handle_dialog_response(string msg) {
         }
         else if (button == CAT_NAME_INVENTORY || button == CAT_NAME_SPEECH ||
                  button == CAT_NAME_TRAVEL || button == CAT_NAME_OTHER) {
+            // Restriction categories require Trustee+
+            if (UserAcl < RESTRICT_MIN_ACL) {
+                llRegionSayTo(CurrentUser, 0, "Access denied.");
+                show_main();
+                return;
+            }
             show_category_menu(button, 0);
         }
         else if (button == "Clear all") {
+            // Clear all requires Trustee+
+            if (UserAcl < RESTRICT_MIN_ACL) {
+                llRegionSayTo(CurrentUser, 0, "Access denied.");
+                show_main();
+                return;
+            }
             remove_all_restrictions();
             llRegionSayTo(CurrentUser, 0, "All restrictions removed.");
             show_main();
