@@ -744,6 +744,27 @@ default
             check_owner_changed();
         }
 
+        if (change & CHANGED_REGION) {
+            // Region crossing: plugins survive but link messages may be lost
+            // during the transition. Reset all last_seen timestamps to prevent
+            // prune_dead_plugins() from culling healthy plugins whose pongs
+            // were dropped, then re-ping so they refresh naturally.
+            integer now_unix = now();
+            integer i = 0;
+            integer len = llGetListLength(PluginRegistry);
+            while (i < len) {
+                PluginRegistry = llListReplaceList(PluginRegistry,
+                    [now_unix], i + REG_LAST_SEEN, i + REG_LAST_SEEN);
+                i += REG_STRIDE;
+            }
+            LastPingUnix = now_unix;
+            LastInvSweepUnix = now_unix;
+            LastDiscoveryUnix = now_unix;
+
+            // Give plugins a moment to settle, then re-register
+            broadcast_register_now();
+        }
+
         if (change & CHANGED_INVENTORY) {
             // Check if SCRIPTS were added/removed (not notecards)
             integer current_script_count = count_scripts();
