@@ -54,6 +54,7 @@ integer LastInvSweepUnix = 0;
 integer LastDiscoveryUnix = 0;      // Track last active plugin discovery
 key LastOwner = NULL_KEY;
 integer LastScriptCount = 0;        // Track script count to detect add/remove
+integer LastRegionCrossUnix = 0;    // Timestamp of last region crossing
 
 /* -------------------- HELPERS -------------------- */
 
@@ -262,7 +263,12 @@ integer update_last_seen(string context) {
 integer prune_dead_plugins() {
     integer now_unix = llGetUnixTime();
     if (now_unix == 0) return 0; // Overflow protection
-    
+
+    // Skip pruning during region crossing grace window
+    if (LastRegionCrossUnix > 0 &&
+        (llGetUnixTime() - LastRegionCrossUnix) < PING_TIMEOUT_SEC) return 0;
+    LastRegionCrossUnix = 0;
+
     integer cutoff = now_unix - PING_TIMEOUT_SEC;
     if (cutoff < 0) cutoff = 0; // Additional overflow protection
     
@@ -698,6 +704,18 @@ default
     changed(integer change) {
         if (change & CHANGED_OWNER) {
             check_owner_changed();
+        }
+
+        if (change & CHANGED_REGION) {
+            // Region crossing: link messages may be lost, causing stale
+            // last_seen timestamps. Record crossing time so prune_dead_plugins()
+            // skips culling until one full timeout window has elapsed.
+            LastRegionCrossUnix = llGetUnixTime();
+            LastPingUnix = LastRegionCrossUnix;
+            LastInvSweepUnix = LastRegionCrossUnix;
+            LastDiscoveryUnix = LastRegionCrossUnix;
+
+            broadcast_register_now();
         }
 
         if (change & CHANGED_INVENTORY) {
