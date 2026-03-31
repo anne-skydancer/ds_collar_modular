@@ -56,6 +56,7 @@ integer LastInvSweepUnix = 0;
 integer LastDiscoveryUnix = 0;      // Track last active plugin discovery
 key LastOwner = NULL_KEY;
 integer LastScriptCount = 0;        // Track script count to detect add/remove
+integer LastRegionCrossUnix = 0;    // Timestamp of last region crossing
 
 /* -------------------- HELPERS -------------------- */
 
@@ -298,7 +299,12 @@ integer update_last_seen(string context) {
 integer prune_dead_plugins() {
     integer now_unix = now();
     if (now_unix == 0) return 0; // Overflow protection
-    
+
+    // Skip pruning during region crossing grace window
+    if (LastRegionCrossUnix > 0 &&
+        (llGetUnixTime() - LastRegionCrossUnix) < PING_TIMEOUT_SEC) return 0;
+    LastRegionCrossUnix = 0;
+
     integer cutoff = now_unix - PING_TIMEOUT_SEC;
     if (cutoff < 0) cutoff = 0; // Additional overflow protection
     
@@ -745,23 +751,14 @@ default
         }
 
         if (change & CHANGED_REGION) {
-            // Region crossing: plugins survive but link messages may be lost
-            // during the transition. Reset all last_seen timestamps to prevent
-            // prune_dead_plugins() from culling healthy plugins whose pongs
-            // were dropped, then re-ping so they refresh naturally.
-            integer now_unix = now();
-            integer i = 0;
-            integer len = llGetListLength(PluginRegistry);
-            while (i < len) {
-                PluginRegistry = llListReplaceList(PluginRegistry,
-                    [now_unix], i + REG_LAST_SEEN, i + REG_LAST_SEEN);
-                i += REG_STRIDE;
-            }
-            LastPingUnix = now_unix;
-            LastInvSweepUnix = now_unix;
-            LastDiscoveryUnix = now_unix;
+            // Region crossing: link messages may be lost, causing stale
+            // last_seen timestamps. Record crossing time so prune_dead_plugins()
+            // skips culling until one full timeout window has elapsed.
+            LastRegionCrossUnix = llGetUnixTime();
+            LastPingUnix = LastRegionCrossUnix;
+            LastInvSweepUnix = LastRegionCrossUnix;
+            LastDiscoveryUnix = LastRegionCrossUnix;
 
-            // Give plugins a moment to settle, then re-register
             broadcast_register_now();
         }
 
