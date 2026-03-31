@@ -389,13 +389,15 @@ default
         TargetKey = NULL_KEY;
         SourcePlugin = "";
         LeashpointLink = 0;
-        
+
         LmActive = FALSE;
         LmController = NULL_KEY;
         LmTargetPrim = NULL_KEY;
         LmAuthorized = FALSE;
         close_lm_listen();
-        
+
+        // Clear any leftover particles from before the reset
+        render_chain_particles(NULL_KEY);
     }
     
     on_rez(integer start_param) {
