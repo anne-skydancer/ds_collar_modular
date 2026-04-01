@@ -373,8 +373,6 @@ integer is_allowed_key(string k) {
     if (k == KEY_BELL_SOUND_ENABLED) return TRUE;
     if (k == KEY_BELL_VOLUME) return TRUE;
     if (k == KEY_BELL_SOUND) return TRUE;
-    // Chat command module keys (chatcmd_enabled, chatcmd_prefix, chatcmd_private_chan, chatcmd_registry_*)
-    if (llGetSubString(k, 0, 7) == "chatcmd_") return TRUE;
     return FALSE;
 }
 

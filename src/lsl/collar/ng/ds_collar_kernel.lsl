@@ -551,7 +551,6 @@ handle_register(string msg) {
 
     // Route fields to interested modules
     route_field(msg, context, "min_acl", "register_acl", AUTH_BUS);
-    route_field(msg, context, "commands", "chatcmd_register", UI_BUS);
 }
 
 handle_pong(string msg) {
