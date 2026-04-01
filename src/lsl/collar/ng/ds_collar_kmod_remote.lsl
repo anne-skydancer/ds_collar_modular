@@ -219,11 +219,12 @@ trigger_menu_for_external_user(key user_key, string context) {
 
 handle_collar_scan(string message) {
     // Extract HUD wearer key
-    if (!json_has(message, ["hud_wearer"])) {
+    string hud_wearer_str = llJsonGetValue(message, ["hud_wearer"]);
+    if (hud_wearer_str == JSON_INVALID) {
         return;
     }
 
-    key hud_wearer = (key)llJsonGetValue(message, ["hud_wearer"]);
+    key hud_wearer = (key)hud_wearer_str;
     if (hud_wearer == NULL_KEY) return;
 
     // SECURITY: Rate limit check
@@ -255,13 +256,14 @@ handle_collar_scan(string message) {
 
 handle_acl_query_external(string message) {
     // Extract query parameters
-    if (!json_has(message, ["avatar"])) return;
-    if (!json_has(message, ["hud"])) return;
-    if (!json_has(message, ["target_avatar"])) return;
+    string acl_avatar_str = llJsonGetValue(message, ["avatar"]);
+    string acl_hud_str = llJsonGetValue(message, ["hud"]);
+    string acl_target_str = llJsonGetValue(message, ["target_avatar"]);
+    if (acl_avatar_str == JSON_INVALID || acl_hud_str == JSON_INVALID || acl_target_str == JSON_INVALID) return;
 
-    key hud_wearer = (key)llJsonGetValue(message, ["avatar"]);
-    key hud_object = (key)llJsonGetValue(message, ["hud"]);
-    key target_avatar = (key)llJsonGetValue(message, ["target_avatar"]);
+    key hud_wearer = (key)acl_avatar_str;
+    key hud_object = (key)acl_hud_str;
+    key target_avatar = (key)acl_target_str;
 
     if (hud_wearer == NULL_KEY) return;
     if (hud_object == NULL_KEY) return;
@@ -285,15 +287,17 @@ handle_acl_query_external(string message) {
 
 handle_menu_request_external(string message) {
     // Extract menu request parameters
-    if (!json_has(message, ["avatar"])) return;
+    string menu_avatar_str = llJsonGetValue(message, ["avatar"]);
+    if (menu_avatar_str == JSON_INVALID) return;
 
-    key hud_wearer = (key)llJsonGetValue(message, ["avatar"]);
+    key hud_wearer = (key)menu_avatar_str;
     if (hud_wearer == NULL_KEY) return;
 
     // Extract context (default to ROOT_CONTEXT if not specified)
     string context = ROOT_CONTEXT;
-    if (json_has(message, ["context"])) {
-        context = llJsonGetValue(message, ["context"]);
+    string menu_context_val = llJsonGetValue(message, ["context"]);
+    if (menu_context_val != JSON_INVALID) {
+        context = menu_context_val;
     }
 
 
@@ -326,11 +330,11 @@ handle_menu_request_external(string message) {
 /* -------------------- UPDATE PROTOCOL HANDLERS -------------------- */
 
 handle_update_discover(string message) {
-    if (!json_has(message, ["updater"])) return;
-    if (!json_has(message, ["session"])) return;
-    
-    key updater = (key)llJsonGetValue(message, ["updater"]);
+    string updater_str = llJsonGetValue(message, ["updater"]);
     string session = llJsonGetValue(message, ["session"]);
+    if (updater_str == JSON_INVALID || session == JSON_INVALID) return;
+
+    key updater = (key)updater_str;
     
     // Check range
     list details = llGetObjectDetails(updater, [OBJECT_POS]);
@@ -410,8 +414,8 @@ default {
     listen(integer channel, string name, key speaker_id, string message) {
         // Handle collar scan broadcasts and ACL queries
         if (channel == EXTERNAL_ACL_QUERY_CHAN) {
-            if (!json_has(message, ["type"])) return;
             string msg_type = llJsonGetValue(message, ["type"]);
+            if (msg_type == JSON_INVALID) return;
             
             // Respond to collar scan
             if (msg_type == "collar_scan") {
@@ -436,9 +440,8 @@ default {
         
         // Handle menu requests (only from HUDs we've authorized)
         if (channel == EXTERNAL_MENU_CHAN) {
-            if (!json_has(message, ["type"])) return;
-            
             string msg_type = llJsonGetValue(message, ["type"]);
+            if (msg_type == JSON_INVALID) return;
             
             if (msg_type == "menu_request_external") {
                 handle_menu_request_external(message);
@@ -450,9 +453,8 @@ default {
     }
     
     link_message(integer sender_num, integer num, string str, key id) {
-        if (!json_has(str, ["type"])) return;
-
         string msg_type = llJsonGetValue(str, ["type"]);
+        if (msg_type == JSON_INVALID) return;
 
         /* -------------------- KERNEL LIFECYCLE -------------------- */
         if (num == KERNEL_LIFECYCLE) {
@@ -467,14 +469,16 @@ default {
             if (msg_type != "acl_result") return;
             
             // Extract ACL information
-            if (!json_has(str, ["avatar"])) return;
-            
-            key avatar_key = (key)llJsonGetValue(str, ["avatar"]);
+            string avatar_str = llJsonGetValue(str, ["avatar"]);
+            if (avatar_str == JSON_INVALID) return;
+
+            key avatar_key = (key)avatar_str;
             
             // Extract ACL level
             integer level = 0;
-            if (json_has(str, ["level"])) {
-                level = (integer)llJsonGetValue(str, ["level"]);
+            string level_val = llJsonGetValue(str, ["level"]);
+            if (level_val != JSON_INVALID) {
+                level = (integer)level_val;
             }
             
             // Check if this is a menu request ACL verification

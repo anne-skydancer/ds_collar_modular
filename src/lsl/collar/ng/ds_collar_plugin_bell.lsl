@@ -257,46 +257,54 @@ cleanup_session() {
 
 /* -------------------- SETTINGS HANDLING -------------------- */
 apply_settings_sync(string msg) {
-    if (!json_has(msg, ["kv"])) return;
     string kv_json = llJsonGetValue(msg, ["kv"]);
-    
-    if (json_has(kv_json, [KEY_BELL_VISIBLE])) {
-        integer new_visible = (integer)llJsonGetValue(kv_json, [KEY_BELL_VISIBLE]);
+    if (kv_json == JSON_INVALID) return;
+
+    string visible_val = llJsonGetValue(kv_json, [KEY_BELL_VISIBLE]);
+    if (visible_val != JSON_INVALID) {
+        integer new_visible = (integer)visible_val;
         set_bell_visibility(new_visible);
     }
-    
-    if (json_has(kv_json, [KEY_BELL_SOUND_ENABLED])) {
-        BellSoundEnabled = (integer)llJsonGetValue(kv_json, [KEY_BELL_SOUND_ENABLED]);
+
+    string sound_enabled_val = llJsonGetValue(kv_json, [KEY_BELL_SOUND_ENABLED]);
+    if (sound_enabled_val != JSON_INVALID) {
+        BellSoundEnabled = (integer)sound_enabled_val;
     }
-    
-    if (json_has(kv_json, [KEY_BELL_VOLUME])) {
-        BellVolume = (float)llJsonGetValue(kv_json, [KEY_BELL_VOLUME]);
+
+    string volume_val = llJsonGetValue(kv_json, [KEY_BELL_VOLUME]);
+    if (volume_val != JSON_INVALID) {
+        BellVolume = (float)volume_val;
     }
-    
-    if (json_has(kv_json, [KEY_BELL_SOUND])) {
-        BellSound = llJsonGetValue(kv_json, [KEY_BELL_SOUND]);
+
+    string sound_val = llJsonGetValue(kv_json, [KEY_BELL_SOUND]);
+    if (sound_val != JSON_INVALID) {
+        BellSound = sound_val;
     }
 }
 
 apply_settings_delta(string msg) {
-    if (!json_has(msg, ["changes"])) return;
     string changes = llJsonGetValue(msg, ["changes"]);
-    
-    if (json_has(changes, [KEY_BELL_VISIBLE])) {
-        integer new_visible = (integer)llJsonGetValue(changes, [KEY_BELL_VISIBLE]);
+    if (changes == JSON_INVALID) return;
+
+    string visible_val = llJsonGetValue(changes, [KEY_BELL_VISIBLE]);
+    if (visible_val != JSON_INVALID) {
+        integer new_visible = (integer)visible_val;
         set_bell_visibility(new_visible);
     }
-    
-    if (json_has(changes, [KEY_BELL_SOUND_ENABLED])) {
-        BellSoundEnabled = (integer)llJsonGetValue(changes, [KEY_BELL_SOUND_ENABLED]);
+
+    string sound_enabled_val = llJsonGetValue(changes, [KEY_BELL_SOUND_ENABLED]);
+    if (sound_enabled_val != JSON_INVALID) {
+        BellSoundEnabled = (integer)sound_enabled_val;
     }
-    
-    if (json_has(changes, [KEY_BELL_VOLUME])) {
-        BellVolume = (float)llJsonGetValue(changes, [KEY_BELL_VOLUME]);
+
+    string volume_val = llJsonGetValue(changes, [KEY_BELL_VOLUME]);
+    if (volume_val != JSON_INVALID) {
+        BellVolume = (float)volume_val;
     }
-    
-    if (json_has(changes, [KEY_BELL_SOUND])) {
-        BellSound = llJsonGetValue(changes, [KEY_BELL_SOUND]);
+
+    string sound_val = llJsonGetValue(changes, [KEY_BELL_SOUND]);
+    if (sound_val != JSON_INVALID) {
+        BellSound = sound_val;
     }
 }
 
@@ -339,8 +347,8 @@ default {
     
     link_message(integer sender, integer num, string msg, key id) {
         /* -------------------- KERNEL LIFECYCLE -------------------- */if (num == KERNEL_LIFECYCLE) {
-            if (!json_has(msg, ["type"])) return;
             string msg_type = llJsonGetValue(msg, ["type"]);
+            if (msg_type == JSON_INVALID) return;
             
             if (msg_type == "register_now") {
                 register_self();
@@ -356,8 +364,8 @@ default {
         }
         
         /* -------------------- SETTINGS SYNC/DELTA -------------------- */if (num == SETTINGS_BUS) {
-            if (!json_has(msg, ["type"])) return;
             string msg_type = llJsonGetValue(msg, ["type"]);
+            if (msg_type == JSON_INVALID) return;
             
             if (msg_type == "settings_sync") {
                 apply_settings_sync(msg);
@@ -373,12 +381,12 @@ default {
         }
         
         /* -------------------- UI START -------------------- */if (num == UI_BUS) {
-            if (!json_has(msg, ["type"])) return;
             string msg_type = llJsonGetValue(msg, ["type"]);
-            
+            if (msg_type == JSON_INVALID) return;
+
             if (msg_type == "start") {
-                if (!json_has(msg, ["context"])) return;
-                if (llJsonGetValue(msg, ["context"]) != PLUGIN_CONTEXT) return;
+                string context_val = llJsonGetValue(msg, ["context"]);
+                if (context_val == JSON_INVALID || context_val != PLUGIN_CONTEXT) return;
                 
                 CurrentUser = id;
                 request_acl(id);
@@ -389,18 +397,20 @@ default {
         }
         
         /* -------------------- AUTH RESULT -------------------- */if (num == AUTH_BUS) {
-            if (!json_has(msg, ["type"])) return;
             string msg_type = llJsonGetValue(msg, ["type"]);
-            
+            if (msg_type == JSON_INVALID) return;
+
             if (msg_type == "acl_result") {
                 if (!AclPending) return;
-                if (!json_has(msg, ["avatar"])) return;
-                
-                key avatar = (key)llJsonGetValue(msg, ["avatar"]);
+                string avatar_str = llJsonGetValue(msg, ["avatar"]);
+                if (avatar_str == JSON_INVALID) return;
+
+                key avatar = (key)avatar_str;
                 if (avatar != CurrentUser) return;
-                
-                if (json_has(msg, ["level"])) {
-                    UserAcl = (integer)llJsonGetValue(msg, ["level"]);
+
+                string level_val = llJsonGetValue(msg, ["level"]);
+                if (level_val != JSON_INVALID) {
+                    UserAcl = (integer)level_val;
                     AclPending = FALSE;
                     
                     if (UserAcl < PLUGIN_MIN_ACL) {
@@ -418,22 +428,21 @@ default {
         }
         
         /* -------------------- DIALOG RESPONSE -------------------- */if (num == DIALOG_BUS) {
-            if (!json_has(msg, ["type"])) return;
             string msg_type = llJsonGetValue(msg, ["type"]);
-            
+            if (msg_type == JSON_INVALID) return;
+
             if (msg_type == "dialog_response") {
-                if (!json_has(msg, ["session_id"]) || !json_has(msg, ["button"])) return;
                 string response_session = llJsonGetValue(msg, ["session_id"]);
-                if (response_session != SessionId) return;
-                
                 string button = llJsonGetValue(msg, ["button"]);
+                if (response_session == JSON_INVALID || button == JSON_INVALID) return;
+                if (response_session != SessionId) return;
                 handle_button_click(button);
                 return;
             }
             
             if (msg_type == "dialog_timeout") {
-                if (!json_has(msg, ["session_id"])) return;
                 string timeout_session = llJsonGetValue(msg, ["session_id"]);
+                if (timeout_session == JSON_INVALID) return;
                 if (timeout_session != SessionId) return;
                 cleanup_session();
                 return;

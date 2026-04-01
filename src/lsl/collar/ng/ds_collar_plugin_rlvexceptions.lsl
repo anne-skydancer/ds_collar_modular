@@ -142,9 +142,9 @@ send_pong() {
 /* -------------------- SETTINGS -------------------- */
 
 apply_settings_sync(string msg) {
-    if (!json_has(msg, ["kv"])) return;
     string kv = llJsonGetValue(msg, ["kv"]);
-    
+    if (kv == JSON_INVALID) return;
+
     // Reset defaults
     ExOwnerTp = TRUE;
     ExOwnerIm = TRUE;
@@ -154,41 +154,47 @@ apply_settings_sync(string msg) {
     OwnerKeys = [];
     TrusteeKeys = [];
     MultiOwnerMode = FALSE;
-    
+
     // Load exception settings
-    if (json_has(kv, [KEY_EX_OWNER_TP])) {
-        ExOwnerTp = (integer)llJsonGetValue(kv, [KEY_EX_OWNER_TP]);
+    string ex_owner_tp_val = llJsonGetValue(kv, [KEY_EX_OWNER_TP]);
+    if (ex_owner_tp_val != JSON_INVALID) {
+        ExOwnerTp = (integer)ex_owner_tp_val;
     }
-    if (json_has(kv, [KEY_EX_OWNER_IM])) {
-        ExOwnerIm = (integer)llJsonGetValue(kv, [KEY_EX_OWNER_IM]);
+    string ex_owner_im_val = llJsonGetValue(kv, [KEY_EX_OWNER_IM]);
+    if (ex_owner_im_val != JSON_INVALID) {
+        ExOwnerIm = (integer)ex_owner_im_val;
     }
-    if (json_has(kv, [KEY_EX_TRUSTEE_TP])) {
-        ExTrusteeTp = (integer)llJsonGetValue(kv, [KEY_EX_TRUSTEE_TP]);
+    string ex_trustee_tp_val = llJsonGetValue(kv, [KEY_EX_TRUSTEE_TP]);
+    if (ex_trustee_tp_val != JSON_INVALID) {
+        ExTrusteeTp = (integer)ex_trustee_tp_val;
     }
-    if (json_has(kv, [KEY_EX_TRUSTEE_IM])) {
-        ExTrusteeIm = (integer)llJsonGetValue(kv, [KEY_EX_TRUSTEE_IM]);
+    string ex_trustee_im_val = llJsonGetValue(kv, [KEY_EX_TRUSTEE_IM]);
+    if (ex_trustee_im_val != JSON_INVALID) {
+        ExTrusteeIm = (integer)ex_trustee_im_val;
     }
-    
+
     // Load owner/trustee lists
-    if (json_has(kv, [KEY_MULTI_OWNER_MODE])) {
-        MultiOwnerMode = (integer)llJsonGetValue(kv, [KEY_MULTI_OWNER_MODE]);
+    string multi_owner_val = llJsonGetValue(kv, [KEY_MULTI_OWNER_MODE]);
+    if (multi_owner_val != JSON_INVALID) {
+        MultiOwnerMode = (integer)multi_owner_val;
     }
-    
+
     if (MultiOwnerMode) {
-        if (json_has(kv, [KEY_OWNER_KEYS])) {
-            string arr = llJsonGetValue(kv, [KEY_OWNER_KEYS]);
+        string arr = llJsonGetValue(kv, [KEY_OWNER_KEYS]);
+        if (arr != JSON_INVALID) {
             if (llGetSubString(arr, 0, 0) == "[") OwnerKeys = llJson2List(arr);
         }
     }
     else {
-        if (json_has(kv, [KEY_OWNER_KEY])) {
-            OwnerKey = (key)llJsonGetValue(kv, [KEY_OWNER_KEY]);
+        string owner_key_val = llJsonGetValue(kv, [KEY_OWNER_KEY]);
+        if (owner_key_val != JSON_INVALID) {
+            OwnerKey = (key)owner_key_val;
         }
     }
-    
-    if (json_has(kv, [KEY_TRUSTEES])) {
-        string arr = llJsonGetValue(kv, [KEY_TRUSTEES]);
-        if (llGetSubString(arr, 0, 0) == "[") TrusteeKeys = llJson2List(arr);
+
+    string trustees_arr = llJsonGetValue(kv, [KEY_TRUSTEES]);
+    if (trustees_arr != JSON_INVALID) {
+        if (llGetSubString(trustees_arr, 0, 0) == "[") TrusteeKeys = llJson2List(trustees_arr);
     }
     
     // Apply RLV commands
@@ -196,34 +202,39 @@ apply_settings_sync(string msg) {
 }
 
 apply_settings_delta(string msg) {
-    if (!json_has(msg, ["op"])) return;
     string op = llJsonGetValue(msg, ["op"]);
-    
+    if (op == JSON_INVALID) return;
+
     if (op == "set") {
-        if (!json_has(msg, ["changes"])) return;
         string changes = llJsonGetValue(msg, ["changes"]);
-        
-        if (json_has(changes, [KEY_EX_OWNER_TP])) {
-            ExOwnerTp = (integer)llJsonGetValue(changes, [KEY_EX_OWNER_TP]);
+        if (changes == JSON_INVALID) return;
+
+        string ex_owner_tp_val = llJsonGetValue(changes, [KEY_EX_OWNER_TP]);
+        if (ex_owner_tp_val != JSON_INVALID) {
+            ExOwnerTp = (integer)ex_owner_tp_val;
             reconcile_all();
         }
-        if (json_has(changes, [KEY_EX_OWNER_IM])) {
-            ExOwnerIm = (integer)llJsonGetValue(changes, [KEY_EX_OWNER_IM]);
+        string ex_owner_im_val = llJsonGetValue(changes, [KEY_EX_OWNER_IM]);
+        if (ex_owner_im_val != JSON_INVALID) {
+            ExOwnerIm = (integer)ex_owner_im_val;
             reconcile_all();
         }
-        if (json_has(changes, [KEY_EX_TRUSTEE_TP])) {
-            ExTrusteeTp = (integer)llJsonGetValue(changes, [KEY_EX_TRUSTEE_TP]);
+        string ex_trustee_tp_val = llJsonGetValue(changes, [KEY_EX_TRUSTEE_TP]);
+        if (ex_trustee_tp_val != JSON_INVALID) {
+            ExTrusteeTp = (integer)ex_trustee_tp_val;
             reconcile_all();
         }
-        if (json_has(changes, [KEY_EX_TRUSTEE_IM])) {
-            ExTrusteeIm = (integer)llJsonGetValue(changes, [KEY_EX_TRUSTEE_IM]);
+        string ex_trustee_im_val = llJsonGetValue(changes, [KEY_EX_TRUSTEE_IM]);
+        if (ex_trustee_im_val != JSON_INVALID) {
+            ExTrusteeIm = (integer)ex_trustee_im_val;
             reconcile_all();
         }
-        
+
         // Handle owner_key changes (single owner mode)
-        if (json_has(changes, [KEY_OWNER_KEY])) {
+        string owner_key_val = llJsonGetValue(changes, [KEY_OWNER_KEY]);
+        if (owner_key_val != JSON_INVALID) {
             key old_owner = OwnerKey;
-            OwnerKey = (key)llJsonGetValue(changes, [KEY_OWNER_KEY]);
+            OwnerKey = (key)owner_key_val;
             
             // Clear exceptions from old owner if it changed
             if (old_owner != NULL_KEY && old_owner != OwnerKey) {
@@ -236,11 +247,9 @@ apply_settings_delta(string msg) {
         }
     }
     else if (op == "list_add") {
-        if (!json_has(msg, ["key"])) return;
-        if (!json_has(msg, ["elem"])) return;
-        
         string key_name = llJsonGetValue(msg, ["key"]);
         string elem = llJsonGetValue(msg, ["elem"]);
+        if (key_name == JSON_INVALID || elem == JSON_INVALID) return;
         
         if (key_name == KEY_OWNER_KEYS) {
             if (llListFindList(OwnerKeys, [elem]) == -1) {
@@ -264,11 +273,9 @@ apply_settings_delta(string msg) {
         }
     }
     else if (op == "list_remove") {
-        if (!json_has(msg, ["key"])) return;
-        if (!json_has(msg, ["elem"])) return;
-        
         string key_name = llJsonGetValue(msg, ["key"]);
         string elem = llJsonGetValue(msg, ["elem"]);
+        if (key_name == JSON_INVALID || elem == JSON_INVALID) return;
         
         if (key_name == KEY_OWNER_KEYS) {
             integer idx = llListFindList(OwnerKeys, [elem]);
@@ -316,12 +323,14 @@ request_acl(key user) {
 }
 
 handle_acl_result(string msg) {
-    if (!json_has(msg, ["avatar"]) || !json_has(msg, ["level"])) return;
-    
-    key avatar = (key)llJsonGetValue(msg, ["avatar"]);
+    string avatar_str = llJsonGetValue(msg, ["avatar"]);
+    string level_str = llJsonGetValue(msg, ["level"]);
+    if (avatar_str == JSON_INVALID || level_str == JSON_INVALID) return;
+
+    key avatar = (key)avatar_str;
     if (avatar != CurrentUser) return;
-    
-    UserAcl = (integer)llJsonGetValue(msg, ["level"]);
+
+    UserAcl = (integer)level_str;
     
     if (UserAcl < PLUGIN_MIN_ACL) {
         llRegionSayTo(CurrentUser, 0, "Access denied.");
@@ -530,8 +539,8 @@ default {
     }
     
     link_message(integer sender, integer num, string msg, key id) {
-        if (!json_has(msg, ["type"])) return;
         string type = llJsonGetValue(msg, ["type"]);
+        if (type == JSON_INVALID) return;
         
         if (num == KERNEL_LIFECYCLE) {
             if (type == "register_now") {
@@ -548,8 +557,9 @@ default {
             else if (type == "settings_delta") apply_settings_delta(msg);
         }
         else if (num == UI_BUS) {
-            if (type == "start" && json_has(msg, ["context"])) {
-                if (llJsonGetValue(msg, ["context"]) == PLUGIN_CONTEXT) {
+            if (type == "start") {
+                string context_val = llJsonGetValue(msg, ["context"]);
+                if (context_val != JSON_INVALID && context_val == PLUGIN_CONTEXT) {
                     CurrentUser = id;
                     request_acl(id);
                 }
@@ -560,15 +570,18 @@ default {
         }
         else if (num == DIALOG_BUS) {
             if (type == "dialog_response") {
-                if (json_has(msg, ["session_id"]) && json_has(msg, ["button"])) {
-                    if (llJsonGetValue(msg, ["session_id"]) == SessionId) {
-                        handle_button(llJsonGetValue(msg, ["button"]));
+                string session_val = llJsonGetValue(msg, ["session_id"]);
+                string button_val = llJsonGetValue(msg, ["button"]);
+                if (session_val != JSON_INVALID && button_val != JSON_INVALID) {
+                    if (session_val == SessionId) {
+                        handle_button(button_val);
                     }
                 }
             }
             else if (type == "dialog_timeout") {
-                if (json_has(msg, ["session_id"])) {
-                    if (llJsonGetValue(msg, ["session_id"]) == SessionId) cleanup();
+                string session_val = llJsonGetValue(msg, ["session_id"]);
+                if (session_val != JSON_INVALID) {
+                    if (session_val == SessionId) cleanup();
                 }
             }
         }

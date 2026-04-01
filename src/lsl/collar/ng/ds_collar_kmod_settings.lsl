@@ -58,8 +58,9 @@ integer json_has(string j, list path) {
     return (llJsonGetValue(j, path) != JSON_INVALID);
 }
 string get_msg_type(string msg) {
-    if (!json_has(msg, ["type"])) return "";
-    return llJsonGetValue(msg, ["type"]);
+    string val = llJsonGetValue(msg, ["type"]);
+    if (val == JSON_INVALID) return "";
+    return val;
 }
 
 // MEMORY OPTIMIZATION: Compact field validation helper
@@ -87,12 +88,16 @@ integer list_contains(list search_list, string s) {
 }
 
 list list_remove_all(list source_list, string s) {
-    integer idx = llListFindList(source_list, [s]);
-    while (idx != -1) {
-        source_list = llDeleteSubList(source_list, idx, idx);
-        idx = llListFindList(source_list, [s]);
+    list result = [];
+    integer i = 0;
+    integer len = llGetListLength(source_list);
+    while (i < len) {
+        if (llList2String(source_list, i) != s) {
+            result += [llList2String(source_list, i)];
+        }
+        i += 1;
     }
-    return source_list;
+    return result;
 }
 
 list list_unique(list source_list) {
@@ -493,19 +498,18 @@ handle_settings_get() {
 }
 
 handle_set(string msg) {
-    if (!json_has(msg, ["key"])) return;
-    
     string key_name = llJsonGetValue(msg, ["key"]);
+    if (key_name == JSON_INVALID) return;
     if (!is_allowed_key(key_name)) return;
     if (is_notecard_only_key(key_name)) {
         return;
     }
-    
+
     integer did_change = FALSE;
-    
+
     // Bulk list set
-    if (json_has(msg, ["values"])) {
-        string values_arr = llJsonGetValue(msg, ["values"]);
+    string values_arr = llJsonGetValue(msg, ["values"]);
+    if (values_arr != JSON_INVALID) {
         if (llJsonValueType(values_arr, []) == JSON_ARRAY) {
             list new_list = llJson2List(values_arr);
             new_list = list_unique(new_list);
@@ -548,8 +552,8 @@ handle_set(string msg) {
     }
     
     // Scalar set
-    if (json_has(msg, ["value"])) {
-        string value = llJsonGetValue(msg, ["value"]);
+    string value = llJsonGetValue(msg, ["value"]);
+    if (value != JSON_INVALID) {
         
         if (key_name == KEY_PUBLIC_ACCESS) value = normalize_bool(value);
         if (key_name == KEY_LOCKED) value = normalize_bool(value);
@@ -581,11 +585,9 @@ handle_set(string msg) {
 }
 
 handle_list_add(string msg) {
-    if (!json_has(msg, ["key"])) return;
-    if (!json_has(msg, ["elem"])) return;
-    
     string key_name = llJsonGetValue(msg, ["key"]);
     string elem = llJsonGetValue(msg, ["elem"]);
+    if (key_name == JSON_INVALID || elem == JSON_INVALID) return;
     
     if (!is_allowed_key(key_name)) return;
     if (is_notecard_only_key(key_name)) {
@@ -618,11 +620,9 @@ handle_list_add(string msg) {
 }
 
 handle_list_remove(string msg) {
-    if (!json_has(msg, ["key"])) return;
-    if (!json_has(msg, ["elem"])) return;
-    
     string key_name = llJsonGetValue(msg, ["key"]);
     string elem = llJsonGetValue(msg, ["elem"]);
+    if (key_name == JSON_INVALID || elem == JSON_INVALID) return;
     
     if (!is_allowed_key(key_name)) return;
     

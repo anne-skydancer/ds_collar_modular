@@ -24,8 +24,9 @@ integer json_has(string j, list path) {
     return (llJsonGetValue(j, path) != JSON_INVALID);
 }
 string get_msg_type(string msg) {
-    if (!json_has(msg, ["type"])) return "";
-    return llJsonGetValue(msg, ["type"]);
+    string val = llJsonGetValue(msg, ["type"]);
+    if (val == JSON_INVALID) return "";
+    return val;
 }
 
 

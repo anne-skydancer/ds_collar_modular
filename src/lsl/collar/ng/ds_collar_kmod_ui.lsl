@@ -78,8 +78,9 @@ integer json_has(string j, list path) {
     return (llJsonGetValue(j, path) != JSON_INVALID);
 }
 string get_msg_type(string msg) {
-    if (!json_has(msg, ["type"])) return "";
-    return llJsonGetValue(msg, ["type"]);
+    string val = llJsonGetValue(msg, ["type"]);
+    if (val == JSON_INVALID) return "";
+    return val;
 }
 
 
@@ -289,11 +290,9 @@ apply_plugin_list(string plugins_json) {
     while (i < count) {
         string plugin_obj = llJsonGetValue(plugins_json, [i]);
 
-        if (json_has(plugin_obj, ["context"]) &&
-            json_has(plugin_obj, ["label"])) {
-
-            string context = llJsonGetValue(plugin_obj, ["context"]);
-            string label = llJsonGetValue(plugin_obj, ["label"]);
+        string context = llJsonGetValue(plugin_obj, ["context"]);
+        string label = llJsonGetValue(plugin_obj, ["label"]);
+        if (context != JSON_INVALID && label != JSON_INVALID) {
 
             // Add with default min_acl=0 (will be updated when ACL list arrives)
             // RACE MITIGATION: Sessions are invalidated when plugin_list updates,
@@ -328,9 +327,10 @@ apply_plugin_acl_list(string acl_json) {
     while (i < count) {
         string acl_obj = llJsonGetValue(acl_json, [i]);
 
-        if (json_has(acl_obj, ["context"]) && json_has(acl_obj, ["min_acl"])) {
-            string context = llJsonGetValue(acl_obj, ["context"]);
-            integer min_acl = (integer)llJsonGetValue(acl_obj, ["min_acl"]);
+        string context = llJsonGetValue(acl_obj, ["context"]);
+        string min_acl_str = llJsonGetValue(acl_obj, ["min_acl"]);
+        if (context != JSON_INVALID && min_acl_str != JSON_INVALID) {
+            integer min_acl = (integer)min_acl_str;
 
             // Find this context in AllPlugins and update min_acl
             // OPTIMIZATION: Jump to next_acl after match (acts as break)
@@ -559,11 +559,10 @@ update_plugin_label(string context, string new_label) {
 
 handle_plugin_list(string msg) {
 
-    if (!json_has(msg, ["plugins"])) {
+    string plugins_json = llJsonGetValue(msg, ["plugins"]);
+    if (plugins_json == JSON_INVALID) {
         return;
     }
-
-    string plugins_json = llJsonGetValue(msg, ["plugins"]);
     apply_plugin_list(plugins_json);
 
     // Invalidate all sessions when plugin list changes
@@ -590,11 +589,14 @@ handle_plugin_list(string msg) {
 }
 
 handle_acl_result(string msg) {
-    if (!validate_required_fields(msg, ["avatar", "level", "is_blacklisted"], "handle_acl_result")) return;
+    string avatar_str = llJsonGetValue(msg, ["avatar"]);
+    string level_str = llJsonGetValue(msg, ["level"]);
+    string blacklisted_str = llJsonGetValue(msg, ["is_blacklisted"]);
+    if (avatar_str == JSON_INVALID || level_str == JSON_INVALID || blacklisted_str == JSON_INVALID) return;
 
-    key avatar = (key)llJsonGetValue(msg, ["avatar"]);
-    integer level = (integer)llJsonGetValue(msg, ["level"]);
-    integer is_blacklisted = (integer)llJsonGetValue(msg, ["is_blacklisted"]);
+    key avatar = (key)avatar_str;
+    integer level = (integer)level_str;
+    integer is_blacklisted = (integer)blacklisted_str;
 
     integer idx = llListFindList(PendingAcl, [avatar]);
     if (idx == -1 || idx % PENDING_ACL_STRIDE != PENDING_ACL_AVATAR) return;
@@ -608,12 +610,11 @@ handle_acl_result(string msg) {
 }
 
 handle_start(string msg, key user_key) {
-    if (!json_has(msg, ["context"])) {
+    string context = llJsonGetValue(msg, ["context"]);
+    if (context == JSON_INVALID) {
         start_root_session(user_key);
         return;
     }
-
-    string context = llJsonGetValue(msg, ["context"]);
 
     if (context == ROOT_CONTEXT) {
         start_root_session(user_key);
@@ -655,9 +656,10 @@ start_sos_session(key user_key) {
 }
 
 handle_return(string msg) {
-    if (!json_has(msg, ["user"])) return;
+    string user_val = llJsonGetValue(msg, ["user"]);
+    if (user_val == JSON_INVALID) return;
 
-    key user_key = (key)llJsonGetValue(msg, ["user"]);
+    key user_key = (key)user_val;
 
 
     // SECURITY FIX: Check session age and re-validate if stale
@@ -688,27 +690,26 @@ handle_return(string msg) {
 }
 
 handle_update_label(string msg) {
-    if (!validate_required_fields(msg, ["context", "label"], "handle_update_label")) return;
-
     string context = llJsonGetValue(msg, ["context"]);
     string new_label = llJsonGetValue(msg, ["label"]);
+    if (context == JSON_INVALID || new_label == JSON_INVALID) return;
 
     update_plugin_label(context, new_label);
 }
 
 handle_update_state(string msg) {
-    if (!validate_required_fields(msg, ["context", "state"], "handle_update_state")) return;
-
     string context = llJsonGetValue(msg, ["context"]);
-    integer plugin_state = (integer)llJsonGetValue(msg, ["state"]);
+    string state_str = llJsonGetValue(msg, ["state"]);
+    if (context == JSON_INVALID || state_str == JSON_INVALID) return;
+
+    integer plugin_state = (integer)state_str;
 
     set_plugin_state(context, plugin_state);
 }
 
 handle_plugin_acl_list(string msg) {
-    if (!json_has(msg, ["acl_data"])) return;
-
     string acl_json = llJsonGetValue(msg, ["acl_data"]);
+    if (acl_json == JSON_INVALID) return;
     apply_plugin_acl_list(acl_json);
 
     // Invalidate all sessions when ACL data changes
@@ -721,16 +722,17 @@ handle_plugin_acl_list(string msg) {
 }
 
 handle_dialog_response(string msg) {
-    if (!validate_required_fields(msg, ["session_id", "button", "user"], "handle_dialog_response")) return;
-
     string session_id = llJsonGetValue(msg, ["session_id"]);
     string button = llJsonGetValue(msg, ["button"]);
-    key user = (key)llJsonGetValue(msg, ["user"]);
+    string user_str = llJsonGetValue(msg, ["user"]);
+    if (session_id == JSON_INVALID || button == JSON_INVALID || user_str == JSON_INVALID) return;
+
+    key user = (key)user_str;
 
     // Extract context (may be empty string for navigation buttons)
-    string context = "";
-    if (json_has(msg, ["context"])) {
-        context = llJsonGetValue(msg, ["context"]);
+    string context = llJsonGetValue(msg, ["context"]);
+    if (context == JSON_INVALID) {
+        context = "";
     }
 
     integer idx = llListFindList(Sessions, [session_id]);
@@ -741,10 +743,11 @@ handle_dialog_response(string msg) {
 }
 
 handle_dialog_timeout(string msg) {
-    if (!validate_required_fields(msg, ["session_id", "user"], "handle_dialog_timeout")) return;
-
     string session_id = llJsonGetValue(msg, ["session_id"]);
-    key user = (key)llJsonGetValue(msg, ["user"]);
+    string user_str = llJsonGetValue(msg, ["user"]);
+    if (session_id == JSON_INVALID || user_str == JSON_INVALID) return;
+
+    key user = (key)user_str;
 
     integer idx = llListFindList(Sessions, [session_id]);
     if (idx != -1 && idx % SESSION_STRIDE == SESSION_ID) {

@@ -334,13 +334,12 @@ default {
     listen(integer channel, string name, key id, string message) {
         // Handle collar scan responses
         if (channel == COLLAR_ACL_REPLY_CHAN && ScanningForCollars) {
-            if (!json_has(message, ["type"])) return;
-            
             string msg_type = llJsonGetValue(message, ["type"]);
-            if (msg_type != "collar_scan_response") return;
-            
-            if (!json_has(message, ["collar_owner"])) return;
-            key collar_owner = (key)llJsonGetValue(message, ["collar_owner"]);
+            if (msg_type == JSON_INVALID || msg_type != "collar_scan_response") return;
+
+            string collar_owner_str = llJsonGetValue(message, ["collar_owner"]);
+            if (collar_owner_str == JSON_INVALID) return;
+            key collar_owner = (key)collar_owner_str;
             string owner_name = llKey2Name(collar_owner);
             
             add_detected_collar(collar_owner, id, owner_name);
@@ -385,28 +384,29 @@ default {
         
         // Handle ACL responses
         if (channel == COLLAR_ACL_REPLY_CHAN && AclPending) {
-            if (!json_has(message, ["type"])) return;
-            
             string msg_type = llJsonGetValue(message, ["type"]);
-            if (msg_type != "acl_result_external") return;
-            
-            if (!json_has(message, ["avatar"])) return;
-            key response_avatar = (key)llJsonGetValue(message, ["avatar"]);
-            
+            if (msg_type == JSON_INVALID || msg_type != "acl_result_external") return;
+
+            string response_avatar_str = llJsonGetValue(message, ["avatar"]);
+            if (response_avatar_str == JSON_INVALID) return;
+            key response_avatar = (key)response_avatar_str;
+
             if (response_avatar != HudWearer) return;
-            
-            if (!json_has(message, ["collar_owner"])) return;
-            key collar_owner = (key)llJsonGetValue(message, ["collar_owner"]);
-            
+
+            string collar_owner_str = llJsonGetValue(message, ["collar_owner"]);
+            if (collar_owner_str == JSON_INVALID) return;
+            key collar_owner = (key)collar_owner_str;
+
             if (collar_owner != TargetAvatarKey) return;
-            
+
             llSetTimerEvent(0.0);
             AclPending = FALSE;
-            
+
             TargetCollarKey = id;
-            
-            if (json_has(message, ["level"])) {
-                AclLevel = (integer)llJsonGetValue(message, ["level"]);
+
+            string level_val = llJsonGetValue(message, ["level"]);
+            if (level_val != JSON_INVALID) {
+                AclLevel = (integer)level_val;
             }
             
             process_acl_result(AclLevel);

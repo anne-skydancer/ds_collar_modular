@@ -84,8 +84,9 @@ integer json_has(string j, list path) {
     return (llJsonGetValue(j, path) != JSON_INVALID);
 }
 string get_msg_type(string msg) {
-    if (!json_has(msg, ["type"])) return "";
-    return llJsonGetValue(msg, ["type"]);
+    string val = llJsonGetValue(msg, ["type"]);
+    if (val == JSON_INVALID) return "";
+    return val;
 }
 
 
@@ -225,39 +226,41 @@ request_settings() {
 }
 
 apply_settings_sync(string msg) {
-    if (!json_has(msg, ["kv"])) return;
-    
     string kv_json = llJsonGetValue(msg, ["kv"]);
-    
+    if (kv_json == JSON_INVALID) return;
+
     // Reset
     MultiOwnerMode = FALSE;
     OwnerKey = NULL_KEY;
     OwnerKeys = [];
     OwnerHonorific = "";
     OwnerHonorifics = [];
-    
+
     // Load
-    if (json_has(kv_json, [KEY_MULTI_OWNER_MODE])) {
-        MultiOwnerMode = (integer)llJsonGetValue(kv_json, [KEY_MULTI_OWNER_MODE]);
+    string multi_owner_val = llJsonGetValue(kv_json, [KEY_MULTI_OWNER_MODE]);
+    if (multi_owner_val != JSON_INVALID) {
+        MultiOwnerMode = (integer)multi_owner_val;
     }
-    
-    if (json_has(kv_json, [KEY_OWNER_KEY])) {
-        OwnerKey = (key)llJsonGetValue(kv_json, [KEY_OWNER_KEY]);
+
+    string owner_key_val = llJsonGetValue(kv_json, [KEY_OWNER_KEY]);
+    if (owner_key_val != JSON_INVALID) {
+        OwnerKey = (key)owner_key_val;
     }
-    
-    if (json_has(kv_json, [KEY_OWNER_KEYS])) {
-        string owner_keys_json = llJsonGetValue(kv_json, [KEY_OWNER_KEYS]);
+
+    string owner_keys_json = llJsonGetValue(kv_json, [KEY_OWNER_KEYS]);
+    if (owner_keys_json != JSON_INVALID) {
         if (llJsonValueType(owner_keys_json, []) == JSON_ARRAY) {
             OwnerKeys = llJson2List(owner_keys_json);
         }
     }
-    
-    if (json_has(kv_json, [KEY_OWNER_HON])) {
-        OwnerHonorific = llJsonGetValue(kv_json, [KEY_OWNER_HON]);
+
+    string owner_hon_val = llJsonGetValue(kv_json, [KEY_OWNER_HON]);
+    if (owner_hon_val != JSON_INVALID) {
+        OwnerHonorific = owner_hon_val;
     }
-    
-    if (json_has(kv_json, [KEY_OWNER_HONS])) {
-        string owner_hons_json = llJsonGetValue(kv_json, [KEY_OWNER_HONS]);
+
+    string owner_hons_json = llJsonGetValue(kv_json, [KEY_OWNER_HONS]);
+    if (owner_hons_json != JSON_INVALID) {
         if (llJsonValueType(owner_hons_json, []) == JSON_ARRAY) {
             OwnerHonorifics = llJson2List(owner_hons_json);
         }
@@ -598,11 +601,10 @@ default
         else if (num == KERNEL_LIFECYCLE) {
             if (msg_type == "soft_reset" || msg_type == "soft_reset_all") {
                 // SECURITY FIX (v2.3 - MEDIUM-023): Validate sender authorization
-                if (!json_has(msg, ["from"])) {
+                string from = llJsonGetValue(msg, ["from"]);
+                if (from == JSON_INVALID) {
                     return;
                 }
-                
-                string from = llJsonGetValue(msg, ["from"]);
                 
                 if (!is_authorized_reset_sender(from)) {
                     return;

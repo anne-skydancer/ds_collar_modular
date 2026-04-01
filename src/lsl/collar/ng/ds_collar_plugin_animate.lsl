@@ -151,13 +151,14 @@ request_acl(key user) {
 }
 
 handle_acl_result(string msg) {
-    if (!json_has(msg, ["avatar"])) return;
-    if (!json_has(msg, ["level"])) return;
-    
-    key avatar = (key)llJsonGetValue(msg, ["avatar"]);
+    string avatar_str = llJsonGetValue(msg, ["avatar"]);
+    string level_str = llJsonGetValue(msg, ["level"]);
+    if (avatar_str == JSON_INVALID || level_str == JSON_INVALID) return;
+
+    key avatar = (key)avatar_str;
     if (avatar != CurrentUser) return;
-    
-    integer level = (integer)llJsonGetValue(msg, ["level"]);
+
+    integer level = (integer)level_str;
     
     AclPending = FALSE;
     UserAcl = level;
@@ -388,8 +389,8 @@ default {
     
     link_message(integer sender, integer num, string msg, key id) {
         /* -------------------- KERNEL LIFECYCLE -------------------- */if (num == KERNEL_LIFECYCLE) {
-            if (!json_has(msg, ["type"])) return;
             string msg_type = llJsonGetValue(msg, ["type"]);
+            if (msg_type == JSON_INVALID) return;
             
             // Registration request
             if (msg_type == "register_now") {
@@ -407,12 +408,12 @@ default {
         }
         
         /* -------------------- UI START -------------------- */if (num == UI_BUS) {
-            if (!json_has(msg, ["type"])) return;
             string msg_type = llJsonGetValue(msg, ["type"]);
-            
+            if (msg_type == JSON_INVALID) return;
+
             if (msg_type == "start") {
-                if (!json_has(msg, ["context"])) return;
-                if (llJsonGetValue(msg, ["context"]) != PLUGIN_CONTEXT) return;
+                string context = llJsonGetValue(msg, ["context"]);
+                if (context == JSON_INVALID || context != PLUGIN_CONTEXT) return;
                 
                 if (id == NULL_KEY) return;
                 
@@ -426,8 +427,8 @@ default {
         }
         
         /* -------------------- AUTH RESULT -------------------- */if (num == AUTH_BUS) {
-            if (!json_has(msg, ["type"])) return;
             string msg_type = llJsonGetValue(msg, ["type"]);
+            if (msg_type == JSON_INVALID) return;
             
             if (msg_type == "acl_result") {
                 if (!AclPending) return;
@@ -439,18 +440,19 @@ default {
         }
         
         /* -------------------- DIALOG RESPONSE -------------------- */if (num == DIALOG_BUS) {
-            if (!json_has(msg, ["type"])) return;
             string msg_type = llJsonGetValue(msg, ["type"]);
-            
+            if (msg_type == JSON_INVALID) return;
+
             if (msg_type == "dialog_response") {
-                if (!json_has(msg, ["session_id"])) return;
-                if (llJsonGetValue(msg, ["session_id"]) != SessionId) return;
-                
-                if (!json_has(msg, ["button"])) return;
+                string session_val = llJsonGetValue(msg, ["session_id"]);
+                if (session_val == JSON_INVALID || session_val != SessionId) return;
+
                 string button = llJsonGetValue(msg, ["button"]);
-                
-                if (!json_has(msg, ["user"])) return;
-                key user = (key)llJsonGetValue(msg, ["user"]);
+                if (button == JSON_INVALID) return;
+
+                string user_str = llJsonGetValue(msg, ["user"]);
+                if (user_str == JSON_INVALID) return;
+                key user = (key)user_str;
                 
                 if (user != CurrentUser) return;
                 
@@ -466,8 +468,8 @@ default {
             }
             
             if (msg_type == "dialog_timeout") {
-                if (!json_has(msg, ["session_id"])) return;
-                if (llJsonGetValue(msg, ["session_id"]) != SessionId) return;
+                string timeout_session = llJsonGetValue(msg, ["session_id"]);
+                if (timeout_session == JSON_INVALID || timeout_session != SessionId) return;
                 
                 cleanup_session();
                 return;
