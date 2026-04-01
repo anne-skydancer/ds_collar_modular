@@ -1,7 +1,7 @@
 # DS Collar NG Scripts - LSL Best Practices Analysis
 
 **Date:** 2026-04-01
-**Scope:** All 30 LSL scripts in `src/lsl/collar/ng/`
+**Scope:** All 26 LSL scripts in `src/lsl/collar/ng/` (after chat command removal)
 **Method:** Cross-reference against Second Life Wiki LSL best practices, LSL Script Efficiency guidelines, LSL Script Memory documentation, and project CLAUDE.md conventions.
 
 ---
@@ -17,7 +17,7 @@
 
 ## 1. Executive Summary
 
-The DS Collar NG codebase (~17,000 lines across 30 scripts) demonstrates **strong architectural discipline**: consolidated message bus, event-driven design, proper listener hygiene, and defense-in-depth security. The code is well above average for LSL projects.
+The DS Collar NG codebase (~15,800 lines across 26 scripts) demonstrates **strong architectural discipline**: consolidated message bus, event-driven design, proper listener hygiene, and defense-in-depth security. The code is well above average for LSL projects.
 
 However, cross-referencing against the SL Wiki's LSL Script Efficiency, LSL Script Memory, and LSL Style Guide pages reveals **concrete opportunities** for improvement in three categories:
 

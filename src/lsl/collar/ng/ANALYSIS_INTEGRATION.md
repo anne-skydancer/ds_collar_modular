@@ -8,9 +8,8 @@ is essential.
 
 > **CRITICAL CONSTRAINT:** In this codebase, scripts cannot exceed ~1024 lines
 > without risking stack-heap collision. `plugin_leash.lsl` already crashed at
-> 993 lines and was trimmed to 968 (now back at 1066). This ceiling fundamentally
-> limits merge opportunities and creates a **splitting** imperative for oversized
-> scripts.
+> 993 lines and was trimmed to 968 (currently ~882 after chat command removal).
+> This ceiling fundamentally limits merge opportunities.
 
 ---
 
@@ -166,7 +165,6 @@ These scripts **must** remain separate because they use resources that conflict:
 | `plugin_access.lsl` | No | Avatar scan | No | Sensor for avatar selection |
 | `plugin_blacklist.lsl` | No | Avatar scan | No | Sensor for avatar selection |
 | `plugin_rlvrelay.lsl` | No | No | Relay channel | ORG spec requires dedicated listen |
-| `plugin_chat.lsl` | No | No | Chat channels | Dedicated listen for emotes |
 
 **Key rule:** If two scripts both need a timer OR both need a sensor, they
 **cannot** be merged without significant architectural compromise.
@@ -202,7 +200,6 @@ creates a monolith that's harder to maintain:
 | `plugin_rlvexceptions.lsl` | RLV exceptions | Pairs with rlvrestrict |
 | `plugin_status.lsl` | Display name queries | Read-only display |
 | `plugin_maintenance.lsl` | Reset/update logic | System utility |
-| `plugin_chat.lsl` | Chat listeners | Independent |
 | `plugin_sos.lsl` | Emergency actions | Must be isolated for safety |
 
 **`plugin_sos.lsl` MUST stay separate.** It's the emergency escape hatch. If it
@@ -233,16 +230,15 @@ than the merge analysis.
 
 ### URGENT: `plugin_leash.lsl` (1066 lines) — Already Crashed
 
-This script has already had a stack-heap collision (rev 21). It was trimmed
-from 993 to 968 lines but has since grown back to 1066. It's living on
-borrowed time.
+This script previously had a stack-heap collision (rev 21) at 993 lines. After
+chat command removal, it is now ~882 lines — comfortably under the ~1024 ceiling.
+**No split is currently needed.**
 
-**What it contains:**
+**What it contains (post chat command removal):**
 - Plugin lifecycle (register, pong): ~30 lines
 - Settings sync/delta: ~50 lines
 - ACL query/handling: ~40 lines
 - Menu system (main, settings, length, pass, coffle, post menus): ~250 lines
-- Chat command handler: ~110 lines
 - Button click handlers: ~120 lines
 - Sensor handling (coffle/post object selection): ~80 lines
 - Offer dialog system: ~70 lines
@@ -250,27 +246,8 @@ borrowed time.
 - Helper functions + boilerplate: ~100 lines
 - Misc (pagination, cleanup, actions): ~80 lines
 
-**Recommended split:**
-
-| New Script | Contents | Est. Lines |
-|-----------|----------|-----------|
-| `plugin_leash.lsl` | Menu display, button handlers, settings sync, ACL, lifecycle | ~550 |
-| `plugin_leash_chatcmd.lsl` | Chat command handler, command helpers | ~250 |
-
-**Why this split works:**
-- Chat commands are **fire-and-forget** — they receive a `chatcmd_execute`
-  message, validate ACL, and forward an action to `kmod_leash`. They don't
-  need access to the menu state.
-- The chat command handler is self-contained (~110 lines of pure command
-  parsing) plus ~110 lines of helper functions (`cmdSendAction`, `cmdDeny`,
-  `cmdReply`, `cmdSendActionWithParam`) and boilerplate.
-- No timer, sensor, or listener conflicts.
-- Chat commands only need to read leash state (Leashed, Leasher, TurnToFace,
-  LeashLength) which can be synced from `kmod_leash` via the existing
-  `leash_state` broadcast.
-
-**Alternative split** (if chat commands alone aren't enough):
-Extract the coffle/post sensor UI into a third script. The sensor results
+**Future split option** (if the script grows again):
+Extract the coffle/post sensor UI into a separate script. The sensor results
 (`SensorCandidates`, pagination) are only needed during object selection
 menus and could be isolated.
 
@@ -420,12 +397,11 @@ The ~1024 line memory constraint fundamentally shifts the analysis from
 |-------|---------|-------------|---------------------|-------------|------|
 | public + lock + tpe | 3 → 1 | ~540 | 112 events | 128KB | Low |
 
-### Required Splits (2 urgent)
+### Possible Future Splits
 
 | Split | Scripts | Reason | Priority |
 |-------|---------|--------|----------|
-| plugin_leash → plugin_leash + plugin_leash_chatcmd | 1 → 2 | At 1066 lines, already crashed | **URGENT** |
-| kmod_leash → kmod_leash + kmod_leash_holder | 1 → 2 | At 1063 lines, over limit | **URGENT** |
+| kmod_leash → kmod_leash + kmod_leash_holder | 1 → 2 | At 1063 lines (804 code), near limit | Low (within budget) |
 
 ### Rejected Merges (exceeded line ceiling)
 

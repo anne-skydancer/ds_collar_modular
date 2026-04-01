@@ -103,18 +103,6 @@
 
 ---
 
-### ds_collar_plugin_chat.lsl (510 lines)
-**Purpose:** Forced chat message sending
-**Compliance:** 79%
-
-| Finding | Type | Line(s) | Severity |
-|---------|------|---------|----------|
-| Chat prefix stored as setting | Architecture | - | Good |
-
-**Proposed improvements:** None critical.
-
----
-
 ### ds_collar_plugin_lock.lsl (360 lines)
 **Purpose:** Lock/unlock collar with PIN protection
 **Compliance:** 82%

@@ -101,23 +101,6 @@ list list_remove_all(list source_list, string s) {
 
 ---
 
-### ds_collar_kmod_chatcmd.lsl (440 lines)
-**Purpose:** Chat command routing infrastructure
-**Compliance:** 79%
-
-| Finding | Type | Line(s) | Severity |
-|---------|------|---------|----------|
-| No registry size cap on `CommandRegistry` | Mem | - | Medium |
-| Case conversion done twice (register + lookup) | Perf | - | Low |
-| `jump` used for loop exit | Style | - | Low |
-| Public chat listener opened when enabled (intentional for chat commands) | Security | - | OK |
-
-**Proposed improvements:**
-1. Add MAX_COMMANDS cap (e.g., 64) to prevent unbounded registry growth
-2. Store commands in lowercase at registration time, avoid re-lowering at lookup
-
----
-
 ### ds_collar_kmod_dialogs.lsl (550 lines)
 **Purpose:** Centralized dialog management
 **Compliance:** 83%

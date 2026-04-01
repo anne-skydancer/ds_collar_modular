@@ -195,17 +195,6 @@ if (llGetFreeMemory() < 4096) {
 
 Priority targets: `kmod_leash.lsl`, `plugin_leash.lsl`, `kmod_ui.lsl`, `plugin_access.lsl`
 
-### IMP-11: Add Command Registry Size Cap (kmod_chatcmd.lsl)
-**Impact:** Prevents unbounded memory growth
-**Effort:** Add 2-line guard
-**Risk:** None
-
-```lsl
-integer MAX_COMMANDS = 64;
-// In registerCommand():
-if (llGetListLength(CommandRegistry) / 2 >= MAX_COMMANDS) return;
-```
-
 ### IMP-12: One-Time Y2038 Warning (kernel.lsl, bootstrap.lsl)
 **Impact:** Prevents llOwnerSay spam post-2038
 **Effort:** Add flag variable
