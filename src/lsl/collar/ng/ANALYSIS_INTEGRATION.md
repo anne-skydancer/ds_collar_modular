@@ -6,6 +6,12 @@ This analysis maps the DS Collar NG architecture against LSL's concrete runtime
 constraints to recommend where consolidation saves resources and where separation
 is essential.
 
+> **CRITICAL CONSTRAINT:** In this codebase, scripts cannot exceed ~1024 lines
+> without risking stack-heap collision. `plugin_leash.lsl` already crashed at
+> 993 lines and was trimmed to 968 (now back at 1066). This ceiling fundamentally
+> limits merge opportunities and creates a **splitting** imperative for oversized
+> scripts.
+
 ---
 
 ## LSL Runtime Constraints That Drive the Decision
@@ -53,27 +59,21 @@ This is the single largest performance cost in the architecture.
 
 ## What Works Best INTEGRATED (Same Script)
 
-### Candidate 1: Merge `kmod_ui.lsl` + `ds_collar_menu.lsl`
+### ~~Candidate 1: Merge `kmod_ui.lsl` + `ds_collar_menu.lsl`~~ REJECTED
 **Current:** Two scripts, tightly coupled via link_message on UI_BUS.
 
 | Metric | Separate | Merged |
 |--------|----------|--------|
 | Scripts | 2 | 1 |
-| link_messages for render_menu | 1 per menu display | 0 (direct function call) |
-| Combined lines | 899 + 230 = 1129 | ~1050 (remove duplicate helpers) |
-| Timer conflict | Neither uses timer | N/A |
-| Sensor conflict | Neither uses sensor | N/A |
+| Combined lines | 899 + 230 = 1129 | ~1104 (remove ~25 lines shared boilerplate) |
 
-**Verdict: MERGE.** `ds_collar_menu.lsl` is a pure rendering service with no persistent
-state, no timer, no listener, and no sensor. It exists solely to receive `render_menu`
-messages from `kmod_ui.lsl` and call `llDialog()`. Merging eliminates:
-- 1 script's idle overhead
-- 1 link_message per menu display
-- 28 wasted event deliveries per menu display
-- ~80 bytes of duplicated helper functions
+**Verdict: CANNOT MERGE.** Combined script would be ~1104 lines, exceeding the
+~1024 line memory ceiling. `kmod_ui.lsl` is already at 899 lines (88% of limit)
+and is itself at risk of needing to shed code.
 
-**Risk:** Low. Both scripts are already in the same logical domain. The combined
-script stays well under 64KB.
+**Alternative:** Keep separate. The link_message cost per menu display is acceptable
+given the memory constraint. If `kmod_ui.lsl` grows further, consider splitting
+*it* instead — e.g., extracting session management into a separate module.
 
 ---
 
@@ -211,24 +211,156 @@ their SOS capability. Isolation is a safety requirement.
 
 ---
 
-### Candidate 4: Merge `plugin_rlvrestrict.lsl` + `plugin_rlvexceptions.lsl`
+### ~~Candidate 4: Merge `plugin_rlvrestrict.lsl` + `plugin_rlvexceptions.lsl`~~ REJECTED
 **Current:** Two scripts managing related RLV functionality.
 
 | Metric | Separate | Merged |
 |--------|----------|--------|
 | Scripts | 2 | 1 |
-| Combined lines | 573 + 576 = 1149 | ~950 (shared boilerplate) |
-| Timer conflict | Neither uses timer | N/A |
-| Sensor conflict | Neither uses sensor | N/A |
-| Listener conflict | Neither uses listener | N/A |
+| Combined lines | 573 + 576 = 1149 | ~1069 (shared boilerplate) |
 
-**Verdict: CONSIDER MERGE.** Both manage RLV restrictions via `llOwnerSay("@...")`
-commands. Neither uses timers, sensors, or listeners. They share settings patterns
-and could share RLV command helpers.
+**Verdict: CANNOT MERGE.** Combined script would be ~1069 lines, exceeding the
+~1024 line memory ceiling. Both scripts individually are in the watch zone
+(~56% of limit) and are sized appropriately as separate scripts.
 
-**Risk:** Medium. Combined ~950 lines is substantial. The RLV exception list
-could grow large. Would need `llGetFreeMemory()` guards. Only merge if memory
-analysis confirms headroom.
+---
+
+## Scripts That Need SPLITTING
+
+The ~1024 line memory ceiling means two scripts are already over-limit and
+several more are approaching it. This section is arguably more important
+than the merge analysis.
+
+### URGENT: `plugin_leash.lsl` (1066 lines) — Already Crashed
+
+This script has already had a stack-heap collision (rev 21). It was trimmed
+from 993 to 968 lines but has since grown back to 1066. It's living on
+borrowed time.
+
+**What it contains:**
+- Plugin lifecycle (register, pong): ~30 lines
+- Settings sync/delta: ~50 lines
+- ACL query/handling: ~40 lines
+- Menu system (main, settings, length, pass, coffle, post menus): ~250 lines
+- Chat command handler: ~110 lines
+- Button click handlers: ~120 lines
+- Sensor handling (coffle/post object selection): ~80 lines
+- Offer dialog system: ~70 lines
+- State query tracking: ~30 lines
+- Helper functions + boilerplate: ~100 lines
+- Misc (pagination, cleanup, actions): ~80 lines
+
+**Recommended split:**
+
+| New Script | Contents | Est. Lines |
+|-----------|----------|-----------|
+| `plugin_leash.lsl` | Menu display, button handlers, settings sync, ACL, lifecycle | ~550 |
+| `plugin_leash_chatcmd.lsl` | Chat command handler, command helpers | ~250 |
+
+**Why this split works:**
+- Chat commands are **fire-and-forget** — they receive a `chatcmd_execute`
+  message, validate ACL, and forward an action to `kmod_leash`. They don't
+  need access to the menu state.
+- The chat command handler is self-contained (~110 lines of pure command
+  parsing) plus ~110 lines of helper functions (`cmdSendAction`, `cmdDeny`,
+  `cmdReply`, `cmdSendActionWithParam`) and boilerplate.
+- No timer, sensor, or listener conflicts.
+- Chat commands only need to read leash state (Leashed, Leasher, TurnToFace,
+  LeashLength) which can be synced from `kmod_leash` via the existing
+  `leash_state` broadcast.
+
+**Alternative split** (if chat commands alone aren't enough):
+Extract the coffle/post sensor UI into a third script. The sensor results
+(`SensorCandidates`, pagination) are only needed during object selection
+menus and could be isolated.
+
+---
+
+### URGENT: `kmod_leash.lsl` (1063 lines) — Over Limit
+
+**What it contains:**
+- ACL verification system: ~120 lines
+- Holder protocol state machine (DS + OC phases): ~100 lines
+- Follow mechanics (movement, distance, turn-to-face): ~80 lines
+- Offsim detection + auto-reclip: ~70 lines
+- Leash actions (grab, release, pass, coffle, post, yank): ~150 lines
+- Settings persistence/sync: ~80 lines
+- Lockmeister/particles protocol messages: ~40 lines
+- Notification helpers: ~30 lines
+- State management helpers: ~60 lines
+- Event handlers + lifecycle: ~150 lines
+- Helper functions + constants: ~100 lines
+
+**Recommended split:**
+
+| New Script | Contents | Est. Lines |
+|-----------|----------|-----------|
+| `kmod_leash.lsl` | Core leash state, actions, follow, offsim, settings, events | ~700 |
+| `kmod_leash_holder.lsl` | Holder detection protocol (DS + OC state machine) | ~350 |
+
+**Why this split works:**
+- The holder protocol is a **self-contained state machine** that runs for
+  2-4 seconds during leash grab, then goes idle. It uses its own listeners
+  (HolderListen, HolderListenOC) and its own state variables.
+- The main leash module only needs to know the *result* (HolderTarget key).
+  After the handshake completes, it calls `setParticlesState(TRUE, HolderTarget)`.
+- Communication: `kmod_leash` sends "find_holder" to the new script;
+  the new script responds with "holder_found" + target key.
+- Both need the timer, but this is solvable: the holder protocol currently
+  uses the leash timer for phase advancement. In the split, the holder
+  script gets its own timer (2s phases), and the leash script keeps the
+  follow timer (0.5s).
+
+---
+
+### AT RISK: `kmod_ui.lsl` (899 lines) — 88% of Limit
+
+**Risk:** Any new feature (e.g., additional session fields, new menu types)
+will push this over the limit.
+
+**Preemptive split if needed:**
+
+| New Script | Contents | Est. Lines |
+|-----------|----------|-----------|
+| `kmod_ui.lsl` | Session management, ACL filtering, plugin list, events | ~600 |
+| `kmod_ui_touch.lsl` | Touch handling, long-touch SOS detection, touch range validation | ~300 |
+
+The touch_start/touch_end handlers + TouchData management are self-contained
+and don't share state with the session management system. The touch handler's
+only output is calling `start_root_session()` or `start_sos_session()`, which
+can be done via link_message.
+
+---
+
+### AT RISK: `plugin_access.lsl` (848 lines) — 83% of Limit
+
+**Preemptive split if needed:**
+
+| New Script | Contents | Est. Lines |
+|-----------|----------|-----------|
+| `plugin_access.lsl` | Main menu, owner/trustee management, settings | ~550 |
+| `plugin_access_scan.lsl` | Avatar sensor scanning, candidate selection, name resolution | ~300 |
+
+The sensor-based avatar selection (scan → build candidate list → show numbered
+dialog) is reusable across access, blacklist, and leash plugins. Extracting it
+could serve all three.
+
+---
+
+### Size Budget Summary
+
+| Script | Current | Limit | Headroom | Status |
+|--------|---------|-------|----------|--------|
+| plugin_leash.lsl | 1066 | ~1024 | **-42** | **OVER - SPLIT NEEDED** |
+| kmod_leash.lsl | 1063 | ~1024 | **-39** | **OVER - SPLIT NEEDED** |
+| kmod_ui.lsl | 899 | ~1024 | 125 | Watch zone |
+| plugin_access.lsl | 848 | ~1024 | 176 | Watch zone |
+| plugin_rlvrelay.lsl | 795 | ~1024 | 229 | OK |
+| kernel.lsl | 782 | ~1024 | 242 | OK |
+| kmod_settings.lsl | 730 | ~1024 | 294 | OK |
+| plugin_maintenance.lsl | 646 | ~1024 | 378 | OK |
+| kmod_auth.lsl | 637 | ~1024 | 387 | OK |
+| kmod_bootstrap.lsl | 622 | ~1024 | 402 | OK |
 
 ---
 
@@ -277,30 +409,47 @@ mechanism, with infrequent pings (every 30-60s) as a secondary check.
 
 ---
 
-## Summary: Recommended Merges
+## Summary: Revised Recommendations (with ~1024 Line Ceiling)
 
-| Merge | Scripts | Lines Saved | Heartbeats Saved/5s | Memory Freed | Risk |
+The ~1024 line memory constraint fundamentally shifts the analysis from
+"what can we merge?" to "what must we split?" Only one merge remains viable.
+
+### Viable Merge (1 only)
+
+| Merge | Scripts | Lines Result | Heartbeats Saved/5s | Memory Freed | Risk |
 |-------|---------|-------------|---------------------|-------------|------|
-| kmod_ui + menu | 2 → 1 | ~80 | 28 events | 64KB | Low |
-| public + lock + tpe | 3 → 1 | ~400 | 112 events | 128KB | Low |
-| rlvrestrict + rlvexceptions | 2 → 1 | ~200 | 56 events | 64KB | Medium |
-| **Total** | **7 → 3** | **~680** | **196 events/5s** | **256KB** | - |
+| public + lock + tpe | 3 → 1 | ~540 | 112 events | 128KB | Low |
+
+### Required Splits (2 urgent)
+
+| Split | Scripts | Reason | Priority |
+|-------|---------|--------|----------|
+| plugin_leash → plugin_leash + plugin_leash_chatcmd | 1 → 2 | At 1066 lines, already crashed | **URGENT** |
+| kmod_leash → kmod_leash + kmod_leash_holder | 1 → 2 | At 1063 lines, over limit | **URGENT** |
+
+### Rejected Merges (exceeded line ceiling)
+
+| Merge | Combined Lines | Over Limit By |
+|-------|---------------|---------------|
+| ~~kmod_ui + menu~~ | ~1104 | ~80 lines |
+| ~~rlvrestrict + rlvexceptions~~ | ~1069 | ~45 lines |
 
 ### Do NOT Merge
 
 | Scripts | Reason |
 |---------|--------|
-| kernel + anything | System-critical, memory-heavy |
-| kmod_settings + anything | Data store, memory-heavy |
+| kernel + anything | System-critical, 782 lines already |
+| kmod_settings + anything | Data store, 730 lines |
 | kmod_auth + anything | Security-critical |
 | kmod_leash + kmod_particles | Timer conflict |
-| plugin_leash + anything | Memory-heavy (already crashed once) |
+| plugin_leash + anything | Memory-heavy, already crashed |
 | plugin_sos + anything | Emergency safety isolation |
-| plugin_access + anything | Memory + sensor usage |
+| plugin_access + anything | 848 lines, sensor usage |
 | Any two scripts that both use timer | Hard LSL constraint |
 | Any two scripts that both use sensor | Hard LSL constraint |
+| Any combination exceeding ~1024 lines | **Hard memory constraint** |
 
-### Heartbeat Optimization (Independent of Merges)
+### Heartbeat Optimization (Independent of Merges/Splits)
 
 | Change | Impact |
 |--------|--------|
@@ -308,8 +457,22 @@ mechanism, with infrequent pings (every 30-60s) as a secondary check.
 | Increase prune timeout 15s → 45s | Proportional safety margin |
 | Add inventory-based liveness | Eliminates most pongs |
 
-**Combined impact of merges + heartbeat tuning:**
-- From 28 scripts to 24 scripts
-- From ~448 events/5s to ~150 events/15s (heartbeat)
-- ~256KB of Mono allocation freed
-- ~680 lines of duplicated boilerplate eliminated
+### Net Effect
+
+| Metric | Before | After |
+|--------|--------|-------|
+| Total scripts | 28 | 27 (merge 3→1, split 2→4, net -1) |
+| Scripts over 1024 lines | 2 | 0 |
+| Scripts in danger zone (>800) | 5 | 3 (kmod_ui, plugin_access remain) |
+| Heartbeat events/cycle | 448/5s | ~168/15s (with interval increase) |
+| Memory freed by merge | - | 128KB |
+| Stack-heap crash risk | High (2 scripts) | Low |
+| Boilerplate eliminated | - | ~400 lines (toggle merge) |
+
+### Priority Order
+
+1. **Split `plugin_leash.lsl`** — Already crashed, most urgent
+2. **Split `kmod_leash.lsl`** — Over limit, timer separation needed
+3. **Merge `public + lock + tpe`** — Easy win, saves 2 scripts
+4. **Increase heartbeat interval** — Biggest performance win
+5. **Monitor `kmod_ui.lsl` and `plugin_access.lsl`** — Pre-plan splits
