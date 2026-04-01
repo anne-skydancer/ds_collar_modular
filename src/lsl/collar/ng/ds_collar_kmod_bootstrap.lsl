@@ -1,34 +1,35 @@
 /*--------------------
 MODULE: ds_collar_kmod_bootstrap.lsl
 VERSION: 1.00
-REVISION: 25
+REVISION: 35
 PURPOSE: Startup coordination, RLV detection, owner name resolution
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- Corected the collar name
 - Rate-limited display name requests to avoid viewer throttling
 - Owner change detection prevents bootstrap on teleports and region crossings
 - Soft reset handling now validates authorized senders before acting
 - Multi-channel RLV detection listens on 4711 and relay channels
 - Startup workflow delivers IM status updates during initialization
+- Delayed settings request to allow linkset data and notecard loading
 --------------------*/
 
 
 /* -------------------- CONSOLIDATED ABI -------------------- */
 integer KERNEL_LIFECYCLE = 500;
-integer AUTH_BUS = 700;
 integer SETTINGS_BUS = 800;
 
 /* -------------------- RLV DETECTION CONFIG -------------------- */
-integer RLV_PROBE_TIMEOUT_SEC = 30;
-integer RLV_RETRY_INTERVAL_SEC = 4;
-integer RLV_MAX_RETRIES = 8;
-integer RLV_INITIAL_DELAY_SEC = 1;
+integer RLV_PROBE_TIMEOUT_SEC = 60;
+integer RLV_RETRY_INTERVAL_SEC = 5;
+integer RLV_MAX_RETRIES = 10;
+integer RLV_INITIAL_DELAY_SEC = 5;
 
 // Probe multiple channels for better compatibility
-integer USE_FIXED_4711 = TRUE;
-integer USE_RELAY_CHAN = TRUE;
+integer UseFixed4711;
+integer UseRelayChan;
 integer RELAY_CHAN = -1812221819;
-integer PROBE_RELAY_BOTH_SIGNS = TRUE;  // Also try positive relay channel
+integer ProbeRelayBothSigns;  // Also try positive relay channel
 
 /* -------------------- DISPLAY NAME REQUEST RATE LIMITING -------------------- */
 float NAME_REQUEST_INTERVAL_SEC = 2.5;  // Space requests 2.5s apart to avoid throttling
@@ -40,8 +41,15 @@ string KEY_OWNER_KEYS = "owner_keys";
 string KEY_OWNER_HON = "owner_hon";
 string KEY_OWNER_HONS = "owner_honorifics";
 
+/* -------------------- BOOTSTRAP CONFIG -------------------- */
+integer BOOTSTRAP_TIMEOUT_SEC = 90;
+integer SETTINGS_RETRY_INTERVAL_SEC = 5;
+integer SETTINGS_MAX_RETRIES = 3;
+integer SETTINGS_INITIAL_DELAY_SEC = 5; // Wait for linkset data + notecard load
+
 /* -------------------- STATE -------------------- */
 integer BootstrapComplete = FALSE;
+integer BootstrapDeadline = 0;
 
 // Owner tracking
 key LastOwner = NULL_KEY;
@@ -59,6 +67,8 @@ integer RlvReady = FALSE;
 
 // Settings
 integer SettingsReceived = FALSE;
+integer SettingsRetryCount = 0;
+integer SettingsNextRetry = 0;
 integer MultiOwnerMode = FALSE;
 key OwnerKey = NULL_KEY;
 list OwnerKeys = [];
@@ -74,7 +84,6 @@ integer NAME_RESOLUTION_TIMEOUT_SEC = 30;
 
 // Name request queue (rate-limited)
 list PendingNameRequests = [];  // List of owner keys waiting for display name requests
-integer NAME_REQUEST_STRIDE = 1;
 integer NextNameRequestTime = 0;  // Timestamp when next request can be sent
 
 /* -------------------- HELPERS -------------------- */
@@ -84,9 +93,8 @@ integer json_has(string j, list path) {
     return (llJsonGetValue(j, path) != JSON_INVALID);
 }
 string get_msg_type(string msg) {
-    string val = llJsonGetValue(msg, ["type"]);
-    if (val == JSON_INVALID) return "";
-    return val;
+    if (!json_has(msg, ["type"])) return "";
+    return llJsonGetValue(msg, ["type"]);
 }
 
 
@@ -147,8 +155,7 @@ addProbeChannel(integer ch) {
 
 clearProbeChannels() {
     integer i = 0;
-    integer len = llGetListLength(RlvListenHandles);
-    while (i < len) {
+    while (i < llGetListLength(RlvListenHandles)) {
         integer handle = llList2Integer(RlvListenHandles, i);
         if (handle) llListenRemove(handle);
         i += 1;
@@ -159,8 +166,7 @@ clearProbeChannels() {
 
 sendRlvQueries() {
     integer i = 0;
-    integer len = llGetListLength(RlvChannels);
-    while (i < len) {
+    while (i < llGetListLength(RlvChannels)) {
         integer ch = llList2Integer(RlvChannels, i);
         llOwnerSay("@versionnew=" + (string)ch);
         i += 1;
@@ -189,10 +195,10 @@ start_rlv_probe() {
     clearProbeChannels();
     
     // Set up multiple probe channels
-    if (USE_FIXED_4711) addProbeChannel(4711);
-    if (USE_RELAY_CHAN) {
+    if (UseFixed4711) addProbeChannel(4711);
+    if (UseRelayChan) {
         addProbeChannel(RELAY_CHAN);
-        if (PROBE_RELAY_BOTH_SIGNS) {
+        if (ProbeRelayBothSigns) {
             addProbeChannel(-RELAY_CHAN);  // Try opposite sign too
         }
     }
@@ -207,13 +213,6 @@ stop_rlv_probe() {
     clearProbeChannels();
     RlvProbing = FALSE;
     RlvReady = TRUE;
-    
-    if (RlvActive) {
-        sendIM("RLV: " + RlvVersion);
-    }
-    else {
-        sendIM("RLV: Not detected");
-    }
 }
 
 /* -------------------- SETTINGS LOADING -------------------- */
@@ -226,41 +225,39 @@ request_settings() {
 }
 
 apply_settings_sync(string msg) {
+    if (!json_has(msg, ["kv"])) return;
+    
     string kv_json = llJsonGetValue(msg, ["kv"]);
-    if (kv_json == JSON_INVALID) return;
-
+    
     // Reset
     MultiOwnerMode = FALSE;
     OwnerKey = NULL_KEY;
     OwnerKeys = [];
     OwnerHonorific = "";
     OwnerHonorifics = [];
-
+    
     // Load
-    string multi_owner_val = llJsonGetValue(kv_json, [KEY_MULTI_OWNER_MODE]);
-    if (multi_owner_val != JSON_INVALID) {
-        MultiOwnerMode = (integer)multi_owner_val;
+    if (json_has(kv_json, [KEY_MULTI_OWNER_MODE])) {
+        MultiOwnerMode = (integer)llJsonGetValue(kv_json, [KEY_MULTI_OWNER_MODE]);
     }
-
-    string owner_key_val = llJsonGetValue(kv_json, [KEY_OWNER_KEY]);
-    if (owner_key_val != JSON_INVALID) {
-        OwnerKey = (key)owner_key_val;
+    
+    if (json_has(kv_json, [KEY_OWNER_KEY])) {
+        OwnerKey = (key)llJsonGetValue(kv_json, [KEY_OWNER_KEY]);
     }
-
-    string owner_keys_json = llJsonGetValue(kv_json, [KEY_OWNER_KEYS]);
-    if (owner_keys_json != JSON_INVALID) {
+    
+    if (json_has(kv_json, [KEY_OWNER_KEYS])) {
+        string owner_keys_json = llJsonGetValue(kv_json, [KEY_OWNER_KEYS]);
         if (llJsonValueType(owner_keys_json, []) == JSON_ARRAY) {
             OwnerKeys = llJson2List(owner_keys_json);
         }
     }
-
-    string owner_hon_val = llJsonGetValue(kv_json, [KEY_OWNER_HON]);
-    if (owner_hon_val != JSON_INVALID) {
-        OwnerHonorific = owner_hon_val;
+    
+    if (json_has(kv_json, [KEY_OWNER_HON])) {
+        OwnerHonorific = llJsonGetValue(kv_json, [KEY_OWNER_HON]);
     }
-
-    string owner_hons_json = llJsonGetValue(kv_json, [KEY_OWNER_HONS]);
-    if (owner_hons_json != JSON_INVALID) {
+    
+    if (json_has(kv_json, [KEY_OWNER_HONS])) {
+        string owner_hons_json = llJsonGetValue(kv_json, [KEY_OWNER_HONS]);
         if (llJsonValueType(owner_hons_json, []) == JSON_ARRAY) {
             OwnerHonorifics = llJson2List(owner_hons_json);
         }
@@ -276,7 +273,7 @@ apply_settings_sync(string msg) {
 
 // Process next queued display name request (rate-limited)
 process_next_name_request() {
-    integer current_time = now();
+    integer current_time = llGetUnixTime();
     if (current_time == 0) return;  // Overflow protection
 
     // Check if we have any pending requests
@@ -328,7 +325,7 @@ start_name_resolution() {
     PendingNameRequests = [];
     NextNameRequestTime = 0;
 
-    integer current_time = now();
+    integer current_time = llGetUnixTime();
     if (current_time > 0) {
         integer deadline = current_time + NAME_RESOLUTION_TIMEOUT_SEC;
         if (deadline > current_time) {
@@ -342,8 +339,7 @@ start_name_resolution() {
     if (MultiOwnerMode) {
         // Multi-owner: queue all owner keys for rate-limited requests
         integer i = 0;
-        integer len = llGetListLength(OwnerKeys);
-        while (i < len) {
+        while (i < llGetListLength(OwnerKeys)) {
             string owner_str = llList2String(OwnerKeys, i);
             key owner = (key)owner_str;
             if (owner != NULL_KEY) {
@@ -373,38 +369,54 @@ start_name_resolution() {
 
 handle_dataserver_name(key query_id, string name) {
     // Find this query
-    integer i = 0;
-    integer len = llGetListLength(OwnerNameQueries);
-    while (i < len) {
-        key stored_query = llList2Key(OwnerNameQueries, i);
-        if (stored_query == query_id) {
-            key owner = llList2Key(OwnerNameQueries, i + 1);
-            
-            // Update display name
-            integer owner_idx = -1;
-            if (MultiOwnerMode) {
-                owner_idx = llListFindList(OwnerKeys, [(string)owner]);
-            }
-            else {
-                if (owner == OwnerKey) owner_idx = 0;
-            }
-            
-            if (owner_idx != -1 && owner_idx < llGetListLength(OwnerDisplayNames)) {
-                OwnerDisplayNames = llListReplaceList(OwnerDisplayNames, [name], owner_idx, owner_idx);
-            }
-            
-            // Remove this query
-            OwnerNameQueries = llDeleteSubList(OwnerNameQueries, i, i + NAME_QUERY_STRIDE - 1);
-            
-            // Check if all names resolved
-            if (llGetListLength(OwnerNameQueries) == 0) {
-                check_bootstrap_complete();
-            }
-            
-            return;
+    integer idx = llListFindList(OwnerNameQueries, [query_id]);
+    if (idx != -1) {
+        key owner = llList2Key(OwnerNameQueries, idx + 1);
+        
+        // Update display name
+        integer owner_idx = -1;
+        if (MultiOwnerMode) {
+            owner_idx = llListFindList(OwnerKeys, [(string)owner]);
         }
-        i += NAME_QUERY_STRIDE;
+        else {
+            if (owner == OwnerKey) owner_idx = 0;
+        }
+        
+        if (owner_idx != -1 && owner_idx < llGetListLength(OwnerDisplayNames)) {
+            OwnerDisplayNames = llListReplaceList(OwnerDisplayNames, [name], owner_idx, owner_idx);
+        }
+        
+        // Remove this query
+        OwnerNameQueries = llDeleteSubList(OwnerNameQueries, idx, idx + NAME_QUERY_STRIDE - 1);
+        
+        // Check if all names resolved
+        if (llGetListLength(OwnerNameQueries) == 0) {
+            check_bootstrap_complete();
+        }
     }
+}
+
+/* -------------------- BOOTSTRAP INITIATION -------------------- */
+
+start_bootstrap() {
+    BootstrapComplete = FALSE;
+    SettingsReceived = FALSE;
+    SettingsRetryCount = 0;
+    NameResolutionDeadline = 0;
+    PendingNameRequests = [];
+    NextNameRequestTime = 0;
+    
+    BootstrapDeadline = now() + BOOTSTRAP_TIMEOUT_SEC;
+    
+    sendIM("D/s Collar starting up. Please wait...");
+    
+    start_rlv_probe();
+    
+    // OPTIMIZATION: Delay initial settings request to allow notecard loading
+    // This prevents "double bootstrap" where we get defaults then reset on notecard_loaded
+    SettingsNextRetry = now() + SETTINGS_INITIAL_DELAY_SEC;
+    
+    llSetTimerEvent(1.0);
 }
 
 /* -------------------- BOOTSTRAP COMPLETION -------------------- */
@@ -425,7 +437,19 @@ check_bootstrap_complete() {
 }
 
 announce_status() {
+    // RLV Status
+    if (RlvActive) {
+        sendIM("RLV: " + RlvVersion);
+    }
+    else {
+        sendIM("RLV: Not detected");
+    }
+
     // Mode notification
+    if (!SettingsReceived) {
+        sendIM("WARNING: Settings timed out. Using defaults.");
+    }
+
     if (MultiOwnerMode) {
         integer owner_count = llGetListLength(OwnerKeys);
         sendIM("Mode: Multi-Owner (" + (string)owner_count + ")");
@@ -438,31 +462,29 @@ announce_status() {
     if (MultiOwnerMode) {
         integer owner_count = llGetListLength(OwnerKeys);
         if (owner_count > 0) {
-            string owner_line = "Owned by ";
+            list owner_parts = [];
             integer i = 0;
             while (i < owner_count) {
-                if (i > 0) owner_line += ", ";
-                
                 string hon = "";
                 if (i < llGetListLength(OwnerHonorifics)) {
                     hon = llList2String(OwnerHonorifics, i);
                 }
                 
-                string name = "";
+                string display_name = "";
                 if (i < llGetListLength(OwnerDisplayNames)) {
-                    name = llList2String(OwnerDisplayNames, i);
+                    display_name = llList2String(OwnerDisplayNames, i);
                 }
                 
                 if (hon != "") {
-                    owner_line += hon + " " + name;
+                    owner_parts += [hon + " " + display_name];
                 }
                 else {
-                    owner_line += name;
+                    owner_parts += [display_name];
                 }
                 
                 i += 1;
             }
-            sendIM(owner_line);
+            sendIM("Owned by " + llDumpList2String(owner_parts, ", "));
         }
         else {
             sendIM("Uncommitted");
@@ -486,26 +508,23 @@ announce_status() {
 }
 
 /* -------------------- EVENTS -------------------- */
-
 default
 {
     state_entry() {
+        UseFixed4711 = TRUE;
+        UseRelayChan = TRUE;
+        ProbeRelayBothSigns = TRUE;
+
         LastOwner = llGetOwner();
-        BootstrapComplete = FALSE;
-        SettingsReceived = FALSE;
-        NameResolutionDeadline = 0;
-        PendingNameRequests = [];
-        NextNameRequestTime = 0;
-        sendIM("DS Collar starting up. Please wait...");
+        
+        state starting;
+    }
+}
 
-        // Start RLV detection
-        start_rlv_probe();
-
-        // Request settings
-        request_settings();
-
-        // Start timer for RLV probe management and name request processing
-        llSetTimerEvent(1.0);
+state starting
+{
+    state_entry() {
+        start_bootstrap();
     }
 
     on_rez(integer start_param) {
@@ -520,8 +539,39 @@ default
     }
     
     timer() {
-        integer current_time = now();
+        integer current_time = llGetUnixTime();
         if (current_time == 0) return; // Overflow protection
+
+        // GLOBAL TIMEOUT CHECK
+        if (!BootstrapComplete && BootstrapDeadline > 0 && current_time >= BootstrapDeadline) {
+            sendIM("WARNING: Bootstrap timed out. Forcing completion.");
+            
+            // Force completion of pending tasks
+            if (!RlvReady) stop_rlv_probe();
+            if (!SettingsReceived) {
+                SettingsReceived = TRUE; // Assume defaults
+                // Start name resolution with defaults (likely just wearer if unowned)
+                start_name_resolution(); 
+            }
+            
+            // Clear pending name queries
+            OwnerNameQueries = [];
+            PendingNameRequests = [];
+            
+            BootstrapComplete = TRUE;
+            announce_status();
+            state running;
+            return;
+        }
+
+        // Handle Settings Retries
+        if (!SettingsReceived && current_time >= SettingsNextRetry) {
+            if (SettingsRetryCount < SETTINGS_MAX_RETRIES) {
+                request_settings();
+                SettingsRetryCount++;
+                SettingsNextRetry = current_time + SETTINGS_RETRY_INTERVAL_SEC;
+            }
+        }
 
         // Handle RLV probe retries
         if (RlvProbing && !RlvReady) {
@@ -560,7 +610,7 @@ default
         if (BootstrapComplete && !RlvProbing &&
             llGetListLength(OwnerNameQueries) == 0 &&
             llGetListLength(PendingNameRequests) == 0) {
-            llSetTimerEvent(0.0);
+            state running;
         }
     }
     
@@ -599,12 +649,17 @@ default
         
         /* -------------------- KERNEL LIFECYCLE -------------------- */
         else if (num == KERNEL_LIFECYCLE) {
-            if (msg_type == "soft_reset" || msg_type == "soft_reset_all") {
+            if (msg_type == "notecard_loaded") {
+                // Settings notecard was loaded/reloaded - re-run bootstrap
+                start_bootstrap();
+            }
+            else if (msg_type == "soft_reset" || msg_type == "soft_reset_all") {
                 // SECURITY FIX (v2.3 - MEDIUM-023): Validate sender authorization
-                string from = llJsonGetValue(msg, ["from"]);
-                if (from == JSON_INVALID) {
+                if (!json_has(msg, ["from"])) {
                     return;
                 }
+                
+                string from = llJsonGetValue(msg, ["from"]);
                 
                 if (!is_authorized_reset_sender(from)) {
                     return;
@@ -616,6 +671,45 @@ default
         }
     }
     
+    changed(integer change) {
+        if (change & CHANGED_OWNER) {
+            check_owner_changed();
+        }
+    }
+}
+
+state running
+{
+    state_entry() {
+        llSetTimerEvent(0.0);
+    }
+
+    on_rez(integer start_param) {
+        check_owner_changed();
+    }
+
+    attach(key id) {
+        if (id == NULL_KEY) return;
+        llResetScript();
+    }
+
+    link_message(integer sender, integer num, string msg, key id) {
+        string msg_type = get_msg_type(msg);
+        if (msg_type == "") return;
+        
+        if (num == KERNEL_LIFECYCLE) {
+            if (msg_type == "notecard_loaded") {
+                llResetScript();
+            }
+            else if (msg_type == "soft_reset" || msg_type == "soft_reset_all") {
+                if (!json_has(msg, ["from"])) return;
+                string from = llJsonGetValue(msg, ["from"]);
+                if (!is_authorized_reset_sender(from)) return;
+                llResetScript();
+            }
+        }
+    }
+
     changed(integer change) {
         if (change & CHANGED_OWNER) {
             check_owner_changed();

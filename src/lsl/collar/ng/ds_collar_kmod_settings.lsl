@@ -1,7 +1,7 @@
 /*--------------------
 MODULE: ds_collar_kmod_settings.lsl
 VERSION: 1.00
-REVISION: 23
+REVISION: 26
 PURPOSE: Persistent key-value store with notecard loading and delta updates
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
@@ -14,6 +14,7 @@ CHANGES:
 
 
 /* -------------------- CONSOLIDATED ABI -------------------- */
+integer KERNEL_LIFECYCLE = 500;
 integer SETTINGS_BUS = 800;
 
 /* -------------------- SETTINGS KEYS -------------------- */
@@ -58,23 +59,8 @@ integer json_has(string j, list path) {
     return (llJsonGetValue(j, path) != JSON_INVALID);
 }
 string get_msg_type(string msg) {
-    string val = llJsonGetValue(msg, ["type"]);
-    if (val == JSON_INVALID) return "";
-    return val;
-}
-
-// MEMORY OPTIMIZATION: Compact field validation helper
-integer validate_required_fields(string json_str, list field_names, string function_name) {
-    integer i = 0;
-    integer len = llGetListLength(field_names);
-    while (i < len) {
-        string field = llList2String(field_names, i);
-        if (!json_has(json_str, [field])) {
-            return FALSE;
-        }
-        i += 1;
-    }
-    return TRUE;
+    if (!json_has(msg, ["type"])) return "";
+    return llJsonGetValue(msg, ["type"]);
 }
 
 string normalize_bool(string s) {
@@ -83,35 +69,27 @@ string normalize_bool(string s) {
     return (string)v;
 }
 
-integer list_contains(list search_list, string s) {
-    return (llListFindList(search_list, [s]) != -1);
-}
-
 list list_remove_all(list source_list, string s) {
-    list result = [];
-    integer i = 0;
-    integer len = llGetListLength(source_list);
-    while (i < len) {
-        if (llList2String(source_list, i) != s) {
-            result += [llList2String(source_list, i)];
-        }
-        i += 1;
+    integer idx = llListFindList(source_list, [s]);
+    while (idx != -1) {
+        source_list = llDeleteSubList(source_list, idx, idx);
+        idx = llListFindList(source_list, [s]);
     }
-    return result;
+    return source_list;
 }
 
 list list_unique(list source_list) {
-    list unique_list = [];
+    if (llGetListLength(source_list) < 2) return source_list;
+    source_list = llListSort(source_list, 1, TRUE);
     integer i = 0;
-    integer len = llGetListLength(source_list);
-    while (i < len) {
-        string s = llList2String(source_list, i);
-        if (!list_contains(unique_list, s)) {
-            unique_list += [s];
+    while (i < llGetListLength(source_list) - 1) {
+        if (llList2String(source_list, i) == llList2String(source_list, i + 1)) {
+            source_list = llDeleteSubList(source_list, i, i);
+        } else {
+            i += 1;
         }
-        i += 1;
     }
-    return unique_list;
+    return source_list;
 }
 
 /* -------------------- KV OPERATIONS -------------------- */
@@ -362,23 +340,14 @@ broadcast_delta_list_remove(string key_name, string elem) {
 /* -------------------- KEY VALIDATION -------------------- */
 
 integer is_allowed_key(string k) {
-    if (k == KEY_MULTI_OWNER_MODE) return TRUE;
-    if (k == KEY_OWNER_KEY) return TRUE;
-    if (k == KEY_OWNER_KEYS) return TRUE;
-    if (k == KEY_OWNER_HON) return TRUE;
-    if (k == KEY_OWNER_HONS) return TRUE;
-    if (k == KEY_TRUSTEES) return TRUE;
-    if (k == KEY_TRUSTEE_HONS) return TRUE;
-    if (k == KEY_BLACKLIST) return TRUE;
-    if (k == KEY_PUBLIC_ACCESS) return TRUE;
-    if (k == KEY_TPE_MODE) return TRUE;
-    if (k == KEY_LOCKED) return TRUE;
-    // Bell plugin keys
-    if (k == KEY_BELL_VISIBLE) return TRUE;
-    if (k == KEY_BELL_SOUND_ENABLED) return TRUE;
-    if (k == KEY_BELL_VOLUME) return TRUE;
-    if (k == KEY_BELL_SOUND) return TRUE;
-    return FALSE;
+    list allowed = [
+        KEY_MULTI_OWNER_MODE, KEY_OWNER_KEY, KEY_OWNER_KEYS, 
+        KEY_OWNER_HON, KEY_OWNER_HONS, KEY_TRUSTEES, 
+        KEY_TRUSTEE_HONS, KEY_BLACKLIST, KEY_PUBLIC_ACCESS, 
+        KEY_TPE_MODE, KEY_LOCKED, KEY_BELL_VISIBLE, 
+        KEY_BELL_SOUND_ENABLED, KEY_BELL_VOLUME, KEY_BELL_SOUND
+    ];
+    return (llListFindList(allowed, [k]) != -1);
 }
 
 integer is_notecard_only_key(string k) {
@@ -423,9 +392,8 @@ parse_notecard_line(string line) {
         // Apply guards for special lists
         if (key_name == KEY_OWNER_KEYS) {
             integer i = 0;
-            integer len = llGetListLength(parsed_list);
             list validated_list = [];
-            while (i < len) {
+            while (i < llGetListLength(parsed_list)) {
                 string owner = llList2String(parsed_list, i);
                 if (apply_owner_set_guard(owner)) {
                     validated_list += [owner];
@@ -443,8 +411,7 @@ parse_notecard_line(string line) {
         // SECURITY FIX: Add blacklist guards for notecard
         else if (key_name == KEY_BLACKLIST) {
             integer i = 0;
-            integer len = llGetListLength(parsed_list);
-            while (i < len) {
+            while (i < llGetListLength(parsed_list)) {
                 apply_blacklist_add_guard(llList2String(parsed_list, i));
                 i += 1;
             }
@@ -498,27 +465,27 @@ handle_settings_get() {
 }
 
 handle_set(string msg) {
+    if (!json_has(msg, ["key"])) return;
+    
     string key_name = llJsonGetValue(msg, ["key"]);
-    if (key_name == JSON_INVALID) return;
     if (!is_allowed_key(key_name)) return;
     if (is_notecard_only_key(key_name)) {
         return;
     }
-
+    
     integer did_change = FALSE;
-
+    
     // Bulk list set
-    string values_arr = llJsonGetValue(msg, ["values"]);
-    if (values_arr != JSON_INVALID) {
+    if (json_has(msg, ["values"])) {
+        string values_arr = llJsonGetValue(msg, ["values"]);
         if (llJsonValueType(values_arr, []) == JSON_ARRAY) {
             list new_list = llJson2List(values_arr);
             new_list = list_unique(new_list);
             
             if (key_name == KEY_OWNER_KEYS) {
                 integer i = 0;
-                integer len = llGetListLength(new_list);
                 list validated_list = [];
-                while (i < len) {
+                while (i < llGetListLength(new_list)) {
                     string owner = llList2String(new_list, i);
                     if (apply_owner_set_guard(owner)) {
                         validated_list += [owner];
@@ -535,8 +502,7 @@ handle_set(string msg) {
             }
             else if (key_name == KEY_BLACKLIST) {
                 integer i = 0;
-                integer len = llGetListLength(new_list);
-                while (i < len) {
+                while (i < llGetListLength(new_list)) {
                     apply_blacklist_add_guard(llList2String(new_list, i));
                     i += 1;
                 }
@@ -552,8 +518,8 @@ handle_set(string msg) {
     }
     
     // Scalar set
-    string value = llJsonGetValue(msg, ["value"]);
-    if (value != JSON_INVALID) {
+    if (json_has(msg, ["value"])) {
+        string value = llJsonGetValue(msg, ["value"]);
         
         if (key_name == KEY_PUBLIC_ACCESS) value = normalize_bool(value);
         if (key_name == KEY_LOCKED) value = normalize_bool(value);
@@ -585,9 +551,11 @@ handle_set(string msg) {
 }
 
 handle_list_add(string msg) {
+    if (!json_has(msg, ["key"])) return;
+    if (!json_has(msg, ["elem"])) return;
+    
     string key_name = llJsonGetValue(msg, ["key"]);
     string elem = llJsonGetValue(msg, ["elem"]);
-    if (key_name == JSON_INVALID || elem == JSON_INVALID) return;
     
     if (!is_allowed_key(key_name)) return;
     if (is_notecard_only_key(key_name)) {
@@ -620,9 +588,11 @@ handle_list_add(string msg) {
 }
 
 handle_list_remove(string msg) {
+    if (!json_has(msg, ["key"])) return;
+    if (!json_has(msg, ["elem"])) return;
+    
     string key_name = llJsonGetValue(msg, ["key"]);
     string elem = llJsonGetValue(msg, ["elem"]);
-    if (key_name == JSON_INVALID || elem == JSON_INVALID) return;
     
     if (!is_allowed_key(key_name)) return;
     
@@ -631,6 +601,15 @@ handle_list_remove(string msg) {
     if (did_change) {
         broadcast_delta_list_remove(key_name, elem);
     }
+}
+
+handle_settings_restore(string msg) {
+    if (!json_has(msg, ["kv"])) return;
+    
+    KvJson = llJsonGetValue(msg, ["kv"]);
+    
+    // After restoring state, broadcast full sync to all other modules
+    broadcast_full_sync();
 }
 
 /* -------------------- EVENTS -------------------- */
@@ -704,6 +683,12 @@ default
         else {
             IsLoadingNotecard = FALSE;
             broadcast_full_sync();
+            
+            // Trigger bootstrap after notecard load completes
+            string bootstrap_msg = llList2Json(JSON_OBJECT, [
+                "type", "notecard_loaded"
+            ]);
+            llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, bootstrap_msg, NULL_KEY);
         }
     }
     
@@ -723,6 +708,9 @@ default
         }
         else if (msg_type == "list_remove") {
             handle_list_remove(msg);
+        }
+        else if (msg_type == "settings_restore") {
+            handle_settings_restore(msg);
         }
     }
 }

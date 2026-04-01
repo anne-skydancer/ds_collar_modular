@@ -1,7 +1,7 @@
 /*--------------------
 PLUGIN: ds_collar_plugin_public.lsl
 VERSION: 1.00
-REVISION: 20
+REVISION: 21
 PURPOSE: Toggle public access mode directly from main menu
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
@@ -18,14 +18,12 @@ integer KERNEL_LIFECYCLE = 500;
 integer AUTH_BUS = 700;
 integer SETTINGS_BUS = 800;
 integer UI_BUS = 900;
-integer DIALOG_BUS = 950;
 
 /* -------------------- PLUGIN IDENTITY -------------------- */
 string PLUGIN_CONTEXT = "core_public";
 string PLUGIN_LABEL_ON = "Public: Y";
 string PLUGIN_LABEL_OFF = "Public: N";
 integer PLUGIN_MIN_ACL = 3;  // Trustee minimum
-string ROOT_CONTEXT = "core_root";
 
 /* ACL levels for reference:
    -1 = Blacklisted
@@ -79,15 +77,15 @@ send_pong() {
 /* -------------------- SETTINGS CONSUMPTION -------------------- */
 
 apply_settings_sync(string msg) {
+    if (!json_has(msg, ["kv"])) return;
+    
     string kv_json = llJsonGetValue(msg, ["kv"]);
-    if (kv_json == JSON_INVALID) return;
-
+    
     integer old_state = PublicModeEnabled;
     PublicModeEnabled = FALSE;
-
-    string public_val = llJsonGetValue(kv_json, [KEY_PUBLIC_MODE]);
-    if (public_val != JSON_INVALID) {
-        PublicModeEnabled = (integer)public_val;
+    
+    if (json_has(kv_json, [KEY_PUBLIC_MODE])) {
+        PublicModeEnabled = (integer)llJsonGetValue(kv_json, [KEY_PUBLIC_MODE]);
     }
     
     
@@ -98,17 +96,17 @@ apply_settings_sync(string msg) {
 }
 
 apply_settings_delta(string msg) {
+    if (!json_has(msg, ["op"])) return;
+    
     string op = llJsonGetValue(msg, ["op"]);
-    if (op == JSON_INVALID) return;
-
+    
     if (op == "set") {
+        if (!json_has(msg, ["changes"])) return;
         string changes = llJsonGetValue(msg, ["changes"]);
-        if (changes == JSON_INVALID) return;
-
-        string public_val = llJsonGetValue(changes, [KEY_PUBLIC_MODE]);
-        if (public_val != JSON_INVALID) {
+        
+        if (json_has(changes, [KEY_PUBLIC_MODE])) {
             integer old_state = PublicModeEnabled;
-            PublicModeEnabled = (integer)public_val;
+            PublicModeEnabled = (integer)llJsonGetValue(changes, [KEY_PUBLIC_MODE]);
             
             // If state changed, update label
             if (old_state != PublicModeEnabled) {
@@ -193,14 +191,13 @@ request_acl_and_toggle(key user) {
 }
 
 handle_acl_result(string msg, key expected_user) {
-    string avatar_str = llJsonGetValue(msg, ["avatar"]);
-    string level_str = llJsonGetValue(msg, ["level"]);
-    if (avatar_str == JSON_INVALID || level_str == JSON_INVALID) return;
-
-    key avatar = (key)avatar_str;
+    if (!json_has(msg, ["avatar"])) return;
+    if (!json_has(msg, ["level"])) return;
+    
+    key avatar = (key)llJsonGetValue(msg, ["avatar"]);
     if (avatar != expected_user) return;
-
-    integer level = (integer)level_str;
+    
+    integer level = (integer)llJsonGetValue(msg, ["level"]);
     
     // Toggle immediately with this ACL level
     toggle_public_access(avatar, level);
@@ -233,8 +230,8 @@ default {
     
     link_message(integer sender, integer num, string msg, key id) {
         /* -------------------- KERNEL LIFECYCLE -------------------- */if (num == KERNEL_LIFECYCLE) {
+            if (!json_has(msg, ["type"])) return;
             string msg_type = llJsonGetValue(msg, ["type"]);
-            if (msg_type == JSON_INVALID) return;
             
             if (msg_type == "register_now") {
                 register_self();
@@ -250,8 +247,8 @@ default {
         }
         
         /* -------------------- SETTINGS SYNC/DELTA -------------------- */if (num == SETTINGS_BUS) {
+            if (!json_has(msg, ["type"])) return;
             string msg_type = llJsonGetValue(msg, ["type"]);
-            if (msg_type == JSON_INVALID) return;
             
             if (msg_type == "settings_sync") {
                 apply_settings_sync(msg);
@@ -267,12 +264,12 @@ default {
         }
         
         /* -------------------- UI DIRECT TOGGLE -------------------- */if (num == UI_BUS) {
+            if (!json_has(msg, ["type"])) return;
             string msg_type = llJsonGetValue(msg, ["type"]);
-            if (msg_type == JSON_INVALID) return;
-
+            
             if (msg_type == "start") {
-                string context = llJsonGetValue(msg, ["context"]);
-                if (context == JSON_INVALID || context != PLUGIN_CONTEXT) return;
+                if (!json_has(msg, ["context"])) return;
+                if (llJsonGetValue(msg, ["context"]) != PLUGIN_CONTEXT) return;
                 
                 if (id == NULL_KEY) return;
                 
@@ -285,17 +282,16 @@ default {
         }
         
         /* -------------------- ACL RESULTS -------------------- */if (num == AUTH_BUS) {
+            if (!json_has(msg, ["type"])) return;
             string msg_type = llJsonGetValue(msg, ["type"]);
-            if (msg_type == JSON_INVALID) return;
-
+            
             if (msg_type == "acl_result") {
+                if (!json_has(msg, ["id"])) return;
                 string correlation = llJsonGetValue(msg, ["id"]);
-                if (correlation == JSON_INVALID) return;
-
+                
                 if (correlation == PLUGIN_CONTEXT + "_toggle") {
-                    string user_str = llJsonGetValue(msg, ["avatar"]);
-                    if (user_str == JSON_INVALID) return;
-                    key user = (key)user_str;
+                    if (!json_has(msg, ["avatar"])) return;
+                    key user = (key)llJsonGetValue(msg, ["avatar"]);
                     handle_acl_result(msg, user);
                 }
                 return;

@@ -1,7 +1,7 @@
 /*--------------------
 MODULE: ds_collar_kernel.lsl
 VERSION: 1.00
-REVISION: 34
+REVISION: 39
 PURPOSE: Plugin registry, lifecycle management, heartbeat monitoring
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
@@ -16,7 +16,6 @@ CHANGES:
 /* -------------------- CONSOLIDATED ABI -------------------- */
 integer KERNEL_LIFECYCLE = 500;
 integer AUTH_BUS = 700;
-integer UI_BUS = 900;
 
 /* -------------------- CONSTANTS -------------------- */
 float   PING_INTERVAL_SEC     = 5.0;
@@ -41,13 +40,14 @@ integer QUEUE_CONTEXT = 1;
 integer QUEUE_LABEL = 2;
 integer QUEUE_SCRIPT = 3;
 integer QUEUE_MIN_ACL = 4;    // Stored for auth module recovery (not used for decisions)
-integer QUEUE_TIMESTAMP = 5;  // Registration timestamp
 
 /* Authorized senders for privileged operations */
-list AUTHORIZED_RESET_SENDERS = ["bootstrap", "maintenance"];
+list AUTHORIZED_RESET_SENDERS = ["bootstrap", "maintenance", "coordinator", "activator"];
 
 /* -------------------- STATE -------------------- */
 list PluginRegistry = [];           // Active plugin registry
+list PluginContexts = [];           // Parallel list for O(1) context lookups
+list PluginScripts = [];            // Parallel list for O(1) script lookups
 list RegistrationQueue = [];        // Pending operations queue (Unix modprobe style)
 integer PendingBatchTimer = FALSE;  // TRUE if batch timer is active
 integer PendingPluginListRequest = FALSE;  // TRUE if plugin_list_request received during batch
@@ -65,24 +65,8 @@ integer json_has(string j, list path) {
     return (llJsonGetValue(j, path) != JSON_INVALID);
 }
 string get_msg_type(string msg) {
-    string val = llJsonGetValue(msg, ["type"]);
-    if (val == JSON_INVALID) return "";
-    return val;
-}
-
-
-// MEMORY OPTIMIZATION: Compact field validation helper
-integer validate_required_fields(string json_str, list field_names, string function_name) {
-    integer i = 0;
-    integer len = llGetListLength(field_names);
-    while (i < len) {
-        string field = llList2String(field_names, i);
-        if (!json_has(json_str, [field])) {
-            return FALSE;
-        }
-        i += 1;
-    }
-    return TRUE;
+    if (!json_has(msg, ["type"])) return "";
+    return llJsonGetValue(msg, ["type"]);
 }
 
 integer now() {
@@ -96,24 +80,11 @@ integer now() {
 }
 
 integer count_scripts() {
-    integer count = 0;
-    integer i;
-    integer inv_count = llGetInventoryNumber(INVENTORY_SCRIPT);
-    for (i = 0; i < inv_count; i = i + 1) {
-        count = count + 1;
-    }
-    return count;
+    return llGetInventoryNumber(INVENTORY_SCRIPT);
 }
 
 integer is_authorized_sender(string sender_name) {
-    integer i;
-    integer len = llGetListLength(AUTHORIZED_RESET_SENDERS);
-    for (i = 0; i < len; i = i + 1) {
-        if (llList2String(AUTHORIZED_RESET_SENDERS, i) == sender_name) {
-            return TRUE;
-        }
-    }
-    return FALSE;
+    return (llListFindList(AUTHORIZED_RESET_SENDERS, [sender_name]) != -1);
 }
 
 integer is_plugin_script(string script_name) {
@@ -136,8 +107,7 @@ integer queue_add(string op_type, string context, string label, string script, i
     // Remove any existing queue entry for this context (newest operation wins)
     list new_queue = [];
     integer i = 0;
-    integer len = llGetListLength(RegistrationQueue);
-    while (i < len) {
+    while (i < llGetListLength(RegistrationQueue)) {
         string queued_context = llList2String(RegistrationQueue, i + QUEUE_CONTEXT);
         if (queued_context != context) {
             new_queue += llList2List(RegistrationQueue, i, i + QUEUE_STRIDE - 1);
@@ -176,10 +146,9 @@ integer process_queue() {
 
     integer changes_made = FALSE;
     integer i = 0;
-    integer len = llGetListLength(RegistrationQueue);
 
 
-    while (i < len) {
+    while (i < llGetListLength(RegistrationQueue)) {
         string op_type = llList2String(RegistrationQueue, i + QUEUE_OP_TYPE);
         string context = llList2String(RegistrationQueue, i + QUEUE_CONTEXT);
         string label = llList2String(RegistrationQueue, i + QUEUE_LABEL);
@@ -213,25 +182,17 @@ integer process_queue() {
 
 // Find plugin index in registry by context
 integer registry_find(string context) {
-    integer i = 0;
-    integer len = llGetListLength(PluginRegistry);
-    while (i < len) {
-        if (llList2String(PluginRegistry, i + REG_CONTEXT) == context) {
-            return i;
-        }
-        i += REG_STRIDE;
+    integer idx = llListFindList(PluginContexts, [context]);
+    if (idx != -1) {
+        return idx * REG_STRIDE;
     }
     return -1;
 }
 
 integer registry_find_by_script(string script_name) {
-    integer i = 0;
-    integer len = llGetListLength(PluginRegistry);
-    while (i < len) {
-        if (llList2String(PluginRegistry, i + REG_SCRIPT) == script_name) {
-            return i;
-        }
-        i += REG_STRIDE;
+    integer idx = llListFindList(PluginScripts, [script_name]);
+    if (idx != -1) {
+        return idx * REG_STRIDE;
     }
     return -1;
 }
@@ -241,7 +202,6 @@ integer registry_find_by_script(string script_name) {
 // Returns FALSE only if re-registering with identical UUID
 integer registry_upsert(string context, string label, string script, integer min_acl) {
     integer idx = registry_find(context);
-    integer now_unix = now();
 
     // Get script UUID - changes when script is recompiled/replaced
     // PERFORMANCE NOTE: llGetInventoryKey() is called on every upsert (intentional):
@@ -253,7 +213,9 @@ integer registry_upsert(string context, string label, string script, integer min
 
     if (idx == -1) {
         // New plugin - add to registry
-        PluginRegistry += [context, label, script, script_uuid, now_unix, min_acl];
+        PluginRegistry += [context, label, script, script_uuid, now(), min_acl];
+        PluginContexts += [context];
+        PluginScripts += [script];
         return TRUE;
     }
     else {
@@ -264,9 +226,13 @@ integer registry_upsert(string context, string label, string script, integer min
 
         // Update registry (timestamp and min_acl always update) - batched for performance
         PluginRegistry = llListReplaceList(PluginRegistry,
-            [label, script, script_uuid, now_unix, min_acl],
+            [label, script, script_uuid, now(), min_acl],
             idx + REG_LABEL,
             idx + REG_MIN_ACL);
+            
+        // Update parallel script list (in case script name changed for same context, though unlikely)
+        integer list_idx = idx / REG_STRIDE;
+        PluginScripts = llListReplaceList(PluginScripts, [script], list_idx, list_idx);
 
         // Note: uuid_changed tracked but not logged to reduce spam
 
@@ -281,6 +247,11 @@ integer registry_remove(string context) {
     if (idx == -1) return FALSE;
 
     PluginRegistry = llDeleteSubList(PluginRegistry, idx, idx + REG_STRIDE - 1);
+    
+    integer list_idx = idx / REG_STRIDE;
+    PluginContexts = llDeleteSubList(PluginContexts, list_idx, list_idx);
+    PluginScripts = llDeleteSubList(PluginScripts, list_idx, list_idx);
+    
     return TRUE;
 }
 
@@ -289,8 +260,7 @@ integer registry_remove(string context) {
 integer update_last_seen(string context) {
     integer idx = registry_find(context);
     if (idx != -1) {
-        integer now_unix = now();
-        PluginRegistry = llListReplaceList(PluginRegistry, [now_unix], idx + REG_LAST_SEEN, idx + REG_LAST_SEEN);
+        PluginRegistry = llListReplaceList(PluginRegistry, [now()], idx + REG_LAST_SEEN, idx + REG_LAST_SEEN);
     }
 
     return 1;
@@ -298,7 +268,7 @@ integer update_last_seen(string context) {
 
 // Remove dead plugins (haven't responded to ping in PING_TIMEOUT_SEC)
 integer prune_dead_plugins() {
-    integer now_unix = now();
+    integer now_unix = llGetUnixTime();
     if (now_unix == 0) return 0; // Overflow protection
 
     // Skip pruning during region crossing grace window
@@ -312,16 +282,18 @@ integer prune_dead_plugins() {
     integer pruned = 0;
     
     list new_registry = [];
+    list new_contexts = [];
+    list new_scripts = [];
     integer i = 0;
-    integer len = llGetListLength(PluginRegistry);
     
-    while (i < len) {
-        string context = llList2String(PluginRegistry, i + REG_CONTEXT);
+    while (i < llGetListLength(PluginRegistry)) {
         integer last_seen = llList2Integer(PluginRegistry, i + REG_LAST_SEEN);
         
         if (last_seen >= cutoff) {
             // Keep this plugin
             new_registry += llList2List(PluginRegistry, i, i + REG_STRIDE - 1);
+            new_contexts += [llList2String(PluginRegistry, i + REG_CONTEXT)];
+            new_scripts += [llList2String(PluginRegistry, i + REG_SCRIPT)];
         }
         else {
             // Prune dead plugin
@@ -332,23 +304,27 @@ integer prune_dead_plugins() {
     }
     
     PluginRegistry = new_registry;
+    PluginContexts = new_contexts;
+    PluginScripts = new_scripts;
     return pruned;
 }
 
 // Remove plugins whose scripts no longer exist in inventory
 integer prune_missing_scripts() {
     list new_registry = [];
+    list new_contexts = [];
+    list new_scripts = [];
     integer pruned = 0;
     integer i = 0;
-    integer len = llGetListLength(PluginRegistry);
     
-    while (i < len) {
+    while (i < llGetListLength(PluginRegistry)) {
         string script = llList2String(PluginRegistry, i + REG_SCRIPT);
-        string context = llList2String(PluginRegistry, i + REG_CONTEXT);
         
         if (llGetInventoryType(script) == INVENTORY_SCRIPT) {
             // Script still exists, keep plugin
             new_registry += llList2List(PluginRegistry, i, i + REG_STRIDE - 1);
+            new_contexts += [llList2String(PluginRegistry, i + REG_CONTEXT)];
+            new_scripts += [script];
         }
         else {
             // Script missing, prune plugin
@@ -359,6 +335,8 @@ integer prune_missing_scripts() {
     }
     
     PluginRegistry = new_registry;
+    PluginContexts = new_contexts;
+    PluginScripts = new_scripts;
     return pruned;
 }
 
@@ -426,9 +404,8 @@ broadcast_ping() {
 broadcast_plugin_list() {
     list plugins = [];
     integer i = 0;
-    integer len = llGetListLength(PluginRegistry);
 
-    while (i < len) {
+    while (i < llGetListLength(PluginRegistry)) {
         string context = llList2String(PluginRegistry, i + REG_CONTEXT);
         string label = llList2String(PluginRegistry, i + REG_LABEL);
 
@@ -509,6 +486,8 @@ integer is_safe_field_name(string field_name) {
 // SECURITY: Validates field_name to prevent JSON injection
 // PRECONDITION: field_name must contain only alphanumeric characters and underscores
 route_field(string msg, string context, string field_name, string route_type, integer channel) {
+    if (!json_has(msg, [field_name])) return;
+
     // SECURITY: Validate field_name before manual JSON construction
     if (!is_safe_field_name(field_name)) {
         llOwnerSay("[KERNEL] ERROR: Unsafe field name rejected: " + field_name);
@@ -516,7 +495,6 @@ route_field(string msg, string context, string field_name, string route_type, in
     }
 
     string field_value = llJsonGetValue(msg, [field_name]);
-    if (field_value == JSON_INVALID) return;
 
     // Build base message with proper encoding for type and context
     string routed_msg = llList2Json(JSON_OBJECT, [
@@ -536,24 +514,28 @@ route_field(string msg, string context, string field_name, string route_type, in
 /* -------------------- MESSAGE HANDLERS -------------------- */
 
 handle_register(string msg) {
+    if (!json_has(msg, ["context"])) return;
+    if (!json_has(msg, ["label"])) return;
+    if (!json_has(msg, ["min_acl"])) return;
+    if (!json_has(msg, ["script"])) return;
+
     string context = llJsonGetValue(msg, ["context"]);
     string label = llJsonGetValue(msg, ["label"]);
-    string min_acl_str = llJsonGetValue(msg, ["min_acl"]);
+    integer min_acl = (integer)llJsonGetValue(msg, ["min_acl"]);
     string script = llJsonGetValue(msg, ["script"]);
-    if (context == JSON_INVALID || label == JSON_INVALID || min_acl_str == JSON_INVALID || script == JSON_INVALID) return;
-
-    integer min_acl = (integer)min_acl_str;
 
     // Add to lifecycle queue (kernel stores min_acl for auth recovery, not enforcement)
     queue_add("REG", context, label, script, min_acl);
 
     // Route fields to interested modules
     route_field(msg, context, "min_acl", "register_acl", AUTH_BUS);
+    // Chat command registration deprecated/removed
 }
 
 handle_pong(string msg) {
+    if (!json_has(msg, ["context"])) return;
+    
     string context = llJsonGetValue(msg, ["context"]);
-    if (context == JSON_INVALID) return;
     update_last_seen(context);
     // Pong logging disabled - too noisy
 }
@@ -589,6 +571,8 @@ handle_soft_reset(string msg) {
 
     // Authorized - proceed with reset
     PluginRegistry = [];
+    PluginContexts = [];
+    PluginScripts = [];
     RegistrationQueue = [];
     PendingBatchTimer = FALSE;
     PendingPluginListRequest = FALSE;
@@ -604,9 +588,8 @@ handle_acl_registry_request() {
     // Send all ACL data from kernel's registry
 
     integer i = 0;
-    integer len = llGetListLength(PluginRegistry);
 
-    while (i < len) {
+    while (i < llGetListLength(PluginRegistry)) {
         string context = llList2String(PluginRegistry, i + REG_CONTEXT);
         integer min_acl = llList2Integer(PluginRegistry, i + REG_MIN_ACL);
 
@@ -630,6 +613,8 @@ default
     state_entry() {
         LastOwner = llGetOwner();
         PluginRegistry = [];
+        PluginContexts = [];
+        PluginScripts = [];
         RegistrationQueue = [];
         PendingBatchTimer = FALSE;
         PendingPluginListRequest = FALSE;
@@ -656,8 +641,8 @@ default
     }
     
     timer() {
-        integer now_unix = now();
-        if (now_unix == 0) return; // Overflow protection
+        integer t = llGetUnixTime();
+        if (t == 0) return; // Overflow protection
 
         // DUAL-MODE TIMER: Batch mode (0.1s) or Heartbeat mode (5s)
         if (PendingBatchTimer) {
@@ -667,15 +652,13 @@ default
             // RACE CONDITION FIX: Broadcast if changes OR if plugin_list_request pending
             if (changes || PendingPluginListRequest) {
                 broadcast_plugin_list();
-                if (PendingPluginListRequest) {
-                }
                 PendingPluginListRequest = FALSE;
             }
             // process_queue() automatically switches back to heartbeat mode
         }
         else {
             // Heartbeat mode: Periodic maintenance only
-            integer ping_elapsed = now_unix - LastPingUnix;
+            integer ping_elapsed = t - LastPingUnix;
             if (ping_elapsed < 0) ping_elapsed = 0; // Overflow protection
 
             if (ping_elapsed >= PING_INTERVAL_SEC) {
@@ -687,11 +670,11 @@ default
                     broadcast_plugin_list();
                 }
 
-                LastPingUnix = now_unix;
+                LastPingUnix = t;
             }
 
             // Periodic inventory sweep
-            integer inv_elapsed = now_unix - LastInvSweepUnix;
+            integer inv_elapsed = t - LastInvSweepUnix;
             if (inv_elapsed < 0) inv_elapsed = 0; // Overflow protection
 
             if (inv_elapsed >= INV_SWEEP_INTERVAL) {
@@ -701,17 +684,17 @@ default
                     broadcast_plugin_list();
                 }
 
-                LastInvSweepUnix = now_unix;
+                LastInvSweepUnix = t;
             }
 
             // Periodic active plugin discovery
-            integer discovery_elapsed = now_unix - LastDiscoveryUnix;
+            integer discovery_elapsed = t - LastDiscoveryUnix;
             if (discovery_elapsed < 0) discovery_elapsed = 0; // Overflow protection
 
             if (discovery_elapsed >= DISCOVERY_INTERVAL_SEC) {
                 // Discover new/changed plugins (triggers register_now if found)
                 discover_plugins();
-                LastDiscoveryUnix = now_unix;
+                LastDiscoveryUnix = t;
             }
         }
     }
@@ -767,6 +750,8 @@ default
 
                 // Clear registry and queue, trigger re-registration
                 PluginRegistry = [];
+                PluginContexts = [];
+                PluginScripts = [];
                 RegistrationQueue = [];
                 PendingBatchTimer = FALSE;
                 PendingPluginListRequest = FALSE;

@@ -1,7 +1,7 @@
 /*--------------------
 PLUGIN: ds_collar_plugin_sos.lsl
 VERSION: 1.00
-REVISION: 10
+REVISION: 11
 PURPOSE: Emergency wearer-accessible actions when ACL is locked out
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
@@ -189,8 +189,9 @@ default {
     }
 
     link_message(integer sender, integer num, string msg, key id) {
+        if (!json_has(msg, ["type"])) return;
+
         string msg_type = llJsonGetValue(msg, ["type"]);
-        if (msg_type == JSON_INVALID) return;
 
         /* -------------------- KERNEL LIFECYCLE -------------------- */
         if (num == KERNEL_LIFECYCLE) {
@@ -206,8 +207,8 @@ default {
 
             if (msg_type == "soft_reset" || msg_type == "soft_reset_all") {
                 // Check if this is a targeted reset
-                string target_context = llJsonGetValue(msg, ["context"]);
-                if (target_context != JSON_INVALID) {
+                if (json_has(msg, ["context"])) {
+                    string target_context = llJsonGetValue(msg, ["context"]);
                     if (target_context != "" && target_context != PLUGIN_CONTEXT) {
                         return;  // Not for us, ignore
                     }
@@ -222,8 +223,8 @@ default {
         /* -------------------- UI START -------------------- */
         if (num == UI_BUS) {
             if (msg_type == "start") {
-                string context = llJsonGetValue(msg, ["context"]);
-                if (context == JSON_INVALID || context != PLUGIN_CONTEXT) return;
+                if (!json_has(msg, ["context"])) return;
+                if (llJsonGetValue(msg, ["context"]) != PLUGIN_CONTEXT) return;
 
                 CurrentUser = id;
                 request_acl(id);
@@ -237,15 +238,13 @@ default {
         if (num == AUTH_BUS) {
             if (msg_type == "acl_result") {
                 if (!AclPending) return;
-                string avatar_str = llJsonGetValue(msg, ["avatar"]);
-                if (avatar_str == JSON_INVALID) return;
+                if (!json_has(msg, ["avatar"])) return;
 
-                key avatar = (key)avatar_str;
+                key avatar = (key)llJsonGetValue(msg, ["avatar"]);
                 if (avatar != CurrentUser) return;
 
-                string level_val = llJsonGetValue(msg, ["level"]);
-                if (level_val != JSON_INVALID) {
-                    UserAcl = (integer)level_val;
+                if (json_has(msg, ["level"])) {
+                    UserAcl = (integer)llJsonGetValue(msg, ["level"]);
                     AclPending = FALSE;
 
                     // SOS is accessible to ACL 0 and above (everyone)
@@ -266,18 +265,20 @@ default {
         /* -------------------- DIALOG RESPONSE -------------------- */
         if (num == DIALOG_BUS) {
             if (msg_type == "dialog_response") {
-                string response_session = llJsonGetValue(msg, ["session_id"]);
-                string button = llJsonGetValue(msg, ["button"]);
-                if (response_session == JSON_INVALID || button == JSON_INVALID) return;
+                if (!json_has(msg, ["session_id"]) || !json_has(msg, ["button"])) return;
 
+                string response_session = llJsonGetValue(msg, ["session_id"]);
                 if (response_session != SessionId) return;
+
+                string button = llJsonGetValue(msg, ["button"]);
                 handle_button_click(button);
                 return;
             }
 
             if (msg_type == "dialog_timeout") {
+                if (!json_has(msg, ["session_id"])) return;
+
                 string timeout_session = llJsonGetValue(msg, ["session_id"]);
-                if (timeout_session == JSON_INVALID) return;
                 if (timeout_session != SessionId) return;
                 cleanup_session();
                 return;

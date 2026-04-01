@@ -1,7 +1,7 @@
 /*--------------------
 PLUGIN: ds_collar_plugin_bell.lsl
 VERSION: 1.00
-REVISION: 10
+REVISION: 11
 PURPOSE: Bell visibility and jingling control for the collar
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
@@ -34,6 +34,7 @@ integer BellSoundEnabled = FALSE;
 float BellVolume = 0.3;
 string BellSound = "16fcf579-82cb-b110-c1a4-5fa5e1385406";
 integer IsMoving = FALSE;
+integer BellLink = 0;
 
 // Jingle timing
 float JINGLE_INTERVAL = 1.75;  // Play sound every 1.75 seconds while moving
@@ -57,26 +58,22 @@ string generate_session_id() {
 }
 
 set_bell_visibility(integer visible) {
-    integer link_count = llGetNumberOfPrims();
-    integer i;
-    integer found = FALSE;
-    
-    float alpha;
-    if (visible) {
-        alpha = 1.0;
-    } else {
-        alpha = 0.0;
-    }
-    
-    for (i = 1; i <= link_count; i++) {
-        string prim_name = llGetLinkName(i);
-        if (llToLower(prim_name) == "bell") {
-            llSetLinkAlpha(i, alpha, ALL_SIDES);
-            found = TRUE;
+    if (BellLink == 0) {
+        integer link_count = llGetNumberOfPrims();
+        integer i;
+        for (i = 1; i <= link_count; i++) {
+            if (llToLower(llGetLinkName(i)) == "bell") {
+                BellLink = i;
+                jump found_bell;
+            }
         }
+        @found_bell;
     }
-    
-    if (!found) {
+
+    if (BellLink != 0) {
+        float alpha = 0.0;
+        if (visible) alpha = 1.0;
+        llSetLinkAlpha(BellLink, alpha, ALL_SIDES);
     }
     
     BellVisible = visible;
@@ -257,54 +254,46 @@ cleanup_session() {
 
 /* -------------------- SETTINGS HANDLING -------------------- */
 apply_settings_sync(string msg) {
+    if (!json_has(msg, ["kv"])) return;
     string kv_json = llJsonGetValue(msg, ["kv"]);
-    if (kv_json == JSON_INVALID) return;
-
-    string visible_val = llJsonGetValue(kv_json, [KEY_BELL_VISIBLE]);
-    if (visible_val != JSON_INVALID) {
-        integer new_visible = (integer)visible_val;
+    
+    if (json_has(kv_json, [KEY_BELL_VISIBLE])) {
+        integer new_visible = (integer)llJsonGetValue(kv_json, [KEY_BELL_VISIBLE]);
         set_bell_visibility(new_visible);
     }
-
-    string sound_enabled_val = llJsonGetValue(kv_json, [KEY_BELL_SOUND_ENABLED]);
-    if (sound_enabled_val != JSON_INVALID) {
-        BellSoundEnabled = (integer)sound_enabled_val;
+    
+    if (json_has(kv_json, [KEY_BELL_SOUND_ENABLED])) {
+        BellSoundEnabled = (integer)llJsonGetValue(kv_json, [KEY_BELL_SOUND_ENABLED]);
     }
-
-    string volume_val = llJsonGetValue(kv_json, [KEY_BELL_VOLUME]);
-    if (volume_val != JSON_INVALID) {
-        BellVolume = (float)volume_val;
+    
+    if (json_has(kv_json, [KEY_BELL_VOLUME])) {
+        BellVolume = (float)llJsonGetValue(kv_json, [KEY_BELL_VOLUME]);
     }
-
-    string sound_val = llJsonGetValue(kv_json, [KEY_BELL_SOUND]);
-    if (sound_val != JSON_INVALID) {
-        BellSound = sound_val;
+    
+    if (json_has(kv_json, [KEY_BELL_SOUND])) {
+        BellSound = llJsonGetValue(kv_json, [KEY_BELL_SOUND]);
     }
 }
 
 apply_settings_delta(string msg) {
+    if (!json_has(msg, ["changes"])) return;
     string changes = llJsonGetValue(msg, ["changes"]);
-    if (changes == JSON_INVALID) return;
-
-    string visible_val = llJsonGetValue(changes, [KEY_BELL_VISIBLE]);
-    if (visible_val != JSON_INVALID) {
-        integer new_visible = (integer)visible_val;
+    
+    if (json_has(changes, [KEY_BELL_VISIBLE])) {
+        integer new_visible = (integer)llJsonGetValue(changes, [KEY_BELL_VISIBLE]);
         set_bell_visibility(new_visible);
     }
-
-    string sound_enabled_val = llJsonGetValue(changes, [KEY_BELL_SOUND_ENABLED]);
-    if (sound_enabled_val != JSON_INVALID) {
-        BellSoundEnabled = (integer)sound_enabled_val;
+    
+    if (json_has(changes, [KEY_BELL_SOUND_ENABLED])) {
+        BellSoundEnabled = (integer)llJsonGetValue(changes, [KEY_BELL_SOUND_ENABLED]);
     }
-
-    string volume_val = llJsonGetValue(changes, [KEY_BELL_VOLUME]);
-    if (volume_val != JSON_INVALID) {
-        BellVolume = (float)volume_val;
+    
+    if (json_has(changes, [KEY_BELL_VOLUME])) {
+        BellVolume = (float)llJsonGetValue(changes, [KEY_BELL_VOLUME]);
     }
-
-    string sound_val = llJsonGetValue(changes, [KEY_BELL_SOUND]);
-    if (sound_val != JSON_INVALID) {
-        BellSound = sound_val;
+    
+    if (json_has(changes, [KEY_BELL_SOUND])) {
+        BellSound = llJsonGetValue(changes, [KEY_BELL_SOUND]);
     }
 }
 
@@ -336,6 +325,9 @@ default {
         if (change & CHANGED_OWNER) {
             llResetScript();
         }
+        if (change & CHANGED_LINK) {
+            BellLink = 0;
+        }
     }
     
     timer() {
@@ -347,8 +339,8 @@ default {
     
     link_message(integer sender, integer num, string msg, key id) {
         /* -------------------- KERNEL LIFECYCLE -------------------- */if (num == KERNEL_LIFECYCLE) {
+            if (!json_has(msg, ["type"])) return;
             string msg_type = llJsonGetValue(msg, ["type"]);
-            if (msg_type == JSON_INVALID) return;
             
             if (msg_type == "register_now") {
                 register_self();
@@ -364,8 +356,8 @@ default {
         }
         
         /* -------------------- SETTINGS SYNC/DELTA -------------------- */if (num == SETTINGS_BUS) {
+            if (!json_has(msg, ["type"])) return;
             string msg_type = llJsonGetValue(msg, ["type"]);
-            if (msg_type == JSON_INVALID) return;
             
             if (msg_type == "settings_sync") {
                 apply_settings_sync(msg);
@@ -381,12 +373,12 @@ default {
         }
         
         /* -------------------- UI START -------------------- */if (num == UI_BUS) {
+            if (!json_has(msg, ["type"])) return;
             string msg_type = llJsonGetValue(msg, ["type"]);
-            if (msg_type == JSON_INVALID) return;
-
+            
             if (msg_type == "start") {
-                string context_val = llJsonGetValue(msg, ["context"]);
-                if (context_val == JSON_INVALID || context_val != PLUGIN_CONTEXT) return;
+                if (!json_has(msg, ["context"])) return;
+                if (llJsonGetValue(msg, ["context"]) != PLUGIN_CONTEXT) return;
                 
                 CurrentUser = id;
                 request_acl(id);
@@ -397,20 +389,18 @@ default {
         }
         
         /* -------------------- AUTH RESULT -------------------- */if (num == AUTH_BUS) {
+            if (!json_has(msg, ["type"])) return;
             string msg_type = llJsonGetValue(msg, ["type"]);
-            if (msg_type == JSON_INVALID) return;
-
+            
             if (msg_type == "acl_result") {
                 if (!AclPending) return;
-                string avatar_str = llJsonGetValue(msg, ["avatar"]);
-                if (avatar_str == JSON_INVALID) return;
-
-                key avatar = (key)avatar_str;
+                if (!json_has(msg, ["avatar"])) return;
+                
+                key avatar = (key)llJsonGetValue(msg, ["avatar"]);
                 if (avatar != CurrentUser) return;
-
-                string level_val = llJsonGetValue(msg, ["level"]);
-                if (level_val != JSON_INVALID) {
-                    UserAcl = (integer)level_val;
+                
+                if (json_has(msg, ["level"])) {
+                    UserAcl = (integer)llJsonGetValue(msg, ["level"]);
                     AclPending = FALSE;
                     
                     if (UserAcl < PLUGIN_MIN_ACL) {
@@ -428,21 +418,22 @@ default {
         }
         
         /* -------------------- DIALOG RESPONSE -------------------- */if (num == DIALOG_BUS) {
+            if (!json_has(msg, ["type"])) return;
             string msg_type = llJsonGetValue(msg, ["type"]);
-            if (msg_type == JSON_INVALID) return;
-
+            
             if (msg_type == "dialog_response") {
+                if (!json_has(msg, ["session_id"]) || !json_has(msg, ["button"])) return;
                 string response_session = llJsonGetValue(msg, ["session_id"]);
-                string button = llJsonGetValue(msg, ["button"]);
-                if (response_session == JSON_INVALID || button == JSON_INVALID) return;
                 if (response_session != SessionId) return;
+                
+                string button = llJsonGetValue(msg, ["button"]);
                 handle_button_click(button);
                 return;
             }
             
             if (msg_type == "dialog_timeout") {
+                if (!json_has(msg, ["session_id"])) return;
                 string timeout_session = llJsonGetValue(msg, ["session_id"]);
-                if (timeout_session == JSON_INVALID) return;
                 if (timeout_session != SessionId) return;
                 cleanup_session();
                 return;

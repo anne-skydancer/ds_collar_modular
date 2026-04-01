@@ -1,7 +1,7 @@
 /*--------------------
 PLUGIN: ds_collar_plugin_maintenance.lsl
 VERSION: 1.00
-REVISION: 20
+REVISION: 22
 PURPOSE: Maintenance and utility functions for collar management
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
@@ -24,7 +24,6 @@ integer DIALOG_BUS = 950;
 string PLUGIN_CONTEXT = "core_maintenance";
 string PLUGIN_LABEL = "Maintenance";
 integer PLUGIN_MIN_ACL = 1;  // Public can view (limited options)
-string ROOT_CONTEXT = "core_root";
 
 /* ACL levels for reference:
    -1 = Blacklisted
@@ -110,14 +109,16 @@ send_pong() {
 /* -------------------- SETTINGS MANAGEMENT -------------------- */
 
 apply_settings_sync(string msg) {
+    if (!json_has(msg, ["kv"])) return;
+    
     string kv_json = llJsonGetValue(msg, ["kv"]);
-    if (kv_json == JSON_INVALID) return;
     CachedSettings = kv_json;
     SettingsReady = TRUE;
 }
 
-apply_settings_delta(string msg) {
+apply_settings_delta() {
     // Request full sync to update our display cache
+    // (msg is unused because we just request a full sync regardless of what changed)
     string request = llList2Json(JSON_OBJECT, [
         "type", "settings_get"
     ]);
@@ -135,14 +136,13 @@ request_acl(key user_key) {
 }
 
 handle_acl_result(string msg) {
-    string avatar_str = llJsonGetValue(msg, ["avatar"]);
-    string level_str = llJsonGetValue(msg, ["level"]);
-    if (avatar_str == JSON_INVALID || level_str == JSON_INVALID) return;
-
-    key avatar = (key)avatar_str;
+    if (!json_has(msg, ["avatar"])) return;
+    if (!json_has(msg, ["level"])) return;
+    
+    key avatar = (key)llJsonGetValue(msg, ["avatar"]);
     if (avatar != CurrentUser) return;
-
-    integer level = (integer)level_str;
+    
+    integer level = (integer)llJsonGetValue(msg, ["level"]);
     CurrentUserAcl = level;
     
     if (llListFindList(ALLOWED_ACL_VIEW, [level]) == -1) {
@@ -206,9 +206,8 @@ do_view_settings() {
     
     // Iterate through ALL known settings
     integer i = 0;
-    integer len = llGetListLength(ALL_SETTINGS);
     
-    while (i < len) {
+    while (i < llGetListLength(ALL_SETTINGS)) {
         string setting_key = llList2String(ALL_SETTINGS, i);
         string value = llJsonGetValue(CachedSettings, [setting_key]);
         
@@ -234,9 +233,8 @@ do_display_access_list() {
     
     // Multi-owner mode check
     integer multi_mode = 0;
-    string multi_mode_val = llJsonGetValue(CachedSettings, ["multi_owner_mode"]);
-    if (multi_mode_val != JSON_INVALID) {
-        multi_mode = (integer)multi_mode_val;
+    if (json_has(CachedSettings, ["multi_owner_mode"])) {
+        multi_mode = (integer)llJsonGetValue(CachedSettings, ["multi_owner_mode"]);
     }
     
     // Owner(s)
@@ -254,10 +252,12 @@ do_display_access_list() {
             
             if (llGetListLength(owners) > 0) {
                 integer i = 0;
-                while (i < llGetListLength(owners)) {
+                integer count = llGetListLength(owners);
+                integer honors_count = llGetListLength(honors);
+                while (i < count) {
                     string owner_key = llList2String(owners, i);
                     string honor = "Owner";
-                    if (i < llGetListLength(honors)) {
+                    if (i < honors_count) {
                         honor = llList2String(honors, i);
                     }
                     output += "  " + honor + " - " + owner_key + "\n";
@@ -300,10 +300,12 @@ do_display_access_list() {
         
         if (llGetListLength(trustees) > 0) {
             integer i = 0;
-            while (i < llGetListLength(trustees)) {
+            integer count = llGetListLength(trustees);
+            integer honors_count = llGetListLength(t_honors);
+            while (i < count) {
                 string trustee_key = llList2String(trustees, i);
                 string honor = "Trustee";
-                if (i < llGetListLength(t_honors)) {
+                if (i < honors_count) {
                     honor = llList2String(t_honors, i);
                 }
                 output += "  " + honor + " - " + trustee_key + "\n";
@@ -404,15 +406,6 @@ return_to_root() {
     cleanup_session();
 }
 
-close_ui() {
-    string msg = llList2Json(JSON_OBJECT, [
-        "type", "close",
-        "user", (string)CurrentUser
-    ]);
-    llMessageLinked(LINK_SET, UI_BUS, msg, NULL_KEY);
-    cleanup_session();
-}
-
 /* -------------------- SESSION CLEANUP -------------------- */
 
 cleanup_session() {
@@ -433,10 +426,13 @@ cleanup_session() {
 /* -------------------- DIALOG HANDLERS -------------------- */
 
 handle_dialog_response(string msg) {
+    if (!json_has(msg, ["session_id"])) return;
+    if (!json_has(msg, ["button"])) return;
+    
     string session = llJsonGetValue(msg, ["session_id"]);
-    string button = llJsonGetValue(msg, ["button"]);
-    if (session == JSON_INVALID || button == JSON_INVALID) return;
     if (session != SessionId) return;
+    
+    string button = llJsonGetValue(msg, ["button"]);
     
     // Navigation
     if (button == "Back") {
@@ -500,8 +496,9 @@ handle_dialog_response(string msg) {
 }
 
 handle_dialog_timeout(string msg) {
+    if (!json_has(msg, ["session_id"])) return;
+    
     string session = llJsonGetValue(msg, ["session_id"]);
-    if (session == JSON_INVALID) return;
     if (session != SessionId) return;
     
     cleanup_session();
@@ -533,8 +530,8 @@ default {
     
     link_message(integer sender, integer num, string msg, key id) {
         /* -------------------- KERNEL LIFECYCLE -------------------- */if (num == KERNEL_LIFECYCLE) {
+            if (!json_has(msg, ["type"])) return;
             string msg_type = llJsonGetValue(msg, ["type"]);
-            if (msg_type == JSON_INVALID) return;
             
             if (msg_type == "register_now") {
                 register_self();
@@ -548,8 +545,8 @@ default {
 
             if (msg_type == "soft_reset" || msg_type == "soft_reset_all") {
                 // Check if this is a targeted reset
-                string target_context = llJsonGetValue(msg, ["context"]);
-                if (target_context != JSON_INVALID) {
+                if (json_has(msg, ["context"])) {
+                    string target_context = llJsonGetValue(msg, ["context"]);
                     if (target_context != "" && target_context != PLUGIN_CONTEXT) {
                         return; // Not for us, ignore
                     }
@@ -562,8 +559,8 @@ default {
         }
         
         /* -------------------- SETTINGS SYNC/DELTA -------------------- */if (num == SETTINGS_BUS) {
+            if (!json_has(msg, ["type"])) return;
             string msg_type = llJsonGetValue(msg, ["type"]);
-            if (msg_type == JSON_INVALID) return;
             
             if (msg_type == "settings_sync") {
                 apply_settings_sync(msg);
@@ -571,7 +568,7 @@ default {
             }
             
             if (msg_type == "settings_delta") {
-                apply_settings_delta(msg);
+                apply_settings_delta();
                 return;
             }
             
@@ -579,8 +576,8 @@ default {
         }
         
         /* -------------------- ACL RESULTS -------------------- */if (num == AUTH_BUS) {
+            if (!json_has(msg, ["type"])) return;
             string msg_type = llJsonGetValue(msg, ["type"]);
-            if (msg_type == JSON_INVALID) return;
             
             if (msg_type == "acl_result") {
                 handle_acl_result(msg);
@@ -591,12 +588,12 @@ default {
         }
         
         /* -------------------- UI START -------------------- */if (num == UI_BUS) {
+            if (!json_has(msg, ["type"])) return;
             string msg_type = llJsonGetValue(msg, ["type"]);
-            if (msg_type == JSON_INVALID) return;
-
+            
             if (msg_type == "start") {
-                string start_context = llJsonGetValue(msg, ["context"]);
-                if (start_context == JSON_INVALID || start_context != PLUGIN_CONTEXT) return;
+                if (!json_has(msg, ["context"])) return;
+                if (llJsonGetValue(msg, ["context"]) != PLUGIN_CONTEXT) return;
                 
                 if (id == NULL_KEY) return;
                 
@@ -609,8 +606,8 @@ default {
         }
         
         /* -------------------- DIALOG RESPONSE -------------------- */if (num == DIALOG_BUS) {
+            if (!json_has(msg, ["type"])) return;
             string msg_type = llJsonGetValue(msg, ["type"]);
-            if (msg_type == JSON_INVALID) return;
 
             if (msg_type == "dialog_response") {
                 handle_dialog_response(msg);
@@ -625,9 +622,9 @@ default {
             if (msg_type == "dialog_close") {
                 // Dialog was closed externally (e.g., replaced by another dialog)
                 // Clean up our session if it matches
-                string close_session = llJsonGetValue(msg, ["session_id"]);
-                if (close_session != JSON_INVALID) {
-                    if (close_session == SessionId) {
+                if (json_has(msg, ["session_id"])) {
+                    string session = llJsonGetValue(msg, ["session_id"]);
+                    if (session == SessionId) {
                         // Don't send another dialog_close since we're responding to one
                         CurrentUser = NULL_KEY;
                         CurrentUserAcl = -999;

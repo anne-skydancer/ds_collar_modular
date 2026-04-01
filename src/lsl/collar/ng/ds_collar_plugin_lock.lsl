@@ -1,11 +1,14 @@
 /*--------------------
 PLUGIN: ds_collar_plugin_lock.lsl
 VERSION: 1.00
-REVISION: 21
+REVISION: 23
 PURPOSE: Toggle collar lock and RLV detach control labels
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
-- CRITICAL FIX: Request settings on state_entry and register_now instead of hardcoding Locked = FALSE
+- Rev 23: Secure defaults - always revert to unlocked when settings missing/deleted
+  Visual state now synced to logical state on all settings operations
+  Prevents locked-looking collar with unlocked logic after update failures
+- Rev 22: Request settings on state_entry and register_now instead of hardcoding Locked = FALSE
 - Provides direct toggle logic without menu interactions
 - Restricts usage to Unowned and Primary Owner ACL levels
 - Updates kernel registration label to reflect current lock state
@@ -25,7 +28,6 @@ string PLUGIN_CONTEXT = "core_lock";
 string PLUGIN_LABEL_LOCKED = "Locked: Y";    // Label when locked
 string PLUGIN_LABEL_UNLOCKED = "Locked: N";    // Label when unlocked
 integer PLUGIN_MIN_ACL = 4;  // Unowned wearer or owner
-string ROOT_CONTEXT = "core_root";
 
 /* -------------------- SETTINGS KEYS -------------------- */
 string KEY_LOCKED = "locked";
@@ -82,35 +84,40 @@ send_pong() {
 /* -------------------- SETTINGS CONSUMPTION -------------------- */
 
 apply_settings_sync(string msg) {
+    if (!json_has(msg, ["kv"])) return;
+    
     string kv_json = llJsonGetValue(msg, ["kv"]);
-    if (kv_json == JSON_INVALID) return;
-
+    
     integer old_locked = Locked;
-    Locked = FALSE;
-
-    string locked_val = llJsonGetValue(kv_json, [KEY_LOCKED]);
-    if (locked_val != JSON_INVALID) {
-        Locked = (integer)locked_val;
+    Locked = FALSE;  // Secure default: unlocked if no settings
+    
+    if (json_has(kv_json, [KEY_LOCKED])) {
+        Locked = (integer)llJsonGetValue(kv_json, [KEY_LOCKED]);
     }
     
+    // Always sync visual state to logical state
+    // This ensures visual consistency even if no change detected
     if (old_locked != Locked) {
         apply_lock_state();
     }
-    
+    else {
+        // Even if state unchanged, force visual sync (recovery from corrupted state)
+        apply_lock_state();
+    }
 }
 
 apply_settings_delta(string msg) {
+    if (!json_has(msg, ["op"])) return;
+    
     string op = llJsonGetValue(msg, ["op"]);
-    if (op == JSON_INVALID) return;
-
+    
     if (op == "set") {
+        if (!json_has(msg, ["changes"])) return;
         string changes = llJsonGetValue(msg, ["changes"]);
-        if (changes == JSON_INVALID) return;
-
-        string delta_locked_val = llJsonGetValue(changes, [KEY_LOCKED]);
-        if (delta_locked_val != JSON_INVALID) {
+        
+        if (json_has(changes, [KEY_LOCKED])) {
             integer old_locked = Locked;
-            Locked = (integer)delta_locked_val;
+            Locked = (integer)llJsonGetValue(changes, [KEY_LOCKED]);
             
             if (old_locked != Locked) {
                 apply_lock_state();
@@ -119,14 +126,35 @@ apply_settings_delta(string msg) {
                 if (Locked) {
                     new_label = PLUGIN_LABEL_LOCKED;
                 }
-                string msg = llList2Json(JSON_OBJECT, [
+                string label_msg = llList2Json(JSON_OBJECT, [
                     "type", "update_label",
                     "context", PLUGIN_CONTEXT,
                     "label", new_label
                 ]);
-                llMessageLinked(LINK_SET, UI_BUS, msg, NULL_KEY);
+                llMessageLinked(LINK_SET, UI_BUS, label_msg, NULL_KEY);
             }
-            
+        }
+    }
+    else if (op == "delete") {
+        // SECURE DEFAULT: If lock setting is deleted, revert to unlocked
+        if (!json_has(msg, ["key"])) return;
+        string deleted_key = llJsonGetValue(msg, ["key"]);
+        
+        if (deleted_key == KEY_LOCKED) {
+            if (Locked) {
+                // Was locked, now reverting to unlocked
+                Locked = FALSE;
+                apply_lock_state();
+                llOwnerSay("Lock setting deleted - reverting to unlocked state");
+                
+                // Update UI label
+                string label_msg = llList2Json(JSON_OBJECT, [
+                    "type", "update_label",
+                    "context", PLUGIN_CONTEXT,
+                    "label", PLUGIN_LABEL_UNLOCKED
+                ]);
+                llMessageLinked(LINK_SET, UI_BUS, label_msg, NULL_KEY);
+            }
         }
     }
 }
@@ -145,7 +173,6 @@ persist_locked(integer new_value) {
 /* -------------------- LOCK STATE APPLICATION -------------------- */
 
 apply_lock_state() {
-    key owner = llGetOwner();
     
     if (Locked) {
         // Lock collar - prevent detach
@@ -262,14 +289,13 @@ request_acl_and_toggle(key user) {
 }
 
 handle_acl_result(string msg, key expected_user) {
-    string avatar_str = llJsonGetValue(msg, ["avatar"]);
-    string level_str = llJsonGetValue(msg, ["level"]);
-    if (avatar_str == JSON_INVALID || level_str == JSON_INVALID) return;
-
-    key avatar = (key)avatar_str;
+    if (!json_has(msg, ["avatar"])) return;
+    if (!json_has(msg, ["level"])) return;
+    
+    key avatar = (key)llJsonGetValue(msg, ["avatar"]);
     if (avatar != expected_user) return;
-
-    integer level = (integer)level_str;
+    
+    integer level = (integer)llJsonGetValue(msg, ["level"]);
     
     // Toggle immediately with this ACL level
     toggle_lock(avatar, level);
@@ -297,8 +323,8 @@ default {
     
     link_message(integer sender, integer num, string msg, key id) {
         /* -------------------- KERNEL LIFECYCLE -------------------- */if (num == KERNEL_LIFECYCLE) {
+            if (!json_has(msg, ["type"])) return;
             string msg_type = llJsonGetValue(msg, ["type"]);
-            if (msg_type == JSON_INVALID) return;
             
             if (msg_type == "register_now") {
                 // Re-request settings after kernel reset to restore lock state
@@ -317,8 +343,8 @@ default {
         }
         
         /* -------------------- SETTINGS SYNC/DELTA -------------------- */if (num == SETTINGS_BUS) {
+            if (!json_has(msg, ["type"])) return;
             string msg_type = llJsonGetValue(msg, ["type"]);
-            if (msg_type == JSON_INVALID) return;
             
             if (msg_type == "settings_sync") {
                 apply_settings_sync(msg);
@@ -335,12 +361,12 @@ default {
         }
         
         /* -------------------- UI START (TOGGLE ACTION) -------------------- */if (num == UI_BUS) {
+            if (!json_has(msg, ["type"])) return;
             string msg_type = llJsonGetValue(msg, ["type"]);
-            if (msg_type == JSON_INVALID) return;
-
+            
             if (msg_type == "start") {
-                string start_context = llJsonGetValue(msg, ["context"]);
-                if (start_context == JSON_INVALID || start_context != PLUGIN_CONTEXT) return;
+                if (!json_has(msg, ["context"])) return;
+                if (llJsonGetValue(msg, ["context"]) != PLUGIN_CONTEXT) return;
                 
                 if (id == NULL_KEY) return;
                 
@@ -353,17 +379,16 @@ default {
         }
         
         /* -------------------- AUTH RESULT -------------------- */if (num == AUTH_BUS) {
+            if (!json_has(msg, ["type"])) return;
             string msg_type = llJsonGetValue(msg, ["type"]);
-            if (msg_type == JSON_INVALID) return;
-
+            
             if (msg_type == "acl_result") {
                 // Check if this is our toggle request
-                string corr_id = llJsonGetValue(msg, ["id"]);
-                if (corr_id != JSON_INVALID) {
+                if (json_has(msg, ["id"])) {
+                    string corr_id = llJsonGetValue(msg, ["id"]);
                     if (corr_id == PLUGIN_CONTEXT + "_toggle") {
-                        string user_str = llJsonGetValue(msg, ["avatar"]);
-                        if (user_str == JSON_INVALID) return;
-                        key user = (key)user_str;
+                        if (!json_has(msg, ["avatar"])) return;
+                        key user = (key)llJsonGetValue(msg, ["avatar"]);
                         handle_acl_result(msg, user);
                     }
                 }

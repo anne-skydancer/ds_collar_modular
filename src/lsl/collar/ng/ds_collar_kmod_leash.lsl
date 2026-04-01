@@ -1,10 +1,22 @@
 /*--------------------
 MODULE: ds_collar_kmod_leash.lsl
 VERSION: 1.00
-REVISION: 20
+REVISION: 27
 PURPOSE: Leashing engine providing leash services to plugins
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- REVISION 25: Code cleanup and optimization.
+  - Removed redundant llGetObjectDetails calls in turnToTarget (now accepts vector).
+  - Consolidated state setting logic into setLeashState helper.
+  - Simplified grab/coffle/post/pass functions to use the new helper.
+- REVISION 24: Replaced RLV @tpto with llMoveToTarget for "Yank" functionality.
+  Fixes stack-heap collision risk and provides smoother physics-based pull.
+- REVISION 23: Restricted standard "release" action to Leasher or ACL 3+.
+  ACL 2 (Owned Wearer) must use SOS emergency release.
+- REVISION 22: Added handler for "emergency_leash_release" from SOS plugin.
+  Strictly verifies sender is the wearer/owner before releasing.
+- REVISION 21: Implemented "Steal" logic in grabLeashInternal. Authorized users
+  (ACL 3+) can now take the leash from an existing holder.
 - Added avatar, coffle, and post leash modes with distance enforcement
 - Introduced offer acceptance dialog and notifications with timeout handling
 - Corrected ACL verification flow for offer and pass actions to prevent deadlocks
@@ -57,6 +69,7 @@ integer FollowActive = FALSE;
 vector LastTargetPos = ZERO_VECTOR;
 float LastDistance = -1.0;
 integer ControlsOk = FALSE;
+integer TickCount = 0;
 
 // Turn-to-face throttling (NEW)
 float LastTurnAngle = -999.0;
@@ -110,8 +123,9 @@ integer jsonHas(string j, list path) {
     return (llJsonGetValue(j, path) != JSON_INVALID);
 }
 string jsonGet(string j, string k, string default_val) {
-    if (jsonHas(j, [k])) return llJsonGetValue(j, [k]);
-    return default_val;
+    string v = llJsonGetValue(j, [k]);
+    if (v == JSON_INVALID) return default_val;
+    return v;
 }
 integer now() {
     return llGetUnixTime();
@@ -119,7 +133,7 @@ integer now() {
 integer inAllowedList(integer level, list allowed) {
     return (llListFindList(allowed, [level]) != -1);
 }
-denyAccess(key user, string reason, string action, integer acl) {
+denyAccess(key user, string reason) {
     llRegionSayTo(user, 0, "Access denied: " + reason);
 }
 
@@ -178,6 +192,18 @@ sendOfferPending(key target, key originator) {
 }
 
 /* -------------------- STATE MANAGEMENT HELPERS -------------------- */
+
+// Helper to set common leash state
+setLeashState(key user, integer mode, key target, key coffle_target) {
+    Leashed = TRUE;
+    Leasher = user;
+    LastLeasher = user;
+    LeashMode = mode;
+    LeashTarget = target;
+    CoffleTargetAvatar = coffle_target;
+    persistLeashState(TRUE, user);
+    broadcastState();
+}
 
 // Clamp leash length to valid range
 integer clampLeashLength(integer len) {
@@ -270,12 +296,13 @@ handleAclResult(string msg) {
     
     // Execute pending action with ACL verification
 
-    // Special case: release (current leasher OR level 2+ can release)
+    // Special case: release (current leasher OR level 3+ can release)
+    // ACL 2 (Owned Wearer) must use SOS emergency release
     if (PendingAction == "release") {
-        if (PendingActionUser == Leasher || acl_level >= 2) {
+        if (PendingActionUser == Leasher || acl_level >= 3) {
             releaseLeashInternal(PendingActionUser);
         } else {
-            denyAccess(PendingActionUser, "only leasher or authorized users can release", "release", acl_level);
+            denyAccess(PendingActionUser, "only leasher or authorized users can release");
         }
     }
     // Special case: pass (current leasher OR level 3+ can pass, then verify target)
@@ -284,7 +311,7 @@ handleAclResult(string msg) {
             requestAclForPassTarget(PendingPassTarget);
             return;  // Don't clear pending state yet
         } else {
-            denyAccess(PendingActionUser, "insufficient permissions to pass leash", "pass", acl_level);
+            denyAccess(PendingActionUser, "insufficient permissions to pass leash");
         }
     }
     // Special case: offer (ACL 2 only, when NOT currently leashed, then verify target)
@@ -296,14 +323,13 @@ handleAclResult(string msg) {
         } else if (Leashed) {
             llRegionSayTo(PendingActionUser, 0, "Cannot offer leash: already leashed.");
         } else {
-            denyAccess(PendingActionUser, "insufficient permissions to offer leash", "offer", acl_level);
+            denyAccess(PendingActionUser, "insufficient permissions to offer leash");
         }
     }
     // Special case: pass_target_check (verifying the target's ACL for pass/offer)
     else if (PendingAction == "pass_target_check") {
         // This is the target verification for pass/offer action
         // Target must be level 1+ (public or higher) to receive leash
-        key target = (key)llJsonGetValue(msg, ["avatar"]);
 
 
         if (acl_level >= 1) {
@@ -333,37 +359,21 @@ handleAclResult(string msg) {
     }
     // Standard ACL pattern for simple actions
     else {
-        list allowed_acl;
-        integer authorized = FALSE;
-
-        if (PendingAction == "grab") {
-            allowed_acl = ALLOWED_ACL_GRAB;
-            authorized = inAllowedList(acl_level, allowed_acl);
-            if (authorized) grabLeashInternal(PendingActionUser);
-        }
-        else if (PendingAction == "coffle") {
-            allowed_acl = ALLOWED_ACL_COFFLE;
-            authorized = inAllowedList(acl_level, allowed_acl);
-            if (authorized) coffleLeashInternal(PendingActionUser, PendingPassTarget);
-        }
-        else if (PendingAction == "post") {
-            allowed_acl = ALLOWED_ACL_POST;
-            authorized = inAllowedList(acl_level, allowed_acl);
-            if (authorized) postLeashInternal(PendingActionUser, PendingPassTarget);
-        }
-        else if (PendingAction == "set_length") {
-            allowed_acl = ALLOWED_ACL_SETTINGS;
-            authorized = inAllowedList(acl_level, allowed_acl);
-            if (authorized) setLengthInternal((integer)((string)PendingPassTarget));
-        }
-        else if (PendingAction == "toggle_turn") {
-            allowed_acl = ALLOWED_ACL_SETTINGS;
-            authorized = inAllowedList(acl_level, allowed_acl);
-            if (authorized) toggleTurnInternal();
-        }
-
-        if (!authorized) {
-            denyAccess(PendingActionUser, "insufficient permissions", PendingAction, acl_level);
+        list allowed_acl = [];
+        
+        if (PendingAction == "grab") allowed_acl = ALLOWED_ACL_GRAB;
+        else if (PendingAction == "coffle") allowed_acl = ALLOWED_ACL_COFFLE;
+        else if (PendingAction == "post") allowed_acl = ALLOWED_ACL_POST;
+        else if (PendingAction == "set_length" || PendingAction == "toggle_turn") allowed_acl = ALLOWED_ACL_SETTINGS;
+        
+        if (inAllowedList(acl_level, allowed_acl)) {
+            if (PendingAction == "grab") grabLeashInternal(PendingActionUser, acl_level);
+            else if (PendingAction == "coffle") coffleLeashInternal(PendingActionUser, PendingPassTarget);
+            else if (PendingAction == "post") postLeashInternal(PendingActionUser, PendingPassTarget);
+            else if (PendingAction == "set_length") setLengthInternal((integer)((string)PendingPassTarget));
+            else if (PendingAction == "toggle_turn") toggleTurnInternal();
+        } else {
+            denyAccess(PendingActionUser, "insufficient permissions");
         }
     }
     
@@ -395,10 +405,7 @@ requestAclForPassTarget(key target) {
 /* -------------------- DS HOLDER PROTOCOL (IMPROVED STATE MACHINE) -------------------- */
 beginHolderHandshake(key user) {
     // Improved randomness for session ID using multiple entropy sources
-    integer key_entropy = (integer)("0x" + llGetSubString((string)llGetOwner(), 0, 7));
-    HolderSession = (integer)(llFrand(999999.0) +
-                              (now() % 1000000) +
-                              (key_entropy % 1000));
+    HolderSession = (integer)llFrand(9.0E06);
     HolderState = HOLDER_STATE_DS_PHASE;
     HolderPhaseStart = now();
 
@@ -428,7 +435,6 @@ handleHolderResponseDs(string msg) {
     if (session != HolderSession) return;
     
     HolderTarget = (key)llJsonGetValue(msg, ["holder"]);
-    string holder_name = llJsonGetValue(msg, ["name"]);
     
 
     HolderState = HOLDER_STATE_COMPLETE;
@@ -494,7 +500,7 @@ advanceHolderStateMachine() {
 checkLeasherPresence() {
     if (!Leashed || Leasher == NULL_KEY) return;
     
-    integer now_time = now();
+    integer now_time = llGetUnixTime();
     
     // Y2038 protection
     if (now_time < 0 || OffsimStartTime < 0) {
@@ -626,19 +632,20 @@ broadcastState() {
 }
 
 /* -------------------- LEASH ACTIONS (INTERNAL - CALLED AFTER ACL VERIFICATION) -------------------- */
-grabLeashInternal(key user) {
+grabLeashInternal(key user, integer acl_level) {
     if (Leashed) {
-        llRegionSayTo(user, 0, "Already leashed to " + llKey2Name(Leasher));
-        return;
+        // Allow stealing if requester is Trustee (3) or higher
+        if (acl_level >= 3) {
+            llRegionSayTo(Leasher, 0, "Leash taken by " + llKey2Name(user));
+            // Proceed to take leash (overwrite existing leasher)
+        }
+        else {
+            llRegionSayTo(user, 0, "Already leashed to " + llKey2Name(Leasher));
+            return;
+        }
     }
 
-    Leashed = TRUE;
-    Leasher = user;
-    LastLeasher = user;
-    LeashMode = MODE_AVATAR;  // Standard avatar leashing
-    LeashTarget = NULL_KEY;   // No special target for avatar mode
-    CoffleTargetAvatar = NULL_KEY;  // Not used in avatar mode
-    persistLeashState(TRUE, user);
+    setLeashState(user, MODE_AVATAR, NULL_KEY, NULL_KEY);
     beginHolderHandshake(user);
 
     // Enable Lockmeister for this authorized controller
@@ -647,7 +654,6 @@ grabLeashInternal(key user) {
 
     startFollow();
     notifyLeashAction(user, "Leash grabbed", "by " + llKey2Name(user));
-    broadcastState();
 }
 
 releaseLeashInternal(key user) {
@@ -664,15 +670,9 @@ passLeashInternal(key new_leasher) {
     if (!Leashed) return;
 
     key old_leasher = Leasher;
-    Leasher = new_leasher;
-    LastLeasher = new_leasher;
-
+    
     // Reset to avatar mode (if was in coffle/post, revert to standard leashing)
-    LeashMode = MODE_AVATAR;
-    LeashTarget = NULL_KEY;
-    CoffleTargetAvatar = NULL_KEY;
-
-    persistLeashState(TRUE, new_leasher);
+    setLeashState(new_leasher, MODE_AVATAR, NULL_KEY, NULL_KEY);
 
     // Start holder handshake for new leasher
     beginHolderHandshake(new_leasher);
@@ -682,7 +682,6 @@ passLeashInternal(key new_leasher) {
     setLockmeisterState(TRUE, new_leasher);
 
     notifyLeashTransfer(old_leasher, new_leasher, "passed");
-    broadcastState();
 }
 
 coffleLeashInternal(key user, key target_collar) {
@@ -710,13 +709,7 @@ coffleLeashInternal(key user, key target_collar) {
         return;
     }
 
-    Leashed = TRUE;
-    Leasher = user;
-    LastLeasher = user;
-    LeashMode = MODE_COFFLE;
-    LeashTarget = target_collar;
-    CoffleTargetAvatar = collar_owner;  // Store the avatar wearing the target collar
-    persistLeashState(TRUE, user);
+    setLeashState(user, MODE_COFFLE, target_collar, collar_owner);
 
     // Start particles to target collar
     setParticlesState(TRUE, target_collar);
@@ -726,7 +719,6 @@ coffleLeashInternal(key user, key target_collar) {
 
     string target_name = llList2String(details, 1);
     notifyLeashAction(user, "Coffled to " + llKey2Name(collar_owner), target_name);
-    broadcastState();
 }
 
 postLeashInternal(key user, key post_object) {
@@ -742,13 +734,7 @@ postLeashInternal(key user, key post_object) {
         return;
     }
 
-    Leashed = TRUE;
-    Leasher = user;
-    LastLeasher = user;
-    LeashMode = MODE_POST;
-    LeashTarget = post_object;
-    CoffleTargetAvatar = NULL_KEY;  // Not used for post mode
-    persistLeashState(TRUE, user);
+    setLeashState(user, MODE_POST, post_object, NULL_KEY);
 
     // Start particles to post object
     setParticlesState(TRUE, post_object);
@@ -758,7 +744,6 @@ postLeashInternal(key user, key post_object) {
 
     string object_name = llList2String(details, 1);
     notifyLeashAction(user, "Posted to " + object_name, "by " + llKey2Name(user));
-    broadcastState();
 }
 
 yankToLeasher() {
@@ -771,9 +756,15 @@ yankToLeasher() {
     }
 
     vector leasher_pos = llList2Vector(details, 0);
-    llOwnerSay("@tpto:" + (string)leasher_pos + "=force");
-    llOwnerSay("Yanked to " + llKey2Name(Leasher));
-    llRegionSayTo(Leasher, 0, llKey2Name(llGetOwner()) + " yanked to you.");
+    
+    if (ControlsOk) {
+        // Use physics move (tau 0.1 for fast yank) instead of RLV
+        llMoveToTarget(leasher_pos, 0.1);
+        llOwnerSay("Yanked to " + llKey2Name(Leasher));
+        llRegionSayTo(Leasher, 0, llKey2Name(llGetOwner()) + " yanked to you.");
+    } else {
+        llOwnerSay("Cannot yank: controls not active.");
+    }
 }
 
 setLengthInternal(integer length) {
@@ -821,11 +812,9 @@ stopFollow() {
     LastTurnAngle = -999.0;
 }
 
-turnToTarget(key target) {
-    if (!TurnToFace || !Leashed || target == NULL_KEY) return;
-    list details = llGetObjectDetails(target, [OBJECT_POS]);
-    if (llGetListLength(details) == 0) return;
-    vector target_pos = llList2Vector(details, 0);
+turnToTarget(vector target_pos) {
+    if (!TurnToFace || !Leashed) return;
+    
     vector wearer_pos = llGetRootPosition();
     vector direction = llVecNorm(target_pos - wearer_pos);
     float angle = llAtan2(direction.y, direction.x);
@@ -843,42 +832,43 @@ followTick() {
     // Determine target position based on mode
     vector target_pos;
     key follow_target = NULL_KEY;
+    key target_key = NULL_KEY;
 
     if (LeashMode == MODE_AVATAR) {
-        // Avatar mode: follow holder or leasher
+        follow_target = Leasher;
+        // Prefer holder if active
         if (HolderTarget != NULL_KEY) {
-            list details = llGetObjectDetails(HolderTarget, [OBJECT_POS]);
-            if (llGetListLength(details) == 0) {
-                HolderTarget = NULL_KEY;
-                updateParticlesTarget(Leasher);
-                return;
-            }
-            target_pos = llList2Vector(details, 0);
-            follow_target = Leasher;
-        }
-        else {
-            list details = llGetObjectDetails(Leasher, [OBJECT_POS]);
-            if (llGetListLength(details) == 0) return;
-            target_pos = llList2Vector(details, 0);
-            follow_target = Leasher;
+            target_key = HolderTarget;
+        } else {
+            target_key = Leasher;
         }
     }
     else if (LeashMode == MODE_COFFLE) {
-        // Coffle mode: follow the avatar wearing the target collar
-        if (CoffleTargetAvatar == NULL_KEY) return;
-        list details = llGetObjectDetails(CoffleTargetAvatar, [OBJECT_POS]);
-        if (llGetListLength(details) == 0) return;
-        target_pos = llList2Vector(details, 0);
         follow_target = CoffleTargetAvatar;
+        target_key = CoffleTargetAvatar;
     }
     else if (LeashMode == MODE_POST) {
-        // Post mode: stay near the post object
-        if (LeashTarget == NULL_KEY) return;
-        list details = llGetObjectDetails(LeashTarget, [OBJECT_POS]);
-        if (llGetListLength(details) == 0) return;
-        target_pos = llList2Vector(details, 0);
         follow_target = LeashTarget;
+        target_key = LeashTarget;
     }
+
+    if (target_key == NULL_KEY) return;
+
+    list details = llGetObjectDetails(target_key, [OBJECT_POS]);
+    
+    // Handle HolderTarget disappearing (special case for Avatar mode)
+    if (llGetListLength(details) == 0) {
+        if (LeashMode == MODE_AVATAR && target_key == HolderTarget) {
+            HolderTarget = NULL_KEY;
+            updateParticlesTarget(Leasher);
+            // Fallback to leasher immediately
+            target_key = Leasher;
+            details = llGetObjectDetails(target_key, [OBJECT_POS]);
+        }
+    }
+
+    if (llGetListLength(details) == 0) return;
+    target_pos = llList2Vector(details, 0);
 
     vector wearer_pos = llGetRootPosition();
     float distance = llVecDist(wearer_pos, target_pos);
@@ -890,7 +880,7 @@ followTick() {
             LastTargetPos = pull_pos;
         }
         if (TurnToFace && follow_target != NULL_KEY) {
-            turnToTarget(follow_target);
+            turnToTarget(target_pos);
         }
     }
     else if (LastDistance >= 0.0 && LastDistance > (float)LeashLength) {
@@ -921,8 +911,6 @@ default
         llRequestPermissions(llGetOwner(), PERMISSION_TAKE_CONTROLS);
 
         // Memory diagnostics
-        integer used = llGetUsedMemory();
-        integer free = llGetFreeMemory();
     }
     
     on_rez(integer start_param) {
@@ -961,7 +949,7 @@ default
                 // Yank only works for current leasher (with rate limiting)
                 if (action == "yank") {
                     if (user == Leasher) {
-                        integer now_time = now();
+                        integer now_time = llGetUnixTime();
                         if ((now_time - LastYankTime) < YANK_COOLDOWN) {
                             integer wait_time = (integer)(YANK_COOLDOWN - (now_time - LastYankTime));
                             llRegionSayTo(user, 0, "Yank on cooldown. Wait " + (string)wait_time + "s.");
@@ -985,6 +973,15 @@ default
 
                 // Single call handles all actions
                 requestAclForAction(user, action, target);
+                return;
+            }
+
+            // Emergency release from SOS plugin
+            if (msg_type == "emergency_leash_release") {
+                // Verify sender is owner/wearer to prevent abuse
+                if (id == llGetOwner()) {
+                    releaseLeashInternal(id);
+                }
                 return;
             }
             
@@ -1044,9 +1041,12 @@ default
         // Advance holder detection state machine
         advanceHolderStateMachine();
         
-        // Check for offsim/auto-release
-        if (Leashed) checkLeasherPresence();
-        if (!Leashed && ReclipScheduled != 0) checkAutoReclip();
+        TickCount++;
+        // Check for offsim/auto-release (Throttled to every ~3 seconds)
+        if (TickCount % 6 == 0) {
+            if (Leashed) checkLeasherPresence();
+            if (!Leashed && ReclipScheduled != 0) checkAutoReclip();
+        }
         
         // Follow tick
         if (FollowActive && Leashed) followTick();

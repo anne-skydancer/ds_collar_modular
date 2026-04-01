@@ -1,7 +1,7 @@
 /*--------------------
 SCRIPT: ds_collar_leash_holder.lsl
 VERSION: 1.00
-REVISION: 1
+REVISION: 2
 PURPOSE: Minimal leash-holder target responder for external objects
 ARCHITECTURE: Direct channel listener with prim discovery fallback
 CHANGES:
@@ -90,12 +90,13 @@ default {
 
         key targetPrim = leashPrimKey();
 
-        string reply = llList2Json(JSON_OBJECT, []);
-        reply = llJsonSetValue(reply, ["type"],    "leash_target");
-        reply = llJsonSetValue(reply, ["ok"],      "1");
-        reply = llJsonSetValue(reply, ["holder"],  (string)targetPrim);
-        reply = llJsonSetValue(reply, ["name"],    llGetObjectName());
-        reply = llJsonSetValue(reply, ["session"], (string)session);
+        string reply = llList2Json(JSON_OBJECT, [
+            "type", "leash_target",
+            "ok", "1",
+            "holder", (string)targetPrim,
+            "name", llGetObjectName(),
+            "session", (string)session
+        ]);
 
         llRegionSayTo(collar, LEASH_HOLDER_CHAN, reply);
     }

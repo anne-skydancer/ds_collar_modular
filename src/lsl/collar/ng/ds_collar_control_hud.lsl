@@ -1,7 +1,7 @@
 /*--------------------
 SCRIPT: ds_collar_control_hud.lsl
 VERSION: 1.00
-REVISION: 5
+REVISION: 7
 PURPOSE: Auto-detect nearby collars and connect automatically
 ARCHITECTURE: RLV relay-style broadcast and listen workflow
 CHANGES:
@@ -21,7 +21,6 @@ integer COLLAR_ACL_REPLY_CHAN = -8675310;
 integer COLLAR_MENU_CHAN      = -8675311;
 
 /* -------------------- ACL CONSTANTS -------------------- */
-integer ACL_BLACKLIST     = -1;
 integer ACL_NOACCESS      = 0;
 integer ACL_PUBLIC        = 1;
 integer ACL_OWNED         = 2;
@@ -34,6 +33,7 @@ float QUERY_TIMEOUT_SEC = 3.0;
 float COLLAR_SCAN_TIME = 2.0;
 integer DIALOG_CHANNEL = -98765;
 float LONG_TOUCH_THRESHOLD = 1.5;
+integer MAX_DIALOG_BUTTONS = 12;  // llDialog button limit
 
 /* -------------------- CONSTANTS -------------------- */
 string ROOT_CONTEXT = "core_root";
@@ -100,13 +100,9 @@ cleanup_session() {
 /* -------------------- COLLAR DETECTION -------------------- */
 
 add_detected_collar(key avatar_key, key collar_key, string avatar_name) {
-    // Check if already detected
-    integer i = 0;
-    while (i < llGetListLength(DetectedCollars)) {
-        if (llList2Key(DetectedCollars, i) == avatar_key) {
-            return;  // Already have this one
-        }
-        i += COLLAR_STRIDE;
+    // Check if already detected using native search (faster than loop)
+    if (llListFindList(DetectedCollars, [avatar_key]) != -1) {
+        return;
     }
     
     DetectedCollars += [avatar_key, collar_key, avatar_name];
@@ -152,7 +148,6 @@ process_scan_results() {
     if (num_collars == 1) {
         // AUTO-CONNECT to single collar (RLV relay style!)
         key avatar_key = llList2Key(DetectedCollars, 0);
-        string avatar_name = llList2String(DetectedCollars, 2);
 
         request_acl_from_collar(avatar_key);
         return;
@@ -179,14 +174,15 @@ show_collar_selection_dialog() {
     string text = "Multiple collars found. Select one:\n\n";
     list buttons = [];
     integer i = 0;
+    integer collar_count = llGetListLength(DetectedCollars);
     
-    while (i < llGetListLength(DetectedCollars) && (i / COLLAR_STRIDE) < 12) {
+    while (i < collar_count && (i / COLLAR_STRIDE) < MAX_DIALOG_BUTTONS) {
         string avatar_name = llList2String(DetectedCollars, i + 2);
         buttons += [avatar_name];
         i += COLLAR_STRIDE;
     }
     
-    if (llGetListLength(buttons) < 12) {
+    if (llGetListLength(buttons) < MAX_DIALOG_BUTTONS) {
         buttons += ["Cancel"];
     }
     
@@ -334,12 +330,13 @@ default {
     listen(integer channel, string name, key id, string message) {
         // Handle collar scan responses
         if (channel == COLLAR_ACL_REPLY_CHAN && ScanningForCollars) {
+            if (!json_has(message, ["type"])) return;
+            
             string msg_type = llJsonGetValue(message, ["type"]);
-            if (msg_type == JSON_INVALID || msg_type != "collar_scan_response") return;
-
-            string collar_owner_str = llJsonGetValue(message, ["collar_owner"]);
-            if (collar_owner_str == JSON_INVALID) return;
-            key collar_owner = (key)collar_owner_str;
+            if (msg_type != "collar_scan_response") return;
+            
+            if (!json_has(message, ["collar_owner"])) return;
+            key collar_owner = (key)llJsonGetValue(message, ["collar_owner"]);
             string owner_name = llKey2Name(collar_owner);
             
             add_detected_collar(collar_owner, id, owner_name);
@@ -384,29 +381,28 @@ default {
         
         // Handle ACL responses
         if (channel == COLLAR_ACL_REPLY_CHAN && AclPending) {
+            if (!json_has(message, ["type"])) return;
+            
             string msg_type = llJsonGetValue(message, ["type"]);
-            if (msg_type == JSON_INVALID || msg_type != "acl_result_external") return;
-
-            string response_avatar_str = llJsonGetValue(message, ["avatar"]);
-            if (response_avatar_str == JSON_INVALID) return;
-            key response_avatar = (key)response_avatar_str;
-
+            if (msg_type != "acl_result_external") return;
+            
+            if (!json_has(message, ["avatar"])) return;
+            key response_avatar = (key)llJsonGetValue(message, ["avatar"]);
+            
             if (response_avatar != HudWearer) return;
-
-            string collar_owner_str = llJsonGetValue(message, ["collar_owner"]);
-            if (collar_owner_str == JSON_INVALID) return;
-            key collar_owner = (key)collar_owner_str;
-
+            
+            if (!json_has(message, ["collar_owner"])) return;
+            key collar_owner = (key)llJsonGetValue(message, ["collar_owner"]);
+            
             if (collar_owner != TargetAvatarKey) return;
-
+            
             llSetTimerEvent(0.0);
             AclPending = FALSE;
-
+            
             TargetCollarKey = id;
-
-            string level_val = llJsonGetValue(message, ["level"]);
-            if (level_val != JSON_INVALID) {
-                AclLevel = (integer)level_val;
+            
+            if (json_has(message, ["level"])) {
+                AclLevel = (integer)llJsonGetValue(message, ["level"]);
             }
             
             process_acl_result(AclLevel);

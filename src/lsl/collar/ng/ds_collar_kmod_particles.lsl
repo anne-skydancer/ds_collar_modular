@@ -1,7 +1,7 @@
 /*--------------------
 MODULE: ds_collar_kmod_particles.lsl
 VERSION: 1.00
-REVISION: 23
+REVISION: 25
 PURPOSE: Visual connection renderer with Lockmeister compatibility
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
@@ -78,7 +78,7 @@ close_lm_listen() {
 lm_ping() {
     if (!LmActive || LmController == NULL_KEY) return;
     
-    integer t = now();
+    integer t = llGetUnixTime();
     if ((t - LmLastPing) < LM_PING_INTERVAL) return;
     LmLastPing = t;
     
@@ -253,13 +253,12 @@ render_chain_particles(key target) {
 /* -------------------- MESSAGE HANDLERS -------------------- */
 
 handle_particles_start(string msg) {
-    string source = llJsonGetValue(msg, ["source"]);
-    string target_str = llJsonGetValue(msg, ["target"]);
-    if (source == JSON_INVALID || target_str == JSON_INVALID) {
+    if (!json_has(msg, ["source"]) || !json_has(msg, ["target"])) {
         return;
     }
-
-    key target = (key)target_str;
+    
+    string source = llJsonGetValue(msg, ["source"]);
+    key target = (key)llJsonGetValue(msg, ["target"]);
     
     // Validate target exists in-world
     list details = llGetObjectDetails(target, [OBJECT_POS]);
@@ -284,9 +283,8 @@ handle_particles_start(string msg) {
     SourcePlugin = source;
     TargetKey = target;
     
-    string style_val = llJsonGetValue(msg, ["style"]);
-    if (style_val != JSON_INVALID) {
-        ParticleStyle = style_val;
+    if (json_has(msg, ["style"])) {
+        ParticleStyle = llJsonGetValue(msg, ["style"]);
     }
     else {
         ParticleStyle = "chain";
@@ -298,10 +296,11 @@ handle_particles_start(string msg) {
 }
 
 handle_particles_stop(string msg) {
-    string source = llJsonGetValue(msg, ["source"]);
-    if (source == JSON_INVALID) {
+    if (!json_has(msg, ["source"])) {
         return;
     }
+    
+    string source = llJsonGetValue(msg, ["source"]);
     
     // Only stop if request is from the same plugin that started it
     if (source != SourcePlugin) {
@@ -321,12 +320,11 @@ handle_particles_stop(string msg) {
 }
 
 handle_particles_update(string msg) {
-    string target_str = llJsonGetValue(msg, ["target"]);
-    if (target_str == JSON_INVALID) {
+    if (!json_has(msg, ["target"])) {
         return;
     }
-
-    key new_target = (key)target_str;
+    
+    key new_target = (key)llJsonGetValue(msg, ["target"]);
     
     // SECURITY: Validate target exists in-world
     list details = llGetObjectDetails(new_target, [OBJECT_POS]);
@@ -342,12 +340,11 @@ handle_particles_update(string msg) {
 
 handle_lm_enable(string msg) {
     // Enable Lockmeister listening
-    string controller_str = llJsonGetValue(msg, ["controller"]);
-    if (controller_str == JSON_INVALID) {
+    if (!json_has(msg, ["controller"])) {
         return;
     }
-
-    LmController = (key)controller_str;
+    
+    LmController = (key)llJsonGetValue(msg, ["controller"]);
     LmAuthorized = TRUE;  // Mark as authorized
     open_lm_listen();
     
@@ -427,8 +424,9 @@ default
     }
     
     link_message(integer sender, integer num, string msg, key id) {
+        if (!json_has(msg, ["type"])) return;
+
         string msg_type = llJsonGetValue(msg, ["type"]);
-        if (msg_type == JSON_INVALID) return;
 
         /* -------------------- KERNEL LIFECYCLE -------------------- */
         if (num == KERNEL_LIFECYCLE) {

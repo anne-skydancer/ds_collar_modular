@@ -1,7 +1,7 @@
 /*--------------------
 PLUGIN: ds_collar_plugin_animate.lsl
 VERSION: 1.00
-REVISION: 20
+REVISION: 25
 PURPOSE: Paginated animation menu driven by inventory contents
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
@@ -16,7 +16,6 @@ CHANGES:
 /* -------------------- CONSOLIDATED ABI -------------------- */
 integer KERNEL_LIFECYCLE = 500;
 integer AUTH_BUS = 700;
-integer SETTINGS_BUS = 800;
 integer UI_BUS = 900;
 integer DIALOG_BUS = 950;
 
@@ -24,7 +23,10 @@ integer DIALOG_BUS = 950;
 string PLUGIN_CONTEXT = "core_animate";
 string PLUGIN_LABEL = "Animate";
 integer PLUGIN_MIN_ACL = 1;  // Public can use
-string ROOT_CONTEXT = "core_root";
+
+/* -------------------- OTHER CONSTANTS -------------------- */
+
+integer MAX_ANIMATIONS = 128;
 
 /* -------------------- STATE -------------------- */
 // Session management
@@ -60,8 +62,14 @@ string generate_session_id() {
 refresh_animation_list() {
     AnimationList = [];
     integer count = llGetInventoryNumber(INVENTORY_ANIMATION);
-    integer i;
     
+    // Safety cap to prevent stack-heap collision
+    if (count > MAX_ANIMATIONS) {
+        llOwnerSay("WARNING: Too many animations (" + (string)count + "). Only loading first " + (string)MAX_ANIMATIONS + ".");
+        count = MAX_ANIMATIONS;
+    }
+
+    integer i;
     for (i = 0; i < count; i++) {
         string anim_name = llGetInventoryName(INVENTORY_ANIMATION, i);
         if (anim_name != "") {
@@ -151,14 +159,13 @@ request_acl(key user) {
 }
 
 handle_acl_result(string msg) {
-    string avatar_str = llJsonGetValue(msg, ["avatar"]);
-    string level_str = llJsonGetValue(msg, ["level"]);
-    if (avatar_str == JSON_INVALID || level_str == JSON_INVALID) return;
-
-    key avatar = (key)avatar_str;
+    if (!json_has(msg, ["avatar"])) return;
+    if (!json_has(msg, ["level"])) return;
+    
+    key avatar = (key)llJsonGetValue(msg, ["avatar"]);
     if (avatar != CurrentUser) return;
-
-    integer level = (integer)level_str;
+    
+    integer level = (integer)llJsonGetValue(msg, ["level"]);
     
     AclPending = FALSE;
     UserAcl = level;
@@ -212,33 +219,55 @@ show_animation_menu(integer page) {
     integer end_idx = start_idx + PAGE_SIZE - 1;
     if (end_idx >= total_anims) end_idx = total_anims - 1;
     
-    // Build animation buttons for this page (up to 8 animations)
-    list buttons = [];
+    // Fixed layout: 
+    // Indices 0-2: Navigation (<<, >>, Back)
+    // Index 3: [Stop]
+    // Indices 4+: Animations (Sorted Top-to-Bottom, Left-to-Right)
+    
+    // 1. Extract animations for this page
+    list page_anims = [];
     integer i;
     for (i = start_idx; i <= end_idx; i++) {
-        buttons += [llList2String(AnimationList, i)];
+        page_anims += [llList2String(AnimationList, i)];
     }
     
-    // llDialog builds 3x4 grid bottom-right to top-left
-    // We want visual layout:
-    // [Anim 1] [Anim 2] [Anim 3]    
-    // [Anim 4] [Anim 5] [Anim 6] 
-    // [Anim 7] [Anim 8] [Stop]
-    // [Back]   [>>]     [<<]
-    //
-    // Button array indices:
-    // 0=<<, 1=>>, 2=Back, 3=[Stop], 4-11=animations (reversed)
+    integer count = llGetListLength(page_anims);
+    integer total_buttons = 4 + count;
     
-    // Reverse the animations so they display top-left to bottom-right
-    list reversed_anims = [];
-    i = llGetListLength(buttons) - 1;
-    while (i >= 0) {
-        reversed_anims += [llList2String(buttons, i)];
-        i = i - 1;
+    // 2. Initialize button list with placeholders
+    list final_buttons = ["<<", ">>", "Back", "[Stop]"];
+    integer p;
+    for (p = 0; p < count; p++) {
+        final_buttons += [""];
     }
     
-    // Build final array
-    list final_buttons = ["<<", ">>", "Back", "[Stop]"] + reversed_anims;
+    // 3. Define visual rows (Top to Bottom)
+    // Row 4: 9, 10, 11
+    // Row 3: 6, 7, 8
+    // Row 2: 4, 5 (Index 3 is Stop)
+    
+    list target_slots = [];
+    
+    // Row 4
+    if (total_buttons > 9) target_slots += [9];
+    if (total_buttons > 10) target_slots += [10];
+    if (total_buttons > 11) target_slots += [11];
+    
+    // Row 3
+    if (total_buttons > 6) target_slots += [6];
+    if (total_buttons > 7) target_slots += [7];
+    if (total_buttons > 8) target_slots += [8];
+    
+    // Row 2
+    if (total_buttons > 4) target_slots += [4];
+    if (total_buttons > 5) target_slots += [5];
+    
+    // 4. Map animations to slots
+    for (i = 0; i < count; i++) {
+        integer slot = llList2Integer(target_slots, i);
+        string anim = llList2String(page_anims, i);
+        final_buttons = llListReplaceList(final_buttons, [anim], slot, slot);
+    }
     
     string buttons_json = llList2Json(JSON_ARRAY, final_buttons);
     
@@ -389,8 +418,8 @@ default {
     
     link_message(integer sender, integer num, string msg, key id) {
         /* -------------------- KERNEL LIFECYCLE -------------------- */if (num == KERNEL_LIFECYCLE) {
+            if (!json_has(msg, ["type"])) return;
             string msg_type = llJsonGetValue(msg, ["type"]);
-            if (msg_type == JSON_INVALID) return;
             
             // Registration request
             if (msg_type == "register_now") {
@@ -408,12 +437,12 @@ default {
         }
         
         /* -------------------- UI START -------------------- */if (num == UI_BUS) {
+            if (!json_has(msg, ["type"])) return;
             string msg_type = llJsonGetValue(msg, ["type"]);
-            if (msg_type == JSON_INVALID) return;
-
+            
             if (msg_type == "start") {
-                string context = llJsonGetValue(msg, ["context"]);
-                if (context == JSON_INVALID || context != PLUGIN_CONTEXT) return;
+                if (!json_has(msg, ["context"])) return;
+                if (llJsonGetValue(msg, ["context"]) != PLUGIN_CONTEXT) return;
                 
                 if (id == NULL_KEY) return;
                 
@@ -427,8 +456,8 @@ default {
         }
         
         /* -------------------- AUTH RESULT -------------------- */if (num == AUTH_BUS) {
+            if (!json_has(msg, ["type"])) return;
             string msg_type = llJsonGetValue(msg, ["type"]);
-            if (msg_type == JSON_INVALID) return;
             
             if (msg_type == "acl_result") {
                 if (!AclPending) return;
@@ -440,19 +469,18 @@ default {
         }
         
         /* -------------------- DIALOG RESPONSE -------------------- */if (num == DIALOG_BUS) {
+            if (!json_has(msg, ["type"])) return;
             string msg_type = llJsonGetValue(msg, ["type"]);
-            if (msg_type == JSON_INVALID) return;
-
+            
             if (msg_type == "dialog_response") {
-                string session_val = llJsonGetValue(msg, ["session_id"]);
-                if (session_val == JSON_INVALID || session_val != SessionId) return;
-
+                if (!json_has(msg, ["session_id"])) return;
+                if (llJsonGetValue(msg, ["session_id"]) != SessionId) return;
+                
+                if (!json_has(msg, ["button"])) return;
                 string button = llJsonGetValue(msg, ["button"]);
-                if (button == JSON_INVALID) return;
-
-                string user_str = llJsonGetValue(msg, ["user"]);
-                if (user_str == JSON_INVALID) return;
-                key user = (key)user_str;
+                
+                if (!json_has(msg, ["user"])) return;
+                key user = (key)llJsonGetValue(msg, ["user"]);
                 
                 if (user != CurrentUser) return;
                 
@@ -468,8 +496,8 @@ default {
             }
             
             if (msg_type == "dialog_timeout") {
-                string timeout_session = llJsonGetValue(msg, ["session_id"]);
-                if (timeout_session == JSON_INVALID || timeout_session != SessionId) return;
+                if (!json_has(msg, ["session_id"])) return;
+                if (llJsonGetValue(msg, ["session_id"]) != SessionId) return;
                 
                 cleanup_session();
                 return;

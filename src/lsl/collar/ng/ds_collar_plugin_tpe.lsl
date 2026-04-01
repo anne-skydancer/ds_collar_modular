@@ -1,10 +1,11 @@
 /*--------------------
 PLUGIN: ds_collar_plugin_tpe.lsl
 VERSION: 1.00
-REVISION: 20
+REVISION: 22
 PURPOSE: Manage TPE mode with wearer confirmation and owner oversight
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- Updated to use lightweight update_label mechanism for UI toggles
 - Adds wearer confirmation dialog before enabling TPE mode
 - Provides direct owner-driven deactivation returning to root menu
 - Updates button labels dynamically based on TPE state
@@ -25,7 +26,6 @@ string PLUGIN_CONTEXT = "core_tpe";
 string PLUGIN_LABEL_ON = "TPE: Y";
 string PLUGIN_LABEL_OFF = "TPE: N";
 integer PLUGIN_MIN_ACL = 5;  // Primary Owner ONLY
-string ROOT_CONTEXT = "core_root";
 
 /* ACL levels for reference:
    -1 = Blacklisted
@@ -55,10 +55,6 @@ integer AclPending = FALSE;        // Waiting for ACL result
 
 integer json_has(string j, list path) {
     return (llJsonGetValue(j, path) != JSON_INVALID);
-}
-
-integer is_json_arr(string j) {
-    return (llGetSubString(j, 0, 0) == "[");
 }
 
 string gen_session() {
@@ -126,6 +122,22 @@ persist_tpe_mode(integer new_value) {
     llMessageLinked(LINK_SET, SETTINGS_BUS, msg, NULL_KEY);
 }
 
+/* -------------------- UI LABEL UPDATE -------------------- */
+
+update_ui_label() {
+    string new_label = PLUGIN_LABEL_OFF;
+    if (TpeModeEnabled) {
+        new_label = PLUGIN_LABEL_ON;
+    }
+    
+    string msg = llList2Json(JSON_OBJECT, [
+        "type", "update_label",
+        "context", PLUGIN_CONTEXT,
+        "label", new_label
+    ]);
+    llMessageLinked(LINK_SET, UI_BUS, msg, NULL_KEY);
+}
+
 /* -------------------- BUTTON HANDLING -------------------- */
 
 handle_button_click(string button) {
@@ -140,20 +152,14 @@ handle_button_click(string button) {
         }
         
         // Update UI label
-        string new_label = PLUGIN_LABEL_ON;
-        string msg = llList2Json(JSON_OBJECT, [
-            "type", "update_label",
-            "context", PLUGIN_CONTEXT,
-            "label", new_label
-        ]);
-        llMessageLinked(LINK_SET, UI_BUS, msg, NULL_KEY);
+        update_ui_label();
         
         // Close UI for wearer (who clicked the dialog)
         close_ui_for_user(WearerKey);
         
         // Return owner to root menu to see updated button (if different from wearer)
         if (CurrentUser != WearerKey) {
-            msg = llList2Json(JSON_OBJECT, [
+            string msg = llList2Json(JSON_OBJECT, [
                 "type", "return",
                 "user", (string)CurrentUser
             ]);
@@ -211,16 +217,10 @@ handle_tpe_click(key user, integer acl_level) {
         }
 
         // Update UI label
-        string new_label = PLUGIN_LABEL_OFF;
-        string msg = llList2Json(JSON_OBJECT, [
-            "type", "update_label",
-            "context", PLUGIN_CONTEXT,
-            "label", new_label
-        ]);
-        llMessageLinked(LINK_SET, UI_BUS, msg, NULL_KEY);
+        update_ui_label();
         
         // Return owner to root menu (so they see the updated button)
-        msg = llList2Json(JSON_OBJECT, [
+        string msg = llList2Json(JSON_OBJECT, [
             "type", "return",
             "user", (string)user
         ]);
@@ -255,23 +255,22 @@ handle_tpe_click(key user, integer acl_level) {
 /* -------------------- SETTINGS CONSUMPTION -------------------- */
 
 apply_settings_sync(string kv_json) {
-    string tpe_val = llJsonGetValue(kv_json, [KEY_TPE_MODE]);
-    if (tpe_val != JSON_INVALID) {
-        TpeModeEnabled = (integer)tpe_val;
+    if (json_has(kv_json, [KEY_TPE_MODE])) {
+        TpeModeEnabled = (integer)llJsonGetValue(kv_json, [KEY_TPE_MODE]);
     }
 }
 
 apply_settings_delta(string msg) {
+    if (!json_has(msg, ["op"])) return;
+    
     string op = llJsonGetValue(msg, ["op"]);
-    if (op == JSON_INVALID) return;
-
+    
     if (op == "set") {
+        if (!json_has(msg, ["changes"])) return;
         string changes = llJsonGetValue(msg, ["changes"]);
-        if (changes == JSON_INVALID) return;
-
-        string tpe_val = llJsonGetValue(changes, [KEY_TPE_MODE]);
-        if (tpe_val != JSON_INVALID) {
-            TpeModeEnabled = (integer)tpe_val;
+        
+        if (json_has(changes, [KEY_TPE_MODE])) {
+            TpeModeEnabled = (integer)llJsonGetValue(changes, [KEY_TPE_MODE]);
         }
     }
 }
@@ -301,8 +300,8 @@ default
     
     link_message(integer sender_num, integer num, string str, key id) {
         // Skip logging kernel lifecycle messages (too noisy)
-        if (num != KERNEL_LIFECYCLE) {
-        }
+        // if (num != KERNEL_LIFECYCLE) {
+        // }
         
         if (num == KERNEL_LIFECYCLE) {
             string msg_type = llJsonGetValue(str, ["type"]);
@@ -315,8 +314,8 @@ default
             }
             else if (msg_type == "soft_reset" || msg_type == "soft_reset_all") {
                 // Check if this is a targeted reset
-                string target_context = llJsonGetValue(str, ["context"]);
-                if (target_context != JSON_INVALID) {
+                if (json_has(str, ["context"])) {
+                    string target_context = llJsonGetValue(str, ["context"]);
                     if (target_context != "" && target_context != PLUGIN_CONTEXT) {
                         return; // Not for us, ignore
                     }
@@ -329,8 +328,8 @@ default
             string msg_type = llJsonGetValue(str, ["type"]);
             
             if (msg_type == "sync") {
-                string kv_json = llJsonGetValue(str, ["kv"]);
-                if (kv_json != JSON_INVALID) {
+                if (json_has(str, ["kv"])) {
+                    string kv_json = llJsonGetValue(str, ["kv"]);
                     apply_settings_sync(kv_json);
                 }
             }
@@ -364,18 +363,16 @@ default
                 if (!AclPending) {
                     return;
                 }
-                string avatar_str = llJsonGetValue(str, ["avatar"]);
-                if (avatar_str == JSON_INVALID) return;
-
-                key avatar = (key)avatar_str;
-
+                if (!json_has(str, ["avatar"])) return;
+                
+                key avatar = (key)llJsonGetValue(str, ["avatar"]);
+                
                 if (avatar != CurrentUser) {
                     return;
                 }
-
-                string level_str = llJsonGetValue(str, ["level"]);
-                if (level_str == JSON_INVALID) return;
-                integer acl_level = (integer)level_str;
+                
+                if (!json_has(str, ["level"])) return;
+                integer acl_level = (integer)llJsonGetValue(str, ["level"]);
                 
                 AclPending = FALSE;
                 
