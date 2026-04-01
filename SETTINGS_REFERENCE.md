@@ -32,7 +32,20 @@ The settings card is **NOT** a traditional Second Life notecard that you read an
 3. Provides a message-based API for plugins to read/modify settings
 4. Enforces security policies (role separation, key whitelisting, etc.)
 
-**Key Insight:** Settings persist only while the collar is worn. To save settings permanently across resets, you must update the `"settings"` notecard in the collar's inventory.
+### Persistence Model (Three Tiers)
+
+The collar uses a **three-tier persistence model**, not simple RAM-only storage:
+
+| Tier | Storage | Survives Relog | Survives Script Reset | Survives Owner Change |
+|------|---------|:-:|:-:|:-:|
+| **Linkset Data (LSD)** | `llLinksetDataWrite` in `ds_collar_kmod_auth.lsl` | Yes | Yes | No (script resets) |
+| **Script Globals** | `KvJson` in `ds_collar_kmod_settings.lsl` | Yes (same owner) | No | No |
+| **Notecard** | `settings` notecard in collar inventory | Yes | Yes | Yes |
+
+**Key Insights:**
+- **ACL data persists across relogs.** The auth module writes owners, trustees, blacklist, public mode, and TPE mode to linkset data via `persist_acl_cache()`. This survives script resets, detach/reattach, and relogs.
+- **All runtime settings persist across detach/reattach** for the same owner. The settings script only resets on ownership change, so `KvJson` (including values set via UI) survives reattach cycles.
+- **The notecard is a seed**, not the sole source of truth. It provides initial values on first load or after owner change. Notecard edits overlay onto existing settings without wiping runtime changes to other keys.
 
 ---
 
@@ -72,6 +85,7 @@ locked = 0
 bell_visible = 1
 bell_sound_enabled = 1
 bell_volume = 0.5
+# NOTE: These override the code defaults (0, 0, 0.3) to enable the bell
 bell_sound = 16fcf579-82cb-b110-c1a4-5fa5e1385406
 ```
 
@@ -111,9 +125,9 @@ To get someone's UUID in Second Life:
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `bell_visible` | boolean (0/1) | `1` | Show/hide bell prim |
-| `bell_sound_enabled` | boolean (0/1) | `1` | Enable sound on movement |
-| `bell_volume` | float (0.0-1.0) | `0.5` | Sound volume |
+| `bell_visible` | boolean (0/1) | `0` | Show/hide bell prim |
+| `bell_sound_enabled` | boolean (0/1) | `0` | Enable sound on movement |
+| `bell_volume` | float (0.0-1.0) | `0.3` | Sound volume |
 
 ---
 
@@ -140,12 +154,12 @@ trustees = [uuid1, uuid2, uuid3]
 owner_honorifics = [Master, Mistress, Owner]
 ```
 
-**Booleans:** Automatically normalized to `0` or `1`
+**Booleans:** Automatically normalized to `0` or `1` using integer cast
 ```
 public_mode = 1      # Enabled
 tpe_mode = 0         # Disabled
-locked = true        # Also valid, normalized to 1
 ```
+**Warning:** Only numeric values work. Non-numeric strings like `true` or `false` will be cast to `0` by LSL's `(integer)` conversion. Use `1` and `0` only.
 
 **Invalid Lines:** Skipped with a warning in chat
 
@@ -220,10 +234,7 @@ tpe_mode = 1
 **Solutions:**
 1. Verify notecard is named exactly `settings` (lowercase, no extension)
 2. Check the notecard exists in the collar's **Content** tab
-3. Look for parsing errors in local chat:
-   ```
-   [SETTINGS] Invalid line (no separator): ...
-   ```
+3. Note that invalid lines (missing `=` separator) and unknown keys are **silently skipped** — there is no chat warning. Double-check your syntax manually.
 4. Ensure key names match exactly (case-sensitive)
 5. Try detaching and re-attaching the collar
 6. As a last resort, reset all scripts in the collar
@@ -240,16 +251,18 @@ tpe_mode = 1
 
 ### Changes Don't Persist
 
-**Symptom:** Settings reset when collar is detached/reattached
+**Symptom:** Settings reset unexpectedly
 
-**Explanation:** Settings are stored in RAM only during runtime.
+**Explanation:** The collar uses a three-tier persistence model:
+- **ACL data (owners, trustees, blacklist, public mode, TPE)** is written to **linkset data** by the auth module and persists across relogs, script resets, and detach/reattach.
+- **All runtime settings** (including values set via UI) persist in script globals (`KvJson`) across detach/reattach for the **same owner**. They are only lost on script reset or ownership change.
+- **The notecard** provides initial seed values on first load or after owner change.
 
-**Solution:** To persist settings across resets:
-1. Modify the `settings` notecard in the collar's inventory
-2. Save the notecard
-3. Detach and re-attach the collar
+**If settings reset after a relog:** This should not normally happen for ACL data. Check that collar scripts haven't been manually reset.
 
-**Best Practice:** Use the collar's runtime API for temporary changes, update the notecard for permanent configuration.
+**If settings reset after ownership change:** This is expected — all scripts reset on owner change. Update the `settings` notecard for values that must survive ownership transfers.
+
+**Best Practice:** For most use cases, runtime changes (via UI or API) are sufficient — they persist automatically. Only edit the notecard when you need values to survive an ownership change or full script reset.
 
 ### Can't Enable TPE Mode
 
@@ -306,19 +319,16 @@ owner_key = 12345678-1234-1234-1234-123456789abc
 3. If not detected, try detaching and re-attaching
 4. Check for inventory change event in debug logs
 
-### "Unknown key ignored" Warning
+### Unknown Keys Have No Effect
 
-**Symptom:** Chat message shows unknown key
-```
-[SETTINGS] Unknown key ignored: my_custom_key
-```
+**Symptom:** A key in your notecard isn't being applied
 
-**Explanation:** The key is not in the whitelist for security reasons.
+**Explanation:** Keys not in the whitelist are **silently ignored** — there is no chat warning. The system only accepts keys defined in `is_allowed_key()` within `ds_collar_kmod_settings.lsl`.
 
 **Solutions:**
 1. Check spelling of key name (case-sensitive)
-2. Ensure the key is defined in `ds_collar_kmod_settings.lsl`
-3. If adding a new key, follow the [Adding New Settings Keys](#adding-new-settings-keys) guide
+2. Verify the key is one of the 15 recognized settings keys listed in this document
+3. If adding a new key, it must be added to the `is_allowed_key()` whitelist in the settings module
 
 ---
 
@@ -367,14 +377,14 @@ locked = 0
 
 # BELL SETTINGS
 # -------------
-# Bell visibility
-bell_visible = 1
+# Bell visibility (default: 0 = hidden)
+bell_visible = 0
 
-# Bell sound on movement
-bell_sound_enabled = 1
+# Bell sound on movement (default: 0 = off)
+bell_sound_enabled = 0
 
-# Bell volume (0.0 to 1.0)
-bell_volume = 0.5
+# Bell volume (0.0 to 1.0, default: 0.3)
+bell_volume = 0.3
 
 # Bell sound UUID (default jingle bell sound)
 bell_sound = 16fcf579-82cb-b110-c1a4-5fa5e1385406
@@ -392,10 +402,11 @@ bell_sound = 16fcf579-82cb-b110-c1a4-5fa5e1385406
 |---------|------|---------|
 | 1.0 | 2025-10-01 | Initial comprehensive reference guide |
 | 1.1 | 2025-10-31 | Security fix: Added TPE mode validation to notecard parsing; documented notecard ordering requirement |
+| 1.2 | 2026-04-01 | Fact-check corrections: Fixed persistence model to document three-tier storage (LSD, script globals, notecard); corrected bell defaults (visible=0, sound=0, volume=0.3); fixed boolean normalization (only numeric values work, not `true`/`false`); corrected silent handling of unknown/invalid keys; fixed source code path |
 
 ---
 
 **Questions or Issues?**
-Please refer to the [main README](./README.md) or review the [source code](./src/stable/ds_collar_kmod_settings.lsl) for implementation details.
+Please refer to the [main README](./README.md) or review the [source code](./src/lsl/collar/stable/ds_collar_kmod_settings.lsl) for implementation details.
 
 
