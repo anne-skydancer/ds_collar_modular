@@ -1,10 +1,11 @@
 /*--------------------
 PLUGIN: ds_collar_plugin_status.lsl
 VERSION: 1.00
-REVISION: 22
+REVISION: 23
 PURPOSE: Read-only collar status display for owners and observers
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- REVISION 23: Fixed request_settings_sync to use correct "settings_get" message type
 - REVISION 22: Added request_settings_sync() call on state_entry for independent reset recovery
 - Consolidates status presentation into single dialog page
 - Renders owner and trustee lists with honorific annotations
@@ -84,7 +85,7 @@ string generate_session_id() {
 
 request_settings_sync() {
     string msg = llList2Json(JSON_OBJECT, [
-        "type", "sync_request"
+        "type", "settings_get"
     ]);
     llMessageLinked(LINK_SET, SETTINGS_BUS, msg, NULL_KEY);
 }
