@@ -1,10 +1,11 @@
 /*--------------------
 MODULE: ds_collar_kmod_dialogs.lsl
 VERSION: 1.00
-REVISION: 27
+REVISION: 28
 PURPOSE: Centralized dialog management for shared listener handling
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- REVISION 28: Added soft_reset sender validation (authorized senders only)
 - REVERT: Replaced delimited string storage with JSON for robustness against special chars
 - OPTIMIZATION: Replaced strided lists with Parallel Lists for O(1) lookups
 - OPTIMIZATION: Removed internal JSON serialization for button maps (Hot Path)
@@ -19,6 +20,9 @@ CHANGES:
 /* -------------------- CONSOLIDATED ABI -------------------- */
 integer KERNEL_LIFECYCLE = 500;
 integer DIALOG_BUS = 950;
+
+/* -------------------- SECURITY -------------------- */
+list AUTHORIZED_RESET_SENDERS = ["bootstrap", "maintenance", "coordinator", "activator"];
 
 /* -------------------- CONSTANTS -------------------- */
 float CHANNEL_BASE = -8E07;
@@ -497,6 +501,9 @@ default
         /* -------------------- KERNEL LIFECYCLE -------------------- */
         if (num == KERNEL_LIFECYCLE) {
             if (msg_type == "soft_reset" || msg_type == "soft_reset_all") {
+                string from = llJsonGetValue(msg, ["from"]);
+                if (from == JSON_INVALID || from == "") return;
+                if (llListFindList(AUTHORIZED_RESET_SENDERS, [from]) == -1) return;
                 llResetScript();
             }
             return;

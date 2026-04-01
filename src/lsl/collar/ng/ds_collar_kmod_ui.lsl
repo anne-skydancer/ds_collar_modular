@@ -1,10 +1,11 @@
 /*--------------------
 MODULE: ds_collar_kmod_ui.lsl
 VERSION: 1.00
-REVISION: 44
+REVISION: 45
 PURPOSE: Session management, ACL filtering, and plugin list orchestration
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- REVISION 45: Added soft_reset sender validation; replaced O(n^2) JSON counting with llJson2List
 - OPTIMIZATION: Replaced strided lists with Parallel Lists for O(1) lookups
 - OPTIMIZATION: Implemented index-based filtering to reduce memory usage
 - Improved module performance
@@ -21,6 +22,9 @@ integer KERNEL_LIFECYCLE = 500;
 integer AUTH_BUS = 700;
 integer UI_BUS = 900;
 integer DIALOG_BUS = 950;
+
+/* -------------------- SECURITY -------------------- */
+list AUTHORIZED_RESET_SENDERS = ["bootstrap", "maintenance", "coordinator", "activator"];
 
 /* -------------------- CONSTANTS -------------------- */
 string ROOT_CONTEXT = "core_root";
@@ -392,11 +396,8 @@ apply_plugin_list(string plugins_json) {
     
     // Temporary strided list for sorting
     list temp_plugins = [];
-    
-    integer count = 0;
-    while (llJsonValueType(plugins_json, [count]) != JSON_INVALID) {
-        count += 1;
-    }
+
+    integer count = llGetListLength(llJson2List(plugins_json));
     
     integer i = 0;
     while (i < count) {
@@ -441,10 +442,7 @@ apply_plugin_acl_list(string acl_json) {
         return;
     }
 
-    integer count = 0;
-    while (llJsonValueType(acl_json, [count]) != JSON_INVALID) {
-        count += 1;
-    }
+    integer count = llGetListLength(llJson2List(acl_json));
 
     integer i = 0;
     while (i < count) {
@@ -1001,7 +999,12 @@ default
         /* -------------------- KERNEL LIFECYCLE -------------------- */
         if (num == KERNEL_LIFECYCLE) {
             if (msg_type == "plugin_list") handle_plugin_list(msg);
-            else if (msg_type == "soft_reset" || msg_type == "soft_reset_all") llResetScript();
+            else if (msg_type == "soft_reset" || msg_type == "soft_reset_all") {
+                string from = llJsonGetValue(msg, ["from"]);
+                if (from == JSON_INVALID || from == "") return;
+                if (llListFindList(AUTHORIZED_RESET_SENDERS, [from]) == -1) return;
+                llResetScript();
+            }
             return;
         }
 

@@ -1,10 +1,11 @@
 /*--------------------
 PLUGIN: ds_collar_plugin_leash.lsl
 VERSION: 1.00
-REVISION: 25
+REVISION: 26
 PURPOSE: User interface and configuration for the leashing system
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- REVISION 26: Increased STATE_QUERY_DELAY from 0.15s to 0.5s (LSL best practice)
 - REVISION 24: Verified "Yank" button logic compatibility with kernel update.
 - REVISION 23: Removed "Unclip" button for ACL 2 (Owned Wearer). Owned wearers
   must now use the SOS plugin for emergency release.
@@ -32,7 +33,7 @@ string PLUGIN_LABEL = "Leash";
 integer PLUGIN_MIN_ACL = 1;
 
 /* -------------------- CONFIGURATION -------------------- */
-float STATE_QUERY_DELAY = 0.15;  // 150ms delay for non-blocking state queries
+float STATE_QUERY_DELAY = 0.5;  // 500ms delay for non-blocking state queries
 
 list ALLOWED_ACL_GRAB  = [1, 3, 4, 5];
 list ALLOWED_ACL_SETTINGS = [3, 4, 5];

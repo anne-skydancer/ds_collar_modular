@@ -1,10 +1,11 @@
 /*--------------------
 PLUGIN: ds_collar_plugin_lock.lsl
 VERSION: 1.00
-REVISION: 23
+REVISION: 24
 PURPOSE: Toggle collar lock and RLV detach control labels
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- REVISION 24: Removed redundant if/else in apply_settings_sync (both branches identical)
 - Rev 23: Secure defaults - always revert to unlocked when settings missing/deleted
   Visual state now synced to logical state on all settings operations
   Prevents locked-looking collar with unlocked logic after update failures
@@ -96,14 +97,8 @@ apply_settings_sync(string msg) {
     }
     
     // Always sync visual state to logical state
-    // This ensures visual consistency even if no change detected
-    if (old_locked != Locked) {
-        apply_lock_state();
-    }
-    else {
-        // Even if state unchanged, force visual sync (recovery from corrupted state)
-        apply_lock_state();
-    }
+    // Ensures visual consistency even on recovery from corrupted state
+    apply_lock_state();
 }
 
 apply_settings_delta(string msg) {

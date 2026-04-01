@@ -1,10 +1,11 @@
 /*--------------------
 SCRIPT: ds_collar_control_hud.lsl
 VERSION: 1.00
-REVISION: 7
+REVISION: 8
 PURPOSE: Auto-detect nearby collars and connect automatically
 ARCHITECTURE: RLV relay-style broadcast and listen workflow
 CHANGES:
+- REVISION 8: Randomize dialog channel per session instead of fixed -98765
 - Auto-scan on attach with timeout
 - Auto-connect to single collar or show selection dialog
 - ACL level verification before menu display
@@ -31,7 +32,7 @@ integer ACL_PRIMARY_OWNER = 5;
 /* -------------------- DIALOG SETTINGS -------------------- */
 float QUERY_TIMEOUT_SEC = 3.0;
 float COLLAR_SCAN_TIME = 2.0;
-integer DIALOG_CHANNEL = -98765;
+integer DIALOG_CHANNEL;  // Randomized per session in state_entry
 float LONG_TOUCH_THRESHOLD = 1.5;
 integer MAX_DIALOG_BUTTONS = 12;  // llDialog button limit
 
@@ -262,6 +263,7 @@ process_acl_result(integer level) {
 
 default {
     state_entry() {
+        DIALOG_CHANNEL = (integer)(llFrand(-1000000.0) - 1000000);
         cleanup_session();
         HudWearer = llGetOwner();
         TouchStartTime = 0.0;

@@ -1,10 +1,11 @@
 /*--------------------
 MODULE: ds_collar_kmod_leash.lsl
 VERSION: 1.00
-REVISION: 27
+REVISION: 28
 PURPOSE: Leashing engine providing leash services to plugins
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- REVISION 28: Changed FOLLOW_TICK from 0.5s to 2.0s to reduce idle sim load
 - REVISION 25: Code cleanup and optimization.
   - Removed redundant llGetObjectDetails calls in turnToTarget (now accepts vector).
   - Consolidated state setting logic into setLeashState helper.
@@ -115,7 +116,7 @@ integer LastYankTime = 0;
 float YANK_COOLDOWN = 5.0;  // 5 seconds between yanks
 
 // Timers
-float FOLLOW_TICK = 0.5;
+float FOLLOW_TICK = 2.0;
 
 /* -------------------- HELPERS -------------------- */
 

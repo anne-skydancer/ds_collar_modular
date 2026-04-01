@@ -1,10 +1,11 @@
 /*--------------------
 MODULE: ds_collar_kmod_auth.lsl
 VERSION: 1.00
-REVISION: 27
+REVISION: 28
 PURPOSE: Authoritative ACL and policy engine - OPTIMIZED
 ARCHITECTURE: Dispatch table pattern with linkset data cache and JSON templates
 CHANGES:
+- REVISION 28: Added soft_reset sender validation (authorized senders only)
 - REVISION 25: PERFORMANCE OPTIMIZATIONS
   * Implemented dispatch table pattern for ACL computation (15-39% faster)
   * Added JSON response templates (30-40% faster JSON construction)
@@ -24,6 +25,9 @@ CHANGES:
 integer KERNEL_LIFECYCLE = 500;
 integer AUTH_BUS = 700;
 integer SETTINGS_BUS = 800;
+
+/* -------------------- SECURITY -------------------- */
+list AUTHORIZED_RESET_SENDERS = ["bootstrap", "maintenance", "coordinator", "activator"];
 
 /* -------------------- ACL CONSTANTS -------------------- */
 integer ACL_BLACKLIST     = -1;
@@ -882,6 +886,9 @@ default
 
         if (num == KERNEL_LIFECYCLE) {
             if (msg_type == "soft_reset" || msg_type == "soft_reset_all") {
+                string from = llJsonGetValue(msg, ["from"]);
+                if (from == JSON_INVALID || from == "") return;
+                if (llListFindList(AUTHORIZED_RESET_SENDERS, [from]) == -1) return;
                 llResetScript();
             }
         }
