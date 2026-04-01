@@ -212,21 +212,22 @@ safeword_clear_all() {
 /* -------------------- SETTINGS CONSUMPTION -------------------- */
 
 apply_settings_sync(string msg) {
-    if (!json_has(msg, ["kv"])) return;
-    
     string kv_json = llJsonGetValue(msg, ["kv"]);
-    
+    if (kv_json == JSON_INVALID) return;
+
     // Reset to defaults
     Mode = MODE_ON;
     Hardcore = FALSE;
-    
+
     // Load persisted values
-    if (json_has(kv_json, [KEY_RELAY_MODE])) {
-        Mode = (integer)llJsonGetValue(kv_json, [KEY_RELAY_MODE]);
+    string mode_val = llJsonGetValue(kv_json, [KEY_RELAY_MODE]);
+    if (mode_val != JSON_INVALID) {
+        Mode = (integer)mode_val;
     }
-    
-    if (json_has(kv_json, [KEY_RELAY_HARDCORE])) {
-        Hardcore = (integer)llJsonGetValue(kv_json, [KEY_RELAY_HARDCORE]);
+
+    string hardcore_val = llJsonGetValue(kv_json, [KEY_RELAY_HARDCORE]);
+    if (hardcore_val != JSON_INVALID) {
+        Hardcore = (integer)hardcore_val;
     }
     
     // Update relay listen state
@@ -235,21 +236,22 @@ apply_settings_sync(string msg) {
 }
 
 apply_settings_delta(string msg) {
-    if (!json_has(msg, ["op"])) return;
-    
     string op = llJsonGetValue(msg, ["op"]);
-    
+    if (op == JSON_INVALID) return;
+
     if (op == "set") {
-        if (!json_has(msg, ["changes"])) return;
         string changes = llJsonGetValue(msg, ["changes"]);
-        
-        if (json_has(changes, [KEY_RELAY_MODE])) {
-            Mode = (integer)llJsonGetValue(changes, [KEY_RELAY_MODE]);
+        if (changes == JSON_INVALID) return;
+
+        string delta_mode_val = llJsonGetValue(changes, [KEY_RELAY_MODE]);
+        if (delta_mode_val != JSON_INVALID) {
+            Mode = (integer)delta_mode_val;
             update_relay_listen_state();
         }
-        
-        if (json_has(changes, [KEY_RELAY_HARDCORE])) {
-            Hardcore = (integer)llJsonGetValue(changes, [KEY_RELAY_HARDCORE]);
+
+        string delta_hardcore_val = llJsonGetValue(changes, [KEY_RELAY_HARDCORE]);
+        if (delta_hardcore_val != JSON_INVALID) {
+            Hardcore = (integer)delta_hardcore_val;
         }
     }
 }
@@ -288,13 +290,14 @@ request_acl(key user) {
 }
 
 handle_acl_result(string msg) {
-    if (!json_has(msg, ["avatar"])) return;
-    if (!json_has(msg, ["level"])) return;
-    
-    key avatar = (key)llJsonGetValue(msg, ["avatar"]);
+    string avatar_str = llJsonGetValue(msg, ["avatar"]);
+    string level_str = llJsonGetValue(msg, ["level"]);
+    if (avatar_str == JSON_INVALID || level_str == JSON_INVALID) return;
+
+    key avatar = (key)avatar_str;
     if (avatar != CurrentUser) return;
-    
-    integer level = (integer)llJsonGetValue(msg, ["level"]);
+
+    integer level = (integer)level_str;
     
     AclPending = FALSE;
     UserAcl = level;
@@ -561,13 +564,12 @@ handle_ground_rez() {
 /* -------------------- MESSAGE HANDLERS -------------------- */
 
 handle_start(string msg) {
-    if (!json_has(msg, ["context"])) return;
-    if (!json_has(msg, ["user"])) return;
-    
     string context = llJsonGetValue(msg, ["context"]);
+    string user_str = llJsonGetValue(msg, ["user"]);
+    if (context == JSON_INVALID || user_str == JSON_INVALID) return;
     if (context != PLUGIN_CONTEXT) return;
-    
-    key user = (key)llJsonGetValue(msg, ["user"]);
+
+    key user = (key)user_str;
     
     // Start new session
     CurrentUser = user;
@@ -576,20 +578,16 @@ handle_start(string msg) {
 }
 
 handle_dialog_response(string msg) {
-    if (!json_has(msg, ["session_id"])) return;
-    if (!json_has(msg, ["button"])) return;
-    
     string session = llJsonGetValue(msg, ["session_id"]);
-    if (session != SessionId) return;
-    
     string button = llJsonGetValue(msg, ["button"]);
+    if (session == JSON_INVALID || button == JSON_INVALID) return;
+    if (session != SessionId) return;
     handle_button_click(button);
 }
 
 handle_dialog_timeout(string msg) {
-    if (!json_has(msg, ["session_id"])) return;
-    
     string session = llJsonGetValue(msg, ["session_id"]);
+    if (session == JSON_INVALID) return;
     if (session != SessionId) return;
     cleanup_session();
 }
@@ -721,9 +719,8 @@ default
     }
     
     link_message(integer sender, integer num, string msg, key id) {
-        if (!json_has(msg, ["type"])) return;
-        
         string msg_type = llJsonGetValue(msg, ["type"]);
+        if (msg_type == JSON_INVALID) return;
         
         /* -------------------- LIFECYCLE -------------------- */
         if (num == KERNEL_LIFECYCLE) {

@@ -65,8 +65,9 @@ integer json_has(string j, list path) {
     return (llJsonGetValue(j, path) != JSON_INVALID);
 }
 string get_msg_type(string msg) {
-    if (!json_has(msg, ["type"])) return "";
-    return llJsonGetValue(msg, ["type"]);
+    string val = llJsonGetValue(msg, ["type"]);
+    if (val == JSON_INVALID) return "";
+    return val;
 }
 
 
@@ -508,8 +509,6 @@ integer is_safe_field_name(string field_name) {
 // SECURITY: Validates field_name to prevent JSON injection
 // PRECONDITION: field_name must contain only alphanumeric characters and underscores
 route_field(string msg, string context, string field_name, string route_type, integer channel) {
-    if (!json_has(msg, [field_name])) return;
-
     // SECURITY: Validate field_name before manual JSON construction
     if (!is_safe_field_name(field_name)) {
         llOwnerSay("[KERNEL] ERROR: Unsafe field name rejected: " + field_name);
@@ -517,6 +516,7 @@ route_field(string msg, string context, string field_name, string route_type, in
     }
 
     string field_value = llJsonGetValue(msg, [field_name]);
+    if (field_value == JSON_INVALID) return;
 
     // Build base message with proper encoding for type and context
     string routed_msg = llList2Json(JSON_OBJECT, [
@@ -536,28 +536,24 @@ route_field(string msg, string context, string field_name, string route_type, in
 /* -------------------- MESSAGE HANDLERS -------------------- */
 
 handle_register(string msg) {
-    if (!json_has(msg, ["context"])) return;
-    if (!json_has(msg, ["label"])) return;
-    if (!json_has(msg, ["min_acl"])) return;
-    if (!json_has(msg, ["script"])) return;
-
     string context = llJsonGetValue(msg, ["context"]);
     string label = llJsonGetValue(msg, ["label"]);
-    integer min_acl = (integer)llJsonGetValue(msg, ["min_acl"]);
+    string min_acl_str = llJsonGetValue(msg, ["min_acl"]);
     string script = llJsonGetValue(msg, ["script"]);
+    if (context == JSON_INVALID || label == JSON_INVALID || min_acl_str == JSON_INVALID || script == JSON_INVALID) return;
+
+    integer min_acl = (integer)min_acl_str;
 
     // Add to lifecycle queue (kernel stores min_acl for auth recovery, not enforcement)
     queue_add("REG", context, label, script, min_acl);
 
     // Route fields to interested modules
     route_field(msg, context, "min_acl", "register_acl", AUTH_BUS);
-    route_field(msg, context, "commands", "chatcmd_register", UI_BUS);
 }
 
 handle_pong(string msg) {
-    if (!json_has(msg, ["context"])) return;
-    
     string context = llJsonGetValue(msg, ["context"]);
+    if (context == JSON_INVALID) return;
     update_last_seen(context);
     // Pong logging disabled - too noisy
 }

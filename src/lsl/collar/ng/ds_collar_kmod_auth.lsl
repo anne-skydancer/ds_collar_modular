@@ -352,9 +352,8 @@ enforce_role_exclusivity() {
 /* -------------------- SETTINGS CONSUMPTION -------------------- */
 
 apply_settings_sync(string msg) {
-    if (!json_has(msg, ["kv"])) return;
-    
     string kv_json = llJsonGetValue(msg, ["kv"]);
+    if (kv_json == JSON_INVALID) return;
     
     // Reset to defaults
     MultiOwnerMode = FALSE;
@@ -366,41 +365,45 @@ apply_settings_sync(string msg) {
     TpeMode = FALSE;
     
     // Load values
-    if (json_has(kv_json, [KEY_MULTI_OWNER_MODE])) {
-        MultiOwnerMode = (integer)llJsonGetValue(kv_json, [KEY_MULTI_OWNER_MODE]);
+    string multi_owner_val = llJsonGetValue(kv_json, [KEY_MULTI_OWNER_MODE]);
+    if (multi_owner_val != JSON_INVALID) {
+        MultiOwnerMode = (integer)multi_owner_val;
     }
-    
-    if (json_has(kv_json, [KEY_OWNER_KEY])) {
-        OwnerKey = (key)llJsonGetValue(kv_json, [KEY_OWNER_KEY]);
+
+    string owner_key_val = llJsonGetValue(kv_json, [KEY_OWNER_KEY]);
+    if (owner_key_val != JSON_INVALID) {
+        OwnerKey = (key)owner_key_val;
     }
-    
-    if (json_has(kv_json, [KEY_OWNER_KEYS])) {
-        string owner_keys_json = llJsonGetValue(kv_json, [KEY_OWNER_KEYS]);
+
+    string owner_keys_json = llJsonGetValue(kv_json, [KEY_OWNER_KEYS]);
+    if (owner_keys_json != JSON_INVALID) {
         if (is_json_arr(owner_keys_json)) {
             OwnerKeys = llJson2List(owner_keys_json);
         }
     }
-    
-    if (json_has(kv_json, [KEY_TRUSTEES])) {
-        string trustees_json = llJsonGetValue(kv_json, [KEY_TRUSTEES]);
+
+    string trustees_json = llJsonGetValue(kv_json, [KEY_TRUSTEES]);
+    if (trustees_json != JSON_INVALID) {
         if (is_json_arr(trustees_json)) {
             TrusteeList = llJson2List(trustees_json);
         }
     }
-    
-    if (json_has(kv_json, [KEY_BLACKLIST])) {
-        string blacklist_json = llJsonGetValue(kv_json, [KEY_BLACKLIST]);
+
+    string blacklist_json = llJsonGetValue(kv_json, [KEY_BLACKLIST]);
+    if (blacklist_json != JSON_INVALID) {
         if (is_json_arr(blacklist_json)) {
             Blacklist = llJson2List(blacklist_json);
         }
     }
-    
-    if (json_has(kv_json, [KEY_PUBLIC_ACCESS])) {
-        PublicMode = (integer)llJsonGetValue(kv_json, [KEY_PUBLIC_ACCESS]);
+
+    string public_val = llJsonGetValue(kv_json, [KEY_PUBLIC_ACCESS]);
+    if (public_val != JSON_INVALID) {
+        PublicMode = (integer)public_val;
     }
-    
-    if (json_has(kv_json, [KEY_TPE_MODE])) {
-        TpeMode = (integer)llJsonGetValue(kv_json, [KEY_TPE_MODE]);
+
+    string tpe_val = llJsonGetValue(kv_json, [KEY_TPE_MODE]);
+    if (tpe_val != JSON_INVALID) {
+        TpeMode = (integer)tpe_val;
     }
     
     // SECURITY FIX: Enforce role exclusivity after loading
@@ -421,34 +424,34 @@ apply_settings_sync(string msg) {
 }
 
 apply_settings_delta(string msg) {
-    if (!json_has(msg, ["op"])) return;
-    
     string op = llJsonGetValue(msg, ["op"]);
-    
+    if (op == JSON_INVALID) return;
+
     if (op == "set") {
-        if (!json_has(msg, ["changes"])) return;
         string changes = llJsonGetValue(msg, ["changes"]);
-        
-        if (json_has(changes, [KEY_PUBLIC_ACCESS])) {
-            PublicMode = (integer)llJsonGetValue(changes, [KEY_PUBLIC_ACCESS]);
+        if (changes == JSON_INVALID) return;
+
+        string public_val = llJsonGetValue(changes, [KEY_PUBLIC_ACCESS]);
+        if (public_val != JSON_INVALID) {
+            PublicMode = (integer)public_val;
         }
-        
-        if (json_has(changes, [KEY_TPE_MODE])) {
-            TpeMode = (integer)llJsonGetValue(changes, [KEY_TPE_MODE]);
+
+        string tpe_val = llJsonGetValue(changes, [KEY_TPE_MODE]);
+        if (tpe_val != JSON_INVALID) {
+            TpeMode = (integer)tpe_val;
         }
-        
-        if (json_has(changes, [KEY_OWNER_KEY])) {
-            OwnerKey = (key)llJsonGetValue(changes, [KEY_OWNER_KEY]);
+
+        string owner_key_val = llJsonGetValue(changes, [KEY_OWNER_KEY]);
+        if (owner_key_val != JSON_INVALID) {
+            OwnerKey = (key)owner_key_val;
             // Enforce exclusivity after owner change
             enforce_role_exclusivity();
         }
     }
     else if (op == "list_add") {
-        if (!json_has(msg, ["key"])) return;
-        if (!json_has(msg, ["elem"])) return;
-        
         string key_name = llJsonGetValue(msg, ["key"]);
         string elem = llJsonGetValue(msg, ["elem"]);
+        if (key_name == JSON_INVALID || elem == JSON_INVALID) return;
         
         if (key_name == KEY_OWNER_KEYS) {
             if (llListFindList(OwnerKeys, [elem]) == -1) {
@@ -471,11 +474,9 @@ apply_settings_delta(string msg) {
         }
     }
     else if (op == "list_remove") {
-        if (!json_has(msg, ["key"])) return;
-        if (!json_has(msg, ["elem"])) return;
-        
         string key_name = llJsonGetValue(msg, ["key"]);
         string elem = llJsonGetValue(msg, ["elem"]);
+        if (key_name == JSON_INVALID || elem == JSON_INVALID) return;
         
         if (key_name == KEY_OWNER_KEYS) {
             integer idx = llListFindList(OwnerKeys, [elem]);
@@ -504,14 +505,15 @@ apply_settings_delta(string msg) {
 /* -------------------- MESSAGE HANDLERS -------------------- */
 
 handle_acl_query(string msg) {
-    if (!json_has(msg, ["avatar"])) return;
+    string avatar_str = llJsonGetValue(msg, ["avatar"]);
+    if (avatar_str == JSON_INVALID) return;
 
-    key av = (key)llJsonGetValue(msg, ["avatar"]);
+    key av = (key)avatar_str;
     if (av == NULL_KEY) return;
 
-    string correlation_id = "";
-    if (json_has(msg, ["id"])) {
-        correlation_id = llJsonGetValue(msg, ["id"]);
+    string correlation_id = llJsonGetValue(msg, ["id"]);
+    if (correlation_id == JSON_INVALID) {
+        correlation_id = "";
     }
 
     if (!SettingsReady) {
@@ -529,21 +531,21 @@ handle_acl_query(string msg) {
 }
 
 handle_register_acl(string msg) {
-    if (!json_has(msg, ["context"])) return;
-    if (!json_has(msg, ["min_acl"])) return;
-
     string context = llJsonGetValue(msg, ["context"]);
-    integer min_acl = (integer)llJsonGetValue(msg, ["min_acl"]);
+    string min_acl_val = llJsonGetValue(msg, ["min_acl"]);
+    if (context == JSON_INVALID || min_acl_val == JSON_INVALID) return;
+
+    integer min_acl = (integer)min_acl_val;
 
     register_plugin_acl(context, min_acl);
 }
 
 handle_filter_plugins(string msg) {
-    if (!json_has(msg, ["user"])) return;
-    if (!json_has(msg, ["contexts"])) return;
-
-    key user = (key)llJsonGetValue(msg, ["user"]);
+    string user_str = llJsonGetValue(msg, ["user"]);
     string contexts_json = llJsonGetValue(msg, ["contexts"]);
+    if (user_str == JSON_INVALID || contexts_json == JSON_INVALID) return;
+
+    key user = (key)user_str;
 
     // Parse contexts array
     list contexts = llJson2List(contexts_json);
@@ -590,9 +592,8 @@ default
     }
     
     link_message(integer sender, integer num, string msg, key id) {
-        if (!json_has(msg, ["type"])) return;
-
         string msg_type = llJsonGetValue(msg, ["type"]);
+        if (msg_type == JSON_INVALID) return;
 
         /* -------------------- KERNEL LIFECYCLE -------------------- */
         if (num == KERNEL_LIFECYCLE) {

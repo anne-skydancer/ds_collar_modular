@@ -255,22 +255,23 @@ handle_tpe_click(key user, integer acl_level) {
 /* -------------------- SETTINGS CONSUMPTION -------------------- */
 
 apply_settings_sync(string kv_json) {
-    if (json_has(kv_json, [KEY_TPE_MODE])) {
-        TpeModeEnabled = (integer)llJsonGetValue(kv_json, [KEY_TPE_MODE]);
+    string tpe_val = llJsonGetValue(kv_json, [KEY_TPE_MODE]);
+    if (tpe_val != JSON_INVALID) {
+        TpeModeEnabled = (integer)tpe_val;
     }
 }
 
 apply_settings_delta(string msg) {
-    if (!json_has(msg, ["op"])) return;
-    
     string op = llJsonGetValue(msg, ["op"]);
-    
+    if (op == JSON_INVALID) return;
+
     if (op == "set") {
-        if (!json_has(msg, ["changes"])) return;
         string changes = llJsonGetValue(msg, ["changes"]);
-        
-        if (json_has(changes, [KEY_TPE_MODE])) {
-            TpeModeEnabled = (integer)llJsonGetValue(changes, [KEY_TPE_MODE]);
+        if (changes == JSON_INVALID) return;
+
+        string tpe_val = llJsonGetValue(changes, [KEY_TPE_MODE]);
+        if (tpe_val != JSON_INVALID) {
+            TpeModeEnabled = (integer)tpe_val;
         }
     }
 }
@@ -314,8 +315,8 @@ default
             }
             else if (msg_type == "soft_reset" || msg_type == "soft_reset_all") {
                 // Check if this is a targeted reset
-                if (json_has(str, ["context"])) {
-                    string target_context = llJsonGetValue(str, ["context"]);
+                string target_context = llJsonGetValue(str, ["context"]);
+                if (target_context != JSON_INVALID) {
                     if (target_context != "" && target_context != PLUGIN_CONTEXT) {
                         return; // Not for us, ignore
                     }
@@ -328,8 +329,8 @@ default
             string msg_type = llJsonGetValue(str, ["type"]);
             
             if (msg_type == "sync") {
-                if (json_has(str, ["kv"])) {
-                    string kv_json = llJsonGetValue(str, ["kv"]);
+                string kv_json = llJsonGetValue(str, ["kv"]);
+                if (kv_json != JSON_INVALID) {
                     apply_settings_sync(kv_json);
                 }
             }
@@ -363,16 +364,18 @@ default
                 if (!AclPending) {
                     return;
                 }
-                if (!json_has(str, ["avatar"])) return;
-                
-                key avatar = (key)llJsonGetValue(str, ["avatar"]);
-                
+                string avatar_str = llJsonGetValue(str, ["avatar"]);
+                if (avatar_str == JSON_INVALID) return;
+
+                key avatar = (key)avatar_str;
+
                 if (avatar != CurrentUser) {
                     return;
                 }
-                
-                if (!json_has(str, ["level"])) return;
-                integer acl_level = (integer)llJsonGetValue(str, ["level"]);
+
+                string level_str = llJsonGetValue(str, ["level"]);
+                if (level_str == JSON_INVALID) return;
+                integer acl_level = (integer)level_str;
                 
                 AclPending = FALSE;
                 

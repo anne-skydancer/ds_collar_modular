@@ -18,7 +18,6 @@ CHANGES:
 /* -------------------- CONSOLIDATED ABI -------------------- */
 integer KERNEL_LIFECYCLE = 500;
 integer AUTH_BUS = 700;
-integer SETTINGS_BUS = 800;
 integer UI_BUS = 900;
 integer DIALOG_BUS = 950;
 
@@ -114,25 +113,6 @@ register_self() {
         "label", PLUGIN_LABEL,
         "min_acl", PLUGIN_MIN_ACL,
         "script", llGetScriptName()
-    ]), NULL_KEY);
-}
-
-/* -------------------- CHAT COMMAND REGISTRATION -------------------- */
-register_chat_commands() {
-    string commands_key = "chatcmd_registry_" + PLUGIN_CONTEXT;
-    llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
-        "type", "set",
-        "key", commands_key,
-        "value", llList2Json(JSON_ARRAY, [
-            "clip",
-            "unclip",
-            "yank",
-            "length",
-            "turn",
-            "pass",
-            "coffle",
-            "post"
-        ])
     ]), NULL_KEY);
 }
 
@@ -441,165 +421,6 @@ sendSetLength(integer length) {
     ]), CurrentUser);
 }
 
-/* -------------------- CHAT COMMAND HELPERS -------------------- */
-cmdSendAction(string action, key user) {
-    llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
-        "type", "leash_action",
-        "action", action,
-        "acl_verified", "1"
-    ]), user);
-}
-
-cmdSendActionWithParam(string action, string param_key, string param_value, key user) {
-    llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
-        "type", "leash_action",
-        "action", action,
-        param_key, param_value,
-        "acl_verified", "1"
-    ]), user);
-}
-
-cmdDeny(key user, string reason) {
-    llRegionSayTo(user, 0, "Access denied: " + reason);
-}
-
-cmdReply(key user, string message) {
-    llRegionSayTo(user, 0, message);
-}
-
-/* -------------------- CHAT COMMAND HANDLER -------------------- */
-handleChatCommand(string msg, key user) {
-    if (!json_has(msg, ["command"]) || !json_has(msg, ["context"])) return;
-
-    string context = llJsonGetValue(msg, ["context"]);
-    if (context != PLUGIN_CONTEXT) return;
-
-    string command = llJsonGetValue(msg, ["command"]);
-    integer acl_level = (integer)llJsonGetValue(msg, ["acl_level"]);
-
-    list args = [];
-    if (json_has(msg, ["args"])) {
-        string args_json = llJsonGetValue(msg, ["args"]);
-        string num_str = llJsonGetValue(args_json, ["length"]);
-        if (num_str != JSON_INVALID) {
-            integer num_args = (integer)num_str;
-            integer i = 0;
-            while (i < num_args) {
-                args += [llJsonGetValue(args_json, [i])];
-                i = i + 1;
-            }
-        }
-    }
-
-
-    if (command == "clip") {
-        if (!inAllowedList(acl_level, ALLOWED_ACL_GRAB)) {
-            cmdDeny(user, "insufficient permissions to grab leash");
-        }
-        else {
-            cmdSendAction("grab", user);
-            cmdReply(user, "Leash grabbed.");
-        }
-    }
-    else if (command == "unclip") {
-        if (acl_level < 2 && user != Leasher) {
-            cmdDeny(user, "only leasher or authorized users can release");
-        }
-        else {
-            cmdSendAction("release", user);
-            cmdReply(user, "Leash released.");
-        }
-    }
-    else if (command == "yank") {
-        if (user != Leasher) {
-            cmdReply(user, "Only the current leasher can yank.");
-        }
-        else {
-            cmdSendAction("yank", user);
-        }
-    }
-    else if (command == "length") {
-        if (!inAllowedList(acl_level, ALLOWED_ACL_SETTINGS)) {
-            cmdDeny(user, "insufficient permissions to change leash length");
-        }
-        else if (llGetListLength(args) == 0) {
-            cmdReply(user, "Usage: <prefix>length <number>");
-        }
-        else {
-            integer length = (integer)llList2String(args, 0);
-            if (length < 1 || length > 20) {
-                cmdReply(user, "Length must be between 1 and 20 meters.");
-            }
-            else {
-                cmdSendActionWithParam("set_length", "length", (string)length, user);
-                cmdReply(user, "Leash length set to " + (string)length + "m");
-            }
-        }
-    }
-    else if (command == "turn") {
-        if (!inAllowedList(acl_level, ALLOWED_ACL_SETTINGS)) {
-            cmdDeny(user, "insufficient permissions to change settings");
-        }
-        else if (llGetListLength(args) == 0) {
-            cmdSendAction("toggle_turn", user);
-            cmdReply(user, "Turn-to-face toggled");
-        }
-        else {
-            string arg = llToLower(llList2String(args, 0));
-            if (arg != "on" && arg != "off") {
-                cmdReply(user, "Usage: <prefix>turn [on|off]");
-            }
-            else if (TurnToFace == (arg == "on")) {
-                cmdReply(user, "Turn-to-face already " + arg);
-            }
-            else {
-                cmdSendAction("toggle_turn", user);
-                cmdReply(user, "Turn-to-face " + arg);
-            }
-        }
-    }
-    else if (command == "pass") {
-        if (user != Leasher && !inAllowedList(acl_level, [3, 4, 5])) {
-            cmdDeny(user, "insufficient permissions to pass leash");
-        }
-        else if (!Leashed) {
-            cmdReply(user, "Not currently leashed.");
-        }
-        else {
-            CurrentUser = user;
-            UserAcl = acl_level;
-            IsOfferMode = FALSE;
-            showPassMenu();
-        }
-    }
-    else if (command == "coffle") {
-        if (!inAllowedList(acl_level, ALLOWED_ACL_COFFLE)) {
-            cmdDeny(user, "insufficient permissions for coffle");
-        }
-        else if (Leashed) {
-            cmdReply(user, "Already leashed. Unclip first.");
-        }
-        else {
-            CurrentUser = user;
-            UserAcl = acl_level;
-            showCoffleMenu();
-        }
-    }
-    else if (command == "post") {
-        if (!inAllowedList(acl_level, ALLOWED_ACL_POST)) {
-            cmdDeny(user, "insufficient permissions to post");
-        }
-        else if (Leashed) {
-            cmdReply(user, "Already leashed. Unclip first.");
-        }
-        else {
-            CurrentUser = user;
-            UserAcl = acl_level;
-            showPostMenu();
-        }
-    }
-}
-
 /* -------------------- BUTTON HANDLERS -------------------- */
 handleButtonClick(string button) {
     
@@ -843,7 +664,6 @@ default
     state_entry() {
         cleanupSession();
         register_self();
-        register_chat_commands();
         queryState();
     }
     
@@ -867,8 +687,8 @@ default
 
     link_message(integer sender, integer num, string msg, key id) {
         if (num == KERNEL_LIFECYCLE) {
-            if (!json_has(msg, ["type"])) return;
             string msg_type = llJsonGetValue(msg, ["type"]);
+            if (msg_type == JSON_INVALID) return;
 
             if (msg_type == "register_now") {
                 register_self();
@@ -883,35 +703,41 @@ default
         }
 
         if (num == UI_BUS) {
-            if (!json_has(msg, ["type"])) return;
             string msg_type = llJsonGetValue(msg, ["type"]);
+            if (msg_type == JSON_INVALID) return;
 
             if (msg_type == "start") {
-                if (!json_has(msg, ["context"])) return;
-                if (llJsonGetValue(msg, ["context"]) != PLUGIN_CONTEXT) return;
+                string start_context = llJsonGetValue(msg, ["context"]);
+                if (start_context == JSON_INVALID || start_context != PLUGIN_CONTEXT) return;
                 CurrentUser = id;
                 requestAcl(id);
                 return;
             }
 
             if (msg_type == "leash_state") {
-                if (json_has(msg, ["leashed"])) {
-                    Leashed = (integer)llJsonGetValue(msg, ["leashed"]);
+                string leashed_val = llJsonGetValue(msg, ["leashed"]);
+                if (leashed_val != JSON_INVALID) {
+                    Leashed = (integer)leashed_val;
                 }
-                if (json_has(msg, ["leasher"])) {
-                    Leasher = (key)llJsonGetValue(msg, ["leasher"]);
+                string leasher_val = llJsonGetValue(msg, ["leasher"]);
+                if (leasher_val != JSON_INVALID) {
+                    Leasher = (key)leasher_val;
                 }
-                if (json_has(msg, ["length"])) {
-                    LeashLength = (integer)llJsonGetValue(msg, ["length"]);
+                string length_val = llJsonGetValue(msg, ["length"]);
+                if (length_val != JSON_INVALID) {
+                    LeashLength = (integer)length_val;
                 }
-                if (json_has(msg, ["turnto"])) {
-                    TurnToFace = (integer)llJsonGetValue(msg, ["turnto"]);
+                string turnto_val = llJsonGetValue(msg, ["turnto"]);
+                if (turnto_val != JSON_INVALID) {
+                    TurnToFace = (integer)turnto_val;
                 }
-                if (json_has(msg, ["mode"])) {
-                    LeashMode = (integer)llJsonGetValue(msg, ["mode"]);
+                string mode_val = llJsonGetValue(msg, ["mode"]);
+                if (mode_val != JSON_INVALID) {
+                    LeashMode = (integer)mode_val;
                 }
-                if (json_has(msg, ["target"])) {
-                    LeashTarget = (key)llJsonGetValue(msg, ["target"]);
+                string target_val = llJsonGetValue(msg, ["target"]);
+                if (target_val != JSON_INVALID) {
+                    LeashTarget = (key)target_val;
                 }
 
                 // If we were waiting for state update, show the pending menu
@@ -933,32 +759,32 @@ default
             }
 
             if (msg_type == "offer_pending") {
-                if (!json_has(msg, ["target"]) || !json_has(msg, ["originator"])) return;
-                key target = (key)llJsonGetValue(msg, ["target"]);
-                key originator = (key)llJsonGetValue(msg, ["originator"]);
+                string offer_target_str = llJsonGetValue(msg, ["target"]);
+                string offer_originator_str = llJsonGetValue(msg, ["originator"]);
+                if (offer_target_str == JSON_INVALID || offer_originator_str == JSON_INVALID) return;
+                key target = (key)offer_target_str;
+                key originator = (key)offer_originator_str;
                 showOfferDialog(target, originator);
                 return;
             }
 
-            if (msg_type == "chatcmd_invoke") {
-                handleChatCommand(msg, id);
-                return;
-            }
         }
 
         if (num == AUTH_BUS) {
-            if (!json_has(msg, ["type"])) return;
-            string msg_type = llJsonGetValue(msg, ["type"]);
+            string auth_msg_type = llJsonGetValue(msg, ["type"]);
+            if (auth_msg_type == JSON_INVALID) return;
 
-            if (msg_type == "acl_result") {
+            if (auth_msg_type == "acl_result") {
                 if (!AclPending) return;
-                if (!json_has(msg, ["avatar"])) return;
+                string avatar_str = llJsonGetValue(msg, ["avatar"]);
+                if (avatar_str == JSON_INVALID) return;
 
-                key avatar = (key)llJsonGetValue(msg, ["avatar"]);
+                key avatar = (key)avatar_str;
                 if (avatar != CurrentUser) return;
 
-                if (json_has(msg, ["level"])) {
-                    UserAcl = (integer)llJsonGetValue(msg, ["level"]);
+                string level_val = llJsonGetValue(msg, ["level"]);
+                if (level_val != JSON_INVALID) {
+                    UserAcl = (integer)level_val;
                     AclPending = FALSE;
                     scheduleStateQuery("main");
                 }
@@ -968,14 +794,13 @@ default
         }
 
         if (num == DIALOG_BUS) {
-            if (!json_has(msg, ["type"])) return;
-            string msg_type = llJsonGetValue(msg, ["type"]);
+            string dialog_msg_type = llJsonGetValue(msg, ["type"]);
+            if (dialog_msg_type == JSON_INVALID) return;
 
-            if (msg_type == "dialog_response") {
-                if (!json_has(msg, ["session_id"]) || !json_has(msg, ["button"])) return;
-                
+            if (dialog_msg_type == "dialog_response") {
                 string response_session = llJsonGetValue(msg, ["session_id"]);
                 string button = llJsonGetValue(msg, ["button"]);
+                if (response_session == JSON_INVALID || button == JSON_INVALID) return;
                 
                 // Check if this is an offer dialog response
                 if (response_session == OfferDialogSession) {
@@ -989,10 +814,9 @@ default
                 return;
             }
 
-            if (msg_type == "dialog_timeout") {
-                if (!json_has(msg, ["session_id"])) return;
-                
+            if (dialog_msg_type == "dialog_timeout") {
                 string timeout_session = llJsonGetValue(msg, ["session_id"]);
+                if (timeout_session == JSON_INVALID) return;
                 
                 // Check if this is an offer dialog timeout
                 if (timeout_session == OfferDialogSession) {

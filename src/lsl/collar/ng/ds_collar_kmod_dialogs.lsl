@@ -19,7 +19,7 @@ integer KERNEL_LIFECYCLE = 500;
 integer DIALOG_BUS = 950;
 
 /* -------------------- CONSTANTS -------------------- */
-integer CHANNEL_BASE = (integer)-8E07;
+integer CHANNEL_BASE = -80000000;
 integer SESSION_MAX = 10;  // Maximum concurrent sessions
 
 /* Session list stride: [session_id, user_key, channel, listen_handle, timeout_unix, button_map] */
@@ -50,8 +50,9 @@ integer json_has(string j, list path) {
     return (llJsonGetValue(j, path) != JSON_INVALID);
 }
 string get_msg_type(string msg) {
-    if (!json_has(msg, ["type"])) return "";
-    return llJsonGetValue(msg, ["type"]);
+    string msg_type = llJsonGetValue(msg, ["type"]);
+    if (msg_type == JSON_INVALID) return "";
+    return msg_type;
 }
 
 
@@ -222,7 +223,8 @@ handle_dialog_open(string msg) {
     key user = (key)llJsonGetValue(msg, ["user"]);
 
     // Check for numbered list type
-    if (json_has(msg, ["dialog_type"]) && llJsonGetValue(msg, ["dialog_type"]) == "numbered_list") {
+    string dialog_type_val = llJsonGetValue(msg, ["dialog_type"]);
+    if (dialog_type_val != JSON_INVALID && dialog_type_val == "numbered_list") {
         handle_numbered_list_dialog(msg, session_id, user);
         return;
     }
@@ -303,17 +305,23 @@ handle_dialog_open(string msg) {
     string message = "Select an option:";
     integer timeout = 60;
 
-    if (json_has(msg, ["title"])) {
-        title = llJsonGetValue(msg, ["title"]);
+    string title_val = llJsonGetValue(msg, ["title"]);
+    if (title_val != JSON_INVALID) {
+        title = title_val;
     }
-    if (json_has(msg, ["body"])) {
-        message = llJsonGetValue(msg, ["body"]);
+    string body_val = llJsonGetValue(msg, ["body"]);
+    if (body_val != JSON_INVALID) {
+        message = body_val;
     }
-    else if (json_has(msg, ["message"])) {
-        message = llJsonGetValue(msg, ["message"]);
+    else {
+        string message_val = llJsonGetValue(msg, ["message"]);
+        if (message_val != JSON_INVALID) {
+            message = message_val;
+        }
     }
-    if (json_has(msg, ["timeout"])) {
-        timeout = (integer)llJsonGetValue(msg, ["timeout"]);
+    string timeout_val = llJsonGetValue(msg, ["timeout"]);
+    if (timeout_val != JSON_INVALID) {
+        timeout = (integer)timeout_val;
     }
 
     // Close existing session with same ID
@@ -355,14 +363,17 @@ handle_numbered_list_dialog(string msg, string session_id, key user) {
     string prompt = "Choose:";
     integer timeout = 60;
     
-    if (json_has(msg, ["title"])) {
-        title = llJsonGetValue(msg, ["title"]);
+    string title_val = llJsonGetValue(msg, ["title"]);
+    if (title_val != JSON_INVALID) {
+        title = title_val;
     }
-    if (json_has(msg, ["prompt"])) {
-        prompt = llJsonGetValue(msg, ["prompt"]);
+    string prompt_val = llJsonGetValue(msg, ["prompt"]);
+    if (prompt_val != JSON_INVALID) {
+        prompt = prompt_val;
     }
-    if (json_has(msg, ["timeout"])) {
-        timeout = (integer)llJsonGetValue(msg, ["timeout"]);
+    string timeout_val = llJsonGetValue(msg, ["timeout"]);
+    if (timeout_val != JSON_INVALID) {
+        timeout = (integer)timeout_val;
     }
     
     // Parse items
@@ -432,9 +443,8 @@ handle_numbered_list_dialog(string msg, string session_id, key user) {
 }
 
 handle_dialog_close(string msg) {
-    if (!json_has(msg, ["session_id"])) return;
-    
     string session_id = llJsonGetValue(msg, ["session_id"]);
+    if (session_id == JSON_INVALID) return;
     close_session(session_id);
 }
 
@@ -529,13 +539,11 @@ default
             handle_dialog_close(msg);
         }
         else if (msg_type == "register_button_config") {
-            if (json_has(msg, ["context"]) && json_has(msg, ["button_a"]) && json_has(msg, ["button_b"])) {
-                string context = llJsonGetValue(msg, ["context"]);
-                string button_a = llJsonGetValue(msg, ["button_a"]);
-                string button_b = llJsonGetValue(msg, ["button_b"]);
+            string context = llJsonGetValue(msg, ["context"]);
+            string button_a = llJsonGetValue(msg, ["button_a"]);
+            string button_b = llJsonGetValue(msg, ["button_b"]);
+            if (context != JSON_INVALID && button_a != JSON_INVALID && button_b != JSON_INVALID) {
                 register_button_config(context, button_a, button_b);
-            }
-            else {
             }
         }
     }

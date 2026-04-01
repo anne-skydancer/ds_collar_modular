@@ -40,7 +40,7 @@ else
         cd "$LSLINT_DIR"
         git pull
     else
-        git clone https://github.com/Makopo/lslint.git "$LSLINT_DIR"
+        git clone https://github.com/anne-skydancer/lslint.git "$LSLINT_DIR"
         cd "$LSLINT_DIR"
     fi
     
