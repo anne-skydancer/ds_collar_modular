@@ -1,17 +1,20 @@
 /*--------------------
 MODULE: ds_collar_kernel.lsl
 VERSION: 1.10
-REVISION: 0
+REVISION: 1
 PURPOSE: Plugin registry, lifecycle management, heartbeat monitoring
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- v1.1 rev 1: Removed min_acl from registry and registration flow. Plugins no
+  longer send min_acl (superseded by LSD policies). Removed route_field to
+  AUTH_BUS register_acl and handle_acl_registry_request — auth module no longer
+  maintains a plugin ACL registry.
 - v1.1 rev 0: Version bump for LSD policy architecture. No functional changes to this module.
 --------------------*/
 
 
 /* -------------------- CONSOLIDATED ABI -------------------- */
 integer KERNEL_LIFECYCLE = 500;
-integer AUTH_BUS = 700;
 
 /* -------------------- CONSTANTS -------------------- */
 float   PING_INTERVAL_SEC     = 5.0;
@@ -20,22 +23,20 @@ float   INV_SWEEP_INTERVAL    = 3.0;
 float   BATCH_WINDOW_SEC      = 0.1;  // Small batch window during startup burst
 float   DISCOVERY_INTERVAL_SEC = 5.0;  // Active plugin discovery interval
 
-/* Registry stride: [context, label, script, script_uuid, last_seen_unix, min_acl] */
-integer REG_STRIDE = 6;
+/* Registry stride: [context, label, script, script_uuid, last_seen_unix] */
+integer REG_STRIDE = 5;
 integer REG_CONTEXT = 0;
 integer REG_LABEL = 1;
 integer REG_SCRIPT = 2;
 integer REG_SCRIPT_UUID = 3;
 integer REG_LAST_SEEN = 4;
-integer REG_MIN_ACL = 5;    // Stored for auth module recovery (not used for decisions)
 
-/* Plugin operation queue stride: [op_type, context, label, script, min_acl, timestamp] */
-integer QUEUE_STRIDE = 6;
+/* Plugin operation queue stride: [op_type, context, label, script, timestamp] */
+integer QUEUE_STRIDE = 5;
 integer QUEUE_OP_TYPE = 0;    // "REG" or "UNREG"
 integer QUEUE_CONTEXT = 1;
 integer QUEUE_LABEL = 2;
 integer QUEUE_SCRIPT = 3;
-integer QUEUE_MIN_ACL = 4;    // Stored for auth module recovery (not used for decisions)
 
 
 /* -------------------- STATE -------------------- */
@@ -85,7 +86,7 @@ integer is_plugin_script(string script_name) {
 // - Deduplicating at insertion prevents duplicate operations in batch
 // - Guarantees queue contains at most one operation per context
 // - Alternative (defer to batch) would process duplicates and cause multiple broadcasts
-integer queue_add(string op_type, string context, string label, string script, integer min_acl) {
+integer queue_add(string op_type, string context, string label, string script) {
     // Remove any existing queue entry for this context (newest operation wins)
     list new_queue = [];
     integer i = 0;
@@ -100,7 +101,7 @@ integer queue_add(string op_type, string context, string label, string script, i
 
     // Add new operation to queue
     integer timestamp = now();
-    new_queue += [op_type, context, label, script, min_acl, timestamp];
+    new_queue += [op_type, context, label, script, timestamp];
     RegistrationQueue = new_queue;
 
 
@@ -137,11 +138,10 @@ integer process_queue() {
         string context = llList2String(RegistrationQueue, i + QUEUE_CONTEXT);
         string label = llList2String(RegistrationQueue, i + QUEUE_LABEL);
         string script = llList2String(RegistrationQueue, i + QUEUE_SCRIPT);
-        integer min_acl = llList2Integer(RegistrationQueue, i + QUEUE_MIN_ACL);
 
         if (op_type == "REG") {
             // Returns TRUE if new plugin OR if existing plugin data changed
-            integer reg_delta = registry_upsert(context, label, script, min_acl);
+            integer reg_delta = registry_upsert(context, label, script);
             if (reg_delta) changes_made = TRUE;
         }
         else if (op_type == "UNREG") {
@@ -184,7 +184,7 @@ integer registry_find_by_script(string script_name) {
 // Add or update plugin in registry
 // Returns TRUE if new plugin added OR script UUID changed (recompiled/updated)
 // Returns FALSE only if re-registering with identical UUID
-integer registry_upsert(string context, string label, string script, integer min_acl) {
+integer registry_upsert(string context, string label, string script) {
     integer idx = registry_find(context);
 
     // Get script UUID - changes when script is recompiled/replaced
@@ -197,7 +197,7 @@ integer registry_upsert(string context, string label, string script, integer min
 
     if (idx == -1) {
         // New plugin - add to registry
-        PluginRegistry += [context, label, script, script_uuid, now(), min_acl];
+        PluginRegistry += [context, label, script, script_uuid, now()];
         PluginContexts += [context];
         PluginScripts += [script];
         return TRUE;
@@ -208,12 +208,12 @@ integer registry_upsert(string context, string label, string script, integer min
 
         integer uuid_changed = (old_uuid != script_uuid);
 
-        // Update registry (timestamp and min_acl always update) - batched for performance
+        // Update registry (timestamp always updates) - batched for performance
         PluginRegistry = llListReplaceList(PluginRegistry,
-            [label, script, script_uuid, now(), min_acl],
+            [label, script, script_uuid, now()],
             idx + REG_LABEL,
-            idx + REG_MIN_ACL);
-            
+            idx + REG_LAST_SEEN);
+
         // Update parallel script list (in case script name changed for same context, though unlikely)
         integer list_idx = idx / REG_STRIDE;
         PluginScripts = llListReplaceList(PluginScripts, [script], list_idx, list_idx);
@@ -432,27 +432,6 @@ integer check_owner_changed() {
     return FALSE;
 }
 
-/* -------------------- ROUTING HELPERS -------------------- */
-
-// Validates that field_name contains only safe characters for JSON field names
-// Returns TRUE if safe (alphanumeric + underscore only), FALSE otherwise
-// Route a registration field to the appropriate module
-// Preserves JSON structure (arrays/objects) without double-encoding
-route_field(string msg, string context, string field_name, string route_type, integer channel) {
-    string field_value = llJsonGetValue(msg, [field_name]);
-    if (field_value == JSON_INVALID) return;
-
-    string routed_msg = llList2Json(JSON_OBJECT, [
-        "type", route_type,
-        "context", context
-    ]);
-
-    // Splice in field value raw to preserve nested JSON (llJsonSetValue would double-encode)
-    routed_msg = llGetSubString(routed_msg, 0, -2) + ",\"" + field_name + "\":" + field_value + "}";
-
-    llMessageLinked(LINK_SET, channel, routed_msg, NULL_KEY);
-}
-
 /* -------------------- MESSAGE HANDLERS -------------------- */
 
 handle_register(string msg) {
@@ -460,18 +439,10 @@ handle_register(string msg) {
     if (context == JSON_INVALID) return;
     string label = llJsonGetValue(msg, ["label"]);
     if (label == JSON_INVALID) return;
-    string min_acl_str = llJsonGetValue(msg, ["min_acl"]);
-    if (min_acl_str == JSON_INVALID) return;
     string script = llJsonGetValue(msg, ["script"]);
     if (script == JSON_INVALID) return;
-    integer min_acl = (integer)min_acl_str;
 
-    // Add to lifecycle queue (kernel stores min_acl for auth recovery, not enforcement)
-    queue_add("REG", context, label, script, min_acl);
-
-    // Route fields to interested modules
-    route_field(msg, context, "min_acl", "register_acl", AUTH_BUS);
-    // Chat command registration deprecated/removed
+    queue_add("REG", context, label, script);
 }
 
 handle_pong(string msg) {
@@ -508,30 +479,6 @@ handle_soft_reset() {
     LastDiscoveryUnix = now();
     llSetTimerEvent(PING_INTERVAL_SEC);
     broadcast_register_now();
-}
-
-handle_acl_registry_request() {
-    // Auth module requesting ACL repopulation (recovery from reset)
-    // Send all ACL data from kernel's registry
-
-    integer i = 0;
-
-    integer reg_len3 = llGetListLength(PluginRegistry);
-    while (i < reg_len3) {
-        string context = llList2String(PluginRegistry, i + REG_CONTEXT);
-        integer min_acl = llList2Integer(PluginRegistry, i + REG_MIN_ACL);
-
-        // Send register_acl message for each plugin
-        string auth_msg = llList2Json(JSON_OBJECT, [
-            "type", "register_acl",
-            "context", context,
-            "min_acl", min_acl
-        ]);
-        llMessageLinked(LINK_SET, AUTH_BUS, auth_msg, NULL_KEY);
-
-        i += REG_STRIDE;
-    }
-
 }
 
 /* -------------------- EVENTS -------------------- */
@@ -643,11 +590,6 @@ default
             }
             else if (msg_type == "soft_reset" || msg_type == "soft_reset_all") {
                 handle_soft_reset();
-            }
-        }
-        else if (num == AUTH_BUS) {
-            if (msg_type == "acl_registry_request") {
-                handle_acl_registry_request();
             }
         }
     }
