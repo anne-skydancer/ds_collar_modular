@@ -9,15 +9,16 @@ This project replaces the old monolithic collars with a clean kernel + plugin ar
 
 ## ✨ Features
 
-- **Modular kernel design** — central kernel with swappable modules.  
-- **Plugins** — each feature (owner control, leash, animations, blacklist, public access, trustees, etc.) lives in its own script.  
-- **JSON ABI** — all link messages use structured JSON; future-proof and explicit.  
-- **Access Control (ACL)** — unified ACL resolution with support for owners, trustees, public access, and blacklist.  
-- **RLVa Integration** — optional plugins add RLVa restrictions and relay support.  
-- **UI** — responsive dialogs with ACL-filtered menus.  
-- **Heartbeat & auto-recover** — kernel pings all plugins, re-registers on silence.  
-- **Safe listeners** — one listener per user session, never leaking channels.
-- **Chat command ready** Ready to accept commands issued in local chat or through a listener on channel 1.  
+- **Modular kernel design** — central kernel (v1.0) with swappable modules and plugins.
+- **Consolidated ABI** — 5-channel architecture (500/700/800/900/950) using structured JSON messaging.
+- **Access Control (ACL)** — unified ACL engine with support for owners, trustees, public access, and blacklist.
+- **Plugins** — 13 plugins covering owner management, leash, animations, RLV relay/restrictions, TPE mode, and more.
+- **Kernel Modules** — 8 specialized modules for auth, settings, dialogs, leash engine, particles, remote HUD, bootstrap, and UI.
+- **RLVa Integration** — comprehensive RLV support including relay, restrictions, exceptions, and Lockmeister protocol.
+- **Security-hardened** — v1.0 includes critical security fixes for authorization, ACL validation, and overflow protection.
+- **Heartbeat & auto-recover** — kernel monitors plugin health, prunes dead plugins, handles script additions/removals.
+- **Centralized dialogs** — single dialog management module eliminates per-plugin listeners.
+- **External HUD support** — remote control via separate HUD with ACL enforcement.  
 
 ---
 
@@ -25,51 +26,119 @@ This project replaces the old monolithic collars with a clean kernel + plugin ar
 
 ```
 ds_collar_modular/
-├── ds_collar_kernel.lsl         # Core kernel
-├── ds_collar_api.lsl            # Public API (ABI v1)
-├── modules/
-│   ├── ds_collar_kmod_acl.lsl
-│   ├── ds_collar_kmod_auth.lsl
-│   ├── ds_collar_kmod_settings.lsl
-│   ├── ds_collar_kmod_bootstrap.lsl
-│   ├── ds_collar_kmod_ui_frontend.lsl
-│   └── ds_collar_kmod_ui_backend.lsl
-└── plugins/
-    ├── ds_collar_plugin_owner.lsl
-    ├── ds_collar_plugin_leash.lsl
-    ├── ds_collar_plugin_blacklist.lsl
-    ├── ds_collar_plugin_public.lsl
-    ├── ds_collar_plugin_trustees.lsl
-    ├── ds_collar_plugin_animate.lsl
-    └── ...
+├── LICENSE
+├── README.md
+├── agents.md                    # LSL coding requirements & best practices
+└── src/stable/
+    ├── ds_collar_kernel.lsl                  # Core kernel (v1.0)
+    ├── ds_collar_control_hud.lsl             # External HUD controller
+    ├── ds_collar_leash_holder.lsl            # Leash holder object
+    │
+    ├── Kernel Modules (kmod_*)
+    │   ├── ds_collar_kmod_auth.lsl           # ACL and policy engine
+    │   ├── ds_collar_kmod_bootstrap.lsl      # Startup coordination, RLV detection
+    │   ├── ds_collar_kmod_dialogs.lsl        # Centralized dialog management
+    │   ├── ds_collar_kmod_leash.lsl          # Leashing engine services
+    │   ├── ds_collar_kmod_particles.lsl      # Visual renderer + Lockmeister
+    │   ├── ds_collar_kmod_remote.lsl         # External HUD bridge
+    │   ├── ds_collar_kmod_settings.lsl       # Persistent key-value store
+    │   └── ds_collar_kmod_ui.lsl             # Root touch menu
+    │
+    └── Plugins (plugin_*)
+        ├── ds_collar_plugin_animate.lsl      # Animation menu
+        ├── ds_collar_plugin_bell.lsl         # Bell controls
+        ├── ds_collar_plugin_blacklist.lsl    # Blacklist management
+        ├── ds_collar_plugin_leash.lsl        # Leash UI and config
+        ├── ds_collar_plugin_lock.lsl         # Lock/unlock toggle
+        ├── ds_collar_plugin_maintenance.lsl  # Maintenance utilities
+        ├── ds_collar_plugin_owner.lsl        # Owner/trustee management
+        ├── ds_collar_plugin_public.lsl       # Public access toggle
+        ├── ds_collar_plugin_rlvexceptions.lsl # RLV exception management
+        ├── ds_collar_plugin_rlvrelay.lsl     # RLV relay modes
+        ├── ds_collar_plugin_rlvrestrict.lsl  # RLV restriction management
+        ├── ds_collar_plugin_status.lsl       # Status information display
+        └── ds_collar_plugin_tpe.lsl          # Total Power Exchange mode
 ```
 
-- **Kernel** — manages plugin registry, heartbeats, and global ABI.  
-- **Modules** — headless components (settings, ACL, auth, UI).  
-- **Plugins** — user-facing features that register with the kernel.  
+- **Kernel** — manages plugin registry, lifecycle, heartbeats, and consolidated ABI (v1.0).
+- **Modules** — headless system components providing core services (auth, settings, dialogs, leash engine, particles, remote communication, UI).
+- **Plugins** — user-facing features that register with the kernel and provide menu-driven functionality.  
+
+---
+
+## 🏗️ Architecture & ABI
+
+### Consolidated ABI v1.0
+
+The system uses a **5-channel architecture** for all inter-script communication:
+
+| Channel | Name | Purpose |
+|---------|------|---------|
+| **500** | `KERNEL_LIFECYCLE` | Plugin registration, heartbeat (ping/pong), soft resets |
+| **700** | `AUTH_BUS` | ACL queries and results |
+| **800** | `SETTINGS_BUS` | Settings sync, delta updates, notecard loading |
+| **900** | `UI_BUS` | UI navigation (start, return, close) |
+| **950** | `DIALOG_BUS` | Centralized dialog management |
+
+### ACL Levels
+
+| Level | Name | Description |
+|-------|------|-------------|
+| **-1** | Blacklisted | Explicitly denied access |
+| **0** | No Access | Default for unknown users, wearer in TPE mode |
+| **1** | Public | Any user (when public mode enabled) |
+| **2** | Owned | Wearer (when owner is set) |
+| **3** | Trustee | Trusted users with elevated permissions |
+| **4** | Unowned | Wearer (when no owner is set) |
+| **5** | Primary Owner | Full administrative control |
+
+### Security Features (v1.0)
+
+- **Authorization validation** for soft resets (only bootstrap/maintenance can trigger)
+- **Integer overflow protection** for Unix timestamps (Year 2038 handling)
+- **JSON injection prevention** using proper encoding
+- **ACL re-validation** with time-based session checks
+- **Rate limiting** on remote HUD requests
+- **Touch range validation** (rejects ZERO_VECTOR)
+- **Owner change detection** with automatic script reset
 
 ---
 
 ## 🚀 Installation & Setup
 
-1. Rez a prim in Second Life.  
-2. Drop `ds_collar_kernel.lsl` and all **modules** into it.  
-3. Add the **plugins** you want to use.  
-4. Wear the prim as a collar.  
-5. On reset, the collar will bootstrap itself, register all plugins, and open the UI.  
+1. Rez a prim in Second Life.
+2. Drop `ds_collar_kernel.lsl` and all **8 kernel modules** (`ds_collar_kmod_*.lsl`) into it.
+3. Add the **plugins** you want to use (all 13 recommended for full functionality).
+4. (Optional) Add a "settings" notecard for pre-configured owners/trustees.
+5. Wear the prim as a collar.
+6. On reset, the collar will:
+   - Bootstrap and detect RLV capability
+   - Load settings from notecard (if present)
+   - Register all plugins with the kernel
+   - Open the UI menu on touch
+
+**Note:** All scripts are in `src/stable/` directory. The HUD and leash holder are separate objects.  
+
+---
+
+## 📚 Documentation
+
+- **[agents.md](./agents.md)** — Comprehensive LSL reference covering quirks, limitations, coding standards, review checklist, documentation guidelines, and versioning specification
 
 ---
 
 ## 🔧 Contributing
 
-1. Fork the repo.  
-2. Work from the **authoritative baselines** (kernel, modules, plugin skeleton).  
-3. Ensure your scripts compile in Second Life.  
-4. Submit a pull request with a clear description of your changes.  
+1. Fork the repo.
+2. Read **[agents.md](./agents.md)** thoroughly — it contains all LSL quirks, coding standards, versioning rules, and the review checklist.
+3. Work from the **authoritative baselines** (kernel, modules, plugin skeleton).
+4. Ensure your scripts compile in Second Life.
+5. Use the **Code Review Checklist** in agents.md before submitting.
+6. Apply appropriate version numbers according to the **Versioning Specification** in agents.md.
+7. Submit a pull request with a clear description of your changes.  
 
 ---
 
 ## 📜 License
 
-MIT License – see [LICENSE](./LICENSE) for details.
-
+GPL v3 License – see [LICENSE](./LICENSE) for details.
