@@ -70,9 +70,6 @@ string SessionId = "";
 /* -------------------- HELPERS -------------------- */
 
 
-integer json_has(string j, list path) {
-    return (llJsonGetValue(j, path) != JSON_INVALID);
-}
 
 integer is_json_arr(string s) {
     return (llGetSubString(s, 0, 0) == "[");
@@ -106,9 +103,8 @@ send_pong() {
 /* -------------------- SETTINGS MANAGEMENT -------------------- */
 
 apply_settings_sync(string msg) {
-    if (!json_has(msg, ["kv"])) return;
-    
     string kv_json = llJsonGetValue(msg, ["kv"]);
+    if (kv_json == JSON_INVALID) return;
     CachedSettings = kv_json;
     SettingsReady = TRUE;
 }
@@ -202,8 +198,9 @@ do_display_access_list() {
     
     // Multi-owner mode check
     integer multi_mode = 0;
-    if (json_has(CachedSettings, ["multi_owner_mode"])) {
-        multi_mode = (integer)llJsonGetValue(CachedSettings, ["multi_owner_mode"]);
+    string tmp = llJsonGetValue(CachedSettings, ["multi_owner_mode"]);
+    if (tmp != JSON_INVALID) {
+        multi_mode = (integer)tmp;
     }
     
     // Owner(s) — stored as JSON objects {uuid:honorific}
@@ -383,8 +380,8 @@ cleanup_session() {
 /* -------------------- DIALOG HANDLERS -------------------- */
 
 handle_dialog_response(string msg) {
-    if (!json_has(msg, ["session_id"])) return;
-    if (!json_has(msg, ["button"])) return;
+    if (llJsonGetValue(msg, ["session_id"]) == JSON_INVALID) return;
+    if (llJsonGetValue(msg, ["button"]) == JSON_INVALID) return;
     
     string session = llJsonGetValue(msg, ["session_id"]);
     if (session != SessionId) return;
@@ -443,9 +440,8 @@ handle_dialog_response(string msg) {
 }
 
 handle_dialog_timeout(string msg) {
-    if (!json_has(msg, ["session_id"])) return;
-    
     string session = llJsonGetValue(msg, ["session_id"]);
+    if (session == JSON_INVALID) return;
     if (session != SessionId) return;
     
     cleanup_session();
@@ -477,8 +473,8 @@ default {
     
     link_message(integer sender, integer num, string msg, key id) {
         /* -------------------- KERNEL LIFECYCLE -------------------- */if (num == KERNEL_LIFECYCLE) {
-            if (!json_has(msg, ["type"])) return;
             string msg_type = llJsonGetValue(msg, ["type"]);
+            if (msg_type == JSON_INVALID) return;
             
             if (msg_type == "register_now") {
                 register_self();
@@ -492,8 +488,8 @@ default {
 
             if (msg_type == "soft_reset" || msg_type == "soft_reset_all") {
                 // Check if this is a targeted reset
-                if (json_has(msg, ["context"])) {
-                    string target_context = llJsonGetValue(msg, ["context"]);
+                string target_context = llJsonGetValue(msg, ["context"]);
+                if (target_context != JSON_INVALID) {
                     if (target_context != "" && target_context != PLUGIN_CONTEXT) {
                         return; // Not for us, ignore
                     }
@@ -506,8 +502,8 @@ default {
         }
         
         /* -------------------- SETTINGS SYNC/DELTA -------------------- */if (num == SETTINGS_BUS) {
-            if (!json_has(msg, ["type"])) return;
             string msg_type = llJsonGetValue(msg, ["type"]);
+            if (msg_type == JSON_INVALID) return;
             
             if (msg_type == "settings_sync") {
                 apply_settings_sync(msg);
@@ -523,11 +519,11 @@ default {
         }
         
         /* -------------------- UI START -------------------- */if (num == UI_BUS) {
-            if (!json_has(msg, ["type"])) return;
             string msg_type = llJsonGetValue(msg, ["type"]);
+            if (msg_type == JSON_INVALID) return;
             
             if (msg_type == "start") {
-                if (!json_has(msg, ["context"])) return;
+                if (llJsonGetValue(msg, ["context"]) == JSON_INVALID) return;
                 if (llJsonGetValue(msg, ["context"]) != PLUGIN_CONTEXT) return;
                 
                 if (id == NULL_KEY) return;
@@ -542,8 +538,8 @@ default {
         }
         
         /* -------------------- DIALOG RESPONSE -------------------- */if (num == DIALOG_BUS) {
-            if (!json_has(msg, ["type"])) return;
             string msg_type = llJsonGetValue(msg, ["type"]);
+            if (msg_type == JSON_INVALID) return;
 
             if (msg_type == "dialog_response") {
                 handle_dialog_response(msg);
@@ -558,8 +554,8 @@ default {
             if (msg_type == "dialog_close") {
                 // Dialog was closed externally (e.g., replaced by another dialog)
                 // Clean up our session if it matches
-                if (json_has(msg, ["session_id"])) {
-                    string session = llJsonGetValue(msg, ["session_id"]);
+                string session = llJsonGetValue(msg, ["session_id"]);
+                if (session != JSON_INVALID) {
                     if (session == SessionId) {
                         // Don't send another dialog_close since we're responding to one
                         CurrentUser = NULL_KEY;

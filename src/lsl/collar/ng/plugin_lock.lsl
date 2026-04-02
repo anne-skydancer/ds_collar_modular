@@ -46,9 +46,6 @@ integer Locked = FALSE;
 /* -------------------- HELPERS -------------------- */
 
 
-integer json_has(string json_data, list path) {
-    return (llJsonGetValue(json_data, path) != JSON_INVALID);
-}
 
 play_toggle_sound() {
     llTriggerSound(SOUND_TOGGLE, SOUND_VOLUME);
@@ -84,15 +81,15 @@ send_pong() {
 /* -------------------- SETTINGS CONSUMPTION -------------------- */
 
 apply_settings_sync(string msg) {
-    if (!json_has(msg, ["kv"])) return;
-    
     string kv_json = llJsonGetValue(msg, ["kv"]);
+    if (kv_json == JSON_INVALID) return;
     
     integer old_locked = Locked;
     Locked = FALSE;  // Secure default: unlocked if no settings
     
-    if (json_has(kv_json, [KEY_LOCKED])) {
-        Locked = (integer)llJsonGetValue(kv_json, [KEY_LOCKED]);
+    string tmp = llJsonGetValue(kv_json, [KEY_LOCKED]);
+    if (tmp != JSON_INVALID) {
+        Locked = (integer)tmp;
     }
     
     // Always sync visual state to logical state
@@ -101,15 +98,14 @@ apply_settings_sync(string msg) {
 }
 
 apply_settings_delta(string msg) {
-    if (!json_has(msg, ["op"])) return;
-    
     string op = llJsonGetValue(msg, ["op"]);
+    if (op == JSON_INVALID) return;
     
     if (op == "set") {
-        if (!json_has(msg, ["changes"])) return;
         string changes = llJsonGetValue(msg, ["changes"]);
+        if (changes == JSON_INVALID) return;
         
-        if (json_has(changes, [KEY_LOCKED])) {
+        if ((llJsonGetValue(changes, [KEY_LOCKED]) != JSON_INVALID)) {
             integer old_locked = Locked;
             Locked = (integer)llJsonGetValue(changes, [KEY_LOCKED]);
             
@@ -131,8 +127,8 @@ apply_settings_delta(string msg) {
     }
     else if (op == "delete") {
         // SECURE DEFAULT: If lock setting is deleted, revert to unlocked
-        if (!json_has(msg, ["key"])) return;
         string deleted_key = llJsonGetValue(msg, ["key"]);
+        if (deleted_key == JSON_INVALID) return;
         
         if (deleted_key == KEY_LOCKED) {
             if (Locked) {
@@ -294,8 +290,8 @@ default {
     
     link_message(integer sender, integer num, string msg, key id) {
         /* -------------------- KERNEL LIFECYCLE -------------------- */if (num == KERNEL_LIFECYCLE) {
-            if (!json_has(msg, ["type"])) return;
             string msg_type = llJsonGetValue(msg, ["type"]);
+            if (msg_type == JSON_INVALID) return;
             
             if (msg_type == "register_now") {
                 // Re-request settings after kernel reset to restore lock state
@@ -314,8 +310,8 @@ default {
         }
         
         /* -------------------- SETTINGS SYNC/DELTA -------------------- */if (num == SETTINGS_BUS) {
-            if (!json_has(msg, ["type"])) return;
             string msg_type = llJsonGetValue(msg, ["type"]);
+            if (msg_type == JSON_INVALID) return;
             
             if (msg_type == "settings_sync") {
                 apply_settings_sync(msg);
@@ -332,11 +328,11 @@ default {
         }
         
         /* -------------------- UI START (TOGGLE ACTION) -------------------- */if (num == UI_BUS) {
-            if (!json_has(msg, ["type"])) return;
             string msg_type = llJsonGetValue(msg, ["type"]);
+            if (msg_type == JSON_INVALID) return;
             
             if (msg_type == "start") {
-                if (!json_has(msg, ["context"])) return;
+                if (llJsonGetValue(msg, ["context"]) == JSON_INVALID) return;
                 if (llJsonGetValue(msg, ["context"]) != PLUGIN_CONTEXT) return;
                 
                 if (id == NULL_KEY) return;

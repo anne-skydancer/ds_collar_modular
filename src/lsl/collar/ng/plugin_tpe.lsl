@@ -53,9 +53,6 @@ key WearerKey = NULL_KEY;          // Owner of the collar (for confirmation)
 /* -------------------- HELPERS -------------------- */
 
 
-integer json_has(string j, list path) {
-    return (llJsonGetValue(j, path) != JSON_INVALID);
-}
 
 string gen_session() {
     return (string)llGetKey() + "_" + (string)llGetUnixTime();
@@ -255,22 +252,23 @@ handle_tpe_click(key user, integer acl_level) {
 /* -------------------- SETTINGS CONSUMPTION -------------------- */
 
 apply_settings_sync(string kv_json) {
-    if (json_has(kv_json, [KEY_TPE_MODE])) {
-        TpeModeEnabled = (integer)llJsonGetValue(kv_json, [KEY_TPE_MODE]);
+    string tmp = llJsonGetValue(kv_json, [KEY_TPE_MODE]);
+    if (tmp != JSON_INVALID) {
+        TpeModeEnabled = (integer)tmp;
     }
 }
 
 apply_settings_delta(string msg) {
-    if (!json_has(msg, ["op"])) return;
-    
     string op = llJsonGetValue(msg, ["op"]);
+    if (op == JSON_INVALID) return;
     
     if (op == "set") {
-        if (!json_has(msg, ["changes"])) return;
         string changes = llJsonGetValue(msg, ["changes"]);
+        if (changes == JSON_INVALID) return;
         
-        if (json_has(changes, [KEY_TPE_MODE])) {
-            TpeModeEnabled = (integer)llJsonGetValue(changes, [KEY_TPE_MODE]);
+        string tmp = llJsonGetValue(changes, [KEY_TPE_MODE]);
+        if (tmp != JSON_INVALID) {
+            TpeModeEnabled = (integer)tmp;
         }
     }
 }
@@ -313,8 +311,8 @@ default
             }
             else if (msg_type == "soft_reset" || msg_type == "soft_reset_all") {
                 // Check if this is a targeted reset
-                if (json_has(str, ["context"])) {
-                    string target_context = llJsonGetValue(str, ["context"]);
+                string target_context = llJsonGetValue(str, ["context"]);
+                if (target_context != JSON_INVALID) {
                     if (target_context != "" && target_context != PLUGIN_CONTEXT) {
                         return; // Not for us, ignore
                     }
@@ -327,8 +325,8 @@ default
             string msg_type = llJsonGetValue(str, ["type"]);
             
             if (msg_type == "settings_sync") {
-                if (json_has(str, ["kv"])) {
-                    string kv_json = llJsonGetValue(str, ["kv"]);
+                string kv_json = llJsonGetValue(str, ["kv"]);
+                if (kv_json != JSON_INVALID) {
                     apply_settings_sync(kv_json);
                 }
             }

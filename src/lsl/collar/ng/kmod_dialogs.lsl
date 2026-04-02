@@ -42,13 +42,11 @@ list ButtonConfigLabelsB;  // [button_b_label]
 
 /* -------------------- HELPERS -------------------- */
 
-integer json_has(string j, list path) {
-    return (llJsonGetValue(j, path) != JSON_INVALID);
-}
 
 string get_msg_type(string msg) {
-    if (!json_has(msg, ["type"])) return "";
-    return llJsonGetValue(msg, ["type"]);
+    string t = llJsonGetValue(msg, ["type"]);
+    if (t == JSON_INVALID) return "";
+    return t;
 }
 
 // MEMORY OPTIMIZATION: Compact field validation helper
@@ -57,7 +55,7 @@ integer validate_required_fields(string json_str, list field_names) {
     integer len = llGetListLength(field_names);
     while (i < len) {
         string field = llList2String(field_names, i);
-        if (!json_has(json_str, [field])) {
+        if (llJsonGetValue(json_str, [field]) == JSON_INVALID) {
             return FALSE;
         }
         i += 1;
@@ -180,7 +178,7 @@ handle_dialog_open(string msg) {
     key user = (key)llJsonGetValue(msg, ["user"]);
 
     // Check for numbered list type
-    if (json_has(msg, ["dialog_type"]) && llJsonGetValue(msg, ["dialog_type"]) == "numbered_list") {
+    if ((llJsonGetValue(msg, ["dialog_type"]) != JSON_INVALID) && llJsonGetValue(msg, ["dialog_type"]) == "numbered_list") {
         handle_numbered_list_dialog(msg, session_id, user);
         return;
     }
@@ -189,7 +187,7 @@ handle_dialog_open(string msg) {
     list buttons = [];
     list storage_map = []; // List of JSON objects for storage [{"b":"btn", "c":"ctx"}]
 
-    if (json_has(msg, ["button_data"])) {
+    if ((llJsonGetValue(msg, ["button_data"]) != JSON_INVALID)) {
         // New format: button_data contains mixed array of strings and objects
         string button_data_json = llJsonGetValue(msg, ["button_data"]);
         list button_data_list = llJson2List(button_data_json);
@@ -204,7 +202,7 @@ handle_dialog_open(string msg) {
 
             // Plugin buttons: JSON objects with context+label+state (routable to plugins)
             if (llJsonValueType(item, []) == JSON_OBJECT &&
-                json_has(item, ["context"]) && json_has(item, ["label"]) && json_has(item, ["state"])) {
+                (llJsonGetValue(item, ["context"]) != JSON_INVALID) && (llJsonGetValue(item, ["label"]) != JSON_INVALID) && (llJsonGetValue(item, ["state"]) != JSON_INVALID)) {
 
                 string context = llJsonGetValue(item, ["context"]);
                 string label = llJsonGetValue(item, ["label"]);
@@ -227,7 +225,7 @@ handle_dialog_open(string msg) {
             else {
                 // Navigation buttons or other non-routable buttons
                 // Extract label from JSON object if available, otherwise use string as-is
-                if (llJsonValueType(item, []) == JSON_OBJECT && json_has(item, ["label"])) {
+                if (llJsonValueType(item, []) == JSON_OBJECT && (llJsonGetValue(item, ["label"]) != JSON_INVALID)) {
                     button_text = llJsonGetValue(item, ["label"]);
                 }
                 else {
@@ -244,7 +242,7 @@ handle_dialog_open(string msg) {
             i++;
         }
     }
-    else if (json_has(msg, ["buttons"])) {
+    else if ((llJsonGetValue(msg, ["buttons"]) != JSON_INVALID)) {
         // Old format: buttons is array of strings
         string buttons_json = llJsonGetValue(msg, ["buttons"]);
         buttons = llJson2List(buttons_json);
@@ -266,17 +264,20 @@ handle_dialog_open(string msg) {
     string message = "Select an option:";
     integer timeout = 60;
 
-    if (json_has(msg, ["title"])) {
-        title = llJsonGetValue(msg, ["title"]);
+    string tmp = llJsonGetValue(msg, ["title"]);
+    if (tmp != JSON_INVALID) {
+        title = tmp;
     }
-    if (json_has(msg, ["body"])) {
-        message = llJsonGetValue(msg, ["body"]);
+    tmp = llJsonGetValue(msg, ["body"]);
+    if (tmp != JSON_INVALID) {
+        message = tmp;
     }
-    else if (json_has(msg, ["message"])) {
+    else if ((llJsonGetValue(msg, ["message"]) != JSON_INVALID)) {
         message = llJsonGetValue(msg, ["message"]);
     }
-    if (json_has(msg, ["timeout"])) {
-        timeout = (integer)llJsonGetValue(msg, ["timeout"]);
+    tmp = llJsonGetValue(msg, ["timeout"]);
+    if (tmp != JSON_INVALID) {
+        timeout = (integer)tmp;
     }
 
     // Close existing session with same ID
@@ -324,14 +325,17 @@ handle_numbered_list_dialog(string msg, string session_id, key user) {
     string prompt = "Choose:";
     integer timeout = 60;
     
-    if (json_has(msg, ["title"])) {
-        title = llJsonGetValue(msg, ["title"]);
+    string tmp = llJsonGetValue(msg, ["title"]);
+    if (tmp != JSON_INVALID) {
+        title = tmp;
     }
-    if (json_has(msg, ["prompt"])) {
-        prompt = llJsonGetValue(msg, ["prompt"]);
+    tmp = llJsonGetValue(msg, ["prompt"]);
+    if (tmp != JSON_INVALID) {
+        prompt = tmp;
     }
-    if (json_has(msg, ["timeout"])) {
-        timeout = (integer)llJsonGetValue(msg, ["timeout"]);
+    tmp = llJsonGetValue(msg, ["timeout"]);
+    if (tmp != JSON_INVALID) {
+        timeout = (integer)tmp;
     }
     
     // Parse items
@@ -408,9 +412,8 @@ handle_numbered_list_dialog(string msg, string session_id, key user) {
 }
 
 handle_dialog_close(string msg) {
-    if (!json_has(msg, ["session_id"])) return;
-    
     string session_id = llJsonGetValue(msg, ["session_id"]);
+    if (session_id == JSON_INVALID) return;
     close_session(session_id);
 }
 
@@ -512,7 +515,7 @@ default
             handle_dialog_close(msg);
         }
         else if (msg_type == "register_button_config") {
-            if (json_has(msg, ["context"]) && json_has(msg, ["button_a"]) && json_has(msg, ["button_b"])) {
+            if ((llJsonGetValue(msg, ["context"]) != JSON_INVALID) && (llJsonGetValue(msg, ["button_a"]) != JSON_INVALID) && (llJsonGetValue(msg, ["button_b"]) != JSON_INVALID)) {
                 string context = llJsonGetValue(msg, ["context"]);
                 string button_a = llJsonGetValue(msg, ["button_a"]);
                 string button_b = llJsonGetValue(msg, ["button_b"]);

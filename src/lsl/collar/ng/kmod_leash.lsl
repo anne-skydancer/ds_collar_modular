@@ -121,9 +121,6 @@ float FOLLOW_TICK = 2.0;
 
 /* -------------------- HELPERS -------------------- */
 
-integer jsonHas(string j, list path) {
-    return (llJsonGetValue(j, path) != JSON_INVALID);
-}
 string jsonGet(string j, string k, string default_val) {
     string v = llJsonGetValue(j, [k]);
     if (v == JSON_INVALID) return default_val;
@@ -287,7 +284,7 @@ requestAclForAction(key user, string action, key pass_target) {
 
 handleAclResult(string msg) {
     if (!AclPending) return;
-    if (!jsonHas(msg, ["avatar"]) || !jsonHas(msg, ["level"])) return;
+    if (llJsonGetValue(msg, ["avatar"]) == JSON_INVALID || llJsonGetValue(msg, ["level"]) == JSON_INVALID) return;
     
     key avatar = (key)llJsonGetValue(msg, ["avatar"]);
     if (avatar != PendingActionUser) return;
@@ -585,19 +582,22 @@ persistTurnto(integer turnto) {
 }
 
 applySettingsSync(string msg) {
-    if (!jsonHas(msg, ["settings"])) return;
     string settings_json = llJsonGetValue(msg, ["settings"]);
-    if (jsonHas(settings_json, [KEY_LEASHED])) {
-        Leashed = (integer)llJsonGetValue(settings_json, [KEY_LEASHED]);
+    if (settings_json == JSON_INVALID) return;
+    string tmp = llJsonGetValue(settings_json, [KEY_LEASHED]);
+    if (tmp != JSON_INVALID) {
+        Leashed = (integer)tmp;
     }
-    if (jsonHas(settings_json, [KEY_LEASHER])) {
-        Leasher = (key)llJsonGetValue(settings_json, [KEY_LEASHER]);
+    tmp = llJsonGetValue(settings_json, [KEY_LEASHER]);
+    if (tmp != JSON_INVALID) {
+        Leasher = (key)tmp;
     }
-    if (jsonHas(settings_json, [KEY_LEASH_LENGTH])) {
+    if ((llJsonGetValue(settings_json, [KEY_LEASH_LENGTH]) != JSON_INVALID)) {
         LeashLength = clampLeashLength((integer)llJsonGetValue(settings_json, [KEY_LEASH_LENGTH]));
     }
-    if (jsonHas(settings_json, [KEY_LEASH_TURNTO])) {
-        TurnToFace = (integer)llJsonGetValue(settings_json, [KEY_LEASH_TURNTO]);
+    tmp = llJsonGetValue(settings_json, [KEY_LEASH_TURNTO]);
+    if (tmp != JSON_INVALID) {
+        TurnToFace = (integer)tmp;
     }
 }
 
@@ -924,8 +924,8 @@ default
     
     link_message(integer sender, integer num, string msg, key id) {
         // OPTIMIZATION: Check "type" once at the top (Code Review Fix #3)
-        if (!jsonHas(msg, ["type"])) return;
         string msg_type = llJsonGetValue(msg, ["type"]);
+        if (msg_type == JSON_INVALID) return;
         
         if (num == UI_BUS) {
             

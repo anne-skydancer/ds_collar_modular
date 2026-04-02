@@ -73,9 +73,6 @@ integer ObjectListPage = 0;
 /* -------------------- HELPERS -------------------- */
 
 
-integer json_has(string j, list path) {
-    return (llJsonGetValue(j, path) != JSON_INVALID);
-}
 
 string generate_session_id() {
     return PLUGIN_CONTEXT + "_" + (string)llGetUnixTime();
@@ -204,21 +201,22 @@ safeword_clear_all() {
 /* -------------------- SETTINGS CONSUMPTION -------------------- */
 
 apply_settings_sync(string msg) {
-    if (!json_has(msg, ["kv"])) return;
-    
     string kv_json = llJsonGetValue(msg, ["kv"]);
+    if (kv_json == JSON_INVALID) return;
     
     // Reset to defaults
     Mode = MODE_ON;
     Hardcore = FALSE;
     
     // Load persisted values
-    if (json_has(kv_json, [KEY_RELAY_MODE])) {
-        Mode = (integer)llJsonGetValue(kv_json, [KEY_RELAY_MODE]);
+    string tmp = llJsonGetValue(kv_json, [KEY_RELAY_MODE]);
+    if (tmp != JSON_INVALID) {
+        Mode = (integer)tmp;
     }
     
-    if (json_has(kv_json, [KEY_RELAY_HARDCORE])) {
-        Hardcore = (integer)llJsonGetValue(kv_json, [KEY_RELAY_HARDCORE]);
+    tmp = llJsonGetValue(kv_json, [KEY_RELAY_HARDCORE]);
+    if (tmp != JSON_INVALID) {
+        Hardcore = (integer)tmp;
     }
     
     // Update relay listen state
@@ -227,21 +225,21 @@ apply_settings_sync(string msg) {
 }
 
 apply_settings_delta(string msg) {
-    if (!json_has(msg, ["op"])) return;
-    
     string op = llJsonGetValue(msg, ["op"]);
+    if (op == JSON_INVALID) return;
     
     if (op == "set") {
-        if (!json_has(msg, ["changes"])) return;
         string changes = llJsonGetValue(msg, ["changes"]);
+        if (changes == JSON_INVALID) return;
         
-        if (json_has(changes, [KEY_RELAY_MODE])) {
+        if ((llJsonGetValue(changes, [KEY_RELAY_MODE]) != JSON_INVALID)) {
             Mode = (integer)llJsonGetValue(changes, [KEY_RELAY_MODE]);
             update_relay_listen_state();
         }
         
-        if (json_has(changes, [KEY_RELAY_HARDCORE])) {
-            Hardcore = (integer)llJsonGetValue(changes, [KEY_RELAY_HARDCORE]);
+        string tmp = llJsonGetValue(changes, [KEY_RELAY_HARDCORE]);
+        if (tmp != JSON_INVALID) {
+            Hardcore = (integer)tmp;
         }
     }
 }
@@ -516,8 +514,8 @@ handle_ground_rez() {
 /* -------------------- MESSAGE HANDLERS -------------------- */
 
 handle_start(string msg) {
-    if (!json_has(msg, ["context"])) return;
-    if (!json_has(msg, ["user"])) return;
+    if (llJsonGetValue(msg, ["context"]) == JSON_INVALID) return;
+    if (llJsonGetValue(msg, ["user"]) == JSON_INVALID) return;
     
     string context = llJsonGetValue(msg, ["context"]);
     if (context != PLUGIN_CONTEXT) return;
@@ -531,8 +529,8 @@ handle_start(string msg) {
 }
 
 handle_dialog_response(string msg) {
-    if (!json_has(msg, ["session_id"])) return;
-    if (!json_has(msg, ["button"])) return;
+    if (llJsonGetValue(msg, ["session_id"]) == JSON_INVALID) return;
+    if (llJsonGetValue(msg, ["button"]) == JSON_INVALID) return;
     
     string session = llJsonGetValue(msg, ["session_id"]);
     if (session != SessionId) return;
@@ -542,9 +540,8 @@ handle_dialog_response(string msg) {
 }
 
 handle_dialog_timeout(string msg) {
-    if (!json_has(msg, ["session_id"])) return;
-    
     string session = llJsonGetValue(msg, ["session_id"]);
+    if (session == JSON_INVALID) return;
     if (session != SessionId) return;
     cleanup_session();
 }
@@ -676,9 +673,8 @@ default
     }
     
     link_message(integer sender, integer num, string msg, key id) {
-        if (!json_has(msg, ["type"])) return;
-        
         string msg_type = llJsonGetValue(msg, ["type"]);
+        if (msg_type == JSON_INVALID) return;
         
         /* -------------------- LIFECYCLE -------------------- */
         if (num == KERNEL_LIFECYCLE) {

@@ -45,9 +45,6 @@ integer LmAuthorized = FALSE;  // TRUE when leash module has activated LM mode
 /* -------------------- HELPERS -------------------- */
 
 
-integer json_has(string j, list path) {
-    return (llJsonGetValue(j, path) != JSON_INVALID);
-}
 
 integer now() {
     return llGetUnixTime();
@@ -253,7 +250,7 @@ render_chain_particles(key target) {
 /* -------------------- MESSAGE HANDLERS -------------------- */
 
 handle_particles_start(string msg) {
-    if (!json_has(msg, ["source"]) || !json_has(msg, ["target"])) {
+    if (llJsonGetValue(msg, ["source"]) == JSON_INVALID || llJsonGetValue(msg, ["target"]) == JSON_INVALID) {
         return;
     }
     
@@ -283,8 +280,9 @@ handle_particles_start(string msg) {
     SourcePlugin = source;
     TargetKey = target;
     
-    if (json_has(msg, ["style"])) {
-        ParticleStyle = llJsonGetValue(msg, ["style"]);
+    string tmp = llJsonGetValue(msg, ["style"]);
+    if (tmp != JSON_INVALID) {
+        ParticleStyle = tmp;
     }
     else {
         ParticleStyle = "chain";
@@ -296,7 +294,7 @@ handle_particles_start(string msg) {
 }
 
 handle_particles_stop(string msg) {
-    if (!json_has(msg, ["source"])) {
+    if (llJsonGetValue(msg, ["source"]) == JSON_INVALID) {
         return;
     }
     
@@ -320,7 +318,7 @@ handle_particles_stop(string msg) {
 }
 
 handle_particles_update(string msg) {
-    if (!json_has(msg, ["target"])) {
+    if (llJsonGetValue(msg, ["target"]) == JSON_INVALID) {
         return;
     }
     
@@ -340,7 +338,7 @@ handle_particles_update(string msg) {
 
 handle_lm_enable(string msg) {
     // Enable Lockmeister listening
-    if (!json_has(msg, ["controller"])) {
+    if (llJsonGetValue(msg, ["controller"]) == JSON_INVALID) {
         return;
     }
     
@@ -424,9 +422,8 @@ default
     }
     
     link_message(integer sender, integer num, string msg, key id) {
-        if (!json_has(msg, ["type"])) return;
-
         string msg_type = llJsonGetValue(msg, ["type"]);
+        if (msg_type == JSON_INVALID) return;
 
         /* -------------------- KERNEL LIFECYCLE -------------------- */
         if (num == KERNEL_LIFECYCLE) {
