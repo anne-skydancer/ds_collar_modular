@@ -1,10 +1,20 @@
 /*--------------------
 MODULE: ds_collar_kmod_settings.lsl
 VERSION: 1.00
-REVISION: 27
+REVISION: 32
 PURPOSE: Persistent key-value store with notecard loading and delta updates
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- REVISION 32: Consolidated owner storage format — owner_key+owner_hon merged
+  into "owner" JSON object {uuid:honorific}; owner_keys+owner_honorifics merged
+  into "owners" JSON object {uuid:honorific}; single/multi-owner modes preserved
+  as separate keys with separate runtime behavior
+- REVISION 31: Added runaway_enabled to allowed keys (bug fix: access plugin
+  writes were silently rejected); added boolean normalization for runaway_enabled
+- REVISION 30: Trustees stored as JSON object {uuid:honorific} instead of
+  parallel arrays; owner_honorifics stored as JSON object {uuid:honorific};
+  removed trustee_honorifics key; atomic add/remove via obj_set/obj_remove
+- REVISION 28: Added RLV exception keys (ex_owner_tp/im, ex_trustee_tp/im) to allowed list
 - REVISION 27: Cache llGetListLength in loop conditions for performance
 - Enforced wearer-owner separation and TPE external owner validation rules
 - Added guard-side delta broadcasts to keep ACL modules synchronized
@@ -20,16 +30,22 @@ integer SETTINGS_BUS = 800;
 
 /* -------------------- SETTINGS KEYS -------------------- */
 string KEY_MULTI_OWNER_MODE = "multi_owner_mode";
-string KEY_OWNER_KEY        = "owner_key";
-string KEY_OWNER_KEYS       = "owner_keys";
-string KEY_OWNER_HON        = "owner_hon";
-string KEY_OWNER_HONS       = "owner_honorifics";
+string KEY_OWNER            = "owner";
+string KEY_OWNERS           = "owners";
 string KEY_TRUSTEES         = "trustees";
-string KEY_TRUSTEE_HONS     = "trustee_honorifics";
 string KEY_BLACKLIST        = "blacklist";
 string KEY_PUBLIC_ACCESS    = "public_mode";
 string KEY_TPE_MODE         = "tpe_mode";
 string KEY_LOCKED           = "locked";
+
+// RLV exception keys
+string KEY_EX_OWNER_TP = "ex_owner_tp";
+string KEY_EX_OWNER_IM = "ex_owner_im";
+string KEY_EX_TRUSTEE_TP = "ex_trustee_tp";
+string KEY_EX_TRUSTEE_IM = "ex_trustee_im";
+
+// Access plugin keys
+string KEY_RUNAWAY_ENABLED = "runaway_enabled";
 
 // Bell plugin keys
 string KEY_BELL_VISIBLE = "bell_visible";
@@ -124,12 +140,33 @@ integer kv_list_add_unique(string key_name, string elem) {
     if (llJsonValueType(arr, []) == JSON_ARRAY) {
         current_list = llJson2List(arr);
     }
-    
+
     if (llListFindList(current_list, [elem]) != -1) return FALSE;
     if (llGetListLength(current_list) >= MaxListLen) return FALSE;
-    
+
     current_list += [elem];
     return kv_set_list(key_name, current_list);
+}
+
+/* ---- JSON OBJECT KV OPERATIONS ---- */
+
+// Set a field in a JSON object stored at key_name
+integer kv_obj_set_field(string key_name, string field, string value) {
+    string obj = kv_get(key_name);
+    if (obj == "" || llJsonValueType(obj, []) != JSON_OBJECT) {
+        obj = "{}";
+    }
+    string new_obj = llJsonSetValue(obj, [field], value);
+    return kv_set_scalar(key_name, new_obj);
+}
+
+// Remove a field from a JSON object stored at key_name
+integer kv_obj_remove_field(string key_name, string field) {
+    string obj = kv_get(key_name);
+    if (obj == "" || llJsonValueType(obj, []) != JSON_OBJECT) return FALSE;
+    if (llJsonGetValue(obj, [field]) == JSON_INVALID) return FALSE;
+    string new_obj = llJsonSetValue(obj, [field], JSON_DELETE);
+    return kv_set_scalar(key_name, new_obj);
 }
 
 integer kv_list_remove_all(string key_name, string elem) {
@@ -146,53 +183,52 @@ integer kv_list_remove_all(string key_name, string elem) {
 
 /* -------------------- VALIDATION HELPERS -------------------- */
 
-// SECURITY FIX: Check if external owner exists
+// Check if external owner exists
 integer has_external_owner() {
     key wearer = llGetOwner();
-    
+
+    string obj_key = KEY_OWNER;
     if (kv_get(KEY_MULTI_OWNER_MODE) == "1") {
-        string owner_keys = kv_get(KEY_OWNER_KEYS);
-        if (llJsonValueType(owner_keys, []) == JSON_ARRAY) {
-            list owners = llJson2List(owner_keys);
-            integer i = 0;
-            integer owners_len = llGetListLength(owners);
-            while (i < owners_len) {
-                key owner = llList2Key(owners, i);
-                if (owner != wearer && owner != NULL_KEY) {
-                    return TRUE;
-                }
-                i += 1;
+        obj_key = KEY_OWNERS;
+    }
+
+    string obj = kv_get(obj_key);
+    if (llJsonValueType(obj, []) == JSON_OBJECT) {
+        list pairs = llJson2List(obj);
+        integer i = 0;
+        integer pairs_len = llGetListLength(pairs);
+        while (i < pairs_len) {
+            key owner = (key)llList2String(pairs, i);
+            if (owner != wearer && owner != NULL_KEY) {
+                return TRUE;
             }
+            i += 2;
         }
     }
-    else {
-        key owner = (key)kv_get(KEY_OWNER_KEY);
-        if (owner != NULL_KEY && owner != wearer) {
-            return TRUE;
-        }
-    }
-    
+
     return FALSE;
 }
 
-// SECURITY FIX: Check if someone is an owner (any mode)
+// Check if someone is an owner (any mode)
 integer is_owner(string who) {
-    // Check single owner
-    if (kv_get(KEY_OWNER_KEY) == who) return TRUE;
-    
-    // Check multi-owner list
-    string owner_keys = kv_get(KEY_OWNER_KEYS);
-    if (llJsonValueType(owner_keys, []) == JSON_ARRAY) {
-        list owners = llJson2List(owner_keys);
-        if (llListFindList(owners, [who]) != -1) return TRUE;
+    // Check single owner object
+    string owner_obj = kv_get(KEY_OWNER);
+    if (llJsonValueType(owner_obj, []) == JSON_OBJECT) {
+        if (llJsonGetValue(owner_obj, [who]) != JSON_INVALID) return TRUE;
     }
-    
+
+    // Check multi-owner object
+    string owners_obj = kv_get(KEY_OWNERS);
+    if (llJsonValueType(owners_obj, []) == JSON_OBJECT) {
+        if (llJsonGetValue(owners_obj, [who]) != JSON_INVALID) return TRUE;
+    }
+
     return FALSE;
 }
 
 /* -------------------- ROLE EXCLUSIVITY GUARDS -------------------- */
 
-// SECURITY FIX: Returns FALSE if owner add should be rejected
+// Returns FALSE if owner add should be rejected
 // BROADCAST FIX: Emits deltas for all guard-side mutations to keep ACL consumers in sync
 integer apply_owner_set_guard(string who) {
     key wearer = llGetOwner();
@@ -203,17 +239,9 @@ integer apply_owner_set_guard(string who) {
         return FALSE;
     }
 
-    // Remove owner from trustees and broadcast the change
-    string trustees_arr = kv_get(KEY_TRUSTEES);
-    if (llJsonValueType(trustees_arr, []) == JSON_ARRAY) {
-        list trustees = llJson2List(trustees_arr);
-        if (llListFindList(trustees, [who]) != -1) {
-            // Only process if actually present
-            trustees = list_remove_all(trustees, who);
-            if (kv_set_list(KEY_TRUSTEES, trustees)) {
-                broadcast_delta_list_remove(KEY_TRUSTEES, who);
-            }
-        }
+    // Remove owner from trustees object and broadcast the change
+    if (kv_obj_remove_field(KEY_TRUSTEES, who)) {
+        broadcast_delta_scalar(KEY_TRUSTEES, kv_get(KEY_TRUSTEES));
     }
 
     // Remove owner from blacklist and broadcast the change
@@ -234,7 +262,7 @@ integer apply_owner_set_guard(string who) {
 
 // BROADCAST FIX: Emits deltas for blacklist removals to keep ACL consumers in sync
 integer apply_trustee_add_guard(string who) {
-    // SECURITY FIX: Can't add owner as trustee (check both modes)
+    // Can't add owner as trustee (check both modes)
     if (is_owner(who)) {
         return FALSE;
     }
@@ -257,40 +285,68 @@ integer apply_trustee_add_guard(string who) {
 
 // BROADCAST FIX: Emits deltas for all guard-side mutations to keep ACL consumers in sync
 integer apply_blacklist_add_guard(string who) {
-    // Remove from trustees and broadcast the change
-    string trustees_arr = kv_get(KEY_TRUSTEES);
-    if (llJsonValueType(trustees_arr, []) == JSON_ARRAY) {
-        list trustees = llJson2List(trustees_arr);
-        if (llListFindList(trustees, [who]) != -1) {
-            // Only process if actually present
-            trustees = list_remove_all(trustees, who);
-            if (kv_set_list(KEY_TRUSTEES, trustees)) {
-                broadcast_delta_list_remove(KEY_TRUSTEES, who);
-            }
-        }
+    // Remove from trustees object and broadcast the change
+    if (kv_obj_remove_field(KEY_TRUSTEES, who)) {
+        broadcast_delta_scalar(KEY_TRUSTEES, kv_get(KEY_TRUSTEES));
     }
 
-    // SECURITY FIX: Clear single owner if blacklisted and broadcast the change
-    string cur_owner = kv_get(KEY_OWNER_KEY);
-    if (cur_owner != "" && cur_owner == who) {
-        if (kv_set_scalar(KEY_OWNER_KEY, (string)NULL_KEY)) {
-            broadcast_delta_scalar(KEY_OWNER_KEY, (string)NULL_KEY);
-        }
+    // Remove from single owner object and broadcast
+    if (kv_obj_remove_field(KEY_OWNER, who)) {
+        broadcast_delta_scalar(KEY_OWNER, kv_get(KEY_OWNER));
     }
 
-    // Remove from multi-owner list and broadcast the change
-    string owner_keys_arr = kv_get(KEY_OWNER_KEYS);
-    if (llJsonValueType(owner_keys_arr, []) == JSON_ARRAY) {
-        list owner_keys = llJson2List(owner_keys_arr);
-        if (llListFindList(owner_keys, [who]) != -1) {
-            // Only process if actually present
-            if (kv_list_remove_all(KEY_OWNER_KEYS, who)) {
-                broadcast_delta_list_remove(KEY_OWNER_KEYS, who);
-            }
-        }
+    // Remove from multi-owner object and broadcast
+    if (kv_obj_remove_field(KEY_OWNERS, who)) {
+        broadcast_delta_scalar(KEY_OWNERS, kv_get(KEY_OWNERS));
     }
 
     return TRUE;
+}
+
+// Guard a trustees JSON object: remove any owner or wearer UUIDs
+string guard_trustees_object(string obj) {
+    key wearer = llGetOwner();
+    // Remove wearer
+    if (llJsonGetValue(obj, [(string)wearer]) != JSON_INVALID) {
+        obj = llJsonSetValue(obj, [(string)wearer], JSON_DELETE);
+    }
+    // Remove owners from single-owner and multi-owner objects
+    list owner_sources = [kv_get(KEY_OWNER), kv_get(KEY_OWNERS)];
+    integer si = 0;
+    while (si < 2) {
+        string src = llList2String(owner_sources, si);
+        if (llJsonValueType(src, []) == JSON_OBJECT) {
+            list pairs = llJson2List(src);
+            integer i = 0;
+            integer pairs_len = llGetListLength(pairs);
+            while (i < pairs_len) {
+                string ok = llList2String(pairs, i);
+                if (llJsonGetValue(obj, [ok]) != JSON_INVALID) {
+                    obj = llJsonSetValue(obj, [ok], JSON_DELETE);
+                }
+                i += 2;
+            }
+        }
+        si += 1;
+    }
+    return obj;
+}
+
+// Guard an owner JSON object: validate each UUID (no self-ownership)
+string guard_owner_object(string obj) {
+    list pairs = llJson2List(obj);
+    string result = "{}";
+    integer i = 0;
+    integer pairs_len = llGetListLength(pairs);
+    while (i < pairs_len) {
+        string uuid = llList2String(pairs, i);
+        string hon = llList2String(pairs, i + 1);
+        if (apply_owner_set_guard(uuid)) {
+            result = llJsonSetValue(result, [uuid], hon);
+        }
+        i += 2;
+    }
+    return result;
 }
 
 /* -------------------- BROADCASTING -------------------- */
@@ -343,18 +399,28 @@ broadcast_delta_list_remove(string key_name, string elem) {
 
 integer is_allowed_key(string k) {
     list allowed = [
-        KEY_MULTI_OWNER_MODE, KEY_OWNER_KEY, KEY_OWNER_KEYS, 
-        KEY_OWNER_HON, KEY_OWNER_HONS, KEY_TRUSTEES, 
-        KEY_TRUSTEE_HONS, KEY_BLACKLIST, KEY_PUBLIC_ACCESS, 
-        KEY_TPE_MODE, KEY_LOCKED, KEY_BELL_VISIBLE, 
-        KEY_BELL_SOUND_ENABLED, KEY_BELL_VOLUME, KEY_BELL_SOUND
+        KEY_MULTI_OWNER_MODE, KEY_OWNER, KEY_OWNERS,
+        KEY_TRUSTEES, KEY_BLACKLIST, KEY_PUBLIC_ACCESS,
+        KEY_TPE_MODE, KEY_LOCKED, KEY_RUNAWAY_ENABLED,
+        KEY_EX_OWNER_TP, KEY_EX_OWNER_IM,
+        KEY_EX_TRUSTEE_TP, KEY_EX_TRUSTEE_IM,
+        KEY_BELL_VISIBLE, KEY_BELL_SOUND_ENABLED,
+        KEY_BELL_VOLUME, KEY_BELL_SOUND
     ];
     return (llListFindList(allowed, [k]) != -1);
 }
 
+// Keys stored as JSON objects (not arrays or scalars)
+integer is_json_object_key(string k) {
+    if (k == KEY_OWNER) return TRUE;
+    if (k == KEY_OWNERS) return TRUE;
+    if (k == KEY_TRUSTEES) return TRUE;
+    return FALSE;
+}
+
 integer is_notecard_only_key(string k) {
     if (k == KEY_MULTI_OWNER_MODE) return TRUE;
-    if (k == KEY_OWNER_KEYS) return TRUE;
+    if (k == KEY_OWNERS) return TRUE;
     return FALSE;
 }
 
@@ -378,41 +444,40 @@ parse_notecard_line(string line) {
         return;
     }
     
+    // Check for JSON object (owner, owners, trustees)
+    if (is_json_object_key(key_name) && llGetSubString(value, 0, 0) == "{") {
+        if (llJsonValueType(value, []) == JSON_OBJECT) {
+            // Guard trustees: remove owners from trustee object
+            if (key_name == KEY_TRUSTEES) {
+                value = guard_trustees_object(value);
+            }
+            // Guard owner objects: validate UUIDs (no self-ownership)
+            if (key_name == KEY_OWNER || key_name == KEY_OWNERS) {
+                value = guard_owner_object(value);
+            }
+            kv_set_scalar(key_name, value);
+        }
+    }
     // Check if it's a list (starts with [)
-    if (llGetSubString(value, 0, 0) == "[") {
+    else if (llGetSubString(value, 0, 0) == "[") {
+        // Reject array syntax for keys that must be JSON objects
+        if (is_json_object_key(key_name)) {
+            llOwnerSay("WARNING: " + key_name + " requires JSON object format, not array");
+            return;
+        }
         // Parse as CSV list
         string list_contents = llGetSubString(value, 1, -2);  // Strip [ ]
         list parsed_list = llCSV2List(list_contents);
         parsed_list = list_unique(parsed_list);
-        
-        // SECURITY FIX: Enforce MaxListLen for notecard
+
+        // Enforce MaxListLen for notecard
         if (llGetListLength(parsed_list) > MaxListLen) {
             parsed_list = llList2List(parsed_list, 0, MaxListLen - 1);
             llOwnerSay("WARNING: " + key_name + " list truncated to " + (string)MaxListLen + " entries");
         }
-        
-        // Apply guards for special lists
-        if (key_name == KEY_OWNER_KEYS) {
-            integer i = 0;
-            integer pl_len = llGetListLength(parsed_list);
-            list validated_list = [];
-            while (i < pl_len) {
-                string owner = llList2String(parsed_list, i);
-                if (apply_owner_set_guard(owner)) {
-                    validated_list += [owner];
-                }
-                i += 1;
-            }
-            parsed_list = validated_list;
-        }
-        else if (key_name == KEY_TRUSTEES) {
-            string cur_owner = kv_get(KEY_OWNER_KEY);
-            if (cur_owner != "") {
-                parsed_list = list_remove_all(parsed_list, cur_owner);
-            }
-        }
-        // SECURITY FIX: Add blacklist guards for notecard
-        else if (key_name == KEY_BLACKLIST) {
+
+        // Apply blacklist guards for notecard
+        if (key_name == KEY_BLACKLIST) {
             integer i = 0;
             integer bl_len = llGetListLength(parsed_list);
             while (i < bl_len) {
@@ -420,7 +485,7 @@ parse_notecard_line(string line) {
                 i += 1;
             }
         }
-        
+
         kv_set_list(key_name, parsed_list);
     }
     else {
@@ -428,23 +493,18 @@ parse_notecard_line(string line) {
         if (key_name == KEY_MULTI_OWNER_MODE) value = normalize_bool(value);
         if (key_name == KEY_PUBLIC_ACCESS) value = normalize_bool(value);
         if (key_name == KEY_LOCKED) value = normalize_bool(value);
+        if (key_name == KEY_RUNAWAY_ENABLED) value = normalize_bool(value);
 
-        // SECURITY FIX: Validate TPE mode in notecard (same as runtime API)
+        // Validate TPE mode in notecard (same as runtime API)
         if (key_name == KEY_TPE_MODE) {
             value = normalize_bool(value);
 
             if ((integer)value == 1) {
                 if (!has_external_owner()) {
                     llOwnerSay("ERROR: Cannot enable TPE via notecard - requires external owner");
-                    llOwnerSay("HINT: Set owner_key or owner_keys BEFORE tpe_mode in notecard");
+                    llOwnerSay("HINT: Set owner or owners BEFORE tpe_mode in notecard");
                     return;  // Don't set TPE
                 }
-            }
-        }
-
-        if (key_name == KEY_OWNER_KEY) {
-            if (!apply_owner_set_guard(value)) {
-                return;  // Rejected (self-ownership)
             }
         }
 
@@ -485,27 +545,8 @@ handle_set(string msg) {
         if (llJsonValueType(values_arr, []) == JSON_ARRAY) {
             list new_list = llJson2List(values_arr);
             new_list = list_unique(new_list);
-            
-            if (key_name == KEY_OWNER_KEYS) {
-                integer i = 0;
-                integer nl_len = llGetListLength(new_list);
-                list validated_list = [];
-                while (i < nl_len) {
-                    string owner = llList2String(new_list, i);
-                    if (apply_owner_set_guard(owner)) {
-                        validated_list += [owner];
-                    }
-                    i += 1;
-                }
-                new_list = validated_list;
-            }
-            else if (key_name == KEY_TRUSTEES) {
-                string cur_owner = kv_get(KEY_OWNER_KEY);
-                if (cur_owner != "") {
-                    new_list = list_remove_all(new_list, cur_owner);
-                }
-            }
-            else if (key_name == KEY_BLACKLIST) {
+
+            if (key_name == KEY_BLACKLIST) {
                 integer i = 0;
                 integer nbl_len = llGetListLength(new_list);
                 while (i < nbl_len) {
@@ -513,27 +554,28 @@ handle_set(string msg) {
                     i += 1;
                 }
             }
-            
+
             did_change = kv_set_list(key_name, new_list);
-            
+
             if (did_change) {
                 broadcast_full_sync();  // Bulk operations get full sync
             }
         }
         return;
     }
-    
+
     // Scalar set
     if (json_has(msg, ["value"])) {
         string value = llJsonGetValue(msg, ["value"]);
-        
+
         if (key_name == KEY_PUBLIC_ACCESS) value = normalize_bool(value);
         if (key_name == KEY_LOCKED) value = normalize_bool(value);
-        
-        // SECURITY FIX: Validate TPE mode
+        if (key_name == KEY_RUNAWAY_ENABLED) value = normalize_bool(value);
+
+        // Validate TPE mode
         if (key_name == KEY_TPE_MODE) {
             value = normalize_bool(value);
-            
+
             if ((integer)value == 1) {
                 if (!has_external_owner()) {
                     llOwnerSay("ERROR: Cannot enable TPE - requires external owner");
@@ -541,15 +583,19 @@ handle_set(string msg) {
                 }
             }
         }
-        
-        if (key_name == KEY_OWNER_KEY) {
-            if (!apply_owner_set_guard(value)) {
-                return;  // Rejected (self-ownership)
-            }
+
+        // Guard owner objects on scalar set
+        if ((key_name == KEY_OWNER || key_name == KEY_OWNERS) && llJsonValueType(value, []) == JSON_OBJECT) {
+            value = guard_owner_object(value);
         }
-        
+
+        // Guard trustees object on scalar set
+        if (key_name == KEY_TRUSTEES && llJsonValueType(value, []) == JSON_OBJECT) {
+            value = guard_trustees_object(value);
+        }
+
         did_change = kv_set_scalar(key_name, value);
-        
+
         if (did_change) {
             broadcast_delta_scalar(key_name, value);
         }
@@ -570,17 +616,7 @@ handle_list_add(string msg) {
     
     integer did_change = FALSE;
     
-    if (key_name == KEY_OWNER_KEYS) {
-        if (apply_owner_set_guard(elem)) {
-            did_change = kv_list_add_unique(key_name, elem);
-        }
-    }
-    else if (key_name == KEY_TRUSTEES) {
-        if (apply_trustee_add_guard(elem)) {
-            did_change = kv_list_add_unique(key_name, elem);
-        }
-    }
-    else if (key_name == KEY_BLACKLIST) {
+    if (key_name == KEY_BLACKLIST) {
         apply_blacklist_add_guard(elem);
         did_change = kv_list_add_unique(key_name, elem);
     }
@@ -590,6 +626,60 @@ handle_list_add(string msg) {
     
     if (did_change) {
         broadcast_delta_list_add(key_name, elem);
+    }
+}
+
+handle_obj_set(string msg) {
+    if (!json_has(msg, ["key"])) return;
+    if (!json_has(msg, ["field"])) return;
+    if (!json_has(msg, ["value"])) return;
+
+    string key_name = llJsonGetValue(msg, ["key"]);
+    string field = llJsonGetValue(msg, ["field"]);
+    string value = llJsonGetValue(msg, ["value"]);
+
+    if (!is_allowed_key(key_name)) return;
+    if (!is_json_object_key(key_name)) return;
+
+    // Guard: trustee can't be an owner
+    if (key_name == KEY_TRUSTEES) {
+        if (!apply_trustee_add_guard(field)) return;
+    }
+
+    // Guard: owner can't be wearer, removes from trustees/blacklist
+    if (key_name == KEY_OWNER || key_name == KEY_OWNERS) {
+        if (!apply_owner_set_guard(field)) return;
+    }
+
+    // Enforce MaxListLen on JSON object fields
+    string current_obj = kv_get(key_name);
+    if (current_obj != "" && llJsonValueType(current_obj, []) == JSON_OBJECT) {
+        // Only count if field is new (not updating existing)
+        if (llJsonGetValue(current_obj, [field]) == JSON_INVALID) {
+            integer field_count = llGetListLength(llJson2List(current_obj)) / 2;
+            if (field_count >= MaxListLen) return;
+        }
+    }
+
+    integer did_change = kv_obj_set_field(key_name, field, value);
+    if (did_change) {
+        broadcast_delta_scalar(key_name, kv_get(key_name));
+    }
+}
+
+handle_obj_remove(string msg) {
+    if (!json_has(msg, ["key"])) return;
+    if (!json_has(msg, ["field"])) return;
+
+    string key_name = llJsonGetValue(msg, ["key"]);
+    string field = llJsonGetValue(msg, ["field"]);
+
+    if (!is_allowed_key(key_name)) return;
+    if (!is_json_object_key(key_name)) return;
+
+    integer did_change = kv_obj_remove_field(key_name, field);
+    if (did_change) {
+        broadcast_delta_scalar(key_name, kv_get(key_name));
     }
 }
 
@@ -714,6 +804,12 @@ default
         }
         else if (msg_type == "list_remove") {
             handle_list_remove(msg);
+        }
+        else if (msg_type == "obj_set") {
+            handle_obj_set(msg);
+        }
+        else if (msg_type == "obj_remove") {
+            handle_obj_remove(msg);
         }
         else if (msg_type == "settings_restore") {
             handle_settings_restore(msg);

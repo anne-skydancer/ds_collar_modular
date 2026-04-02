@@ -9,7 +9,6 @@ CHANGES:
 - Event-driven plugin registration queue replaces broadcast storms
 - Adaptive timer shifts between batch processing and heartbeat modes
 - Inventory discovery detects new or updated plugin scripts automatically
-- Authorized reset handling protects against unauthorized soft resets
 - Deferred plugin list responses avoid race conditions during registration
 --------------------*/
 
@@ -42,8 +41,6 @@ integer QUEUE_LABEL = 2;
 integer QUEUE_SCRIPT = 3;
 integer QUEUE_MIN_ACL = 4;    // Stored for auth module recovery (not used for decisions)
 
-/* Authorized senders for privileged operations */
-list AUTHORIZED_RESET_SENDERS = ["bootstrap", "maintenance", "coordinator", "activator"];
 
 /* -------------------- STATE -------------------- */
 list PluginRegistry = [];           // Active plugin registry
@@ -71,21 +68,11 @@ string get_msg_type(string msg) {
 }
 
 integer now() {
-    integer unix_time = llGetUnixTime();
-    // INTEGER OVERFLOW PROTECTION: Handle year 2038 problem
-    if (unix_time < 0) {
-        llOwnerSay("[KERNEL] ERROR: Unix timestamp overflow detected!");
-        return 0;
-    }
-    return unix_time;
+    return llGetUnixTime();
 }
 
 integer count_scripts() {
     return llGetInventoryNumber(INVENTORY_SCRIPT);
-}
-
-integer is_authorized_sender(string sender_name) {
-    return (llListFindList(AUTHORIZED_RESET_SENDERS, [sender_name]) != -1);
 }
 
 integer is_plugin_script(string script_name) {
@@ -272,15 +259,13 @@ integer update_last_seen(string context) {
 // Remove dead plugins (haven't responded to ping in PING_TIMEOUT_SEC)
 integer prune_dead_plugins() {
     integer now_unix = llGetUnixTime();
-    if (now_unix == 0) return 0; // Overflow protection
 
     // Skip pruning during region crossing grace window
     if (LastRegionCrossUnix > 0 &&
-        (llGetUnixTime() - LastRegionCrossUnix) < PING_TIMEOUT_SEC) return 0;
+        (now_unix - LastRegionCrossUnix) < PING_TIMEOUT_SEC) return 0;
     LastRegionCrossUnix = 0;
 
     integer cutoff = now_unix - PING_TIMEOUT_SEC;
-    if (cutoff < 0) cutoff = 0; // Additional overflow protection
     
     integer pruned = 0;
     
@@ -403,7 +388,6 @@ broadcast_ping() {
 }
 
 // Send current plugin list (only when registry changes)
-// SECURITY FIX: Use proper JSON encoding to prevent string injection
 broadcast_plugin_list() {
     list plugins = [];
     integer i = 0;
@@ -458,58 +442,19 @@ integer check_owner_changed() {
 
 // Validates that field_name contains only safe characters for JSON field names
 // Returns TRUE if safe (alphanumeric + underscore only), FALSE otherwise
-// SECURITY: Prevents JSON injection when building field names manually
-integer is_safe_field_name(string field_name) {
-    integer len = llStringLength(field_name);
-    if (len == 0 || len > 64) return FALSE;  // Reasonable length bounds
-
-    integer i = 0;
-    while (i < len) {
-        string c = llGetSubString(field_name, i, i);
-
-        // Allow: a-z, A-Z, 0-9, underscore
-        // Use ASCII comparisons via llOrd() for efficiency
-        integer ascii = llOrd(c, 0);
-        integer is_alpha = ((ascii >= 97 && ascii <= 122) || (ascii >= 65 && ascii <= 90));
-        integer is_digit = (ascii >= 48 && ascii <= 57);
-        integer is_underscore = (ascii == 95);
-
-        if (!is_alpha && !is_digit && !is_underscore) {
-            return FALSE;  // Unsafe character found
-        }
-
-        i = i + 1;
-    }
-
-    return TRUE;
-}
-
-// Generic helper to route registration fields to modules
-// Extracts field from registration message and forwards to target module
-// CRITICAL: Preserves JSON structure (arrays/objects) without double-encoding
-// SECURITY: Validates field_name to prevent JSON injection
-// PRECONDITION: field_name must contain only alphanumeric characters and underscores
+// Route a registration field to the appropriate module
+// Preserves JSON structure (arrays/objects) without double-encoding
 route_field(string msg, string context, string field_name, string route_type, integer channel) {
     if (!json_has(msg, [field_name])) return;
 
-    // SECURITY: Validate field_name before manual JSON construction
-    if (!is_safe_field_name(field_name)) {
-        llOwnerSay("[KERNEL] ERROR: Unsafe field name rejected: " + field_name);
-        return;
-    }
-
     string field_value = llJsonGetValue(msg, [field_name]);
 
-    // Build base message with proper encoding for type and context
     string routed_msg = llList2Json(JSON_OBJECT, [
         "type", route_type,
         "context", context
     ]);
 
-    // Manually splice in field value to preserve JSON structure (arrays/objects)
-    // llList2Json would double-encode the field_value, breaking nested JSON
-    // SAFETY: field_name validated above to contain only safe characters
-    // Remove closing brace, add field, then close
+    // Splice in field value raw to preserve nested JSON (llJsonSetValue would double-encode)
     routed_msg = llGetSubString(routed_msg, 0, -2) + ",\"" + field_name + "\":" + field_value + "}";
 
     llMessageLinked(LINK_SET, channel, routed_msg, NULL_KEY);
@@ -559,21 +504,7 @@ handle_plugin_list_request() {
     broadcast_plugin_list();
 }
 
-handle_soft_reset(string msg) {
-    // SECURITY FIX: Verify sender is authorized to request reset
-    string from = llJsonGetValue(msg, ["from"]);
-
-    if (from == JSON_INVALID || from == "") {
-        llOwnerSay("[KERNEL] ERROR: Soft reset rejected - sender not identified");
-        return;
-    }
-
-    if (!is_authorized_sender(from)) {
-        llOwnerSay("[KERNEL] ERROR: Soft reset rejected - unauthorized sender: " + from);
-        return;
-    }
-
-    // Authorized - proceed with reset
+handle_soft_reset() {
     PluginRegistry = [];
     PluginContexts = [];
     PluginScripts = [];
@@ -719,7 +650,7 @@ default
                 handle_plugin_list_request();
             }
             else if (msg_type == "soft_reset" || msg_type == "soft_reset_all") {
-                handle_soft_reset(msg);
+                handle_soft_reset();
             }
         }
         else if (num == AUTH_BUS) {

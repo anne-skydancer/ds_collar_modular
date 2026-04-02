@@ -15,7 +15,6 @@ CHANGES:
 
 /* -------------------- CONSOLIDATED ABI -------------------- */
 integer KERNEL_LIFECYCLE = 500;
-integer AUTH_BUS = 700;
 integer UI_BUS = 900;
 integer DIALOG_BUS = 950;
 
@@ -27,7 +26,6 @@ integer PLUGIN_MIN_ACL = 0;  // ACL 0 - accessible to all (including no access)
 /* -------------------- STATE -------------------- */
 key CurrentUser = NULL_KEY;
 integer UserAcl = -999;
-integer AclPending = FALSE;
 string SessionId = "";
 
 /* -------------------- HELPERS -------------------- */
@@ -57,16 +55,6 @@ send_pong() {
         "type", "pong",
         "context", PLUGIN_CONTEXT
     ]), NULL_KEY);
-}
-
-/* -------------------- ACL QUERIES -------------------- */
-request_acl(key user) {
-    AclPending = TRUE;
-    llMessageLinked(LINK_SET, AUTH_BUS, llList2Json(JSON_OBJECT, [
-        "type", "acl_query",
-        "avatar", (string)user
-    ]), user);
-
 }
 
 /* -------------------- MENU DISPLAY -------------------- */
@@ -167,7 +155,6 @@ return_to_root() {
 cleanup_session() {
     CurrentUser = NULL_KEY;
     UserAcl = -999;
-    AclPending = FALSE;
     SessionId = "";
 }
 
@@ -227,35 +214,15 @@ default {
                 if (llJsonGetValue(msg, ["context"]) != PLUGIN_CONTEXT) return;
 
                 CurrentUser = id;
-                request_acl(id);
-                return;
-            }
+                UserAcl = (integer)llJsonGetValue(msg, ["acl"]);
 
-            return;
-        }
-
-        /* -------------------- AUTH RESULT -------------------- */
-        if (num == AUTH_BUS) {
-            if (msg_type == "acl_result") {
-                if (!AclPending) return;
-                if (!json_has(msg, ["avatar"])) return;
-
-                key avatar = (key)llJsonGetValue(msg, ["avatar"]);
-                if (avatar != CurrentUser) return;
-
-                if (json_has(msg, ["level"])) {
-                    UserAcl = (integer)llJsonGetValue(msg, ["level"]);
-                    AclPending = FALSE;
-
-                    // SOS is accessible to ACL 0 and above (everyone)
-                    if (UserAcl < PLUGIN_MIN_ACL) {
-                        llRegionSayTo(CurrentUser, 0, "[SOS] Access denied.");
-                        cleanup_session();
-                        return;
-                    }
-
-                    show_sos_menu();
+                if (UserAcl < PLUGIN_MIN_ACL) {
+                    llRegionSayTo(CurrentUser, 0, "[SOS] Access denied.");
+                    cleanup_session();
+                    return;
                 }
+
+                show_sos_menu();
                 return;
             }
 

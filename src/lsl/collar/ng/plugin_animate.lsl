@@ -15,7 +15,6 @@ CHANGES:
 
 /* -------------------- CONSOLIDATED ABI -------------------- */
 integer KERNEL_LIFECYCLE = 500;
-integer AUTH_BUS = 700;
 integer UI_BUS = 900;
 integer DIALOG_BUS = 950;
 
@@ -32,7 +31,6 @@ integer MAX_ANIMATIONS = 128;
 // Session management
 key CurrentUser = NULL_KEY;
 integer UserAcl = -999;
-integer AclPending = FALSE;
 string SessionId = "";
 
 // Pagination
@@ -143,41 +141,6 @@ send_pong() {
         "context", PLUGIN_CONTEXT
     ]);
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, msg, NULL_KEY);
-}
-
-/* -------------------- ACL VALIDATION -------------------- */
-
-request_acl(key user) {
-    AclPending = TRUE;
-    
-    string msg = llList2Json(JSON_OBJECT, [
-        "type", "acl_query",
-        "avatar", (string)user,
-        "id", PLUGIN_CONTEXT + "_acl"
-    ]);
-    llMessageLinked(LINK_SET, AUTH_BUS, msg, NULL_KEY);
-}
-
-handle_acl_result(string msg) {
-    if (!json_has(msg, ["avatar"])) return;
-    if (!json_has(msg, ["level"])) return;
-    
-    key avatar = (key)llJsonGetValue(msg, ["avatar"]);
-    if (avatar != CurrentUser) return;
-    
-    integer level = (integer)llJsonGetValue(msg, ["level"]);
-    
-    AclPending = FALSE;
-    UserAcl = level;
-    
-    if (level < PLUGIN_MIN_ACL) {
-        llRegionSayTo(CurrentUser, 0, "Access denied.");
-        cleanup_session();
-        return;
-    }
-    
-    // User has access, show menu
-    show_animation_menu(0);
 }
 
 /* -------------------- UI / MENU SYSTEM -------------------- */
@@ -364,7 +327,6 @@ ui_return_root() {
 cleanup_session() {
     CurrentUser = NULL_KEY;
     UserAcl = -999;
-    AclPending = FALSE;
     SessionId = "";
     CurrentPage = 0;
 }
@@ -448,20 +410,15 @@ default {
                 
                 CurrentUser = id;
                 CurrentPage = 0;
-                request_acl(id);
-                return;
-            }
-            
-            return;
-        }
-        
-        /* -------------------- AUTH RESULT -------------------- */if (num == AUTH_BUS) {
-            if (!json_has(msg, ["type"])) return;
-            string msg_type = llJsonGetValue(msg, ["type"]);
-            
-            if (msg_type == "acl_result") {
-                if (!AclPending) return;
-                handle_acl_result(msg);
+                UserAcl = (integer)llJsonGetValue(msg, ["acl"]);
+
+                if (UserAcl < PLUGIN_MIN_ACL) {
+                    llRegionSayTo(CurrentUser, 0, "Access denied.");
+                    cleanup_session();
+                    return;
+                }
+
+                show_animation_menu(0);
                 return;
             }
             

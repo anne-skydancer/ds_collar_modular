@@ -1,10 +1,14 @@
 /*--------------------
 PLUGIN: ds_collar_plugin_access.lsl
 VERSION: 1.00
-REVISION: 22
+REVISION: 25
 PURPOSE: Owner, trustee, and honorific management workflows
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- REVISION 25: Owner storage consolidated — owner_key+owner_hon→owner,
+  owner_keys+owner_honorifics→owners as JSON objects {uuid:honorific}
+- REVISION 24: Trustees stored as JSON object {uuid:honorific} for atomic
+  sync; owner_honorifics stored as JSON object; removed trustee_honorifics
 - Adds multi-owner mode with ordered lists and honorific metadata
 - Guides owner transfer and release with dual confirmation dialogs
 - Supports runaway self-release and trustee roster maintenance
@@ -15,7 +19,6 @@ CHANGES:
 
 /* -------------------- ABI CHANNELS -------------------- */
 integer KERNEL_LIFECYCLE = 500;
-integer AUTH_BUS = 700;
 integer SETTINGS_BUS = 800;
 integer UI_BUS = 900;
 integer DIALOG_BUS = 950;
@@ -30,12 +33,9 @@ integer MAX_NUMBERED_LIST_ITEMS = 11;  // 12 dialog buttons - 1 Back button
 
 /* -------------------- SETTINGS KEYS -------------------- */
 string KEY_MULTI_OWNER_MODE = "multi_owner_mode";
-string KEY_OWNER_KEY = "owner_key";
-string KEY_OWNER_KEYS = "owner_keys";
-string KEY_OWNER_HON = "owner_hon";
-string KEY_OWNER_HONS = "owner_honorifics";
+string KEY_OWNER = "owner";
+string KEY_OWNERS = "owners";
 string KEY_TRUSTEES = "trustees";
-string KEY_TRUSTEE_HONS = "trustee_honorifics";
 string KEY_RUNAWAY_ENABLED = "runaway_enabled";
 
 /* -------------------- STATE -------------------- */
@@ -43,10 +43,11 @@ integer MultiOwnerMode;
 key OwnerKey;
 list OwnerKeys;
 string OwnerHonorific;
-list OwnerHonorifics;
+string OwnerJson = "{}";
+string OwnersJson = "{}";
 list TrusteeKeys;
+string TrusteesJson = "{}";
 integer RunawayEnabled = TRUE;
-list TrusteeHonorifics;
 
 key CurrentUser;
 integer UserAcl = -999;
@@ -61,7 +62,8 @@ list NameCache;
 key ActiveNameQuery;
 key ActiveQueryTarget;
 
-list HONORIFICS = ["Master", "Mistress", "Daddy", "Mommy", "King", "Queen"];
+list OWNER_HONORIFICS = ["Master", "Mistress", "Daddy", "Mommy", "King", "Queen"];
+list TRUSTEE_HONORIFICS = ["Sir", "Madame", "Milord", "Milady"];
 
 /* -------------------- HELPERS -------------------- */
 
@@ -155,41 +157,60 @@ apply_settings_sync(string msg) {
     OwnerKey = NULL_KEY;
     OwnerKeys = [];
     OwnerHonorific = "";
-    OwnerHonorifics = [];
+    OwnerJson = "{}";
+    OwnersJson = "{}";
     TrusteeKeys = [];
-    TrusteeHonorifics = [];
-    
+    TrusteesJson = "{}";
+
     if (json_has(kv, [KEY_MULTI_OWNER_MODE])) {
         MultiOwnerMode = (integer)llJsonGetValue(kv, [KEY_MULTI_OWNER_MODE]);
     }
-    
+
     if (MultiOwnerMode) {
-        if (json_has(kv, [KEY_OWNER_KEYS])) {
-            string arr = llJsonGetValue(kv, [KEY_OWNER_KEYS]);
-            if (llGetSubString(arr, 0, 0) == "[") OwnerKeys = llJson2List(arr);
-        }
-        if (json_has(kv, [KEY_OWNER_HONS])) {
-            string arr = llJsonGetValue(kv, [KEY_OWNER_HONS]);
-            if (llGetSubString(arr, 0, 0) == "[") OwnerHonorifics = llJson2List(arr);
+        if (json_has(kv, [KEY_OWNERS])) {
+            string obj = llJsonGetValue(kv, [KEY_OWNERS]);
+            if (llJsonValueType(obj, []) == JSON_OBJECT) {
+                OwnersJson = obj;
+                // Extract UUID keys for list lookups
+                list pairs = llJson2List(obj);
+                integer oi = 0;
+                integer olen = llGetListLength(pairs);
+                while (oi < olen) {
+                    OwnerKeys += [llList2String(pairs, oi)];
+                    oi += 2;
+                }
+            }
         }
     }
     else {
-        if (json_has(kv, [KEY_OWNER_KEY])) {
-            OwnerKey = (key)llJsonGetValue(kv, [KEY_OWNER_KEY]);
-        }
-        if (json_has(kv, [KEY_OWNER_HON])) {
-            OwnerHonorific = llJsonGetValue(kv, [KEY_OWNER_HON]);
+        if (json_has(kv, [KEY_OWNER])) {
+            string obj = llJsonGetValue(kv, [KEY_OWNER]);
+            if (llJsonValueType(obj, []) == JSON_OBJECT) {
+                OwnerJson = obj;
+                list pairs = llJson2List(obj);
+                if (llGetListLength(pairs) >= 2) {
+                    OwnerKey = (key)llList2String(pairs, 0);
+                    OwnerHonorific = llList2String(pairs, 1);
+                }
+            }
         }
     }
-    
+
+    // Trustees: JSON object {uuid:honorific}
     if (json_has(kv, [KEY_TRUSTEES])) {
-        string arr = llJsonGetValue(kv, [KEY_TRUSTEES]);
-        if (llGetSubString(arr, 0, 0) == "[") TrusteeKeys = llJson2List(arr);
-    }
-    
-    if (json_has(kv, [KEY_TRUSTEE_HONS])) {
-        string arr = llJsonGetValue(kv, [KEY_TRUSTEE_HONS]);
-        if (llGetSubString(arr, 0, 0) == "[") TrusteeHonorifics = llJson2List(arr);
+        string obj = llJsonGetValue(kv, [KEY_TRUSTEES]);
+        if (llJsonValueType(obj, []) == JSON_OBJECT) {
+            TrusteesJson = obj;
+            // Extract UUID keys for list lookups
+            list pairs = llJson2List(obj);
+            TrusteeKeys = [];
+            integer i = 0;
+            integer pairs_len = llGetListLength(pairs);
+            while (i < pairs_len) {
+                TrusteeKeys += [llList2String(pairs, i)];
+                i += 2;
+            }
+        }
     }
     
     if (json_has(kv, [KEY_RUNAWAY_ENABLED])) {
@@ -203,80 +224,95 @@ apply_settings_sync(string msg) {
 apply_settings_delta(string msg) {
     if (!json_has(msg, ["op"])) return;
     string op = llJsonGetValue(msg, ["op"]);
-    
+
     if (op == "set") {
         if (!json_has(msg, ["changes"])) return;
         string changes = llJsonGetValue(msg, ["changes"]);
-        
+
         if (json_has(changes, [KEY_RUNAWAY_ENABLED])) {
             RunawayEnabled = (integer)llJsonGetValue(changes, [KEY_RUNAWAY_ENABLED]);
+        }
+
+        // Trustees changed (full JSON object broadcast)
+        if (json_has(changes, [KEY_TRUSTEES])) {
+            string obj = llJsonGetValue(changes, [KEY_TRUSTEES]);
+            if (llJsonValueType(obj, []) == JSON_OBJECT) {
+                TrusteesJson = obj;
+                list pairs = llJson2List(obj);
+                TrusteeKeys = [];
+                integer i = 0;
+                integer pairs_len = llGetListLength(pairs);
+                while (i < pairs_len) {
+                    TrusteeKeys += [llList2String(pairs, i)];
+                    i += 2;
+                }
+            }
+        }
+
+        // Single owner changed (full JSON object broadcast)
+        if (json_has(changes, [KEY_OWNER])) {
+            string obj = llJsonGetValue(changes, [KEY_OWNER]);
+            OwnerKey = NULL_KEY;
+            OwnerHonorific = "";
+            OwnerJson = "{}";
+            if (llJsonValueType(obj, []) == JSON_OBJECT) {
+                OwnerJson = obj;
+                list pairs = llJson2List(obj);
+                if (llGetListLength(pairs) >= 2) {
+                    OwnerKey = (key)llList2String(pairs, 0);
+                    OwnerHonorific = llList2String(pairs, 1);
+                }
+            }
+        }
+
+        // Multi-owner changed (full JSON object broadcast)
+        if (json_has(changes, [KEY_OWNERS])) {
+            string obj = llJsonGetValue(changes, [KEY_OWNERS]);
+            OwnerKeys = [];
+            OwnersJson = "{}";
+            if (llJsonValueType(obj, []) == JSON_OBJECT) {
+                OwnersJson = obj;
+                list pairs = llJson2List(obj);
+                integer oi = 0;
+                integer olen = llGetListLength(pairs);
+                while (oi < olen) {
+                    OwnerKeys += [llList2String(pairs, oi)];
+                    oi += 2;
+                }
+            }
         }
     }
 }
 
 
 persist_owner(key owner, string hon) {
+    string obj = llList2Json(JSON_OBJECT, [(string)owner, hon]);
     llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
-        "type", "set", "key", KEY_OWNER_KEY, "value", (string)owner
-    ]), NULL_KEY);
-    llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
-        "type", "set", "key", KEY_OWNER_HON, "value", hon
+        "type", "set", "key", KEY_OWNER, "value", obj
     ]), NULL_KEY);
 }
 
 add_trustee(key trustee, string hon) {
     llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
-        "type", "list_add", "key", KEY_TRUSTEES, "elem", (string)trustee
-    ]), NULL_KEY);
-    llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
-        "type", "list_add", "key", KEY_TRUSTEE_HONS, "elem", hon
+        "type", "obj_set",
+        "key", KEY_TRUSTEES,
+        "field", (string)trustee,
+        "value", hon
     ]), NULL_KEY);
 }
 
 remove_trustee(key trustee) {
-    integer idx = llListFindList(TrusteeKeys, [(string)trustee]);
-    if (idx == -1) return;
-    
     llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
-        "type", "list_remove", "key", KEY_TRUSTEES, "elem", (string)trustee
+        "type", "obj_remove",
+        "key", KEY_TRUSTEES,
+        "field", (string)trustee
     ]), NULL_KEY);
-    
-    if (idx < llGetListLength(TrusteeHonorifics)) {
-        llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
-            "type", "list_remove", "key", KEY_TRUSTEE_HONS, "elem", llList2String(TrusteeHonorifics, idx)
-        ]), NULL_KEY);
-    }
 }
 
 clear_owner() {
-    persist_owner(NULL_KEY, "");
-}
-
-/* -------------------- ACL -------------------- */
-
-request_acl(key user) {
-    llMessageLinked(LINK_SET, AUTH_BUS, llList2Json(JSON_OBJECT, [
-        "type", "acl_query",
-        "avatar", (string)user,
-        "id", PLUGIN_CONTEXT + "_acl"
+    llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
+        "type", "set", "key", KEY_OWNER, "value", "{}"
     ]), NULL_KEY);
-}
-
-handle_acl_result(string msg) {
-    if (!json_has(msg, ["avatar"]) || !json_has(msg, ["level"])) return;
-    
-    key avatar = (key)llJsonGetValue(msg, ["avatar"]);
-    if (avatar != CurrentUser) return;
-    
-    UserAcl = (integer)llJsonGetValue(msg, ["level"]);
-    
-    if (UserAcl < PLUGIN_MIN_ACL) {
-        llRegionSayTo(CurrentUser, 0, "Access denied.");
-        cleanup();
-        return;
-    }
-    
-    show_main();
 }
 
 /* -------------------- MENUS -------------------- */
@@ -371,7 +407,10 @@ show_honorific(key target, string context) {
     PendingCandidate = target;
     SessionId = gen_session();
     MenuContext = context;
-    
+
+    list choices = OWNER_HONORIFICS;
+    if (context == "trustee_hon") choices = TRUSTEE_HONORIFICS;
+
     llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
         "type", "dialog_open",
         "dialog_type", "numbered_list",
@@ -379,7 +418,7 @@ show_honorific(key target, string context) {
         "user", (string)target,
         "title", "Honorific",
         "prompt", "What would you like to be called?",
-        "items", llList2Json(JSON_ARRAY, HONORIFICS),
+        "items", llList2Json(JSON_ARRAY, choices),
         "timeout", 60
     ]), NULL_KEY);
 }
@@ -408,11 +447,12 @@ show_remove_trustee() {
     
     list names = [];
     integer i = 0;
-    integer hon_len = llGetListLength(TrusteeHonorifics);
     while (i < llGetListLength(TrusteeKeys) && i < MAX_NUMBERED_LIST_ITEMS) {
-        string name = get_name((key)llList2String(TrusteeKeys, i));
-        if (i < hon_len) {
-            name += " (" + llList2String(TrusteeHonorifics, i) + ")";
+        string trustee_uuid = llList2String(TrusteeKeys, i);
+        string name = get_name((key)trustee_uuid);
+        string hon = llJsonGetValue(TrusteesJson, [trustee_uuid]);
+        if (hon != JSON_INVALID && hon != "") {
+            name += " (" + hon + ")";
         }
         names += [name];
         i++;
@@ -538,8 +578,8 @@ handle_button(string btn) {
         }
     }
     else if (MenuContext == "set_hon") {
-        if (idx >= 0 && idx < 6) {
-            PendingHonorific = llList2String(HONORIFICS, idx);
+        if (idx >= 0 && idx < llGetListLength(OWNER_HONORIFICS)) {
+            PendingHonorific = llList2String(OWNER_HONORIFICS, idx);
             SessionId = gen_session();
             MenuContext = "set_confirm";
             
@@ -591,8 +631,8 @@ handle_button(string btn) {
         }
     }
     else if (MenuContext == "transfer_hon") {
-        if (idx >= 0 && idx < 6) {
-            PendingHonorific = llList2String(HONORIFICS, idx);
+        if (idx >= 0 && idx < llGetListLength(OWNER_HONORIFICS)) {
+            PendingHonorific = llList2String(OWNER_HONORIFICS, idx);
             key old = OwnerKey;
             persist_owner(PendingCandidate, PendingHonorific);
             llRegionSayTo(old, 0, "You have transferred " + get_name(llGetOwner()) + " to " + get_name(PendingCandidate) + ".");
@@ -710,8 +750,8 @@ handle_button(string btn) {
         }
     }
     else if (MenuContext == "trustee_hon") {
-        if (idx >= 0 && idx < 6) {
-            PendingHonorific = llList2String(HONORIFICS, idx);
+        if (idx >= 0 && idx < llGetListLength(TRUSTEE_HONORIFICS)) {
+            PendingHonorific = llList2String(TRUSTEE_HONORIFICS, idx);
             add_trustee(PendingCandidate, PendingHonorific);
             llRegionSayTo(PendingCandidate, 0, "You are trustee of " + get_name(llGetOwner()) + " as " + PendingHonorific + ".");
             llRegionSayTo(CurrentUser, 0, get_name(PendingCandidate) + " is trustee.");
@@ -777,12 +817,18 @@ default {
             if (type == "start" && json_has(msg, ["context"])) {
                 if (llJsonGetValue(msg, ["context"]) == PLUGIN_CONTEXT) {
                     CurrentUser = id;
-                    request_acl(id);
+                    // ACL level provided by UI module
+                    UserAcl = (integer)llJsonGetValue(msg, ["acl"]);
+
+                    if (UserAcl < PLUGIN_MIN_ACL) {
+                        llRegionSayTo(CurrentUser, 0, "Access denied.");
+                        cleanup();
+                        return;
+                    }
+
+                    show_main();
                 }
             }
-        }
-        else if (num == AUTH_BUS) {
-            if (type == "acl_result") handle_acl_result(msg);
         }
         else if (num == DIALOG_BUS) {
             if (type == "dialog_response") {

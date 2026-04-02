@@ -1,11 +1,13 @@
 /*--------------------
 MODULE: ds_collar_kmod_auth.lsl
 VERSION: 1.00
-REVISION: 28
+REVISION: 30
 PURPOSE: Authoritative ACL and policy engine - OPTIMIZED
 ARCHITECTURE: Dispatch table pattern with linkset data cache and JSON templates
 CHANGES:
-- REVISION 28: Added soft_reset sender validation (authorized senders only)
+- REVISION 30: Owner storage consolidated — owner_key→owner, owner_keys→owners as
+  JSON objects {uuid:honorific}; pre-extract UUID lists at sync time
+- REVISION 29: Trustees parsed as JSON object {uuid:honorific}; extract UUID keys
 - REVISION 25: PERFORMANCE OPTIMIZATIONS
   * Implemented dispatch table pattern for ACL computation (15-39% faster)
   * Added JSON response templates (30-40% faster JSON construction)
@@ -26,9 +28,6 @@ integer KERNEL_LIFECYCLE = 500;
 integer AUTH_BUS = 700;
 integer SETTINGS_BUS = 800;
 
-/* -------------------- SECURITY -------------------- */
-list AUTHORIZED_RESET_SENDERS = ["bootstrap", "maintenance", "coordinator", "activator"];
-
 /* -------------------- ACL CONSTANTS -------------------- */
 integer ACL_BLACKLIST     = -1;
 integer ACL_NOACCESS      = 0;
@@ -40,8 +39,8 @@ integer ACL_PRIMARY_OWNER = 5;
 
 /* -------------------- SETTINGS KEYS -------------------- */
 string KEY_MULTI_OWNER_MODE = "multi_owner_mode";
-string KEY_OWNER_KEY        = "owner_key";
-string KEY_OWNER_KEYS       = "owner_keys";
+string KEY_OWNER            = "owner";
+string KEY_OWNERS           = "owners";
 string KEY_TRUSTEES         = "trustees";
 string KEY_BLACKLIST        = "blacklist";
 string KEY_PUBLIC_ACCESS    = "public_mode";
@@ -640,21 +639,45 @@ apply_settings_sync(string msg) {
         MultiOwnerMode = (integer)llJsonGetValue(kv_json, [KEY_MULTI_OWNER_MODE]);
     }
     
-    if (json_has(kv_json, [KEY_OWNER_KEY])) {
-        OwnerKey = (key)llJsonGetValue(kv_json, [KEY_OWNER_KEY]);
+    // Single owner: JSON object {uuid:honorific} — extract UUID
+    if (json_has(kv_json, [KEY_OWNER])) {
+        string owner_obj = llJsonGetValue(kv_json, [KEY_OWNER]);
+        if (llJsonValueType(owner_obj, []) == JSON_OBJECT) {
+            list pairs = llJson2List(owner_obj);
+            if (llGetListLength(pairs) >= 2) {
+                OwnerKey = (key)llList2String(pairs, 0);
+            }
+        }
     }
-    
-    if (json_has(kv_json, [KEY_OWNER_KEYS])) {
-        string owner_keys_json = llJsonGetValue(kv_json, [KEY_OWNER_KEYS]);
-        if (is_json_arr(owner_keys_json)) {
-            OwnerKeys = llJson2List(owner_keys_json);
+
+    // Multi-owner: JSON object {uuid:honorific, ...} — extract UUID list
+    if (json_has(kv_json, [KEY_OWNERS])) {
+        string owners_obj = llJsonGetValue(kv_json, [KEY_OWNERS]);
+        if (llJsonValueType(owners_obj, []) == JSON_OBJECT) {
+            list pairs = llJson2List(owners_obj);
+            integer pi = 0;
+            integer plen = llGetListLength(pairs);
+            while (pi < plen) {
+                OwnerKeys += [llList2String(pairs, pi)];
+                pi += 2;
+            }
         }
     }
     
     if (json_has(kv_json, [KEY_TRUSTEES])) {
-        string trustees_json = llJsonGetValue(kv_json, [KEY_TRUSTEES]);
-        if (is_json_arr(trustees_json)) {
-            TrusteeList = llJson2List(trustees_json);
+        string trustees_raw = llJsonGetValue(kv_json, [KEY_TRUSTEES]);
+        if (llJsonValueType(trustees_raw, []) == JSON_OBJECT) {
+            // Trustees stored as {uuid:honorific} — extract UUID keys
+            list pairs = llJson2List(trustees_raw);
+            integer pi = 0;
+            integer plen = llGetListLength(pairs);
+            while (pi < plen) {
+                TrusteeList += [llList2String(pairs, pi)];
+                pi += 2;
+            }
+        }
+        else if (is_json_arr(trustees_raw)) {
+            TrusteeList = llJson2List(trustees_raw);
         }
     }
     
@@ -712,8 +735,52 @@ apply_settings_delta(string msg) {
             cache_dirty = TRUE;
         }
         
-        if (json_has(changes, [KEY_OWNER_KEY])) {
-            OwnerKey = (key)llJsonGetValue(changes, [KEY_OWNER_KEY]);
+        // Single owner changed (full JSON object broadcast)
+        if (json_has(changes, [KEY_OWNER])) {
+            string owner_obj = llJsonGetValue(changes, [KEY_OWNER]);
+            OwnerKey = NULL_KEY;
+            if (llJsonValueType(owner_obj, []) == JSON_OBJECT) {
+                list pairs = llJson2List(owner_obj);
+                if (llGetListLength(pairs) >= 2) {
+                    OwnerKey = (key)llList2String(pairs, 0);
+                }
+            }
+            enforce_role_exclusivity();
+            broadcast_acl_change("global", NULL_KEY);
+            cache_dirty = TRUE;
+        }
+
+        // Multi-owner changed (full JSON object broadcast)
+        if (json_has(changes, [KEY_OWNERS])) {
+            string owners_obj = llJsonGetValue(changes, [KEY_OWNERS]);
+            OwnerKeys = [];
+            if (llJsonValueType(owners_obj, []) == JSON_OBJECT) {
+                list pairs = llJson2List(owners_obj);
+                integer oi = 0;
+                integer olen = llGetListLength(pairs);
+                while (oi < olen) {
+                    OwnerKeys += [llList2String(pairs, oi)];
+                    oi += 2;
+                }
+            }
+            enforce_role_exclusivity();
+            broadcast_acl_change("global", NULL_KEY);
+            cache_dirty = TRUE;
+        }
+
+        // Trustees changed (full JSON object broadcast)
+        if (json_has(changes, [KEY_TRUSTEES])) {
+            string trustees_raw = llJsonGetValue(changes, [KEY_TRUSTEES]);
+            TrusteeList = [];
+            if (llJsonValueType(trustees_raw, []) == JSON_OBJECT) {
+                list pairs = llJson2List(trustees_raw);
+                integer pi = 0;
+                integer plen = llGetListLength(pairs);
+                while (pi < plen) {
+                    TrusteeList += [llList2String(pairs, pi)];
+                    pi += 2;
+                }
+            }
             enforce_role_exclusivity();
             broadcast_acl_change("global", NULL_KEY);
             cache_dirty = TRUE;
@@ -722,27 +789,11 @@ apply_settings_delta(string msg) {
     else if (op == "list_add") {
         if (!json_has(msg, ["key"])) return;
         if (!json_has(msg, ["elem"])) return;
-        
+
         string key_name = llJsonGetValue(msg, ["key"]);
         string elem = llJsonGetValue(msg, ["elem"]);
-        
-        if (key_name == KEY_OWNER_KEYS) {
-            if (llListFindList(OwnerKeys, [elem]) == -1) {
-                OwnerKeys += [elem];
-                enforce_role_exclusivity();
-                broadcast_acl_change("global", NULL_KEY);
-                cache_dirty = TRUE;
-            }
-        }
-        else if (key_name == KEY_TRUSTEES) {
-            if (llListFindList(TrusteeList, [elem]) == -1) {
-                TrusteeList += [elem];
-                enforce_role_exclusivity();
-                broadcast_acl_change("avatar", (key)elem);
-                cache_dirty = TRUE;
-            }
-        }
-        else if (key_name == KEY_BLACKLIST) {
+
+        if (key_name == KEY_BLACKLIST) {
             if (llListFindList(Blacklist, [elem]) == -1) {
                 Blacklist += [elem];
                 broadcast_acl_change("avatar", (key)elem);
@@ -757,25 +808,7 @@ apply_settings_delta(string msg) {
         string key_name = llJsonGetValue(msg, ["key"]);
         string elem = llJsonGetValue(msg, ["elem"]);
         
-        if (key_name == KEY_OWNER_KEYS) {
-            integer idx = llListFindList(OwnerKeys, [elem]);
-            while (idx != -1) {
-                OwnerKeys = llDeleteSubList(OwnerKeys, idx, idx);
-                idx = llListFindList(OwnerKeys, [elem]);
-            }
-            broadcast_acl_change("global", NULL_KEY);
-            cache_dirty = TRUE;
-        }
-        else if (key_name == KEY_TRUSTEES) {
-            integer idx = llListFindList(TrusteeList, [elem]);
-            while (idx != -1) {
-                TrusteeList = llDeleteSubList(TrusteeList, idx, idx);
-                idx = llListFindList(TrusteeList, [elem]);
-            }
-            broadcast_acl_change("avatar", (key)elem);
-            cache_dirty = TRUE;
-        }
-        else if (key_name == KEY_BLACKLIST) {
+        if (key_name == KEY_BLACKLIST) {
             integer idx = llListFindList(Blacklist, [elem]);
             while (idx != -1) {
                 Blacklist = llDeleteSubList(Blacklist, idx, idx);
@@ -886,9 +919,6 @@ default
 
         if (num == KERNEL_LIFECYCLE) {
             if (msg_type == "soft_reset" || msg_type == "soft_reset_all") {
-                string from = llJsonGetValue(msg, ["from"]);
-                if (from == JSON_INVALID || from == "") return;
-                if (llListFindList(AUTHORIZED_RESET_SENDERS, [from]) == -1) return;
                 llResetScript();
             }
         }

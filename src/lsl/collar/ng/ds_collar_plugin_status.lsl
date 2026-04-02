@@ -1,10 +1,13 @@
 /*--------------------
 PLUGIN: ds_collar_plugin_status.lsl
 VERSION: 1.00
-REVISION: 23
+REVISION: 26
 PURPOSE: Read-only collar status display for owners and observers
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- REVISION 26: Owner storage consolidated — owner/owners as JSON objects
+- REVISION 25: Trustees and owner_honorifics parsed as JSON objects {uuid:honorific}
+- REVISION 24: Added trustee display name resolution via async dataserver queries
 - REVISION 23: Fixed request_settings_sync to use correct "settings_get" message type
 - REVISION 22: Added request_settings_sync() call on state_entry for independent reset recovery
 - Consolidates status presentation into single dialog page
@@ -28,12 +31,9 @@ integer PLUGIN_MIN_ACL = 1;  // Public can view
 
 /* -------------------- SETTINGS KEYS -------------------- */
 string KEY_MULTI_OWNER_MODE = "multi_owner_mode";
-string KEY_OWNER_KEY = "owner_key";
-string KEY_OWNER_KEYS = "owner_keys";
-string KEY_OWNER_HON = "owner_hon";
-string KEY_OWNER_HONS = "owner_honorifics";
+string KEY_OWNER = "owner";
+string KEY_OWNERS = "owners";
 string KEY_TRUSTEES = "trustees";
-string KEY_TRUSTEE_HONS = "trustee_honorifics";
 string KEY_BLACKLIST = "blacklist";
 string KEY_PUBLIC_ACCESS = "public_mode";
 string KEY_LOCKED = "locked";
@@ -45,9 +45,9 @@ integer MultiOwnerMode = FALSE;
 key OwnerKey = NULL_KEY;
 list OwnerKeys = [];
 string OwnerHonorific = "";
-list OwnerHonorifics = [];
+string OwnersJson = "{}";
 list TrusteeKeys = [];
-list TrusteeHonorifics = [];
+string TrusteesJson = "{}";
 list BlacklistKeys = [];
 integer PublicAccess = FALSE;
 integer Locked = FALSE;
@@ -61,6 +61,10 @@ key OwnerLegacyQuery = NULL_KEY;
 // Multi-owner display names
 list OwnerDisplayNames = [];
 list OwnerNameQueries = [];
+
+// Trustee display names
+list TrusteeDisplayNames = [];
+list TrusteeNameQueries = [];
 
 // Session management
 key CurrentUser = NULL_KEY;
@@ -125,53 +129,61 @@ apply_settings_sync(string msg) {
     OwnerKey = NULL_KEY;
     OwnerKeys = [];
     OwnerHonorific = "";
-    OwnerHonorifics = [];
+    OwnersJson = "{}";
     TrusteeKeys = [];
-    TrusteeHonorifics = [];
+    TrusteesJson = "{}";
     BlacklistKeys = [];
     PublicAccess = FALSE;
     Locked = FALSE;
     TpeMode = FALSE;
-    
+
     // Load values
     if (json_has(kv_json, [KEY_MULTI_OWNER_MODE])) {
         MultiOwnerMode = (integer)llJsonGetValue(kv_json, [KEY_MULTI_OWNER_MODE]);
     }
-    
-    if (json_has(kv_json, [KEY_OWNER_KEY])) {
-        string owner_str = llJsonGetValue(kv_json, [KEY_OWNER_KEY]);
-        OwnerKey = (key)owner_str;
-    }
-    
-    if (json_has(kv_json, [KEY_OWNER_KEYS])) {
-        string owner_keys_json = llJsonGetValue(kv_json, [KEY_OWNER_KEYS]);
-        if (is_json_arr(owner_keys_json)) {
-            OwnerKeys = llJson2List(owner_keys_json);
+
+    // Single owner: JSON object {uuid:honorific}
+    if (json_has(kv_json, [KEY_OWNER])) {
+        string obj = llJsonGetValue(kv_json, [KEY_OWNER]);
+        if (llJsonValueType(obj, []) == JSON_OBJECT) {
+            list pairs = llJson2List(obj);
+            if (llGetListLength(pairs) >= 2) {
+                OwnerKey = (key)llList2String(pairs, 0);
+                OwnerHonorific = llList2String(pairs, 1);
+            }
         }
     }
-    
-    if (json_has(kv_json, [KEY_OWNER_HON])) {
-        OwnerHonorific = llJsonGetValue(kv_json, [KEY_OWNER_HON]);
-    }
-    
-    if (json_has(kv_json, [KEY_OWNER_HONS])) {
-        string hon_json = llJsonGetValue(kv_json, [KEY_OWNER_HONS]);
-        if (is_json_arr(hon_json)) {
-            OwnerHonorifics = llJson2List(hon_json);
+
+    // Multi-owner: JSON object {uuid:honorific, ...}
+    if (json_has(kv_json, [KEY_OWNERS])) {
+        string obj = llJsonGetValue(kv_json, [KEY_OWNERS]);
+        if (llJsonValueType(obj, []) == JSON_OBJECT) {
+            OwnersJson = obj;
+            list pairs = llJson2List(obj);
+            integer oi = 0;
+            integer olen = llGetListLength(pairs);
+            while (oi < olen) {
+                OwnerKeys += [llList2String(pairs, oi)];
+                oi += 2;
+            }
         }
     }
-    
+
     if (json_has(kv_json, [KEY_TRUSTEES])) {
-        string trustees_json = llJsonGetValue(kv_json, [KEY_TRUSTEES]);
-        if (is_json_arr(trustees_json)) {
-            TrusteeKeys = llJson2List(trustees_json);
+        string trustees_raw = llJsonGetValue(kv_json, [KEY_TRUSTEES]);
+        if (llJsonValueType(trustees_raw, []) == JSON_OBJECT) {
+            TrusteesJson = trustees_raw;
+            list pairs = llJson2List(trustees_raw);
+            TrusteeKeys = [];
+            integer pi = 0;
+            integer plen = llGetListLength(pairs);
+            while (pi < plen) {
+                TrusteeKeys += [llList2String(pairs, pi)];
+                pi += 2;
+            }
         }
-    }
-    
-    if (json_has(kv_json, [KEY_TRUSTEE_HONS])) {
-        string hon_json = llJsonGetValue(kv_json, [KEY_TRUSTEE_HONS]);
-        if (is_json_arr(hon_json)) {
-            TrusteeHonorifics = llJson2List(hon_json);
+        else if (is_json_arr(trustees_raw)) {
+            TrusteeKeys = llJson2List(trustees_raw);
         }
     }
     
@@ -214,6 +226,9 @@ apply_settings_sync(string msg) {
     if (needs_refresh) {
         request_owner_names();
     }
+
+    // Always refresh trustee names on full sync
+    request_trustee_names();
 }
 
 apply_settings_delta(string msg) {
@@ -232,13 +247,37 @@ apply_settings_delta(string msg) {
             needs_refresh = TRUE;
         }
         
-        if (json_has(changes, [KEY_OWNER_KEY])) {
-            OwnerKey = (key)llJsonGetValue(changes, [KEY_OWNER_KEY]);
+        // Single owner changed (full JSON object broadcast)
+        if (json_has(changes, [KEY_OWNER])) {
+            string obj = llJsonGetValue(changes, [KEY_OWNER]);
+            OwnerKey = NULL_KEY;
+            OwnerHonorific = "";
+            if (llJsonValueType(obj, []) == JSON_OBJECT) {
+                list pairs = llJson2List(obj);
+                if (llGetListLength(pairs) >= 2) {
+                    OwnerKey = (key)llList2String(pairs, 0);
+                    OwnerHonorific = llList2String(pairs, 1);
+                }
+            }
             needs_refresh = TRUE;
         }
-        
-        if (json_has(changes, [KEY_OWNER_HON])) {
-            OwnerHonorific = llJsonGetValue(changes, [KEY_OWNER_HON]);
+
+        // Multi-owner changed (full JSON object broadcast)
+        if (json_has(changes, [KEY_OWNERS])) {
+            string obj = llJsonGetValue(changes, [KEY_OWNERS]);
+            OwnerKeys = [];
+            OwnersJson = "{}";
+            if (llJsonValueType(obj, []) == JSON_OBJECT) {
+                OwnersJson = obj;
+                list pairs = llJson2List(obj);
+                integer oi = 0;
+                integer olen = llGetListLength(pairs);
+                while (oi < olen) {
+                    OwnerKeys += [llList2String(pairs, oi)];
+                    oi += 2;
+                }
+            }
+            needs_refresh = TRUE;
         }
         
         if (json_has(changes, [KEY_PUBLIC_ACCESS])) {
@@ -256,16 +295,24 @@ apply_settings_delta(string msg) {
         if (needs_refresh) {
             request_owner_names();
         }
-    }
-    else if (op == "list_add" || op == "list_remove") {
-        if (!json_has(msg, ["key"])) return;
-        string list_key = llJsonGetValue(msg, ["key"]);
-        
-        if (list_key == KEY_OWNER_KEYS || list_key == KEY_TRUSTEES || 
-            list_key == KEY_OWNER_HONS || list_key == KEY_TRUSTEE_HONS) {
-            // Request full sync to refresh lists
-            llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, ["type", "settings_get"]), NULL_KEY);
+
+        // Trustees changed (full JSON object broadcast)
+        if (json_has(changes, [KEY_TRUSTEES])) {
+            string trustees_raw = llJsonGetValue(changes, [KEY_TRUSTEES]);
+            if (llJsonValueType(trustees_raw, []) == JSON_OBJECT) {
+                TrusteesJson = trustees_raw;
+                list pairs = llJson2List(trustees_raw);
+                TrusteeKeys = [];
+                integer ti = 0;
+                integer tlen = llGetListLength(pairs);
+                while (ti < tlen) {
+                    TrusteeKeys += [llList2String(pairs, ti)];
+                    ti += 2;
+                }
+                request_trustee_names();
+            }
         }
+
     }
 }
 
@@ -280,10 +327,13 @@ request_owner_names() {
         integer count = llGetListLength(OwnerKeys);
         for (i = 0; i < count; i++) {
             key owner_key = llList2Key(OwnerKeys, i);
+            OwnerDisplayNames += [""];  // Placeholder aligned with OwnerKeys
             if (owner_key != NULL_KEY) {
                 key query_id = llRequestDisplayName(owner_key);
                 OwnerNameQueries += [query_id];
-                OwnerDisplayNames += [""];  // Placeholder
+            }
+            else {
+                OwnerNameQueries += [NULL_KEY];
             }
         }
         
@@ -298,6 +348,25 @@ request_owner_names() {
             OwnerDisplay = "";
             OwnerDisplayQuery = NULL_KEY;
             OwnerLegacyQuery = NULL_KEY;
+        }
+    }
+}
+
+request_trustee_names() {
+    TrusteeDisplayNames = [];
+    TrusteeNameQueries = [];
+
+    integer i;
+    integer count = llGetListLength(TrusteeKeys);
+    for (i = 0; i < count; i++) {
+        key trustee_key = llList2Key(TrusteeKeys, i);
+        TrusteeDisplayNames += [""];  // Placeholder aligned with TrusteeKeys
+        if (trustee_key != NULL_KEY) {
+            key query_id = llRequestDisplayName(trustee_key);
+            TrusteeNameQueries += [query_id];
+        }
+        else {
+            TrusteeNameQueries += [NULL_KEY];
         }
     }
 }
@@ -326,15 +395,11 @@ string build_status_report() {
             status_text += "Owners:\n";
             
             integer i;
-            integer hon_count = llGetListLength(OwnerHonorifics);
             integer disp_count = llGetListLength(OwnerDisplayNames);
             for (i = 0; i < owner_count; i++) {
                 key owner_key = llList2Key(OwnerKeys, i);
-                string honorific = "";
-                
-                if (i < hon_count) {
-                    honorific = llList2String(OwnerHonorifics, i);
-                }
+                string honorific = llJsonGetValue(OwnersJson, [(string)owner_key]);
+                if (honorific == JSON_INVALID) honorific = "";
                 
                 string display_name = "";
                 if (i < disp_count) {
@@ -375,27 +440,31 @@ string build_status_report() {
     // Trustee information
     integer trustee_count = llGetListLength(TrusteeKeys);
     if (trustee_count > 0) {
-        status_text += "Trustees: ";
-        
+        status_text += "Trustees:\n";
+
         integer i;
-        integer hon_count = llGetListLength(TrusteeHonorifics);
+        integer tdisp_count = llGetListLength(TrusteeDisplayNames);
         for (i = 0; i < trustee_count; i++) {
-            if (i != 0) {
-                status_text += ", ";
+            key trustee_key = llList2Key(TrusteeKeys, i);
+            string honorific = llJsonGetValue(TrusteesJson, [(string)trustee_key]);
+            if (honorific == JSON_INVALID) honorific = "";
+
+            string display_name = "";
+            if (i < tdisp_count) {
+                display_name = llList2String(TrusteeDisplayNames, i);
             }
-            
-            string honorific = "";
-            if (i < hon_count) {
-                honorific = llList2String(TrusteeHonorifics, i);
+
+            if (display_name == "") {
+                display_name = llKey2Name(trustee_key);
             }
-            
-            if (honorific == "") {
-                honorific = "trustee";
+
+            if (honorific != "") {
+                status_text += "  " + honorific + " " + display_name + "\n";
             }
-            
-            status_text += honorific;
+            else {
+                status_text += "  " + display_name + "\n";
+            }
         }
-        status_text += "\n";
     }
     else {
         status_text += "Trustees: none\n";
@@ -492,7 +561,9 @@ default {
         OwnerLegacyQuery = NULL_KEY;
         OwnerDisplayNames = [];
         OwnerNameQueries = [];
-        
+        TrusteeDisplayNames = [];
+        TrusteeNameQueries = [];
+
         register_self();
         request_settings_sync();
     }
@@ -593,6 +664,15 @@ default {
     }
     
     dataserver(key query_id, string data) {
+        // Check trustee name queries first
+        integer tidx = llListFindList(TrusteeNameQueries, [query_id]);
+        if (tidx != -1) {
+            if (tidx < llGetListLength(TrusteeDisplayNames)) {
+                TrusteeDisplayNames = llListReplaceList(TrusteeDisplayNames, [data], tidx, tidx);
+            }
+            return;
+        }
+
         // Multi-owner mode
         if (MultiOwnerMode) {
             integer idx = llListFindList(OwnerNameQueries, [query_id]);

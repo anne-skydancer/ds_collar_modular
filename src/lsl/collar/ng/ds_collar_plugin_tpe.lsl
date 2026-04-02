@@ -18,7 +18,6 @@ CHANGES:
 
 /* -------------------- CONSOLIDATED ABI -------------------- */
 integer KERNEL_LIFECYCLE = 500;
-integer AUTH_BUS = 700;
 integer SETTINGS_BUS = 800;
 integer UI_BUS = 900;
 integer DIALOG_BUS = 950;
@@ -50,7 +49,6 @@ key CurrentUser = NULL_KEY;        // Who initiated the action
 integer UserAcl = -999;
 string SessionId = "";
 key WearerKey = NULL_KEY;          // Owner of the collar (for confirmation)
-integer AclPending = FALSE;        // Waiting for ACL result
 
 /* -------------------- HELPERS -------------------- */
 
@@ -284,7 +282,6 @@ default
     state_entry() {
         TpeModeEnabled = FALSE;
         WearerKey = llGetOwner();
-        AclPending = FALSE;
         cleanup_session();
         register_with_kernel();
         request_settings_sync();
@@ -345,42 +342,15 @@ default
             if (msg_type == "start") {
                 string context = llJsonGetValue(str, ["context"]);
                 if (context != PLUGIN_CONTEXT) return;
-                
+
                 // User key is passed as the id parameter to link_message, not in JSON
                 CurrentUser = id;
-                
-                // Request ACL for this user
-                AclPending = TRUE;
-                string acl_msg = llList2Json(JSON_OBJECT, [
-                    "type", "acl_query",
-                    "avatar", (string)CurrentUser
-                ]);
-                llMessageLinked(LINK_SET, AUTH_BUS, acl_msg, CurrentUser);
-            }
-        }
-        else if (num == AUTH_BUS) {
-            string msg_type = llJsonGetValue(str, ["type"]);
-            
-            if (msg_type == "acl_result") {
-                if (!AclPending) {
-                    return;
-                }
-                if (!json_has(str, ["avatar"])) return;
-                
-                key avatar = (key)llJsonGetValue(str, ["avatar"]);
-                
-                if (avatar != CurrentUser) {
-                    return;
-                }
-                
-                if (!json_has(str, ["level"])) return;
-                integer acl_level = (integer)llJsonGetValue(str, ["level"]);
-                
-                AclPending = FALSE;
-                
-                
+
+                // ACL level provided by UI module
+                UserAcl = (integer)llJsonGetValue(str, ["acl"]);
+
                 // Handle click - may show confirmation dialog or toggle directly
-                handle_tpe_click(avatar, acl_level);
+                handle_tpe_click(CurrentUser, UserAcl);
             }
         }
         else if (num == DIALOG_BUS) {

@@ -40,7 +40,7 @@ integer LmActive = FALSE;
 key LmController = NULL_KEY;  // Who is authorized to control the leash
 key LmTargetPrim = NULL_KEY;  // Which prim we're leashing to
 integer LmLastPing = 0;
-integer LmAuthorized = FALSE;  // NEW: Explicit authorization flag
+integer LmAuthorized = FALSE;  // TRUE when leash module has activated LM mode
 
 /* -------------------- HELPERS -------------------- */
 
@@ -60,7 +60,7 @@ integer needs_timer() {
     return FALSE;
 }
 
-/* -------------------- LOCKMEISTER PROTOCOL (IMPROVED SECURITY) -------------------- */
+/* -------------------- LOCKMEISTER PROTOCOL -------------------- */
 
 open_lm_listen() {
     if (LmListen == 0) {
@@ -140,12 +140,12 @@ handle_lm_message(key id, string msg) {
     
     // Lockmeister grab response: "collar ok" or "handle ok"
     if (protocol == "collar ok" || protocol == "handle ok") {
-        // SECURITY: Only accept if Lockmeister mode was explicitly authorized
+        // Only accept if LM mode was activated by the leash module
         if (!LmAuthorized) {
             return;
         }
         
-        // CRITICAL: Only accept handles belonging to the authorized controller
+        // Only accept handles belonging to the expected controller
         if (LmController != NULL_KEY && owner_key != LmController) {
             return;
         }
@@ -326,7 +326,7 @@ handle_particles_update(string msg) {
     
     key new_target = (key)llJsonGetValue(msg, ["target"]);
     
-    // SECURITY: Validate target exists in-world
+    // Verify target is present in-world before rendering
     list details = llGetObjectDetails(new_target, [OBJECT_POS]);
     if (llGetListLength(details) == 0) {
         return;

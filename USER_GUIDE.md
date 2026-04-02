@@ -204,7 +204,7 @@ The collar supports multiple owners sharing equal owner access.
 
 **Enabling Multi-Owner Mode:**
 - Multi-owner mode can **only** be enabled via the settings notecard
-- Add `multi_owner_mode=1` to your settings notecard
+- Add `multi_owner_mode = 1` to your settings notecard
 - Cannot be changed through collar menus - this is intentional for stability
 
 **Adding Additional Owners:**
@@ -614,33 +614,33 @@ The collar supports pre-configuration via a notecard named **"settings"** in the
 ```
 # D/s Collar Settings
 # Lines starting with # are comments
-# Format: key=value
-# IMPORTANT: Do NOT use quotes around UUIDs!
-# Lists use comma-separated UUIDs in brackets: key=[uuid1,uuid2,uuid3]
+# Format: key = value
+# IMPORTANT: Do NOT use quotes around UUIDs in plain values or lists.
+# UUIDs inside JSON objects (owner/trustees) use JSON syntax with quotes.
 
-# Ownership
-owner_key=a1b2c3d4-e5f6-7890-abcd-ef1234567890
-owner_hon=Master
-multi_owner_mode=0
+# Ownership (JSON object format: {"uuid":"honorific"})
+owner = {"a1b2c3d4-e5f6-7890-abcd-ef1234567890":"Master"}
+multi_owner_mode = 0
 
 # Access Control
-public_mode=1
-trustees=[12345678-90ab-cdef-1234-567890abcdef,abcdef01-2345-6789-abcd-ef0123456789]
-trustee_honorifics=[Mistress,Master,Daddy]
-blacklist=[fedcba98-7654-3210-fedc-ba9876543210]
+public_mode = 1
+# Trustees use JSON object format: {"uuid":"honorific"}
+trustees = {"12345678-90ab-cdef-1234-567890abcdef":"Mistress", "abcdef01-2345-6789-abcd-ef0123456789":"Sir"}
+blacklist = [fedcba98-7654-3210-fedc-ba9876543210]
 
 # Collar State
-locked=0
-tpe_mode=0
+locked = 0
+tpe_mode = 0
+runaway_enabled = 1
 
 # Bell Settings
-bell_visible=1
-bell_sound_enabled=1
-bell_volume=0.3
-bell_sound=bell_sound_name
+bell_visible = 1
+bell_sound_enabled = 1
+bell_volume = 0.3
+bell_sound = 16fcf579-82cb-b110-c1a4-5fa5e1385406
 ```
 
-**Note:** RLV settings (relay mode, restrictions, exceptions) and leash settings (length, turn-to-face) cannot be pre-configured via notecard. These must be set through the collar menus after startup.
+**Note:** RLV relay mode, RLV restrictions, and leash settings (length, turn-to-face) cannot be pre-configured via notecard. These must be set through the collar menus after startup. However, RLV *exception* settings (`ex_owner_tp`, `ex_owner_im`, `ex_trustee_tp`, `ex_trustee_im`) can be set via notecard.
 
 ### Available Settings Keys
 
@@ -648,14 +648,11 @@ bell_sound=bell_sound_name
 
 | Key | Type | Description | Example |
 |-----|------|-------------|---------|
-| `owner_key` | UUID | Owner's avatar UUID (single owner mode) | `a1b2c3d4-e5f6-7890-abcd-ef1234567890` |
-| `owner_keys` | List | Owner UUIDs (multi-owner mode, notecard only) | `[a1b2c3d4-e5f6-7890-abcd-ef1234567890,12345678-90ab-cdef-1234-567890abcdef]` |
-| `owner_hon` | String | Owner's honorific (single owner) | `Master`, `Mistress` |
-| `owner_honorifics` | List | Owner honorifics (multi-owner mode) | `[Master,Mistress]` |
+| `owner` | JSON object | Owner with honorific (single owner mode) | `{"uuid":"Master"}` |
+| `owners` | JSON object | Owners with honorifics (multi-owner mode, notecard only) | `{"uuid1":"Master", "uuid2":"Mistress"}` |
 | `multi_owner_mode` | 0/1 | Enable multi-owner (notecard only) | `0` = off, `1` = on |
-| `trustees` | List | Trustee UUIDs | `[12345678-90ab-cdef-1234-567890abcdef,abcdef01-2345-6789-abcd-ef0123456789]` |
-| `trustee_honorifics` | List | Trustee titles | `[Master,Mistress]` |
-| `blacklist` | List | Blacklisted UUIDs | `[fedcba98-7654-3210-fedc-ba9876543210,00000000-0000-0000-0000-000000000000]` |
+| `trustees` | JSON object | Trusted users keyed by UUID with honorifics | `{"uuid1":"Sir", "uuid2":"Lady"}` |
+| `blacklist` | JSON array | Blacklisted UUIDs | `[uuid1, uuid2]` |
 
 **Collar State:**
 
@@ -664,6 +661,16 @@ bell_sound=bell_sound_name
 | `public_mode` | 0/1 | Public access | `0` = off, `1` = on |
 | `locked` | 0/1 | Lock state | `0` = unlocked, `1` = locked |
 | `tpe_mode` | 0/1 | TPE mode | `0` = off, `1` = on |
+| `runaway_enabled` | 0/1 | Allow wearer self-release | `0` = off, `1` = on (default) |
+
+**RLV Exceptions:**
+
+| Key | Type | Description | Example |
+|-----|------|-------------|---------|
+| `ex_owner_tp` | 0/1 | Owner bypasses TP restrictions | `0` = off, `1` = on |
+| `ex_owner_im` | 0/1 | Owner bypasses IM restrictions | `0` = off, `1` = on |
+| `ex_trustee_tp` | 0/1 | Trustees bypass TP restrictions | `0` = off, `1` = on |
+| `ex_trustee_im` | 0/1 | Trustees bypass IM restrictions | `0` = off, `1` = on |
 
 **Bell Settings:**
 
@@ -672,12 +679,13 @@ bell_sound=bell_sound_name
 | `bell_visible` | 0/1 | Bell visibility | `0` = hidden, `1` = visible |
 | `bell_sound_enabled` | 0/1 | Bell sound | `0` = silent, `1` = enabled |
 | `bell_volume` | Float | Bell volume | `0.0` to `1.0` |
-| `bell_sound` | String | Bell sound name from inventory | `bell_jingle` |
+| `bell_sound` | UUID | Bell sound asset UUID | `16fcf579-82cb-b110-c1a4-5fa5e1385406` |
 
 **Notes:**
 - Keys marked "notecard only" can only be set via settings notecard, not via runtime messages
-- RLV settings (relay, restrictions, exceptions) are **not supported** in notecard configuration
-- Leash settings (length, turn-to-face) are **not supported** in notecard configuration
+- RLV relay mode, RLV restrictions, and leash settings are **not supported** in notecard configuration
+- RLV exception settings (`ex_owner_tp/im`, `ex_trustee_tp/im`) **are** supported in notecard configuration
+- `owner`, `owners`, and `trustees` use JSON object format `{"uuid":"honorific"}` — array syntax `[...]` is rejected for these keys
 - All non-notecard-only settings persist automatically when changed via menus
 
 ### Finding Avatar UUIDs
@@ -710,10 +718,10 @@ default {
 3. Shows all current key-value pairs
 
 **What Gets Saved:**
-- All settings persist automatically
-- Changes sync across all scripts
-- Survives logout/login
-- Survives script resets
+- All settings persist automatically across detach/reattach for the same owner
+- Changes sync across all scripts in real-time via delta broadcasts
+- ACL data (owners, trustees, blacklist, public mode, TPE) also persists in linkset data, surviving script resets
+- Runtime settings in script globals (`KvJson`) do **not** survive script resets or ownership changes — use the notecard for values that must survive these events
 
 ---
 
@@ -768,13 +776,13 @@ default {
 4. Check you're not blacklisted (unlikely but possible)
 
 #### Settings Not Saving
-**Symptoms:** Changes reset after relog.
+**Symptoms:** Changes reset after relog or script reset.
 
 **Solutions:**
-1. Wait 5 seconds after making changes before relogging
-2. Check `kmod_settings` script is present and running
-3. Check object permissions allow script modifications
-4. Reset collar scripts
+1. ACL data (owners, trustees, blacklist, public mode, TPE) persists in linkset data and should survive relogs and script resets automatically
+2. Other runtime settings persist in script globals across detach/reattach but are lost on script reset or ownership change — edit the `settings` notecard for values that must survive these events
+3. Check `kmod_settings` script is present and running
+4. Check object permissions allow script modifications
 
 #### HUD Not Detecting Collar
 **Symptoms:** Control HUD shows no collars.
@@ -867,7 +875,7 @@ A: Check the LICENSE (MIT) and object permissions. Generally yes, but respect cr
 ### Ownership Questions
 
 **Q: Can I have multiple owners?**
-A: Yes. Enable `multi_owner_mode=1` in settings notecard. All owners have equal owner access.
+A: Yes. Enable `multi_owner_mode = 1` in settings notecard. All owners have equal owner access.
 
 **Q: What happens if my owner disappears/quits SL?**
 A: If unowned access is available, you can use the Runaway feature (if enabled). Otherwise, you'll need to reset the collar (which clears ownership) or contact the creator for assistance.
