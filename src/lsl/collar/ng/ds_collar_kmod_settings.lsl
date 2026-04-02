@@ -445,6 +445,11 @@ parse_notecard_line(string line) {
     }
     // Check if it's a list (starts with [)
     else if (llGetSubString(value, 0, 0) == "[") {
+        // Reject array syntax for keys that must be JSON objects
+        if (is_json_object_key(key_name)) {
+            llOwnerSay("WARNING: " + key_name + " requires JSON object format, not array");
+            return;
+        }
         // Parse as CSV list
         string list_contents = llGetSubString(value, 1, -2);  // Strip [ ]
         list parsed_list = llCSV2List(list_contents);
@@ -661,6 +666,16 @@ handle_obj_set(string msg) {
     // Guard: trustee can't be an owner
     if (key_name == KEY_TRUSTEES) {
         if (!apply_trustee_add_guard(field)) return;
+    }
+
+    // Enforce MaxListLen on JSON object fields
+    string current_obj = kv_get(key_name);
+    if (current_obj != "" && llJsonValueType(current_obj, []) == JSON_OBJECT) {
+        // Only count if field is new (not updating existing)
+        if (llJsonGetValue(current_obj, [field]) == JSON_INVALID) {
+            integer field_count = llGetListLength(llJson2List(current_obj)) / 2;
+            if (field_count >= MaxListLen) return;
+        }
     }
 
     integer did_change = kv_obj_set_field(key_name, field, value);
