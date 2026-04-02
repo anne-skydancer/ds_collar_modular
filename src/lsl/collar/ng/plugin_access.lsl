@@ -68,9 +68,6 @@ list TRUSTEE_HONORIFICS = ["Sir", "Madame", "Milord", "Milady"];
 /* -------------------- HELPERS -------------------- */
 
 
-integer json_has(string j, list path) {
-    return (llJsonGetValue(j, path) != JSON_INVALID);
-}
 
 string gen_session() {
     return PLUGIN_CONTEXT + "_" + (string)llGetUnixTime();
@@ -150,8 +147,8 @@ send_pong() {
 /* -------------------- SETTINGS -------------------- */
 
 apply_settings_sync(string msg) {
-    if (!json_has(msg, ["kv"])) return;
     string kv = llJsonGetValue(msg, ["kv"]);
+    if (kv == JSON_INVALID) return;
     
     MultiOwnerMode = FALSE;
     OwnerKey = NULL_KEY;
@@ -162,13 +159,15 @@ apply_settings_sync(string msg) {
     TrusteeKeys = [];
     TrusteesJson = "{}";
 
-    if (json_has(kv, [KEY_MULTI_OWNER_MODE])) {
-        MultiOwnerMode = (integer)llJsonGetValue(kv, [KEY_MULTI_OWNER_MODE]);
+    string tmp = llJsonGetValue(kv, [KEY_MULTI_OWNER_MODE]);
+    if (tmp != JSON_INVALID) {
+        MultiOwnerMode = (integer)tmp;
     }
 
+    string obj;
     if (MultiOwnerMode) {
-        if (json_has(kv, [KEY_OWNERS])) {
-            string obj = llJsonGetValue(kv, [KEY_OWNERS]);
+        obj = llJsonGetValue(kv, [KEY_OWNERS]);
+        if (obj != JSON_INVALID) {
             if (llJsonValueType(obj, []) == JSON_OBJECT) {
                 OwnersJson = obj;
                 // Extract UUID keys for list lookups
@@ -183,8 +182,8 @@ apply_settings_sync(string msg) {
         }
     }
     else {
-        if (json_has(kv, [KEY_OWNER])) {
-            string obj = llJsonGetValue(kv, [KEY_OWNER]);
+        obj = llJsonGetValue(kv, [KEY_OWNER]);
+        if (obj != JSON_INVALID) {
             if (llJsonValueType(obj, []) == JSON_OBJECT) {
                 OwnerJson = obj;
                 list pairs = llJson2List(obj);
@@ -197,8 +196,8 @@ apply_settings_sync(string msg) {
     }
 
     // Trustees: JSON object {uuid:honorific}
-    if (json_has(kv, [KEY_TRUSTEES])) {
-        string obj = llJsonGetValue(kv, [KEY_TRUSTEES]);
+    obj = llJsonGetValue(kv, [KEY_TRUSTEES]);
+    if (obj != JSON_INVALID) {
         if (llJsonValueType(obj, []) == JSON_OBJECT) {
             TrusteesJson = obj;
             // Extract UUID keys for list lookups
@@ -213,8 +212,9 @@ apply_settings_sync(string msg) {
         }
     }
     
-    if (json_has(kv, [KEY_RUNAWAY_ENABLED])) {
-        RunawayEnabled = (integer)llJsonGetValue(kv, [KEY_RUNAWAY_ENABLED]);
+    tmp = llJsonGetValue(kv, [KEY_RUNAWAY_ENABLED]);
+    if (tmp != JSON_INVALID) {
+        RunawayEnabled = (integer)tmp;
     }
     else {
         RunawayEnabled = TRUE;
@@ -222,20 +222,21 @@ apply_settings_sync(string msg) {
 }
 
 apply_settings_delta(string msg) {
-    if (!json_has(msg, ["op"])) return;
     string op = llJsonGetValue(msg, ["op"]);
+    if (op == JSON_INVALID) return;
 
     if (op == "set") {
-        if (!json_has(msg, ["changes"])) return;
         string changes = llJsonGetValue(msg, ["changes"]);
+        if (changes == JSON_INVALID) return;
 
-        if (json_has(changes, [KEY_RUNAWAY_ENABLED])) {
-            RunawayEnabled = (integer)llJsonGetValue(changes, [KEY_RUNAWAY_ENABLED]);
+        string tmp = llJsonGetValue(changes, [KEY_RUNAWAY_ENABLED]);
+        if (tmp != JSON_INVALID) {
+            RunawayEnabled = (integer)tmp;
         }
 
         // Trustees changed (full JSON object broadcast)
-        if (json_has(changes, [KEY_TRUSTEES])) {
-            string obj = llJsonGetValue(changes, [KEY_TRUSTEES]);
+        string obj = llJsonGetValue(changes, [KEY_TRUSTEES]);
+        if (obj != JSON_INVALID) {
             if (llJsonValueType(obj, []) == JSON_OBJECT) {
                 TrusteesJson = obj;
                 list pairs = llJson2List(obj);
@@ -250,8 +251,8 @@ apply_settings_delta(string msg) {
         }
 
         // Single owner changed (full JSON object broadcast)
-        if (json_has(changes, [KEY_OWNER])) {
-            string obj = llJsonGetValue(changes, [KEY_OWNER]);
+        obj = llJsonGetValue(changes, [KEY_OWNER]);
+        if (obj != JSON_INVALID) {
             OwnerKey = NULL_KEY;
             OwnerHonorific = "";
             OwnerJson = "{}";
@@ -266,8 +267,8 @@ apply_settings_delta(string msg) {
         }
 
         // Multi-owner changed (full JSON object broadcast)
-        if (json_has(changes, [KEY_OWNERS])) {
-            string obj = llJsonGetValue(changes, [KEY_OWNERS]);
+        obj = llJsonGetValue(changes, [KEY_OWNERS]);
+        if (obj != JSON_INVALID) {
             OwnerKeys = [];
             OwnersJson = "{}";
             if (llJsonValueType(obj, []) == JSON_OBJECT) {
@@ -802,8 +803,8 @@ default {
     }
     
     link_message(integer sender, integer num, string msg, key id) {
-        if (!json_has(msg, ["type"])) return;
         string type = llJsonGetValue(msg, ["type"]);
+        if (type == JSON_INVALID) return;
         
         if (num == KERNEL_LIFECYCLE) {
             if (type == "register_now") register_self();
@@ -814,7 +815,7 @@ default {
             else if (type == "settings_delta") apply_settings_delta(msg);
         }
         else if (num == UI_BUS) {
-            if (type == "start" && json_has(msg, ["context"])) {
+            if (type == "start" && (llJsonGetValue(msg, ["context"]) != JSON_INVALID)) {
                 if (llJsonGetValue(msg, ["context"]) == PLUGIN_CONTEXT) {
                     CurrentUser = id;
                     // ACL level provided by UI module
@@ -832,14 +833,14 @@ default {
         }
         else if (num == DIALOG_BUS) {
             if (type == "dialog_response") {
-                if (json_has(msg, ["session_id"]) && json_has(msg, ["button"])) {
+                if ((llJsonGetValue(msg, ["session_id"]) != JSON_INVALID) && (llJsonGetValue(msg, ["button"]) != JSON_INVALID)) {
                     if (llJsonGetValue(msg, ["session_id"]) == SessionId) {
                         handle_button(llJsonGetValue(msg, ["button"]));
                     }
                 }
             }
             else if (type == "dialog_timeout") {
-                if (json_has(msg, ["session_id"])) {
+                if ((llJsonGetValue(msg, ["session_id"]) != JSON_INVALID)) {
                     if (llJsonGetValue(msg, ["session_id"]) == SessionId) cleanup();
                 }
             }

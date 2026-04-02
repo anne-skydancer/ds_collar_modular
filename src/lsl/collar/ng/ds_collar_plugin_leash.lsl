@@ -73,9 +73,6 @@ integer IsRegistered = FALSE;
 /* -------------------- HELPERS -------------------- */
 
 
-integer json_has(string j, list path) {
-    return (llJsonGetValue(j, path) != JSON_INVALID);
-}
 string generate_session_id() {
     return PLUGIN_CONTEXT + "_" + (string)llGetUnixTime();
 }
@@ -687,8 +684,8 @@ default
 
     link_message(integer sender, integer num, string msg, key id) {
         if (num == KERNEL_LIFECYCLE) {
-            if (!json_has(msg, ["type"])) return;
             string msg_type = llJsonGetValue(msg, ["type"]);
+            if (msg_type == JSON_INVALID) return;
 
             if (msg_type == "register_now") {
                 register_self();
@@ -703,11 +700,11 @@ default
         }
 
         if (num == UI_BUS) {
-            if (!json_has(msg, ["type"])) return;
             string msg_type = llJsonGetValue(msg, ["type"]);
+            if (msg_type == JSON_INVALID) return;
 
             if (msg_type == "start") {
-                if (!json_has(msg, ["context"])) return;
+                if (llJsonGetValue(msg, ["context"]) == JSON_INVALID) return;
                 if (llJsonGetValue(msg, ["context"]) != PLUGIN_CONTEXT) return;
                 CurrentUser = id;
                 UserAcl = (integer)llJsonGetValue(msg, ["acl"]);
@@ -716,23 +713,29 @@ default
             }
 
             if (msg_type == "leash_state") {
-                if (json_has(msg, ["leashed"])) {
-                    Leashed = (integer)llJsonGetValue(msg, ["leashed"]);
+                string tmp = llJsonGetValue(msg, ["leashed"]);
+                if (tmp != JSON_INVALID) {
+                    Leashed = (integer)tmp;
                 }
-                if (json_has(msg, ["leasher"])) {
-                    Leasher = (key)llJsonGetValue(msg, ["leasher"]);
+                tmp = llJsonGetValue(msg, ["leasher"]);
+                if (tmp != JSON_INVALID) {
+                    Leasher = (key)tmp;
                 }
-                if (json_has(msg, ["length"])) {
-                    LeashLength = (integer)llJsonGetValue(msg, ["length"]);
+                tmp = llJsonGetValue(msg, ["length"]);
+                if (tmp != JSON_INVALID) {
+                    LeashLength = (integer)tmp;
                 }
-                if (json_has(msg, ["turnto"])) {
-                    TurnToFace = (integer)llJsonGetValue(msg, ["turnto"]);
+                tmp = llJsonGetValue(msg, ["turnto"]);
+                if (tmp != JSON_INVALID) {
+                    TurnToFace = (integer)tmp;
                 }
-                if (json_has(msg, ["mode"])) {
-                    LeashMode = (integer)llJsonGetValue(msg, ["mode"]);
+                tmp = llJsonGetValue(msg, ["mode"]);
+                if (tmp != JSON_INVALID) {
+                    LeashMode = (integer)tmp;
                 }
-                if (json_has(msg, ["target"])) {
-                    LeashTarget = (key)llJsonGetValue(msg, ["target"]);
+                tmp = llJsonGetValue(msg, ["target"]);
+                if (tmp != JSON_INVALID) {
+                    LeashTarget = (key)tmp;
                 }
 
                 // If we were waiting for state update, show the pending menu
@@ -754,7 +757,7 @@ default
             }
 
             if (msg_type == "offer_pending") {
-                if (!json_has(msg, ["target"]) || !json_has(msg, ["originator"])) return;
+                if (llJsonGetValue(msg, ["target"]) == JSON_INVALID || llJsonGetValue(msg, ["originator"]) == JSON_INVALID) return;
                 key target = (key)llJsonGetValue(msg, ["target"]);
                 key originator = (key)llJsonGetValue(msg, ["originator"]);
                 showOfferDialog(target, originator);
@@ -763,11 +766,11 @@ default
         }
 
         if (num == DIALOG_BUS) {
-            if (!json_has(msg, ["type"])) return;
             string msg_type = llJsonGetValue(msg, ["type"]);
+            if (msg_type == JSON_INVALID) return;
 
             if (msg_type == "dialog_response") {
-                if (!json_has(msg, ["session_id"]) || !json_has(msg, ["button"])) return;
+                if (llJsonGetValue(msg, ["session_id"]) == JSON_INVALID || llJsonGetValue(msg, ["button"]) == JSON_INVALID) return;
                 
                 string response_session = llJsonGetValue(msg, ["session_id"]);
                 string button = llJsonGetValue(msg, ["button"]);
@@ -785,9 +788,8 @@ default
             }
 
             if (msg_type == "dialog_timeout") {
-                if (!json_has(msg, ["session_id"])) return;
-                
                 string timeout_session = llJsonGetValue(msg, ["session_id"]);
+                if (timeout_session == JSON_INVALID) return;
                 
                 // Check if this is an offer dialog timeout
                 if (timeout_session == OfferDialogSession) {

@@ -43,9 +43,6 @@ integer PublicModeEnabled = FALSE;
 /* -------------------- HELPERS -------------------- */
 
 
-integer json_has(string j, list path) {
-    return (llJsonGetValue(j, path) != JSON_INVALID);
-}
 
 /* -------------------- LIFECYCLE MANAGEMENT -------------------- */
 
@@ -76,15 +73,15 @@ send_pong() {
 /* -------------------- SETTINGS CONSUMPTION -------------------- */
 
 apply_settings_sync(string msg) {
-    if (!json_has(msg, ["kv"])) return;
-    
     string kv_json = llJsonGetValue(msg, ["kv"]);
+    if (kv_json == JSON_INVALID) return;
     
     integer old_state = PublicModeEnabled;
     PublicModeEnabled = FALSE;
     
-    if (json_has(kv_json, [KEY_PUBLIC_MODE])) {
-        PublicModeEnabled = (integer)llJsonGetValue(kv_json, [KEY_PUBLIC_MODE]);
+    string tmp = llJsonGetValue(kv_json, [KEY_PUBLIC_MODE]);
+    if (tmp != JSON_INVALID) {
+        PublicModeEnabled = (integer)tmp;
     }
     
     
@@ -95,15 +92,14 @@ apply_settings_sync(string msg) {
 }
 
 apply_settings_delta(string msg) {
-    if (!json_has(msg, ["op"])) return;
-    
     string op = llJsonGetValue(msg, ["op"]);
+    if (op == JSON_INVALID) return;
     
     if (op == "set") {
-        if (!json_has(msg, ["changes"])) return;
         string changes = llJsonGetValue(msg, ["changes"]);
+        if (changes == JSON_INVALID) return;
         
-        if (json_has(changes, [KEY_PUBLIC_MODE])) {
+        if ((llJsonGetValue(changes, [KEY_PUBLIC_MODE]) != JSON_INVALID)) {
             integer old_state = PublicModeEnabled;
             PublicModeEnabled = (integer)llJsonGetValue(changes, [KEY_PUBLIC_MODE]);
             
@@ -205,8 +201,8 @@ default {
     
     link_message(integer sender, integer num, string msg, key id) {
         /* -------------------- KERNEL LIFECYCLE -------------------- */if (num == KERNEL_LIFECYCLE) {
-            if (!json_has(msg, ["type"])) return;
             string msg_type = llJsonGetValue(msg, ["type"]);
+            if (msg_type == JSON_INVALID) return;
             
             if (msg_type == "register_now") {
                 register_self();
@@ -222,8 +218,8 @@ default {
         }
         
         /* -------------------- SETTINGS SYNC/DELTA -------------------- */if (num == SETTINGS_BUS) {
-            if (!json_has(msg, ["type"])) return;
             string msg_type = llJsonGetValue(msg, ["type"]);
+            if (msg_type == JSON_INVALID) return;
             
             if (msg_type == "settings_sync") {
                 apply_settings_sync(msg);
@@ -239,11 +235,11 @@ default {
         }
         
         /* -------------------- UI DIRECT TOGGLE -------------------- */if (num == UI_BUS) {
-            if (!json_has(msg, ["type"])) return;
             string msg_type = llJsonGetValue(msg, ["type"]);
+            if (msg_type == JSON_INVALID) return;
             
             if (msg_type == "start") {
-                if (!json_has(msg, ["context"])) return;
+                if (llJsonGetValue(msg, ["context"]) == JSON_INVALID) return;
                 if (llJsonGetValue(msg, ["context"]) != PLUGIN_CONTEXT) return;
                 
                 if (id == NULL_KEY) return;

@@ -22,12 +22,10 @@ integer DIALOG_BUS = 950;
 
 /* -------------------- HELPERS -------------------- */
 
-integer json_has(string j, list path) {
-    return (llJsonGetValue(j, path) != JSON_INVALID);
-}
 string get_msg_type(string msg) {
-    if (!json_has(msg, ["type"])) return "";
-    return llJsonGetValue(msg, ["type"]);
+    string t = llJsonGetValue(msg, ["type"]);
+    if (t == JSON_INVALID) return "";
+    return t;
 }
 
 integer validate_required_fields(string json_str, list field_names) {
@@ -35,7 +33,7 @@ integer validate_required_fields(string json_str, list field_names) {
     integer len = llGetListLength(field_names);
     while (i < len) {
         string field = llList2String(field_names, i);
-        if (!json_has(json_str, [field])) {
+        if (llJsonGetValue(json_str, [field]) == JSON_INVALID) {
             return FALSE;
         }
         i += 1;

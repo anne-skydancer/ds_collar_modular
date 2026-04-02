@@ -88,12 +88,10 @@ integer NextNameRequestTime = 0;  // Timestamp when next request can be sent
 /* -------------------- HELPERS -------------------- */
 
 
-integer json_has(string j, list path) {
-    return (llJsonGetValue(j, path) != JSON_INVALID);
-}
 string get_msg_type(string msg) {
-    if (!json_has(msg, ["type"])) return "";
-    return llJsonGetValue(msg, ["type"]);
+    string t = llJsonGetValue(msg, ["type"]);
+    if (t == JSON_INVALID) return "";
+    return t;
 }
 
 
@@ -210,10 +208,9 @@ request_settings() {
 }
 
 apply_settings_sync(string msg) {
-    if (!json_has(msg, ["kv"])) return;
-    
     string kv_json = llJsonGetValue(msg, ["kv"]);
-    
+    if (kv_json == JSON_INVALID) return;
+
     // Reset
     MultiOwnerMode = FALSE;
     OwnerKey = NULL_KEY;
@@ -222,13 +219,14 @@ apply_settings_sync(string msg) {
     OwnersJson = "{}";
 
     // Load
-    if (json_has(kv_json, [KEY_MULTI_OWNER_MODE])) {
-        MultiOwnerMode = (integer)llJsonGetValue(kv_json, [KEY_MULTI_OWNER_MODE]);
+    string tmp = llJsonGetValue(kv_json, [KEY_MULTI_OWNER_MODE]);
+    if (tmp != JSON_INVALID) {
+        MultiOwnerMode = (integer)tmp;
     }
 
     // Single owner: JSON object {uuid:honorific}
-    if (json_has(kv_json, [KEY_OWNER])) {
-        string obj = llJsonGetValue(kv_json, [KEY_OWNER]);
+    string obj = llJsonGetValue(kv_json, [KEY_OWNER]);
+    if (obj != JSON_INVALID) {
         if (llJsonValueType(obj, []) == JSON_OBJECT) {
             list pairs = llJson2List(obj);
             if (llGetListLength(pairs) >= 2) {
@@ -239,8 +237,8 @@ apply_settings_sync(string msg) {
     }
 
     // Multi-owner: JSON object {uuid:honorific, ...}
-    if (json_has(kv_json, [KEY_OWNERS])) {
-        string obj = llJsonGetValue(kv_json, [KEY_OWNERS]);
+    obj = llJsonGetValue(kv_json, [KEY_OWNERS]);
+    if (obj != JSON_INVALID) {
         if (llJsonValueType(obj, []) == JSON_OBJECT) {
             OwnersJson = obj;
             list pairs = llJson2List(obj);

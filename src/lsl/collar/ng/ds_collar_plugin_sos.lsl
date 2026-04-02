@@ -31,9 +31,6 @@ string SessionId = "";
 /* -------------------- HELPERS -------------------- */
 
 
-integer json_has(string j, list path) {
-    return (llJsonGetValue(j, path) != JSON_INVALID);
-}
 
 string generate_session_id() {
     return PLUGIN_CONTEXT + "_" + (string)llGetUnixTime();
@@ -176,9 +173,8 @@ default {
     }
 
     link_message(integer sender, integer num, string msg, key id) {
-        if (!json_has(msg, ["type"])) return;
-
         string msg_type = llJsonGetValue(msg, ["type"]);
+        if (msg_type == JSON_INVALID) return;
 
         /* -------------------- KERNEL LIFECYCLE -------------------- */
         if (num == KERNEL_LIFECYCLE) {
@@ -194,8 +190,8 @@ default {
 
             if (msg_type == "soft_reset" || msg_type == "soft_reset_all") {
                 // Check if this is a targeted reset
-                if (json_has(msg, ["context"])) {
-                    string target_context = llJsonGetValue(msg, ["context"]);
+                string target_context = llJsonGetValue(msg, ["context"]);
+                if (target_context != JSON_INVALID) {
                     if (target_context != "" && target_context != PLUGIN_CONTEXT) {
                         return;  // Not for us, ignore
                     }
@@ -210,7 +206,7 @@ default {
         /* -------------------- UI START -------------------- */
         if (num == UI_BUS) {
             if (msg_type == "start") {
-                if (!json_has(msg, ["context"])) return;
+                if (llJsonGetValue(msg, ["context"]) == JSON_INVALID) return;
                 if (llJsonGetValue(msg, ["context"]) != PLUGIN_CONTEXT) return;
 
                 CurrentUser = id;
@@ -232,7 +228,7 @@ default {
         /* -------------------- DIALOG RESPONSE -------------------- */
         if (num == DIALOG_BUS) {
             if (msg_type == "dialog_response") {
-                if (!json_has(msg, ["session_id"]) || !json_has(msg, ["button"])) return;
+                if (llJsonGetValue(msg, ["session_id"]) == JSON_INVALID || llJsonGetValue(msg, ["button"]) == JSON_INVALID) return;
 
                 string response_session = llJsonGetValue(msg, ["session_id"]);
                 if (response_session != SessionId) return;
@@ -243,9 +239,8 @@ default {
             }
 
             if (msg_type == "dialog_timeout") {
-                if (!json_has(msg, ["session_id"])) return;
-
                 string timeout_session = llJsonGetValue(msg, ["session_id"]);
+                if (timeout_session == JSON_INVALID) return;
                 if (timeout_session != SessionId) return;
                 cleanup_session();
                 return;

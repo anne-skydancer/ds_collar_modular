@@ -65,9 +65,6 @@ list CandidateKeys = [];
 /* -------------------- HELPERS -------------------- */
 
 
-integer json_has(string j, list path) {
-    return (llJsonGetValue(j, path) != JSON_INVALID);
-}
 
 string generate_session_id() {
     return "blacklist_" + (string)llGetKey() + "_" + (string)llGetUnixTime();
@@ -115,29 +112,27 @@ send_pong() {
 /* -------------------- SETTINGS MANAGEMENT -------------------- */
 
 apply_settings_sync(string msg) {
-    if (!json_has(msg, ["kv"])) return;
-    
     string kv_json = llJsonGetValue(msg, ["kv"]);
+    if (kv_json == JSON_INVALID) return;
     apply_blacklist_payload(kv_json);
 }
 
 apply_settings_delta(string msg) {
-    if (!json_has(msg, ["op"])) return;
-    
     string op = llJsonGetValue(msg, ["op"]);
+    if (op == JSON_INVALID) return;
     
     if (op == "set") {
-        if (!json_has(msg, ["changes"])) return;
         string changes = llJsonGetValue(msg, ["changes"]);
+        if (changes == JSON_INVALID) return;
         
-        if (json_has(changes, [KEY_BLACKLIST])) {
-            string new_value = llJsonGetValue(changes, [KEY_BLACKLIST]);
+        string new_value = llJsonGetValue(changes, [KEY_BLACKLIST]);
+        if (new_value != JSON_INVALID) {
             parse_blacklist_value(new_value);
         }
     }
     else if (op == "list_add") {
-        if (!json_has(msg, ["key"])) return;
-        if (!json_has(msg, ["elem"])) return;
+        if (llJsonGetValue(msg, ["key"]) == JSON_INVALID) return;
+        if (llJsonGetValue(msg, ["elem"]) == JSON_INVALID) return;
         
         string setting_key = llJsonGetValue(msg, ["key"]);
         if (setting_key == KEY_BLACKLIST) {
@@ -148,8 +143,8 @@ apply_settings_delta(string msg) {
         }
     }
     else if (op == "list_remove") {
-        if (!json_has(msg, ["key"])) return;
-        if (!json_has(msg, ["elem"])) return;
+        if (llJsonGetValue(msg, ["key"]) == JSON_INVALID) return;
+        if (llJsonGetValue(msg, ["elem"]) == JSON_INVALID) return;
         
         string setting_key = llJsonGetValue(msg, ["key"]);
         if (setting_key == KEY_BLACKLIST) {
@@ -163,7 +158,7 @@ apply_settings_delta(string msg) {
 }
 
 apply_blacklist_payload(string kv_json) {
-    if (!json_has(kv_json, [KEY_BLACKLIST])) {
+    if (llJsonGetValue(kv_json, [KEY_BLACKLIST]) == JSON_INVALID) {
         Blacklist = [];
         return;
     }
@@ -333,8 +328,8 @@ cleanup_session() {
 /* -------------------- DIALOG HANDLERS -------------------- */
 
 handle_dialog_response(string msg) {
-    if (!json_has(msg, ["session_id"])) return;
-    if (!json_has(msg, ["button"])) return;
+    if (llJsonGetValue(msg, ["session_id"]) == JSON_INVALID) return;
+    if (llJsonGetValue(msg, ["button"]) == JSON_INVALID) return;
     
     string session = llJsonGetValue(msg, ["session_id"]);
     if (session != SessionId) return;
@@ -404,9 +399,8 @@ handle_dialog_response(string msg) {
 }
 
 handle_dialog_timeout(string msg) {
-    if (!json_has(msg, ["session_id"])) return;
-    
     string session = llJsonGetValue(msg, ["session_id"]);
+    if (session == JSON_INVALID) return;
     if (session != SessionId) return;
     cleanup_session();
 }
@@ -436,9 +430,8 @@ default {
     }
     
     link_message(integer sender, integer num, string msg, key id) {
-        if (!json_has(msg, ["type"])) return;
-        
         string msg_type = llJsonGetValue(msg, ["type"]);
+        if (msg_type == JSON_INVALID) return;
         
         /* -------------------- KERNEL LIFECYCLE -------------------- */
         if (num == KERNEL_LIFECYCLE) {
@@ -473,7 +466,7 @@ default {
         /* -------------------- UI START -------------------- */
         if (num == UI_BUS) {
             if (msg_type == "start") {
-                if (!json_has(msg, ["context"])) return;
+                if (llJsonGetValue(msg, ["context"]) == JSON_INVALID) return;
                 if (llJsonGetValue(msg, ["context"]) != PLUGIN_CONTEXT) return;
                 
                 // User wants to start this plugin

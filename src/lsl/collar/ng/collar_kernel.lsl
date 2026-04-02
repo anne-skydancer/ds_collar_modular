@@ -59,12 +59,10 @@ integer LastRegionCrossUnix = 0;    // Timestamp of last region crossing
 /* -------------------- HELPERS -------------------- */
 
 
-integer json_has(string j, list path) {
-    return (llJsonGetValue(j, path) != JSON_INVALID);
-}
 string get_msg_type(string msg) {
-    if (!json_has(msg, ["type"])) return "";
-    return llJsonGetValue(msg, ["type"]);
+    string t = llJsonGetValue(msg, ["type"]);
+    if (t == JSON_INVALID) return "";
+    return t;
 }
 
 integer now() {
@@ -445,9 +443,8 @@ integer check_owner_changed() {
 // Route a registration field to the appropriate module
 // Preserves JSON structure (arrays/objects) without double-encoding
 route_field(string msg, string context, string field_name, string route_type, integer channel) {
-    if (!json_has(msg, [field_name])) return;
-
     string field_value = llJsonGetValue(msg, [field_name]);
+    if (field_value == JSON_INVALID) return;
 
     string routed_msg = llList2Json(JSON_OBJECT, [
         "type", route_type,
@@ -463,15 +460,15 @@ route_field(string msg, string context, string field_name, string route_type, in
 /* -------------------- MESSAGE HANDLERS -------------------- */
 
 handle_register(string msg) {
-    if (!json_has(msg, ["context"])) return;
-    if (!json_has(msg, ["label"])) return;
-    if (!json_has(msg, ["min_acl"])) return;
-    if (!json_has(msg, ["script"])) return;
-
     string context = llJsonGetValue(msg, ["context"]);
+    if (context == JSON_INVALID) return;
     string label = llJsonGetValue(msg, ["label"]);
-    integer min_acl = (integer)llJsonGetValue(msg, ["min_acl"]);
+    if (label == JSON_INVALID) return;
+    string min_acl_str = llJsonGetValue(msg, ["min_acl"]);
+    if (min_acl_str == JSON_INVALID) return;
     string script = llJsonGetValue(msg, ["script"]);
+    if (script == JSON_INVALID) return;
+    integer min_acl = (integer)min_acl_str;
 
     // Add to lifecycle queue (kernel stores min_acl for auth recovery, not enforcement)
     queue_add("REG", context, label, script, min_acl);
@@ -482,9 +479,8 @@ handle_register(string msg) {
 }
 
 handle_pong(string msg) {
-    if (!json_has(msg, ["context"])) return;
-    
     string context = llJsonGetValue(msg, ["context"]);
+    if (context == JSON_INVALID) return;
     update_last_seen(context);
     // Pong logging disabled - too noisy
 }
