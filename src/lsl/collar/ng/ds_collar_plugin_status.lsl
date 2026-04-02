@@ -288,10 +288,13 @@ request_owner_names() {
         integer count = llGetListLength(OwnerKeys);
         for (i = 0; i < count; i++) {
             key owner_key = llList2Key(OwnerKeys, i);
+            OwnerDisplayNames += [""];  // Placeholder aligned with OwnerKeys
             if (owner_key != NULL_KEY) {
                 key query_id = llRequestDisplayName(owner_key);
                 OwnerNameQueries += [query_id];
-                OwnerDisplayNames += [""];  // Placeholder
+            }
+            else {
+                OwnerNameQueries += [NULL_KEY];
             }
         }
         
@@ -318,10 +321,13 @@ request_trustee_names() {
     integer count = llGetListLength(TrusteeKeys);
     for (i = 0; i < count; i++) {
         key trustee_key = llList2Key(TrusteeKeys, i);
+        TrusteeDisplayNames += [""];  // Placeholder aligned with TrusteeKeys
         if (trustee_key != NULL_KEY) {
             key query_id = llRequestDisplayName(trustee_key);
             TrusteeNameQueries += [query_id];
-            TrusteeDisplayNames += [""];  // Placeholder
+        }
+        else {
+            TrusteeNameQueries += [NULL_KEY];
         }
     }
 }
