@@ -1,10 +1,11 @@
 /*--------------------
 MODULE: ds_collar_kmod_settings.lsl
 VERSION: 1.00
-REVISION: 27
+REVISION: 28
 PURPOSE: Persistent key-value store with notecard loading and delta updates
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- REVISION 28: Added RLV exception keys (ex_owner_tp/im, ex_trustee_tp/im) to allowed list
 - REVISION 27: Cache llGetListLength in loop conditions for performance
 - Enforced wearer-owner separation and TPE external owner validation rules
 - Added guard-side delta broadcasts to keep ACL modules synchronized
@@ -30,6 +31,12 @@ string KEY_BLACKLIST        = "blacklist";
 string KEY_PUBLIC_ACCESS    = "public_mode";
 string KEY_TPE_MODE         = "tpe_mode";
 string KEY_LOCKED           = "locked";
+
+// RLV exception keys
+string KEY_EX_OWNER_TP = "ex_owner_tp";
+string KEY_EX_OWNER_IM = "ex_owner_im";
+string KEY_EX_TRUSTEE_TP = "ex_trustee_tp";
+string KEY_EX_TRUSTEE_IM = "ex_trustee_im";
 
 // Bell plugin keys
 string KEY_BELL_VISIBLE = "bell_visible";
@@ -343,11 +350,14 @@ broadcast_delta_list_remove(string key_name, string elem) {
 
 integer is_allowed_key(string k) {
     list allowed = [
-        KEY_MULTI_OWNER_MODE, KEY_OWNER_KEY, KEY_OWNER_KEYS, 
-        KEY_OWNER_HON, KEY_OWNER_HONS, KEY_TRUSTEES, 
-        KEY_TRUSTEE_HONS, KEY_BLACKLIST, KEY_PUBLIC_ACCESS, 
-        KEY_TPE_MODE, KEY_LOCKED, KEY_BELL_VISIBLE, 
-        KEY_BELL_SOUND_ENABLED, KEY_BELL_VOLUME, KEY_BELL_SOUND
+        KEY_MULTI_OWNER_MODE, KEY_OWNER_KEY, KEY_OWNER_KEYS,
+        KEY_OWNER_HON, KEY_OWNER_HONS, KEY_TRUSTEES,
+        KEY_TRUSTEE_HONS, KEY_BLACKLIST, KEY_PUBLIC_ACCESS,
+        KEY_TPE_MODE, KEY_LOCKED,
+        KEY_EX_OWNER_TP, KEY_EX_OWNER_IM,
+        KEY_EX_TRUSTEE_TP, KEY_EX_TRUSTEE_IM,
+        KEY_BELL_VISIBLE, KEY_BELL_SOUND_ENABLED,
+        KEY_BELL_VOLUME, KEY_BELL_SOUND
     ];
     return (llListFindList(allowed, [k]) != -1);
 }
