@@ -23,9 +23,6 @@ integer AUTH_BUS = 700;
 integer UI_BUS = 900;
 integer DIALOG_BUS = 950;
 
-/* -------------------- SECURITY -------------------- */
-list AUTHORIZED_RESET_SENDERS = ["bootstrap", "maintenance", "coordinator", "activator"];
-
 /* -------------------- CONSTANTS -------------------- */
 string ROOT_CONTEXT = "core_root";
 string SOS_CONTEXT = "sos_root";
@@ -366,7 +363,7 @@ create_session(key user, integer acl, integer is_blacklisted, string context_fil
     integer filtered_count = llGetListLength(filtered_indices);
     FilteredPluginIndices += filtered_indices;
 
-    // SECURITY FIX: Add timestamp to session
+    // Track session creation time
     string session_id = generate_session_id(user);
     integer created_time = llGetUnixTime();
     
@@ -575,7 +572,7 @@ handle_button_click(key user, string button, string context) {
         return;
     }
 
-    // SECURITY FIX: Check blacklist status
+    // Blacklist gate
     integer is_blacklisted = llList2Integer(SessionBlacklisted, session_idx);
     if (is_blacklisted) {
         send_message(user, "You have been barred from using this collar.");
@@ -617,7 +614,7 @@ handle_button_click(key user, string button, string context) {
             integer min_acl = llList2Integer(PluginMinACLs, i);
             integer user_acl = llList2Integer(SessionACLs, session_idx);
 
-            // ACL check - CRITICAL for collar security
+            // ACL filter
             if (user_acl < min_acl) {
                 send_message(user, "Access denied.");
                 return;
@@ -780,7 +777,7 @@ handle_return(string msg) {
 
     key user_key = (key)llJsonGetValue(msg, ["user"]);
 
-    // SECURITY FIX: Check session age and re-validate if stale
+    // Re-validate stale sessions
     integer session_idx = find_session_idx(user_key);
     if (session_idx != -1) {
         integer created_time = llList2Integer(SessionCreatedTimes, session_idx);
@@ -934,7 +931,7 @@ default
             key toucher = llDetectedKey(i);
             vector touch_pos = llDetectedTouchPos(i);
 
-            // SECURITY FIX: Reject invalid touches
+            // Skip invalid touches
             if (touch_pos == ZERO_VECTOR) {
                 i += 1;
                 jump next_touch;
@@ -1000,9 +997,6 @@ default
         if (num == KERNEL_LIFECYCLE) {
             if (msg_type == "plugin_list") handle_plugin_list(msg);
             else if (msg_type == "soft_reset" || msg_type == "soft_reset_all") {
-                string from = llJsonGetValue(msg, ["from"]);
-                if (from == JSON_INVALID || from == "") return;
-                if (llListFindList(AUTHORIZED_RESET_SENDERS, [from]) == -1) return;
                 llResetScript();
             }
             return;
@@ -1033,7 +1027,7 @@ default
         }
     }
     
-    // SECURITY FIX: Reset on owner change
+    // Reset on owner change
     changed(integer change) {
         if (change & CHANGED_OWNER) {
             llResetScript();

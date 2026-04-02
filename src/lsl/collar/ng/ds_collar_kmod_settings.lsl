@@ -183,7 +183,7 @@ integer kv_list_remove_all(string key_name, string elem) {
 
 /* -------------------- VALIDATION HELPERS -------------------- */
 
-// SECURITY FIX: Check if external owner exists
+// Check if external owner exists
 integer has_external_owner() {
     key wearer = llGetOwner();
 
@@ -209,7 +209,7 @@ integer has_external_owner() {
     return FALSE;
 }
 
-// SECURITY FIX: Check if someone is an owner (any mode)
+// Check if someone is an owner (any mode)
 integer is_owner(string who) {
     // Check single owner object
     string owner_obj = kv_get(KEY_OWNER);
@@ -228,7 +228,7 @@ integer is_owner(string who) {
 
 /* -------------------- ROLE EXCLUSIVITY GUARDS -------------------- */
 
-// SECURITY FIX: Returns FALSE if owner add should be rejected
+// Returns FALSE if owner add should be rejected
 // BROADCAST FIX: Emits deltas for all guard-side mutations to keep ACL consumers in sync
 integer apply_owner_set_guard(string who) {
     key wearer = llGetOwner();
@@ -262,7 +262,7 @@ integer apply_owner_set_guard(string who) {
 
 // BROADCAST FIX: Emits deltas for blacklist removals to keep ACL consumers in sync
 integer apply_trustee_add_guard(string who) {
-    // SECURITY FIX: Can't add owner as trustee (check both modes)
+    // Can't add owner as trustee (check both modes)
     if (is_owner(who)) {
         return FALSE;
     }
@@ -290,7 +290,7 @@ integer apply_blacklist_add_guard(string who) {
         broadcast_delta_scalar(KEY_TRUSTEES, kv_get(KEY_TRUSTEES));
     }
 
-    // SECURITY FIX: Remove from single owner object and broadcast
+    // Remove from single owner object and broadcast
     if (kv_obj_remove_field(KEY_OWNER, who)) {
         broadcast_delta_scalar(KEY_OWNER, kv_get(KEY_OWNER));
     }
@@ -470,13 +470,13 @@ parse_notecard_line(string line) {
         list parsed_list = llCSV2List(list_contents);
         parsed_list = list_unique(parsed_list);
 
-        // SECURITY FIX: Enforce MaxListLen for notecard
+        // Enforce MaxListLen for notecard
         if (llGetListLength(parsed_list) > MaxListLen) {
             parsed_list = llList2List(parsed_list, 0, MaxListLen - 1);
             llOwnerSay("WARNING: " + key_name + " list truncated to " + (string)MaxListLen + " entries");
         }
 
-        // SECURITY FIX: Add blacklist guards for notecard
+        // Apply blacklist guards for notecard
         if (key_name == KEY_BLACKLIST) {
             integer i = 0;
             integer bl_len = llGetListLength(parsed_list);
@@ -495,7 +495,7 @@ parse_notecard_line(string line) {
         if (key_name == KEY_LOCKED) value = normalize_bool(value);
         if (key_name == KEY_RUNAWAY_ENABLED) value = normalize_bool(value);
 
-        // SECURITY FIX: Validate TPE mode in notecard (same as runtime API)
+        // Validate TPE mode in notecard (same as runtime API)
         if (key_name == KEY_TPE_MODE) {
             value = normalize_bool(value);
 
@@ -572,7 +572,7 @@ handle_set(string msg) {
         if (key_name == KEY_LOCKED) value = normalize_bool(value);
         if (key_name == KEY_RUNAWAY_ENABLED) value = normalize_bool(value);
 
-        // SECURITY FIX: Validate TPE mode
+        // Validate TPE mode
         if (key_name == KEY_TPE_MODE) {
             value = normalize_bool(value);
 

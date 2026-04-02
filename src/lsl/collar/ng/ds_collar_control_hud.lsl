@@ -234,8 +234,7 @@ trigger_collar_menu() {
 /* -------------------- ACL LEVEL PROCESSING -------------------- */
 
 process_acl_result(integer level) {
-    // Explicitly whitelist known ACL levels that grant access
-    // Reject unknown/malformed levels for security
+    // Whitelist known ACL levels that grant access
     integer has_access = (
         level == ACL_PRIMARY_OWNER ||
         level == ACL_TRUSTEE ||

@@ -10,7 +10,6 @@ CHANGES:
 - Corected the collar name
 - Rate-limited display name requests to avoid viewer throttling
 - Owner change detection prevents bootstrap on teleports and region crossings
-- Soft reset handling now validates authorized senders before acting
 - Multi-channel RLV detection listens on 4711 and relay channels
 - Startup workflow delivers IM status updates during initialization
 - Delayed settings request to allow linkset data and notecard loading
@@ -99,13 +98,7 @@ string get_msg_type(string msg) {
 
 
 integer now() {
-    integer unix_time = llGetUnixTime();
-    // INTEGER OVERFLOW PROTECTION: Handle year 2038 problem
-    if (unix_time < 0) {
-        llOwnerSay("[BOOTSTRAP] ERROR: Unix timestamp overflow detected!");
-        return 0;
-    }
-    return unix_time;
+    return llGetUnixTime();
 }
 
 sendIM(string msg) {
@@ -117,14 +110,6 @@ sendIM(string msg) {
 
 integer isAttached() {
     return ((integer)llGetAttached() != 0);
-}
-
-// SECURITY: Check if sender is authorized to trigger soft_reset
-integer is_authorized_reset_sender(string from) {
-    if (from == "kernel") return TRUE;
-    if (from == "maintenance") return TRUE;
-    if (from == "bootstrap") return TRUE;
-    return FALSE;
 }
 
 // Owner change detection (prevents unnecessary resets on teleport)
@@ -658,18 +643,6 @@ state starting
                 start_bootstrap();
             }
             else if (msg_type == "soft_reset" || msg_type == "soft_reset_all") {
-                // SECURITY FIX (v2.3 - MEDIUM-023): Validate sender authorization
-                if (!json_has(msg, ["from"])) {
-                    return;
-                }
-                
-                string from = llJsonGetValue(msg, ["from"]);
-                
-                if (!is_authorized_reset_sender(from)) {
-                    return;
-                }
-                
-                // Authorized - proceed with reset
                 llResetScript();
             }
         }
@@ -706,9 +679,6 @@ state running
                 llResetScript();
             }
             else if (msg_type == "soft_reset" || msg_type == "soft_reset_all") {
-                if (!json_has(msg, ["from"])) return;
-                string from = llJsonGetValue(msg, ["from"]);
-                if (!is_authorized_reset_sender(from)) return;
                 llResetScript();
             }
         }
