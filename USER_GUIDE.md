@@ -615,7 +615,8 @@ The collar supports pre-configuration via a notecard named **"settings"** in the
 # D/s Collar Settings
 # Lines starting with # are comments
 # Format: key = value
-# IMPORTANT: Do NOT use quotes around UUIDs!
+# IMPORTANT: Do NOT use quotes around UUIDs in plain values or lists.
+# UUIDs inside JSON objects (owner/trustees) use JSON syntax with quotes.
 
 # Ownership (JSON object format: {"uuid":"honorific"})
 owner = {"a1b2c3d4-e5f6-7890-abcd-ef1234567890":"Master"}
