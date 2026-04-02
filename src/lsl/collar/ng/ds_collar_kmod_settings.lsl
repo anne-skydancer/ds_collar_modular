@@ -1,10 +1,12 @@
 /*--------------------
 MODULE: ds_collar_kmod_settings.lsl
 VERSION: 1.00
-REVISION: 30
+REVISION: 31
 PURPOSE: Persistent key-value store with notecard loading and delta updates
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- REVISION 31: Added runaway_enabled to allowed keys (bug fix: access plugin
+  writes were silently rejected); added boolean normalization for runaway_enabled
 - REVISION 30: Trustees stored as JSON object {uuid:honorific} instead of
   parallel arrays; owner_honorifics stored as JSON object {uuid:honorific};
   removed trustee_honorifics key; atomic add/remove via obj_set/obj_remove
@@ -39,6 +41,9 @@ string KEY_EX_OWNER_TP = "ex_owner_tp";
 string KEY_EX_OWNER_IM = "ex_owner_im";
 string KEY_EX_TRUSTEE_TP = "ex_trustee_tp";
 string KEY_EX_TRUSTEE_IM = "ex_trustee_im";
+
+// Access plugin keys
+string KEY_RUNAWAY_ENABLED = "runaway_enabled";
 
 // Bell plugin keys
 string KEY_BELL_VISIBLE = "bell_visible";
@@ -391,7 +396,7 @@ integer is_allowed_key(string k) {
         KEY_MULTI_OWNER_MODE, KEY_OWNER_KEY, KEY_OWNER_KEYS,
         KEY_OWNER_HON, KEY_OWNER_HONS, KEY_TRUSTEES,
         KEY_BLACKLIST, KEY_PUBLIC_ACCESS,
-        KEY_TPE_MODE, KEY_LOCKED,
+        KEY_TPE_MODE, KEY_LOCKED, KEY_RUNAWAY_ENABLED,
         KEY_EX_OWNER_TP, KEY_EX_OWNER_IM,
         KEY_EX_TRUSTEE_TP, KEY_EX_TRUSTEE_IM,
         KEY_BELL_VISIBLE, KEY_BELL_SOUND_ENABLED,
@@ -492,6 +497,7 @@ parse_notecard_line(string line) {
         if (key_name == KEY_MULTI_OWNER_MODE) value = normalize_bool(value);
         if (key_name == KEY_PUBLIC_ACCESS) value = normalize_bool(value);
         if (key_name == KEY_LOCKED) value = normalize_bool(value);
+        if (key_name == KEY_RUNAWAY_ENABLED) value = normalize_bool(value);
 
         // SECURITY FIX: Validate TPE mode in notecard (same as runtime API)
         if (key_name == KEY_TPE_MODE) {
@@ -587,7 +593,8 @@ handle_set(string msg) {
         
         if (key_name == KEY_PUBLIC_ACCESS) value = normalize_bool(value);
         if (key_name == KEY_LOCKED) value = normalize_bool(value);
-        
+        if (key_name == KEY_RUNAWAY_ENABLED) value = normalize_bool(value);
+
         // SECURITY FIX: Validate TPE mode
         if (key_name == KEY_TPE_MODE) {
             value = normalize_bool(value);
