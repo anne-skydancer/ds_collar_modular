@@ -1,10 +1,11 @@
 /*--------------------
 PLUGIN: ds_collar_plugin_status.lsl
 VERSION: 1.00
-REVISION: 24
+REVISION: 25
 PURPOSE: Read-only collar status display for owners and observers
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- REVISION 25: Trustees and owner_honorifics parsed as JSON objects {uuid:honorific}
 - REVISION 24: Added trustee display name resolution via async dataserver queries
 - REVISION 23: Fixed request_settings_sync to use correct "settings_get" message type
 - REVISION 22: Added request_settings_sync() call on state_entry for independent reset recovery
@@ -34,7 +35,6 @@ string KEY_OWNER_KEYS = "owner_keys";
 string KEY_OWNER_HON = "owner_hon";
 string KEY_OWNER_HONS = "owner_honorifics";
 string KEY_TRUSTEES = "trustees";
-string KEY_TRUSTEE_HONS = "trustee_honorifics";
 string KEY_BLACKLIST = "blacklist";
 string KEY_PUBLIC_ACCESS = "public_mode";
 string KEY_LOCKED = "locked";
@@ -46,9 +46,9 @@ integer MultiOwnerMode = FALSE;
 key OwnerKey = NULL_KEY;
 list OwnerKeys = [];
 string OwnerHonorific = "";
-list OwnerHonorifics = [];
+string OwnerHonJson = "{}";
 list TrusteeKeys = [];
-list TrusteeHonorifics = [];
+string TrusteesJson = "{}";
 list BlacklistKeys = [];
 integer PublicAccess = FALSE;
 integer Locked = FALSE;
@@ -130,9 +130,9 @@ apply_settings_sync(string msg) {
     OwnerKey = NULL_KEY;
     OwnerKeys = [];
     OwnerHonorific = "";
-    OwnerHonorifics = [];
+    OwnerHonJson = "{}";
     TrusteeKeys = [];
-    TrusteeHonorifics = [];
+    TrusteesJson = "{}";
     BlacklistKeys = [];
     PublicAccess = FALSE;
     Locked = FALSE;
@@ -160,23 +160,27 @@ apply_settings_sync(string msg) {
     }
     
     if (json_has(kv_json, [KEY_OWNER_HONS])) {
-        string hon_json = llJsonGetValue(kv_json, [KEY_OWNER_HONS]);
-        if (is_json_arr(hon_json)) {
-            OwnerHonorifics = llJson2List(hon_json);
+        string hon_raw = llJsonGetValue(kv_json, [KEY_OWNER_HONS]);
+        if (llJsonValueType(hon_raw, []) == JSON_OBJECT) {
+            OwnerHonJson = hon_raw;
         }
     }
-    
+
     if (json_has(kv_json, [KEY_TRUSTEES])) {
-        string trustees_json = llJsonGetValue(kv_json, [KEY_TRUSTEES]);
-        if (is_json_arr(trustees_json)) {
-            TrusteeKeys = llJson2List(trustees_json);
+        string trustees_raw = llJsonGetValue(kv_json, [KEY_TRUSTEES]);
+        if (llJsonValueType(trustees_raw, []) == JSON_OBJECT) {
+            TrusteesJson = trustees_raw;
+            list pairs = llJson2List(trustees_raw);
+            TrusteeKeys = [];
+            integer pi = 0;
+            integer plen = llGetListLength(pairs);
+            while (pi < plen) {
+                TrusteeKeys += [llList2String(pairs, pi)];
+                pi += 2;
+            }
         }
-    }
-    
-    if (json_has(kv_json, [KEY_TRUSTEE_HONS])) {
-        string hon_json = llJsonGetValue(kv_json, [KEY_TRUSTEE_HONS]);
-        if (is_json_arr(hon_json)) {
-            TrusteeHonorifics = llJson2List(hon_json);
+        else if (is_json_arr(trustees_raw)) {
+            TrusteeKeys = llJson2List(trustees_raw);
         }
     }
     
@@ -264,14 +268,38 @@ apply_settings_delta(string msg) {
         if (needs_refresh) {
             request_owner_names();
         }
+
+        // Trustees changed (full JSON object broadcast)
+        if (json_has(changes, [KEY_TRUSTEES])) {
+            string trustees_raw = llJsonGetValue(changes, [KEY_TRUSTEES]);
+            if (llJsonValueType(trustees_raw, []) == JSON_OBJECT) {
+                TrusteesJson = trustees_raw;
+                list pairs = llJson2List(trustees_raw);
+                TrusteeKeys = [];
+                integer ti = 0;
+                integer tlen = llGetListLength(pairs);
+                while (ti < tlen) {
+                    TrusteeKeys += [llList2String(pairs, ti)];
+                    ti += 2;
+                }
+                request_trustee_names();
+            }
+        }
+
+        // Owner honorifics changed (full JSON object broadcast)
+        if (json_has(changes, [KEY_OWNER_HONS])) {
+            string hon_raw = llJsonGetValue(changes, [KEY_OWNER_HONS]);
+            if (llJsonValueType(hon_raw, []) == JSON_OBJECT) {
+                OwnerHonJson = hon_raw;
+            }
+        }
     }
     else if (op == "list_add" || op == "list_remove") {
         if (!json_has(msg, ["key"])) return;
         string list_key = llJsonGetValue(msg, ["key"]);
-        
-        if (list_key == KEY_OWNER_KEYS || list_key == KEY_TRUSTEES || 
-            list_key == KEY_OWNER_HONS || list_key == KEY_TRUSTEE_HONS) {
-            // Request full sync to refresh lists
+
+        if (list_key == KEY_OWNER_KEYS) {
+            // Request full sync to refresh owner lists
             llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, ["type", "settings_get"]), NULL_KEY);
         }
     }
@@ -356,15 +384,11 @@ string build_status_report() {
             status_text += "Owners:\n";
             
             integer i;
-            integer hon_count = llGetListLength(OwnerHonorifics);
             integer disp_count = llGetListLength(OwnerDisplayNames);
             for (i = 0; i < owner_count; i++) {
                 key owner_key = llList2Key(OwnerKeys, i);
-                string honorific = "";
-                
-                if (i < hon_count) {
-                    honorific = llList2String(OwnerHonorifics, i);
-                }
+                string honorific = llJsonGetValue(OwnerHonJson, [(string)owner_key]);
+                if (honorific == JSON_INVALID) honorific = "";
                 
                 string display_name = "";
                 if (i < disp_count) {
@@ -408,15 +432,11 @@ string build_status_report() {
         status_text += "Trustees:\n";
 
         integer i;
-        integer hon_count = llGetListLength(TrusteeHonorifics);
         integer tdisp_count = llGetListLength(TrusteeDisplayNames);
         for (i = 0; i < trustee_count; i++) {
             key trustee_key = llList2Key(TrusteeKeys, i);
-            string honorific = "";
-
-            if (i < hon_count) {
-                honorific = llList2String(TrusteeHonorifics, i);
-            }
+            string honorific = llJsonGetValue(TrusteesJson, [(string)trustee_key]);
+            if (honorific == JSON_INVALID) honorific = "";
 
             string display_name = "";
             if (i < tdisp_count) {
