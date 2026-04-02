@@ -6,16 +6,14 @@ Key-value pairs use `=` as separator. Whitespace around `=` is trimmed.
 ## Single Owner Mode (default)
 
 ```
-owner_key = 1a2b3c4d-5e6f-7890-abcd-ef1234567890
-owner_hon = Master
+owner = {"1a2b3c4d-5e6f-7890-abcd-ef1234567890":"Master"}
 ```
 
 ## Multi-Owner Mode
 
 ```
 multi_owner_mode = 1
-owner_keys = [1a2b3c4d-5e6f-7890-abcd-ef1234567890, 9f8e7d6c-5b4a-3210-fedc-ba0987654321]
-owner_honorifics = {"1a2b3c4d-5e6f-7890-abcd-ef1234567890":"King", "9f8e7d6c-5b4a-3210-fedc-ba0987654321":"Mistress"}
+owners = {"1a2b3c4d-5e6f-7890-abcd-ef1234567890":"King", "9f8e7d6c-5b4a-3210-fedc-ba0987654321":"Mistress"}
 ```
 
 ## Trustees
@@ -52,9 +50,9 @@ ex_trustee_im = 0
 
 ## Format Notes
 
-- `trustees` and `owner_honorifics` use JSON object format: `{"uuid":"honorific"}`
-- `owner_keys`, `blacklist` use JSON array format: `[uuid, uuid]`
+- `owner`, `owners`, and `trustees` use JSON object format: `{"uuid":"honorific"}`
+- `blacklist` uses JSON array format: `[uuid, uuid]`
 - Scalar values are plain strings or integers (0/1 for booleans)
-- Array syntax `[...]` is rejected for `trustees` and `owner_honorifics`
+- Array syntax `[...]` is rejected for `owner`, `owners`, and `trustees`
 - Owner honorifics: Master, Mistress, Daddy, Mommy, King, Queen
 - Trustee honorifics: Sir, Madame, Milord, Milady

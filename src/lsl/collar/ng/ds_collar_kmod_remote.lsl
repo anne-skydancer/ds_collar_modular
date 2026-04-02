@@ -227,7 +227,7 @@ handle_collar_scan(string message) {
     key hud_wearer = (key)llJsonGetValue(message, ["hud_wearer"]);
     if (hud_wearer == NULL_KEY) return;
 
-    // SECURITY: Rate limit check
+    // Rate limit
     if (!check_rate_limit(hud_wearer, REQUEST_TYPE_SCAN)) return;
     
     // Check distance to HUD wearer
@@ -268,7 +268,7 @@ handle_acl_query_external(string message) {
     if (hud_object == NULL_KEY) return;
     if (target_avatar == NULL_KEY) return;
 
-    // SECURITY: Rate limit check
+    // Rate limit
     if (!check_rate_limit(hud_wearer, REQUEST_TYPE_ACL_QUERY)) return;
     
     // Check if this query is for OUR collar (target matches our owner)
@@ -298,10 +298,10 @@ handle_menu_request_external(string message) {
     }
 
 
-    // SECURITY: Rate limit check
+    // Rate limit
     if (!check_rate_limit(hud_wearer, REQUEST_TYPE_MENU)) return;
 
-    // SECURITY: Check range
+    // Range check
     list agent_data = llGetObjectDetails(hud_wearer, [OBJECT_POS]);
     if (llGetListLength(agent_data) == 0) {
         return;
@@ -319,7 +319,7 @@ handle_menu_request_external(string message) {
         return;
     }
 
-    // SECURITY: Verify ACL before triggering menu
+    // ACL check before triggering menu
     PendingMenuRequests += [hud_wearer, context];
     request_internal_acl(hud_wearer);
 }
@@ -499,7 +499,7 @@ default {
 
             // Only trigger menu if ACL >= 1 (public or higher) OR emergency access (TPE mode)
             if (level >= 1 || emergency_access) {
-                // SECURITY: Only allow SOS context for collar wearer
+                // Only the collar wearer can access SOS
                 // Non-wearers requesting SOS get downgraded to root menu
                 string final_context = requested_context;
                 if (requested_context == SOS_CONTEXT && !is_wearer) {

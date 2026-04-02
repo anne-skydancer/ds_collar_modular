@@ -22,7 +22,7 @@ CHANGES:
 - Added avatar, coffle, and post leash modes with distance enforcement
 - Introduced offer acceptance dialog and notifications with timeout handling
 - Corrected ACL verification flow for offer and pass actions to prevent deadlocks
-- Implemented yank rate limiting and enhanced session security safeguards
+- Implemented yank rate limiting
 - Improved holder detection, offsim handling, and auto-reclip resilience
 --------------------*/
 
@@ -503,14 +503,7 @@ checkLeasherPresence() {
     if (!Leashed || Leasher == NULL_KEY) return;
     
     integer now_time = llGetUnixTime();
-    
-    // Y2038 protection
-    if (now_time < 0 || OffsimStartTime < 0) {
-        OffsimStartTime = 0;
-        OffsimDetected = FALSE;
-        return;
-    }
-    
+
     // Check both avatar and holder separately
     integer avatar_present = (llGetAgentInfo(Leasher) != 0);
     integer holder_present = FALSE;
@@ -992,7 +985,7 @@ default
                 key controller = (key)jsonGet(msg, "controller", (string)NULL_KEY);
                 if (controller == NULL_KEY) return;
                 
-                // SECURITY: Only accept if this controller was authorized
+                // Only accept from the controller we initiated the LM handshake for
                 if (controller != AuthorizedLmController) {
                     return;
                 }

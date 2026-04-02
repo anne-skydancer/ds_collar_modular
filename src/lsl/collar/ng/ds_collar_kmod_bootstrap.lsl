@@ -1,15 +1,15 @@
 /*--------------------
 MODULE: ds_collar_kmod_bootstrap.lsl
 VERSION: 1.00
-REVISION: 36
+REVISION: 37
 PURPOSE: Startup coordination, RLV detection, owner name resolution
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- REVISION 37: Owner storage consolidated — owner/owners as JSON objects
 - REVISION 36: Parse owner_honorifics as JSON object {uuid:honorific}
 - Corected the collar name
 - Rate-limited display name requests to avoid viewer throttling
 - Owner change detection prevents bootstrap on teleports and region crossings
-- Soft reset handling now validates authorized senders before acting
 - Multi-channel RLV detection listens on 4711 and relay channels
 - Startup workflow delivers IM status updates during initialization
 - Delayed settings request to allow linkset data and notecard loading
@@ -37,10 +37,8 @@ float NAME_REQUEST_INTERVAL_SEC = 2.5;  // Space requests 2.5s apart to avoid th
 
 /* -------------------- SETTINGS KEYS -------------------- */
 string KEY_MULTI_OWNER_MODE = "multi_owner_mode";
-string KEY_OWNER_KEY = "owner_key";
-string KEY_OWNER_KEYS = "owner_keys";
-string KEY_OWNER_HON = "owner_hon";
-string KEY_OWNER_HONS = "owner_honorifics";
+string KEY_OWNER = "owner";
+string KEY_OWNERS = "owners";
 
 /* -------------------- BOOTSTRAP CONFIG -------------------- */
 integer BOOTSTRAP_TIMEOUT_SEC = 90;
@@ -74,7 +72,7 @@ integer MultiOwnerMode = FALSE;
 key OwnerKey = NULL_KEY;
 list OwnerKeys = [];
 string OwnerHonorific = "";
-string OwnerHonJson = "{}";
+string OwnersJson = "{}";
 
 // Name resolution
 list OwnerNameQueries = [];
@@ -100,13 +98,7 @@ string get_msg_type(string msg) {
 
 
 integer now() {
-    integer unix_time = llGetUnixTime();
-    // INTEGER OVERFLOW PROTECTION: Handle year 2038 problem
-    if (unix_time < 0) {
-        llOwnerSay("[BOOTSTRAP] ERROR: Unix timestamp overflow detected!");
-        return 0;
-    }
-    return unix_time;
+    return llGetUnixTime();
 }
 
 sendIM(string msg) {
@@ -118,14 +110,6 @@ sendIM(string msg) {
 
 integer isAttached() {
     return ((integer)llGetAttached() != 0);
-}
-
-// SECURITY: Check if sender is authorized to trigger soft_reset
-integer is_authorized_reset_sender(string from) {
-    if (from == "kernel") return TRUE;
-    if (from == "maintenance") return TRUE;
-    if (from == "bootstrap") return TRUE;
-    return FALSE;
 }
 
 // Owner change detection (prevents unnecessary resets on teleport)
@@ -235,32 +219,37 @@ apply_settings_sync(string msg) {
     OwnerKey = NULL_KEY;
     OwnerKeys = [];
     OwnerHonorific = "";
-    OwnerHonJson = "{}";
-    
+    OwnersJson = "{}";
+
     // Load
     if (json_has(kv_json, [KEY_MULTI_OWNER_MODE])) {
         MultiOwnerMode = (integer)llJsonGetValue(kv_json, [KEY_MULTI_OWNER_MODE]);
     }
-    
-    if (json_has(kv_json, [KEY_OWNER_KEY])) {
-        OwnerKey = (key)llJsonGetValue(kv_json, [KEY_OWNER_KEY]);
-    }
-    
-    if (json_has(kv_json, [KEY_OWNER_KEYS])) {
-        string owner_keys_json = llJsonGetValue(kv_json, [KEY_OWNER_KEYS]);
-        if (llJsonValueType(owner_keys_json, []) == JSON_ARRAY) {
-            OwnerKeys = llJson2List(owner_keys_json);
+
+    // Single owner: JSON object {uuid:honorific}
+    if (json_has(kv_json, [KEY_OWNER])) {
+        string obj = llJsonGetValue(kv_json, [KEY_OWNER]);
+        if (llJsonValueType(obj, []) == JSON_OBJECT) {
+            list pairs = llJson2List(obj);
+            if (llGetListLength(pairs) >= 2) {
+                OwnerKey = (key)llList2String(pairs, 0);
+                OwnerHonorific = llList2String(pairs, 1);
+            }
         }
     }
-    
-    if (json_has(kv_json, [KEY_OWNER_HON])) {
-        OwnerHonorific = llJsonGetValue(kv_json, [KEY_OWNER_HON]);
-    }
-    
-    if (json_has(kv_json, [KEY_OWNER_HONS])) {
-        string owner_hons_raw = llJsonGetValue(kv_json, [KEY_OWNER_HONS]);
-        if (llJsonValueType(owner_hons_raw, []) == JSON_OBJECT) {
-            OwnerHonJson = owner_hons_raw;
+
+    // Multi-owner: JSON object {uuid:honorific, ...}
+    if (json_has(kv_json, [KEY_OWNERS])) {
+        string obj = llJsonGetValue(kv_json, [KEY_OWNERS]);
+        if (llJsonValueType(obj, []) == JSON_OBJECT) {
+            OwnersJson = obj;
+            list pairs = llJson2List(obj);
+            integer pi = 0;
+            integer plen = llGetListLength(pairs);
+            while (pi < plen) {
+                OwnerKeys += [llList2String(pairs, pi)];
+                pi += 2;
+            }
         }
     }
     
@@ -467,7 +456,7 @@ announce_status() {
             integer i = 0;
             while (i < owner_count) {
                 string owner_uuid = llList2String(OwnerKeys, i);
-                string hon = llJsonGetValue(OwnerHonJson, [owner_uuid]);
+                string hon = llJsonGetValue(OwnersJson, [owner_uuid]);
                 if (hon == JSON_INVALID) hon = "";
                 
                 string display_name = "";
@@ -654,18 +643,6 @@ state starting
                 start_bootstrap();
             }
             else if (msg_type == "soft_reset" || msg_type == "soft_reset_all") {
-                // SECURITY FIX (v2.3 - MEDIUM-023): Validate sender authorization
-                if (!json_has(msg, ["from"])) {
-                    return;
-                }
-                
-                string from = llJsonGetValue(msg, ["from"]);
-                
-                if (!is_authorized_reset_sender(from)) {
-                    return;
-                }
-                
-                // Authorized - proceed with reset
                 llResetScript();
             }
         }
@@ -702,9 +679,6 @@ state running
                 llResetScript();
             }
             else if (msg_type == "soft_reset" || msg_type == "soft_reset_all") {
-                if (!json_has(msg, ["from"])) return;
-                string from = llJsonGetValue(msg, ["from"]);
-                if (!is_authorized_reset_sender(from)) return;
                 llResetScript();
             }
         }

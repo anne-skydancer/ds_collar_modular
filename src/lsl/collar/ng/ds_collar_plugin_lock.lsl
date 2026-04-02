@@ -20,7 +20,6 @@ CHANGES:
 
 /* -------------------- CONSOLIDATED ABI -------------------- */
 integer KERNEL_LIFECYCLE = 500;
-integer AUTH_BUS = 700;
 integer SETTINGS_BUS = 800;
 integer UI_BUS = 900;
 
@@ -272,29 +271,6 @@ toggle_lock(key user, integer acl_level) {
     update_ui_label_and_return(user);
 }
 
-/* -------------------- ACL VALIDATION -------------------- */
-
-request_acl_and_toggle(key user) {
-    string msg = llList2Json(JSON_OBJECT, [
-        "type", "acl_query",
-        "avatar", (string)user,
-        "id", PLUGIN_CONTEXT + "_toggle"
-    ]);
-    llMessageLinked(LINK_SET, AUTH_BUS, msg, NULL_KEY);
-}
-
-handle_acl_result(string msg, key expected_user) {
-    if (!json_has(msg, ["avatar"])) return;
-    if (!json_has(msg, ["level"])) return;
-    
-    key avatar = (key)llJsonGetValue(msg, ["avatar"]);
-    if (avatar != expected_user) return;
-    
-    integer level = (integer)llJsonGetValue(msg, ["level"]);
-    
-    // Toggle immediately with this ACL level
-    toggle_lock(avatar, level);
-}
 
 /* -------------------- EVENTS -------------------- */
 
@@ -365,32 +341,13 @@ default {
                 
                 if (id == NULL_KEY) return;
                 
-                // Request ACL and toggle when we get it
-                request_acl_and_toggle(id);
+                integer acl = (integer)llJsonGetValue(msg, ["acl"]);
+                toggle_lock(id, acl);
                 return;
             }
             
             return;
         }
         
-        /* -------------------- AUTH RESULT -------------------- */if (num == AUTH_BUS) {
-            if (!json_has(msg, ["type"])) return;
-            string msg_type = llJsonGetValue(msg, ["type"]);
-            
-            if (msg_type == "acl_result") {
-                // Check if this is our toggle request
-                if (json_has(msg, ["id"])) {
-                    string corr_id = llJsonGetValue(msg, ["id"]);
-                    if (corr_id == PLUGIN_CONTEXT + "_toggle") {
-                        if (!json_has(msg, ["avatar"])) return;
-                        key user = (key)llJsonGetValue(msg, ["avatar"]);
-                        handle_acl_result(msg, user);
-                    }
-                }
-                return;
-            }
-            
-            return;
-        }
     }
 }

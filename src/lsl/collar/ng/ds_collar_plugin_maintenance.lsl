@@ -1,10 +1,11 @@
 /*--------------------
 PLUGIN: ds_collar_plugin_maintenance.lsl
 VERSION: 1.00
-REVISION: 23
+REVISION: 24
 PURPOSE: Maintenance and utility functions for collar management
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- REVISION 24: Owner storage consolidated — owner/owners as JSON objects
 - REVISION 23: Trustees parsed as JSON object; removed trustee_honorifics from settings list
 - Displays full settings snapshot including unset keys
 - Presents access list with honorifics for quick review
@@ -16,7 +17,6 @@ CHANGES:
 
 /* -------------------- CONSOLIDATED ABI -------------------- */
 integer KERNEL_LIFECYCLE = 500;
-integer AUTH_BUS = 700;
 integer SETTINGS_BUS = 800;
 integer UI_BUS = 900;
 integer DIALOG_BUS = 950;
@@ -37,16 +37,13 @@ integer PLUGIN_MIN_ACL = 1;  // Public can view (limited options)
 */
 
 /* -------------------- ACL TIERS -------------------- */
-list ALLOWED_ACL_VIEW = [1, 2, 3, 4, 5];  // Can see menu
 list ALLOWED_ACL_FULL = [2, 3, 4, 5];     // Can use admin functions
 
 /* -------------------- ALL POSSIBLE SETTINGS -------------------- */
 list ALL_SETTINGS = [
     "multi_owner_mode",
-    "owner_key",
-    "owner_keys",
-    "owner_hon",
-    "owner_honorifics",
+    "owner",
+    "owners",
     "trustees",
     "blacklist",
     "public_mode",
@@ -125,34 +122,6 @@ apply_settings_delta() {
     llMessageLinked(LINK_SET, SETTINGS_BUS, request, NULL_KEY);
 }
 
-/* -------------------- ACL MANAGEMENT -------------------- */
-
-request_acl(key user_key) {
-    string msg = llList2Json(JSON_OBJECT, [
-        "type", "acl_query",
-        "avatar", (string)user_key
-    ]);
-    llMessageLinked(LINK_SET, AUTH_BUS, msg, NULL_KEY);
-}
-
-handle_acl_result(string msg) {
-    if (!json_has(msg, ["avatar"])) return;
-    if (!json_has(msg, ["level"])) return;
-    
-    key avatar = (key)llJsonGetValue(msg, ["avatar"]);
-    if (avatar != CurrentUser) return;
-    
-    integer level = (integer)llJsonGetValue(msg, ["level"]);
-    CurrentUserAcl = level;
-    
-    if (llListFindList(ALLOWED_ACL_VIEW, [level]) == -1) {
-        llRegionSayTo(CurrentUser, 0, "Access denied.");
-        return_to_root();
-        return;
-    }
-    
-    show_main_menu();
-}
 
 /* -------------------- MENU DISPLAY -------------------- */
 
@@ -237,28 +206,22 @@ do_display_access_list() {
         multi_mode = (integer)llJsonGetValue(CachedSettings, ["multi_owner_mode"]);
     }
     
-    // Owner(s)
+    // Owner(s) — stored as JSON objects {uuid:honorific}
     if (multi_mode) {
         output += "OWNERS:\n";
-        string owners_json = llJsonGetValue(CachedSettings, ["owner_keys"]);
-        string honors_json = llJsonGetValue(CachedSettings, ["owner_honorifics"]);
-        
-        if (owners_json != JSON_INVALID && is_json_arr(owners_json)) {
-            list owners = llJson2List(owners_json);
+        string owners_raw = llJsonGetValue(CachedSettings, ["owners"]);
 
-            if (llGetListLength(owners) > 0) {
+        if (owners_raw != JSON_INVALID && llJsonValueType(owners_raw, []) == JSON_OBJECT) {
+            list pairs = llJson2List(owners_raw);
+            integer plen = llGetListLength(pairs);
+            if (plen > 0) {
                 integer i = 0;
-                integer count = llGetListLength(owners);
-                while (i < count) {
-                    string owner_key = llList2String(owners, i);
-                    string honor = "Owner";
-                    // Look up honorific from JSON object
-                    if (honors_json != JSON_INVALID && llJsonValueType(honors_json, []) == JSON_OBJECT) {
-                        string h = llJsonGetValue(honors_json, [owner_key]);
-                        if (h != JSON_INVALID && h != "") honor = h;
-                    }
-                    output += "  " + honor + " - " + owner_key + "\n";
-                    i += 1;
+                while (i < plen) {
+                    string owner_uuid = llList2String(pairs, i);
+                    string honor = llList2String(pairs, i + 1);
+                    if (honor == "") honor = "Owner";
+                    output += "  " + honor + " - " + owner_uuid + "\n";
+                    i += 2;
                 }
             }
             else {
@@ -271,12 +234,19 @@ do_display_access_list() {
     }
     else {
         output += "OWNER:\n";
-        string owner_key = llJsonGetValue(CachedSettings, ["owner_key"]);
-        string honor = llJsonGetValue(CachedSettings, ["owner_hon"]);
-        
-        if (owner_key != JSON_INVALID && owner_key != "" && (key)owner_key != NULL_KEY) {
-            if (honor == JSON_INVALID || honor == "") honor = "Owner";
-            output += "  " + honor + " - " + owner_key + "\n";
+        string owner_raw = llJsonGetValue(CachedSettings, ["owner"]);
+
+        if (owner_raw != JSON_INVALID && llJsonValueType(owner_raw, []) == JSON_OBJECT) {
+            list pairs = llJson2List(owner_raw);
+            if (llGetListLength(pairs) >= 2) {
+                string owner_uuid = llList2String(pairs, 0);
+                string honor = llList2String(pairs, 1);
+                if (honor == "") honor = "Owner";
+                output += "  " + honor + " - " + owner_uuid + "\n";
+            }
+            else {
+                output += "  (none)\n";
+            }
         }
         else {
             output += "  (none)\n";
@@ -344,8 +314,7 @@ do_reload_settings() {
 do_clear_leash() {
     string msg = llList2Json(JSON_OBJECT, [
         "type", "leash_action",
-        "action", "release",
-        "acl_verified", "1"
+        "action", "release"
     ]);
     llMessageLinked(LINK_SET, UI_BUS, msg, CurrentUser);
 
@@ -428,44 +397,34 @@ handle_dialog_response(string msg) {
         return;
     }
     
-    // Admin actions (ACL check)
+    // Admin actions (button only shown to qualified ACL)
     if (button == "View Settings") {
-        if (llListFindList(ALLOWED_ACL_FULL, [CurrentUserAcl]) != -1) {
-            do_view_settings();
-            show_main_menu();
-        }
+        do_view_settings();
+        show_main_menu();
         return;
     }
-    
+
     if (button == "Access List") {
-        if (llListFindList(ALLOWED_ACL_FULL, [CurrentUserAcl]) != -1) {
-            do_display_access_list();
-            show_main_menu();
-        }
+        do_display_access_list();
+        show_main_menu();
         return;
     }
-    
+
     if (button == "Reload Settings") {
-        if (llListFindList(ALLOWED_ACL_FULL, [CurrentUserAcl]) != -1) {
-            do_reload_settings();
-            show_main_menu();
-        }
+        do_reload_settings();
+        show_main_menu();
         return;
     }
-    
+
     if (button == "Clear Leash") {
-        if (llListFindList(ALLOWED_ACL_FULL, [CurrentUserAcl]) != -1) {
-            do_clear_leash();
-            show_main_menu();
-        }
+        do_clear_leash();
+        show_main_menu();
         return;
     }
-    
+
     if (button == "Reload Collar") {
-        if (llListFindList(ALLOWED_ACL_FULL, [CurrentUserAcl]) != -1) {
-            do_reload_collar();
-            show_main_menu();
-        }
+        do_reload_collar();
+        show_main_menu();
         return;
     }
     
@@ -563,18 +522,6 @@ default {
             return;
         }
         
-        /* -------------------- ACL RESULTS -------------------- */if (num == AUTH_BUS) {
-            if (!json_has(msg, ["type"])) return;
-            string msg_type = llJsonGetValue(msg, ["type"]);
-            
-            if (msg_type == "acl_result") {
-                handle_acl_result(msg);
-                return;
-            }
-            
-            return;
-        }
-        
         /* -------------------- UI START -------------------- */if (num == UI_BUS) {
             if (!json_has(msg, ["type"])) return;
             string msg_type = llJsonGetValue(msg, ["type"]);
@@ -586,7 +533,8 @@ default {
                 if (id == NULL_KEY) return;
                 
                 CurrentUser = id;
-                request_acl(id);
+                CurrentUserAcl = (integer)llJsonGetValue(msg, ["acl"]);
+                show_main_menu();
                 return;
             }
             

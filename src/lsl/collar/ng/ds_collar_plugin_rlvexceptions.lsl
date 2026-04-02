@@ -1,10 +1,11 @@
 /*--------------------
 PLUGIN: ds_collar_plugin_rlvexceptions.lsl
 VERSION: 1.00
-REVISION: 29
+REVISION: 30
 PURPOSE: Manage RLV teleport and IM exceptions for owners and trustees
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- REVISION 30: Owner storage consolidated — owner/owners as JSON objects
 - REVISION 29: Trustees parsed as JSON object {uuid:honorific}; delta via set op
 - REVISION 28: Guard apply_settings_delta to skip reconcile when value unchanged
 - REVISION 27: Fix case mismatch in MenuContext causing silent toggle failures;
@@ -22,7 +23,6 @@ CHANGES:
 
 /* -------------------- ABI CHANNELS -------------------- */
 integer KERNEL_LIFECYCLE = 500;
-integer AUTH_BUS = 700;
 integer SETTINGS_BUS = 800;
 integer UI_BUS = 900;
 integer DIALOG_BUS = 950;
@@ -37,8 +37,8 @@ string KEY_EX_OWNER_TP = "ex_owner_tp";
 string KEY_EX_OWNER_IM = "ex_owner_im";
 string KEY_EX_TRUSTEE_TP = "ex_trustee_tp";
 string KEY_EX_TRUSTEE_IM = "ex_trustee_im";
-string KEY_OWNER_KEY = "owner_key";
-string KEY_OWNER_KEYS = "owner_keys";
+string KEY_OWNER = "owner";
+string KEY_OWNERS = "owners";
 string KEY_TRUSTEES = "trustees";
 string KEY_MULTI_OWNER_MODE = "multi_owner_mode";
 
@@ -184,14 +184,28 @@ apply_settings_sync(string msg) {
     }
     
     if (MultiOwnerMode) {
-        if (json_has(kv, [KEY_OWNER_KEYS])) {
-            string arr = llJsonGetValue(kv, [KEY_OWNER_KEYS]);
-            if (llGetSubString(arr, 0, 0) == "[") OwnerKeys = llJson2List(arr);
+        if (json_has(kv, [KEY_OWNERS])) {
+            string obj = llJsonGetValue(kv, [KEY_OWNERS]);
+            if (llJsonValueType(obj, []) == JSON_OBJECT) {
+                list pairs = llJson2List(obj);
+                integer oi = 0;
+                integer olen = llGetListLength(pairs);
+                while (oi < olen) {
+                    OwnerKeys += [llList2String(pairs, oi)];
+                    oi += 2;
+                }
+            }
         }
     }
     else {
-        if (json_has(kv, [KEY_OWNER_KEY])) {
-            OwnerKey = (key)llJsonGetValue(kv, [KEY_OWNER_KEY]);
+        if (json_has(kv, [KEY_OWNER])) {
+            string obj = llJsonGetValue(kv, [KEY_OWNER]);
+            if (llJsonValueType(obj, []) == JSON_OBJECT) {
+                list pairs = llJson2List(obj);
+                if (llGetListLength(pairs) >= 2) {
+                    OwnerKey = (key)llList2String(pairs, 0);
+                }
+            }
         }
     }
     
@@ -254,11 +268,18 @@ apply_settings_delta(string msg) {
             MultiOwnerMode = (integer)llJsonGetValue(changes, [KEY_MULTI_OWNER_MODE]);
             reconcile_all();
         }
-        
-        // Handle owner_key changes (single owner mode)
-        if (json_has(changes, [KEY_OWNER_KEY])) {
+
+        // Single owner changed (full JSON object broadcast)
+        if (json_has(changes, [KEY_OWNER])) {
             key old_owner = OwnerKey;
-            OwnerKey = (key)llJsonGetValue(changes, [KEY_OWNER_KEY]);
+            OwnerKey = NULL_KEY;
+            string obj = llJsonGetValue(changes, [KEY_OWNER]);
+            if (llJsonValueType(obj, []) == JSON_OBJECT) {
+                list pairs = llJson2List(obj);
+                if (llGetListLength(pairs) >= 2) {
+                    OwnerKey = (key)llList2String(pairs, 0);
+                }
+            }
 
             // Clear exceptions from old owner if it changed
             if (old_owner != NULL_KEY && old_owner != OwnerKey) {
@@ -266,7 +287,34 @@ apply_settings_delta(string msg) {
                 apply_im_exception(old_owner, FALSE);
             }
 
-            // Apply to new owner
+            reconcile_all();
+        }
+
+        // Multi-owner changed (full JSON object broadcast)
+        if (json_has(changes, [KEY_OWNERS])) {
+            // Clear exceptions for old owners
+            integer ci = 0;
+            integer old_count = llGetListLength(OwnerKeys);
+            while (ci < old_count) {
+                key old_k = (key)llList2String(OwnerKeys, ci);
+                apply_tp_exception(old_k, FALSE);
+                apply_im_exception(old_k, FALSE);
+                ci++;
+            }
+
+            // Parse new owners
+            OwnerKeys = [];
+            string obj = llJsonGetValue(changes, [KEY_OWNERS]);
+            if (llJsonValueType(obj, []) == JSON_OBJECT) {
+                list pairs = llJson2List(obj);
+                integer oi = 0;
+                integer olen = llGetListLength(pairs);
+                while (oi < olen) {
+                    OwnerKeys += [llList2String(pairs, oi)];
+                    oi += 2;
+                }
+            }
+
             reconcile_all();
         }
 
@@ -299,44 +347,6 @@ apply_settings_delta(string msg) {
             reconcile_all();
         }
     }
-    else if (op == "list_add") {
-        if (!json_has(msg, ["key"])) return;
-        if (!json_has(msg, ["elem"])) return;
-
-        string key_name = llJsonGetValue(msg, ["key"]);
-        string elem = llJsonGetValue(msg, ["elem"]);
-
-        if (key_name == KEY_OWNER_KEYS) {
-            if (llListFindList(OwnerKeys, [elem]) == -1) {
-                OwnerKeys += [elem];
-
-                // Apply exceptions to new owner
-                key k = (key)elem;
-                apply_tp_exception(k, ExOwnerTp);
-                apply_im_exception(k, ExOwnerIm);
-            }
-        }
-    }
-    else if (op == "list_remove") {
-        if (!json_has(msg, ["key"])) return;
-        if (!json_has(msg, ["elem"])) return;
-
-        string key_name = llJsonGetValue(msg, ["key"]);
-        string elem = llJsonGetValue(msg, ["elem"]);
-
-        if (key_name == KEY_OWNER_KEYS) {
-            integer idx = llListFindList(OwnerKeys, [elem]);
-            if (idx != -1) {
-                // CRITICAL: Clear exceptions BEFORE removing from list
-                key k = (key)elem;
-                apply_tp_exception(k, FALSE);
-                apply_im_exception(k, FALSE);
-
-                // Remove from list
-                OwnerKeys = llDeleteSubList(OwnerKeys, idx, idx);
-            }
-        }
-    }
 }
 
 persist_setting(string setting_key, integer value) {
@@ -345,33 +355,6 @@ persist_setting(string setting_key, integer value) {
         "key", setting_key,
         "value", (string)value
     ]), NULL_KEY);
-}
-
-/* -------------------- ACL -------------------- */
-
-request_acl(key user) {
-    llMessageLinked(LINK_SET, AUTH_BUS, llList2Json(JSON_OBJECT, [
-        "type", "acl_query",
-        "avatar", (string)user,
-        "id", PLUGIN_CONTEXT + "_acl"
-    ]), NULL_KEY);
-}
-
-handle_acl_result(string msg) {
-    if (!json_has(msg, ["avatar"]) || !json_has(msg, ["level"])) return;
-    
-    key avatar = (key)llJsonGetValue(msg, ["avatar"]);
-    if (avatar != CurrentUser) return;
-    
-    UserAcl = (integer)llJsonGetValue(msg, ["level"]);
-    
-    if (UserAcl < PLUGIN_MIN_ACL) {
-        llRegionSayTo(CurrentUser, 0, "Access denied.");
-        cleanup();
-        return;
-    }
-    
-    show_main();
 }
 
 /* -------------------- MENUS -------------------- */
@@ -625,12 +608,10 @@ default {
             if (type == "start" && json_has(msg, ["context"])) {
                 if (llJsonGetValue(msg, ["context"]) == PLUGIN_CONTEXT) {
                     CurrentUser = id;
-                    request_acl(id);
+                    UserAcl = (integer)llJsonGetValue(msg, ["acl"]);
+                    show_main();
                 }
             }
-        }
-        else if (num == AUTH_BUS) {
-            if (type == "acl_result") handle_acl_result(msg);
         }
         else if (num == DIALOG_BUS) {
             if (type == "dialog_response") {
