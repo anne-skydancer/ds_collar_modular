@@ -29,11 +29,7 @@ string PLUGIN_LABEL = "Status";
 integer PLUGIN_MIN_ACL = 1;  // Public can view
 
 /* -------------------- SETTINGS KEYS -------------------- */
-string KEY_MULTI_OWNER_MODE = "multi_owner_mode";
-string KEY_OWNER_KEY = "owner_key";
-string KEY_OWNER_KEYS = "owner_keys";
-string KEY_OWNER_HON = "owner_hon";
-string KEY_OWNER_HONS = "owner_honorifics";
+string KEY_OWNERS = "owners";
 string KEY_TRUSTEES = "trustees";
 string KEY_BLACKLIST = "blacklist";
 string KEY_PUBLIC_ACCESS = "public_mode";
@@ -42,11 +38,8 @@ string KEY_TPE_MODE = "tpe_mode";
 
 /* -------------------- STATE -------------------- */
 // Settings cache
-integer MultiOwnerMode = FALSE;
-key OwnerKey = NULL_KEY;
 list OwnerKeys = [];
-string OwnerHonorific = "";
-string OwnerHonJson = "{}";
+string OwnersJson = "{}";
 list TrusteeKeys = [];
 string TrusteesJson = "{}";
 list BlacklistKeys = [];
@@ -54,12 +47,7 @@ integer PublicAccess = FALSE;
 integer Locked = FALSE;
 integer TpeMode = FALSE;
 
-// Display name resolution
-string OwnerDisplay = "";
-key OwnerDisplayQuery = NULL_KEY;
-key OwnerLegacyQuery = NULL_KEY;
-
-// Multi-owner display names
+// Owner display names
 list OwnerDisplayNames = [];
 list OwnerNameQueries = [];
 
@@ -121,16 +109,11 @@ apply_settings_sync(string msg) {
     
     string kv_json = llJsonGetValue(msg, ["kv"]);
     
-    integer previous_mode = MultiOwnerMode;
-    key previous_owner = OwnerKey;
     list previous_owners = OwnerKeys;
-    
+
     // Reset to defaults
-    MultiOwnerMode = FALSE;
-    OwnerKey = NULL_KEY;
     OwnerKeys = [];
-    OwnerHonorific = "";
-    OwnerHonJson = "{}";
+    OwnersJson = "{}";
     TrusteeKeys = [];
     TrusteesJson = "{}";
     BlacklistKeys = [];
@@ -139,30 +122,17 @@ apply_settings_sync(string msg) {
     TpeMode = FALSE;
     
     // Load values
-    if (json_has(kv_json, [KEY_MULTI_OWNER_MODE])) {
-        MultiOwnerMode = (integer)llJsonGetValue(kv_json, [KEY_MULTI_OWNER_MODE]);
-    }
-    
-    if (json_has(kv_json, [KEY_OWNER_KEY])) {
-        string owner_str = llJsonGetValue(kv_json, [KEY_OWNER_KEY]);
-        OwnerKey = (key)owner_str;
-    }
-    
-    if (json_has(kv_json, [KEY_OWNER_KEYS])) {
-        string owner_keys_json = llJsonGetValue(kv_json, [KEY_OWNER_KEYS]);
-        if (is_json_arr(owner_keys_json)) {
-            OwnerKeys = llJson2List(owner_keys_json);
-        }
-    }
-    
-    if (json_has(kv_json, [KEY_OWNER_HON])) {
-        OwnerHonorific = llJsonGetValue(kv_json, [KEY_OWNER_HON]);
-    }
-    
-    if (json_has(kv_json, [KEY_OWNER_HONS])) {
-        string hon_raw = llJsonGetValue(kv_json, [KEY_OWNER_HONS]);
-        if (llJsonValueType(hon_raw, []) == JSON_OBJECT) {
-            OwnerHonJson = hon_raw;
+    if (json_has(kv_json, [KEY_OWNERS])) {
+        string raw = llJsonGetValue(kv_json, [KEY_OWNERS]);
+        if (llJsonValueType(raw, []) == JSON_OBJECT) {
+            OwnersJson = raw;
+            list pairs = llJson2List(raw);
+            integer pi = 0;
+            integer plen = llGetListLength(pairs);
+            while (pi < plen) {
+                OwnerKeys += [llList2String(pairs, pi)];
+                pi += 2;
+            }
         }
     }
 
@@ -204,23 +174,7 @@ apply_settings_sync(string msg) {
     }
     
     // Check if we need to refresh owner names
-    integer needs_refresh = FALSE;
-    
-    if (MultiOwnerMode != previous_mode) {
-        needs_refresh = TRUE;
-    }
-    else if (MultiOwnerMode) {
-        if (OwnerKeys != previous_owners) {
-            needs_refresh = TRUE;
-        }
-    }
-    else {
-        if (OwnerKey != previous_owner) {
-            needs_refresh = TRUE;
-        }
-    }
-    
-    if (needs_refresh) {
+    if (OwnerKeys != previous_owners) {
         request_owner_names();
     }
 
@@ -237,22 +191,23 @@ apply_settings_delta(string msg) {
         if (!json_has(msg, ["changes"])) return;
         string changes = llJsonGetValue(msg, ["changes"]);
         
-        integer needs_refresh = FALSE;
-        
-        if (json_has(changes, [KEY_MULTI_OWNER_MODE])) {
-            MultiOwnerMode = (integer)llJsonGetValue(changes, [KEY_MULTI_OWNER_MODE]);
-            needs_refresh = TRUE;
+        if (json_has(changes, [KEY_OWNERS])) {
+            string raw = llJsonGetValue(changes, [KEY_OWNERS]);
+            OwnersJson = "{}";
+            OwnerKeys = [];
+            if (llJsonValueType(raw, []) == JSON_OBJECT) {
+                OwnersJson = raw;
+                list pairs = llJson2List(raw);
+                integer pi = 0;
+                integer plen = llGetListLength(pairs);
+                while (pi < plen) {
+                    OwnerKeys += [llList2String(pairs, pi)];
+                    pi += 2;
+                }
+            }
+            request_owner_names();
         }
-        
-        if (json_has(changes, [KEY_OWNER_KEY])) {
-            OwnerKey = (key)llJsonGetValue(changes, [KEY_OWNER_KEY]);
-            needs_refresh = TRUE;
-        }
-        
-        if (json_has(changes, [KEY_OWNER_HON])) {
-            OwnerHonorific = llJsonGetValue(changes, [KEY_OWNER_HON]);
-        }
-        
+
         if (json_has(changes, [KEY_PUBLIC_ACCESS])) {
             PublicAccess = (integer)llJsonGetValue(changes, [KEY_PUBLIC_ACCESS]);
         }
@@ -265,10 +220,6 @@ apply_settings_delta(string msg) {
             TpeMode = (integer)llJsonGetValue(changes, [KEY_TPE_MODE]);
         }
         
-        if (needs_refresh) {
-            request_owner_names();
-        }
-
         // Trustees changed (full JSON object broadcast)
         if (json_has(changes, [KEY_TRUSTEES])) {
             string trustees_raw = llJsonGetValue(changes, [KEY_TRUSTEES]);
@@ -286,57 +237,26 @@ apply_settings_delta(string msg) {
             }
         }
 
-        // Owner honorifics changed (full JSON object broadcast)
-        if (json_has(changes, [KEY_OWNER_HONS])) {
-            string hon_raw = llJsonGetValue(changes, [KEY_OWNER_HONS]);
-            if (llJsonValueType(hon_raw, []) == JSON_OBJECT) {
-                OwnerHonJson = hon_raw;
-            }
-        }
-    }
-    else if (op == "list_add" || op == "list_remove") {
-        if (!json_has(msg, ["key"])) return;
-        string list_key = llJsonGetValue(msg, ["key"]);
-
-        if (list_key == KEY_OWNER_KEYS) {
-            // Request full sync to refresh owner lists
-            llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, ["type", "settings_get"]), NULL_KEY);
-        }
     }
 }
 
 /* -------------------- OWNER NAME RESOLUTION -------------------- */
 
 request_owner_names() {
-    if (MultiOwnerMode) {
-        OwnerDisplayNames = [];
-        OwnerNameQueries = [];
-        
-        integer i;
-        integer count = llGetListLength(OwnerKeys);
-        for (i = 0; i < count; i++) {
-            key owner_key = llList2Key(OwnerKeys, i);
-            OwnerDisplayNames += [""];  // Placeholder aligned with OwnerKeys
-            if (owner_key != NULL_KEY) {
-                key query_id = llRequestDisplayName(owner_key);
-                OwnerNameQueries += [query_id];
-            }
-            else {
-                OwnerNameQueries += [NULL_KEY];
-            }
-        }
-        
-    }
-    else {
-        if (OwnerKey != NULL_KEY) {
-            OwnerDisplay = "";
-            OwnerDisplayQuery = llRequestDisplayName(OwnerKey);
-            OwnerLegacyQuery = llRequestAgentData(OwnerKey, DATA_NAME);
+    OwnerDisplayNames = [];
+    OwnerNameQueries = [];
+
+    integer i;
+    integer count = llGetListLength(OwnerKeys);
+    for (i = 0; i < count; i++) {
+        key owner_key = llList2Key(OwnerKeys, i);
+        OwnerDisplayNames += [""];  // Placeholder aligned with OwnerKeys
+        if (owner_key != NULL_KEY) {
+            key query_id = llRequestDisplayName(owner_key);
+            OwnerNameQueries += [query_id];
         }
         else {
-            OwnerDisplay = "";
-            OwnerDisplayQuery = NULL_KEY;
-            OwnerLegacyQuery = NULL_KEY;
+            OwnerNameQueries += [NULL_KEY];
         }
     }
 }
@@ -360,45 +280,46 @@ request_trustee_names() {
     }
 }
 
-string get_owner_label() {
-    if (OwnerDisplay != "") {
-        return OwnerDisplay;
-    }
-    else if (OwnerKey != NULL_KEY) {
-        return llKey2Name(OwnerKey);
-    }
-    else {
-        return "(unowned)";
-    }
-}
-
 /* -------------------- STATUS REPORT BUILDING -------------------- */
 
 string build_status_report() {
     string status_text = "Collar Status:\n\n";
     
     // Owner information
-    if (MultiOwnerMode) {
-        integer owner_count = llGetListLength(OwnerKeys);
-        if (owner_count > 0) {
+    integer owner_count = llGetListLength(OwnerKeys);
+    if (owner_count > 0) {
+        if (owner_count == 1) {
+            status_text += "Owner: ";
+        }
+        else {
             status_text += "Owners:\n";
-            
-            integer i;
-            integer disp_count = llGetListLength(OwnerDisplayNames);
-            for (i = 0; i < owner_count; i++) {
-                key owner_key = llList2Key(OwnerKeys, i);
-                string honorific = llJsonGetValue(OwnerHonJson, [(string)owner_key]);
-                if (honorific == JSON_INVALID) honorific = "";
-                
-                string display_name = "";
-                if (i < disp_count) {
-                    display_name = llList2String(OwnerDisplayNames, i);
+        }
+
+        integer i;
+        integer disp_count = llGetListLength(OwnerDisplayNames);
+        for (i = 0; i < owner_count; i++) {
+            key owner_key = llList2Key(OwnerKeys, i);
+            string honorific = llJsonGetValue(OwnersJson, [(string)owner_key]);
+            if (honorific == JSON_INVALID) honorific = "";
+
+            string display_name = "";
+            if (i < disp_count) {
+                display_name = llList2String(OwnerDisplayNames, i);
+            }
+
+            if (display_name == "") {
+                display_name = llKey2Name(owner_key);
+            }
+
+            if (owner_count == 1) {
+                if (honorific != "") {
+                    status_text += honorific + " " + display_name + "\n";
                 }
-                
-                if (display_name == "") {
-                    display_name = llKey2Name(owner_key);
+                else {
+                    status_text += display_name + "\n";
                 }
-                
+            }
+            else {
                 if (honorific != "") {
                     status_text += "  " + honorific + " " + display_name + "\n";
                 }
@@ -407,23 +328,9 @@ string build_status_report() {
                 }
             }
         }
-        else {
-            status_text += "Owners: Uncommitted\n";
-        }
     }
     else {
-        if (OwnerKey != NULL_KEY) {
-            string owner_label = get_owner_label();
-            if (OwnerHonorific != "") {
-                status_text += "Owner: " + OwnerHonorific + " " + owner_label + "\n";
-            }
-            else {
-                status_text += "Owner: " + owner_label + "\n";
-            }
-        }
-        else {
-            status_text += "Owner: Uncommitted\n";
-        }
+        status_text += "Owner: Uncommitted\n";
     }
     
     // Trustee information
@@ -545,9 +452,6 @@ default {
         cleanup_session();
         
         // Reset display name cache
-        OwnerDisplay = "";
-        OwnerDisplayQuery = NULL_KEY;
-        OwnerLegacyQuery = NULL_KEY;
         OwnerDisplayNames = [];
         OwnerNameQueries = [];
         TrusteeDisplayNames = [];
@@ -662,24 +566,11 @@ default {
             return;
         }
 
-        // Multi-owner mode
-        if (MultiOwnerMode) {
-            integer idx = llListFindList(OwnerNameQueries, [query_id]);
-            if (idx != -1) {
-                if (idx < llGetListLength(OwnerDisplayNames)) {
-                    OwnerDisplayNames = llListReplaceList(OwnerDisplayNames, [data], idx, idx);
-                }
-            }
-        }
-        // Single owner mode
-        else {
-            if (query_id == OwnerDisplayQuery) {
-                OwnerDisplay = data;
-            }
-            else if (query_id == OwnerLegacyQuery) {
-                if (OwnerDisplay == "") {
-                    OwnerDisplay = data;
-                }
+        // Owner name queries
+        integer idx = llListFindList(OwnerNameQueries, [query_id]);
+        if (idx != -1) {
+            if (idx < llGetListLength(OwnerDisplayNames)) {
+                OwnerDisplayNames = llListReplaceList(OwnerDisplayNames, [data], idx, idx);
             }
         }
     }

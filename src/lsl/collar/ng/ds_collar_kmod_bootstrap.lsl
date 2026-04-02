@@ -1,10 +1,11 @@
 /*--------------------
 MODULE: ds_collar_kmod_bootstrap.lsl
 VERSION: 1.00
-REVISION: 36
+REVISION: 37
 PURPOSE: Startup coordination, RLV detection, owner name resolution
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- REVISION 37: Unified owners JSON object {uuid:honorific} replaces separate owner key/honorific fields
 - REVISION 36: Parse owner_honorifics as JSON object {uuid:honorific}
 - Corected the collar name
 - Rate-limited display name requests to avoid viewer throttling
@@ -37,10 +38,7 @@ float NAME_REQUEST_INTERVAL_SEC = 2.5;  // Space requests 2.5s apart to avoid th
 
 /* -------------------- SETTINGS KEYS -------------------- */
 string KEY_MULTI_OWNER_MODE = "multi_owner_mode";
-string KEY_OWNER_KEY = "owner_key";
-string KEY_OWNER_KEYS = "owner_keys";
-string KEY_OWNER_HON = "owner_hon";
-string KEY_OWNER_HONS = "owner_honorifics";
+string KEY_OWNERS = "owners";
 
 /* -------------------- BOOTSTRAP CONFIG -------------------- */
 integer BOOTSTRAP_TIMEOUT_SEC = 90;
@@ -71,10 +69,8 @@ integer SettingsReceived = FALSE;
 integer SettingsRetryCount = 0;
 integer SettingsNextRetry = 0;
 integer MultiOwnerMode = FALSE;
-key OwnerKey = NULL_KEY;
 list OwnerKeys = [];
-string OwnerHonorific = "";
-string OwnerHonJson = "{}";
+string OwnersJson = "{}";
 
 // Name resolution
 list OwnerNameQueries = [];
@@ -232,35 +228,25 @@ apply_settings_sync(string msg) {
     
     // Reset
     MultiOwnerMode = FALSE;
-    OwnerKey = NULL_KEY;
+    OwnersJson = "{}";
     OwnerKeys = [];
-    OwnerHonorific = "";
-    OwnerHonJson = "{}";
-    
+
     // Load
     if (json_has(kv_json, [KEY_MULTI_OWNER_MODE])) {
         MultiOwnerMode = (integer)llJsonGetValue(kv_json, [KEY_MULTI_OWNER_MODE]);
     }
-    
-    if (json_has(kv_json, [KEY_OWNER_KEY])) {
-        OwnerKey = (key)llJsonGetValue(kv_json, [KEY_OWNER_KEY]);
-    }
-    
-    if (json_has(kv_json, [KEY_OWNER_KEYS])) {
-        string owner_keys_json = llJsonGetValue(kv_json, [KEY_OWNER_KEYS]);
-        if (llJsonValueType(owner_keys_json, []) == JSON_ARRAY) {
-            OwnerKeys = llJson2List(owner_keys_json);
-        }
-    }
-    
-    if (json_has(kv_json, [KEY_OWNER_HON])) {
-        OwnerHonorific = llJsonGetValue(kv_json, [KEY_OWNER_HON]);
-    }
-    
-    if (json_has(kv_json, [KEY_OWNER_HONS])) {
-        string owner_hons_raw = llJsonGetValue(kv_json, [KEY_OWNER_HONS]);
-        if (llJsonValueType(owner_hons_raw, []) == JSON_OBJECT) {
-            OwnerHonJson = owner_hons_raw;
+
+    if (json_has(kv_json, [KEY_OWNERS])) {
+        string raw = llJsonGetValue(kv_json, [KEY_OWNERS]);
+        if (llJsonValueType(raw, []) == JSON_OBJECT) {
+            OwnersJson = raw;
+            list pairs = llJson2List(raw);
+            integer pi = 0;
+            integer plen = llGetListLength(pairs);
+            while (pi < plen) {
+                OwnerKeys += [llList2String(pairs, pi)];
+                pi += 2;
+            }
         }
     }
     
@@ -293,13 +279,7 @@ process_next_name_request() {
         OwnerNameQueries += [query_id, owner];
 
         // Find the index for this owner
-        integer owner_idx = -1;
-        if (MultiOwnerMode) {
-            owner_idx = llListFindList(OwnerKeys, [(string)owner]);
-        }
-        else {
-            if (owner == OwnerKey) owner_idx = 0;
-        }
+        integer owner_idx = llListFindList(OwnerKeys, [(string)owner]);
 
         // Initialize display name placeholder
         if (owner_idx != -1) {
@@ -337,25 +317,16 @@ start_name_resolution() {
         }
     }
 
-    if (MultiOwnerMode) {
-        // Multi-owner: queue all owner keys for rate-limited requests
-        integer i = 0;
-        while (i < llGetListLength(OwnerKeys)) {
-            string owner_str = llList2String(OwnerKeys, i);
-            key owner = (key)owner_str;
-            if (owner != NULL_KEY) {
-                PendingNameRequests += [owner];
-                OwnerDisplayNames += ["(loading...)"];
-            }
-            i += 1;
-        }
-    }
-    else {
-        // Single owner: queue one request
-        if (OwnerKey != NULL_KEY) {
-            PendingNameRequests += [OwnerKey];
+    // Queue all owner keys for rate-limited display name requests
+    integer i = 0;
+    while (i < llGetListLength(OwnerKeys)) {
+        string owner_str = llList2String(OwnerKeys, i);
+        key owner_id = (key)owner_str;
+        if (owner_id != NULL_KEY) {
+            PendingNameRequests += [owner_id];
             OwnerDisplayNames += ["(loading...)"];
         }
+        i += 1;
     }
 
     // If no owners, we're done
@@ -375,13 +346,7 @@ handle_dataserver_name(key query_id, string name) {
         key owner = llList2Key(OwnerNameQueries, idx + 1);
         
         // Update display name
-        integer owner_idx = -1;
-        if (MultiOwnerMode) {
-            owner_idx = llListFindList(OwnerKeys, [(string)owner]);
-        }
-        else {
-            if (owner == OwnerKey) owner_idx = 0;
-        }
+        integer owner_idx = llListFindList(OwnerKeys, [(string)owner]);
         
         if (owner_idx != -1 && owner_idx < llGetListLength(OwnerDisplayNames)) {
             OwnerDisplayNames = llListReplaceList(OwnerDisplayNames, [name], owner_idx, owner_idx);
@@ -460,48 +425,35 @@ announce_status() {
     }
     
     // Ownership status
-    if (MultiOwnerMode) {
-        integer owner_count = llGetListLength(OwnerKeys);
-        if (owner_count > 0) {
-            list owner_parts = [];
-            integer i = 0;
-            while (i < owner_count) {
-                string owner_uuid = llList2String(OwnerKeys, i);
-                string hon = llJsonGetValue(OwnerHonJson, [owner_uuid]);
-                if (hon == JSON_INVALID) hon = "";
-                
-                string display_name = "";
-                if (i < llGetListLength(OwnerDisplayNames)) {
-                    display_name = llList2String(OwnerDisplayNames, i);
-                }
-                
-                if (hon != "") {
-                    owner_parts += [hon + " " + display_name];
-                }
-                else {
-                    owner_parts += [display_name];
-                }
-                
-                i += 1;
+    integer owner_count = llGetListLength(OwnerKeys);
+    if (owner_count > 0) {
+        list owner_parts = [];
+        integer i = 0;
+        while (i < owner_count) {
+            string owner_uuid = llList2String(OwnerKeys, i);
+            string hon = llJsonGetValue(OwnersJson, [owner_uuid]);
+            if (hon == JSON_INVALID) {
+                hon = "";
             }
-            sendIM("Owned by " + llDumpList2String(owner_parts, ", "));
+
+            string display_name = "";
+            if (i < llGetListLength(OwnerDisplayNames)) {
+                display_name = llList2String(OwnerDisplayNames, i);
+            }
+
+            if (hon != "") {
+                owner_parts += [hon + " " + display_name];
+            }
+            else {
+                owner_parts += [display_name];
+            }
+
+            i += 1;
         }
-        else {
-            sendIM("Uncommitted");
-        }
+        sendIM("Owned by " + llDumpList2String(owner_parts, ", "));
     }
     else {
-        if (OwnerKey != NULL_KEY) {
-            string owner_line = "Owned by ";
-            if (OwnerHonorific != "") {
-                owner_line += OwnerHonorific + " ";
-            }
-            owner_line += llList2String(OwnerDisplayNames, 0);
-            sendIM(owner_line);
-        }
-        else {
-            sendIM("Uncommitted");
-        }
+        sendIM("Uncommitted");
     }
     
     sendIM("Collar startup complete.");

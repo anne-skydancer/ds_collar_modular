@@ -41,8 +41,7 @@ integer ACL_PRIMARY_OWNER = 5;
 
 /* -------------------- SETTINGS KEYS -------------------- */
 string KEY_MULTI_OWNER_MODE = "multi_owner_mode";
-string KEY_OWNER_KEY        = "owner_key";
-string KEY_OWNER_KEYS       = "owner_keys";
+string KEY_OWNERS           = "owners";
 string KEY_TRUSTEES         = "trustees";
 string KEY_BLACKLIST        = "blacklist";
 string KEY_PUBLIC_ACCESS    = "public_mode";
@@ -72,7 +71,6 @@ string JSON_TEMPLATE_PRIMARY = "";
 
 /* -------------------- STATE (CACHED SETTINGS) -------------------- */
 integer MultiOwnerMode = FALSE;
-key OwnerKey = NULL_KEY;
 list OwnerKeys = [];
 list TrusteeList = [];
 list Blacklist = [];
@@ -105,17 +103,11 @@ integer list_has_key(list search_list, key k) {
 /* -------------------- OWNER CHECKING -------------------- */
 
 integer has_owner() {
-    if (MultiOwnerMode) {
-        return (llGetListLength(OwnerKeys) > 0);
-    }
-    return (OwnerKey != NULL_KEY);
+    return (llGetListLength(OwnerKeys) > 0);
 }
 
 integer is_owner(key av) {
-    if (MultiOwnerMode) {
-        return list_has_key(OwnerKeys, av);
-    }
-    return (av == OwnerKey);
+    return list_has_key(OwnerKeys, av);
 }
 
 /* -------------------- JSON TEMPLATE INITIALIZATION -------------------- */
@@ -303,15 +295,7 @@ clear_acl_query_cache() {
 
 // Persist ACL role lists to linkset data
 persist_acl_cache() {
-    list owners_payload = [];
-    if (MultiOwnerMode) {
-        owners_payload = OwnerKeys;
-    }
-    else if (OwnerKey != NULL_KEY) {
-        owners_payload = [(string)OwnerKey];
-    }
-
-    string owners_json = llList2Json(JSON_ARRAY, owners_payload);
+    string owners_json = llList2Json(JSON_ARRAY, OwnerKeys);
     string trustees_json = llList2Json(JSON_ARRAY, TrusteeList);
     string blacklist_json = llList2Json(JSON_ARRAY, Blacklist);
 
@@ -575,41 +559,22 @@ list filter_plugins_for_user(key user, list plugin_contexts) {
 /* -------------------- ROLE EXCLUSIVITY VALIDATION -------------------- */
 
 enforce_role_exclusivity() {
-    integer i;
-    
-    if (MultiOwnerMode) {
-        i = 0;
-        while (i < llGetListLength(OwnerKeys)) {
-            string owner = llList2String(OwnerKeys, i);
-            
-            integer idx = llListFindList(TrusteeList, [owner]);
-            if (idx != -1) {
-                TrusteeList = llDeleteSubList(TrusteeList, idx, idx);
-            }
-            
-            idx = llListFindList(Blacklist, [owner]);
-            if (idx != -1) {
-                Blacklist = llDeleteSubList(Blacklist, idx, idx);
-            }
-            i = i + 1;
+    integer i = 0;
+    while (i < llGetListLength(OwnerKeys)) {
+        string owner = llList2String(OwnerKeys, i);
+
+        integer idx = llListFindList(TrusteeList, [owner]);
+        if (idx != -1) {
+            TrusteeList = llDeleteSubList(TrusteeList, idx, idx);
         }
-    }
-    else {
-        if (OwnerKey != NULL_KEY) {
-            string owner = (string)OwnerKey;
-            
-            integer idx = llListFindList(TrusteeList, [owner]);
-            if (idx != -1) {
-                TrusteeList = llDeleteSubList(TrusteeList, idx, idx);
-            }
-            
-            idx = llListFindList(Blacklist, [owner]);
-            if (idx != -1) {
-                Blacklist = llDeleteSubList(Blacklist, idx, idx);
-            }
+
+        idx = llListFindList(Blacklist, [owner]);
+        if (idx != -1) {
+            Blacklist = llDeleteSubList(Blacklist, idx, idx);
         }
+        i = i + 1;
     }
-    
+
     i = 0;
     while (i < llGetListLength(TrusteeList)) {
         string trustee = llList2String(TrusteeList, i);
@@ -630,28 +595,30 @@ apply_settings_sync(string msg) {
     string kv_json = llJsonGetValue(msg, ["kv"]);
     
     MultiOwnerMode = FALSE;
-    OwnerKey = NULL_KEY;
     OwnerKeys = [];
     TrusteeList = [];
     Blacklist = [];
     PublicMode = FALSE;
     TpeMode = FALSE;
-    
+
     if (json_has(kv_json, [KEY_MULTI_OWNER_MODE])) {
         MultiOwnerMode = (integer)llJsonGetValue(kv_json, [KEY_MULTI_OWNER_MODE]);
     }
-    
-    if (json_has(kv_json, [KEY_OWNER_KEY])) {
-        OwnerKey = (key)llJsonGetValue(kv_json, [KEY_OWNER_KEY]);
-    }
-    
-    if (json_has(kv_json, [KEY_OWNER_KEYS])) {
-        string owner_keys_json = llJsonGetValue(kv_json, [KEY_OWNER_KEYS]);
-        if (is_json_arr(owner_keys_json)) {
-            OwnerKeys = llJson2List(owner_keys_json);
+
+    // Owners stored as {uuid:honorific} — extract UUID keys
+    if (json_has(kv_json, [KEY_OWNERS])) {
+        string owners_raw = llJsonGetValue(kv_json, [KEY_OWNERS]);
+        if (llJsonValueType(owners_raw, []) == JSON_OBJECT) {
+            list pairs = llJson2List(owners_raw);
+            integer pi = 0;
+            integer plen = llGetListLength(pairs);
+            while (pi < plen) {
+                OwnerKeys += [llList2String(pairs, pi)];
+                pi += 2;
+            }
         }
     }
-    
+
     if (json_has(kv_json, [KEY_TRUSTEES])) {
         string trustees_raw = llJsonGetValue(kv_json, [KEY_TRUSTEES]);
         if (llJsonValueType(trustees_raw, []) == JSON_OBJECT) {
@@ -723,8 +690,19 @@ apply_settings_delta(string msg) {
             cache_dirty = TRUE;
         }
         
-        if (json_has(changes, [KEY_OWNER_KEY])) {
-            OwnerKey = (key)llJsonGetValue(changes, [KEY_OWNER_KEY]);
+        // Owners changed (full JSON object broadcast)
+        if (json_has(changes, [KEY_OWNERS])) {
+            string owners_raw = llJsonGetValue(changes, [KEY_OWNERS]);
+            OwnerKeys = [];
+            if (llJsonValueType(owners_raw, []) == JSON_OBJECT) {
+                list pairs = llJson2List(owners_raw);
+                integer pi = 0;
+                integer plen = llGetListLength(pairs);
+                while (pi < plen) {
+                    OwnerKeys += [llList2String(pairs, pi)];
+                    pi += 2;
+                }
+            }
             enforce_role_exclusivity();
             broadcast_acl_change("global", NULL_KEY);
             cache_dirty = TRUE;
@@ -755,15 +733,7 @@ apply_settings_delta(string msg) {
         string key_name = llJsonGetValue(msg, ["key"]);
         string elem = llJsonGetValue(msg, ["elem"]);
         
-        if (key_name == KEY_OWNER_KEYS) {
-            if (llListFindList(OwnerKeys, [elem]) == -1) {
-                OwnerKeys += [elem];
-                enforce_role_exclusivity();
-                broadcast_acl_change("global", NULL_KEY);
-                cache_dirty = TRUE;
-            }
-        }
-        else if (key_name == KEY_BLACKLIST) {
+        if (key_name == KEY_BLACKLIST) {
             if (llListFindList(Blacklist, [elem]) == -1) {
                 Blacklist += [elem];
                 broadcast_acl_change("avatar", (key)elem);
@@ -778,16 +748,7 @@ apply_settings_delta(string msg) {
         string key_name = llJsonGetValue(msg, ["key"]);
         string elem = llJsonGetValue(msg, ["elem"]);
         
-        if (key_name == KEY_OWNER_KEYS) {
-            integer idx = llListFindList(OwnerKeys, [elem]);
-            while (idx != -1) {
-                OwnerKeys = llDeleteSubList(OwnerKeys, idx, idx);
-                idx = llListFindList(OwnerKeys, [elem]);
-            }
-            broadcast_acl_change("global", NULL_KEY);
-            cache_dirty = TRUE;
-        }
-        else if (key_name == KEY_BLACKLIST) {
+        if (key_name == KEY_BLACKLIST) {
             integer idx = llListFindList(Blacklist, [elem]);
             while (idx != -1) {
                 Blacklist = llDeleteSubList(Blacklist, idx, idx);

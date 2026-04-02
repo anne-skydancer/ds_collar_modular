@@ -67,12 +67,10 @@ The collar uses a **three-tier persistence model**, not simple RAM-only storage:
 # DS Collar Settings
 # Lines starting with # are comments
 
-# Owner Settings (Single Owner Mode)
-multi_owner_mode = 0
-owner_key = 12345678-1234-1234-1234-123456789abc
-owner_hon = Master
+# Owner — JSON object format: {"uuid":"honorific"}
+owners = {"12345678-1234-1234-1234-123456789abc":"Master"}
 
-# Trustees (optional) — JSON object format: {"uuid":"honorific"}
+# Trustees (optional) — same format as owners
 trustees = {"a1b2c3d4-e5f6-7890-abcd-111111111111":"Sir", "b2c3d4e5-f6a7-8901-bcde-222222222222":"Lady"}
 
 # Access Control
@@ -105,10 +103,7 @@ To get someone's UUID in Second Life:
 | Key | Type | Default | Description | Notes |
 |-----|------|---------|-------------|-------|
 | `multi_owner_mode` | boolean (0/1) | `0` | Enable multiple owners | **Notecard-only** — Cannot be changed via UI |
-| `owner_key` | UUID | `NULL_KEY` | Single owner UUID | Used when `multi_owner_mode = 0` |
-| `owner_keys` | JSON array | `[]` | List of owner UUIDs | Used when `multi_owner_mode = 1`; **Notecard-only** for bulk set |
-| `owner_hon` | string | `""` | Owner's honorific (single owner) | e.g., "Master", "Mistress", "Owner" |
-| `owner_honorifics` | JSON object | `{}` | Owner honorifics keyed by UUID | Format: `{"uuid":"honorific"}` |
+| `owners` | JSON object | `{}` | Owners keyed by UUID with honorifics | Format: `{"uuid":"honorific"}`; ACL level 5 |
 | `trustees` | JSON object | `{}` | Trusted users keyed by UUID with honorifics | Format: `{"uuid":"honorific"}`; ACL level 3 |
 | `blacklist` | JSON array | `[]` | List of blocked UUIDs | Blacklisted users have no access (ACL level -1) |
 
@@ -159,16 +154,15 @@ key = value  # This is NOT supported (no inline comments)
 
 **Lists (JSON arrays):** Enclosed in brackets, comma-separated
 ```
-owner_keys = [uuid1, uuid2, uuid3]
 blacklist = [uuid1, uuid2]
 ```
 
-**JSON Objects:** Enclosed in braces, for `trustees` and `owner_honorifics`
+**JSON Objects:** Enclosed in braces, for `owners` and `trustees`
 ```
+owners = {"uuid1":"Master", "uuid2":"Mistress"}
 trustees = {"uuid1":"Sir", "uuid2":"Lady"}
-owner_honorifics = {"uuid1":"Master", "uuid2":"Mistress"}
 ```
-**Warning:** Array syntax `[...]` is rejected for `trustees` and `owner_honorifics` — use JSON object format `{...}` instead.
+**Warning:** Array syntax `[...]` is rejected for `owners` and `trustees` — use JSON object format `{...}` instead.
 
 **Booleans:** Automatically normalized to `0` or `1` using integer cast
 ```
@@ -182,52 +176,45 @@ tpe_mode = 0         # Disabled
 ### Syntax Rules (CRITICAL)
 
 *   **No Quotes:** Do **NOT** enclose UUIDs or strings in quotes. The system reads values literally.
-    *   ✅ `owner_key = 12345678-1234-1234-1234-123456789abc`
-    *   ❌ `owner_key = "12345678-1234-1234-1234-123456789abc"`
-*   **Lists:** Enclosed in brackets `[]`, comma-separated (for `owner_keys`, `blacklist`).
+    *   ✅ `owners = {"12345678-1234-1234-1234-123456789abc":"Master"}`
+    *   ❌ `owners = {"\"12345678-1234-1234-1234-123456789abc\"":"Master"}` (no extra quotes around UUID)
+*   **Lists:** Enclosed in brackets `[]`, comma-separated (for `blacklist`).
     *   ✅ `blacklist = [uuid1, uuid2]`
-*   **JSON Objects:** Enclosed in braces `{}` (for `trustees`, `owner_honorifics`).
+*   **JSON Objects:** Enclosed in braces `{}` (for `owners`, `trustees`).
+    *   ✅ `owners = {"uuid1":"Master", "uuid2":"Mistress"}`
     *   ✅ `trustees = {"uuid1":"Sir", "uuid2":"Lady"}`
-*   **Case Sensitivity:** Keys are case-sensitive (e.g., `owner_key`, not `Owner_Key`).
+*   **Case Sensitivity:** Keys are case-sensitive (e.g., `owners`, not `Owners`).
 *   **Whitespace:** Spaces around `=` are optional but recommended for readability.
 
 ### Configuration Patterns
 
 #### Pattern A: Single Owner (Default)
 ```
-multi_owner_mode = 0
-owner_key = 12345678-1234-1234-1234-123456789abc
-owner_hon = Master
+owners = {"12345678-1234-1234-1234-123456789abc":"Master"}
 ```
 
 #### Pattern B: Multiple Owners
 ```
 multi_owner_mode = 1
-owner_keys = [uuid1, uuid2, uuid3]
-owner_honorifics = {"uuid1":"Master", "uuid2":"Mistress", "uuid3":"Owner"}
+owners = {"uuid1":"Master", "uuid2":"Mistress", "uuid3":"Owner"}
 ```
-**Note:** With multi-owner mode, all owners have equal administrative access (ACL level 5). `owner_keys` is a JSON array; `owner_honorifics` is a JSON object mapping each UUID to its honorific.
+**Note:** With multi-owner mode, all owners have equal administrative access (ACL level 5). The `multi_owner_mode` flag controls whether the UI allows adding additional owners.
 
 #### Pattern C: Owner + Trustees
 ```
-multi_owner_mode = 0
-owner_key = 12345678-1234-1234-1234-123456789abc
-owner_hon = Master
+owners = {"12345678-1234-1234-1234-123456789abc":"Master"}
 trustees = {"uuid-friend-1":"Sir", "uuid-friend-2":"Lady"}
 ```
 
 #### Pattern D: Public Access (No Owner)
 ```
-multi_owner_mode = 0
-owner_key = 00000000-0000-0000-0000-000000000000
 public_mode = 1
 ```
 **Warning:** This allows anyone to access the collar. Use with caution!
 
 #### Pattern E: TPE Mode (Total Power Exchange)
 ```
-multi_owner_mode = 0
-owner_key = 12345678-1234-1234-1234-123456789abc
+owners = {"12345678-1234-1234-1234-123456789abc":"Master"}
 tpe_mode = 1
 ```
 **Important:** TPE mode removes all control from the wearer. The wearer cannot:
@@ -238,7 +225,7 @@ tpe_mode = 1
 
 **Security Requirement:** Cannot enable TPE mode without an external owner set.
 
-**⚠️ CRITICAL NOTECARD ORDERING:** When configuring TPE mode in the notecard, you MUST set `owner_key` (or `owner_keys`) BEFORE `tpe_mode`. The collar validates the external owner requirement line-by-line during notecard parsing. If `tpe_mode = 1` appears before the owner is set, the collar will reject it and display an error.
+**⚠️ CRITICAL NOTECARD ORDERING:** When configuring TPE mode in the notecard, you MUST set `owners` BEFORE `tpe_mode`. The collar validates the external owner requirement line-by-line during notecard parsing. If `tpe_mode = 1` appears before owners are set, the collar will reject it and display an error.
 
 ---
 
@@ -261,8 +248,8 @@ tpe_mode = 1
 **Symptom:** Owner is denied access to certain features
 
 **Solutions:**
-1. Verify `owner_key` is set correctly in single-owner mode (ensure NO quotes around UUID)
-2. In multi-owner mode, ensure UUID is in `owner_keys` list
+1. Verify your UUID is in the `owners` JSON object (ensure NO quotes around the outer value, only around inner strings)
+2. In multi-owner mode, ensure your UUID is one of the keys in the `owners` object
 3. Check owner is not in the `blacklist`
 4. Confirm the menu's ACL requirement (some features require ACL level 5)
 
@@ -293,27 +280,27 @@ ERROR: Cannot enable TPE - requires external owner
 **Notecard Error:**
 ```
 ERROR: Cannot enable TPE via notecard - requires external owner
-HINT: Set owner_key or owner_keys BEFORE tpe_mode in notecard
+HINT: Set owners BEFORE tpe_mode in notecard
 ```
 
 **Explanation:** TPE mode requires an external owner (not the wearer) for safety.
 
 **Solutions:**
-1. Ensure `owner_key` is set to someone else's UUID
+1. Ensure the `owners` object contains someone else's UUID (not the wearer's)
 2. Verify the owner UUID is not the wearer's UUID
-3. In multi-owner mode, ensure at least one owner is not the wearer
-4. **For notecard configuration:** Ensure `owner_key` or `owner_keys` appears BEFORE `tpe_mode` in the notecard (order matters!)
+3. Ensure at least one owner in the `owners` object is not the wearer
+4. **For notecard configuration:** Ensure `owners` appears BEFORE `tpe_mode` in the notecard (order matters!)
 
 **Correct Notecard Order:**
 ```
-owner_key = 12345678-1234-1234-1234-123456789abc
+owners = {"12345678-1234-1234-1234-123456789abc":"Master"}
 tpe_mode = 1  # Owner is set, TPE can be enabled
 ```
 
 **Incorrect Notecard Order:**
 ```
 tpe_mode = 1  # ERROR! No owner set yet
-owner_key = 12345678-1234-1234-1234-123456789abc
+owners = {"12345678-1234-1234-1234-123456789abc":"Master"}
 ```
 
 ### List/Object Operations Don't Work
@@ -321,11 +308,11 @@ owner_key = 12345678-1234-1234-1234-123456789abc
 **Symptom:** Can't add/remove trustees or blacklist entries
 
 **Solutions:**
-1. For `blacklist` and `owner_keys`: use JSON array format `[uuid1, uuid2]`
-2. For `trustees` and `owner_honorifics`: use JSON object format `{"uuid":"honorific"}`
+1. For `blacklist`: use JSON array format `[uuid1, uuid2]`
+2. For `owners` and `trustees`: use JSON object format `{"uuid":"honorific"}`
 3. Check collection hasn't reached maximum size (64 entries)
 4. Verify target element exists before removing
-5. **Common mistake:** Using array `[...]` syntax for `trustees` or `owner_honorifics` — these require object `{...}` syntax
+5. **Common mistake:** Using array `[...]` syntax for `owners` or `trustees` — these require object `{...}` syntax
 
 ### Notecard Changes Not Detected
 
@@ -345,7 +332,7 @@ owner_key = 12345678-1234-1234-1234-123456789abc
 
 **Solutions:**
 1. Check spelling of key name (case-sensitive)
-2. Verify the key is one of the 19 recognized settings keys listed in this document
+2. Verify the key is one of the 16 recognized settings keys listed in this document
 3. If adding a new key, it must be added to the `is_allowed_key()` whitelist in the settings module
 
 ---
@@ -360,20 +347,18 @@ owner_key = 12345678-1234-1234-1234-123456789abc
 
 # OWNERSHIP SETTINGS
 # ------------------
-# Single owner mode (default)
-multi_owner_mode = 0
-owner_key = 00000000-0000-0000-0000-000000000000
-owner_hon =
+# Owners — JSON object {"uuid":"honorific"}
+# Single owner (default):
+owners = {}
 
-# Multi-owner mode (uncomment to use)
+# Multi-owner mode (uncomment to use):
 # multi_owner_mode = 1
-# owner_keys = [uuid1, uuid2, uuid3]
-# owner_honorifics = {"uuid1":"Master", "uuid2":"Mistress", "uuid3":"Owner"}
+# owners = {"uuid1":"Master", "uuid2":"Mistress", "uuid3":"Owner"}
 
 # TRUSTEES
 # --------
 # Trusted users with elevated permissions (ACL level 3)
-# Format: JSON object {"uuid":"honorific"}
+# Same format as owners: {"uuid":"honorific"}
 trustees = {}
 
 # BLACKLIST
@@ -432,7 +417,7 @@ bell_sound = 16fcf579-82cb-b110-c1a4-5fa5e1385406
 | 1.0 | 2025-10-01 | Initial comprehensive reference guide |
 | 1.1 | 2025-10-31 | Security fix: Added TPE mode validation to notecard parsing; documented notecard ordering requirement |
 | 1.2 | 2026-04-01 | Fact-check corrections: Fixed persistence model to document three-tier storage (LSD, script globals, notecard); corrected bell defaults (visible=0, sound=0, volume=0.3); fixed boolean normalization (only numeric values work, not `true`/`false`); corrected silent handling of unknown/invalid keys; fixed source code path |
-| 1.3 | 2026-04-02 | Reconciled with ng branch code (rev 31): trustees and owner_honorifics now documented as JSON objects; removed trustee_honorifics key; added runaway_enabled, RLV exception keys (ex_owner_tp/im, ex_trustee_tp/im); updated key count to 19; fixed notecard template and configuration patterns |
+| 1.3 | 2026-04-02 | Consolidated owner_key/owner_hon/owner_keys/owner_honorifics into single `owners` JSON object; matches `trustees` format; removed trustee_honorifics; added runaway_enabled, RLV exception keys; updated all examples and patterns |
 
 ---
 
