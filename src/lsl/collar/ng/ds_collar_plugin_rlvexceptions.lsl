@@ -37,16 +37,21 @@ string KEY_EX_OWNER_TP = "ex_owner_tp";
 string KEY_EX_OWNER_IM = "ex_owner_im";
 string KEY_EX_TRUSTEE_TP = "ex_trustee_tp";
 string KEY_EX_TRUSTEE_IM = "ex_trustee_im";
-string KEY_OWNERS = "owners";
+string KEY_OWNER_KEY = "owner_key";
+string KEY_OWNER_KEYS = "owner_keys";
 string KEY_TRUSTEES = "trustees";
+string KEY_MULTI_OWNER_MODE = "multi_owner_mode";
+
 /* -------------------- STATE -------------------- */
 integer ExOwnerTp = TRUE;
 integer ExOwnerIm = TRUE;
 integer ExTrusteeTp = FALSE;
 integer ExTrusteeIm = FALSE;
 
+key OwnerKey;
 list OwnerKeys;
 list TrusteeKeys;
+integer MultiOwnerMode;
 
 key CurrentUser;
 integer UserAcl = -999;
@@ -85,29 +90,36 @@ apply_im_exception(key k, integer allow) {
 }
 
 reconcile_all() {
-    integer has_owners = llGetListLength(OwnerKeys) > 0;
+    // Check if there are any owners/trustees to apply exceptions for
+    integer has_owners = (MultiOwnerMode && llGetListLength(OwnerKeys) > 0) || (!MultiOwnerMode && OwnerKey != NULL_KEY);
     integer has_trustees = llGetListLength(TrusteeKeys) > 0;
-
+    
     if (!has_owners && !has_trustees) return;
-
+    
     // Owner exceptions
-    integer i = 0;
-    integer owner_count = llGetListLength(OwnerKeys);
-    while (i < owner_count) {
-        key k = (key)llList2String(OwnerKeys, i);
-        apply_tp_exception(k, ExOwnerTp);
-        apply_im_exception(k, ExOwnerIm);
-        i++;
+    if (MultiOwnerMode) {
+        integer i = 0;
+        integer owner_count = llGetListLength(OwnerKeys);
+        while (i < owner_count) {
+            key k = (key)llList2String(OwnerKeys, i);
+            apply_tp_exception(k, ExOwnerTp);
+            apply_im_exception(k, ExOwnerIm);
+            i++;
+        }
+    }
+    else {
+        apply_tp_exception(OwnerKey, ExOwnerTp);
+        apply_im_exception(OwnerKey, ExOwnerIm);
     }
 
     // Trustee exceptions
-    integer ti = 0;
+    integer i = 0;
     integer trustee_count = llGetListLength(TrusteeKeys);
-    while (ti < trustee_count) {
-        key k = (key)llList2String(TrusteeKeys, ti);
+    while (i < trustee_count) {
+        key k = (key)llList2String(TrusteeKeys, i);
         apply_tp_exception(k, ExTrusteeTp);
         apply_im_exception(k, ExTrusteeIm);
-        ti++;
+        i++;
     }
 }
 
@@ -141,8 +153,10 @@ apply_settings_sync(string msg) {
     ExOwnerIm = TRUE;
     ExTrusteeTp = FALSE;
     ExTrusteeIm = FALSE;
+    OwnerKey = NULL_KEY;
     OwnerKeys = [];
     TrusteeKeys = [];
+    MultiOwnerMode = FALSE;
     
     // Load exception settings
     integer has_owner_tp = FALSE;
@@ -164,18 +178,20 @@ apply_settings_sync(string msg) {
         ExTrusteeIm = (integer)llJsonGetValue(kv, [KEY_EX_TRUSTEE_IM]);
     }
     
-    // Load owner list from unified owners object
-    OwnerKeys = [];
-    if (json_has(kv, [KEY_OWNERS])) {
-        string raw = llJsonGetValue(kv, [KEY_OWNERS]);
-        if (llJsonValueType(raw, []) == JSON_OBJECT) {
-            list pairs = llJson2List(raw);
-            integer pi = 0;
-            integer plen = llGetListLength(pairs);
-            while (pi < plen) {
-                OwnerKeys += [llList2String(pairs, pi)];
-                pi += 2;
-            }
+    // Load owner/trustee lists
+    if (json_has(kv, [KEY_MULTI_OWNER_MODE])) {
+        MultiOwnerMode = (integer)llJsonGetValue(kv, [KEY_MULTI_OWNER_MODE]);
+    }
+    
+    if (MultiOwnerMode) {
+        if (json_has(kv, [KEY_OWNER_KEYS])) {
+            string arr = llJsonGetValue(kv, [KEY_OWNER_KEYS]);
+            if (llGetSubString(arr, 0, 0) == "[") OwnerKeys = llJson2List(arr);
+        }
+    }
+    else {
+        if (json_has(kv, [KEY_OWNER_KEY])) {
+            OwnerKey = (key)llJsonGetValue(kv, [KEY_OWNER_KEY]);
         }
     }
     
@@ -196,7 +212,7 @@ apply_settings_sync(string msg) {
     }
     
     // Auto-initialize settings if owners exist but settings don't
-    integer owners_exist = llGetListLength(OwnerKeys) > 0;
+    integer owners_exist = (MultiOwnerMode && llGetListLength(OwnerKeys) > 0) || (!MultiOwnerMode && OwnerKey != NULL_KEY);
     
     if (owners_exist) {
         if (!has_owner_tp) persist_setting(KEY_EX_OWNER_TP, TRUE);
@@ -233,32 +249,24 @@ apply_settings_delta(string msg) {
             if (val != ExTrusteeIm) { ExTrusteeIm = val; reconcile_all(); }
         }
         
-        // Handle owners changes (unified JSON object)
-        if (json_has(changes, [KEY_OWNERS])) {
-            // Clear exceptions for old owners
-            integer oi = 0;
-            integer old_owner_count = llGetListLength(OwnerKeys);
-            while (oi < old_owner_count) {
-                key old_k = (key)llList2String(OwnerKeys, oi);
-                apply_tp_exception(old_k, FALSE);
-                apply_im_exception(old_k, FALSE);
-                oi++;
+        // Handle multi_owner_mode changes
+        if (json_has(changes, [KEY_MULTI_OWNER_MODE])) {
+            MultiOwnerMode = (integer)llJsonGetValue(changes, [KEY_MULTI_OWNER_MODE]);
+            reconcile_all();
+        }
+        
+        // Handle owner_key changes (single owner mode)
+        if (json_has(changes, [KEY_OWNER_KEY])) {
+            key old_owner = OwnerKey;
+            OwnerKey = (key)llJsonGetValue(changes, [KEY_OWNER_KEY]);
+
+            // Clear exceptions from old owner if it changed
+            if (old_owner != NULL_KEY && old_owner != OwnerKey) {
+                apply_tp_exception(old_owner, FALSE);
+                apply_im_exception(old_owner, FALSE);
             }
 
-            // Parse new owners
-            OwnerKeys = [];
-            string raw = llJsonGetValue(changes, [KEY_OWNERS]);
-            if (llJsonValueType(raw, []) == JSON_OBJECT) {
-                list pairs = llJson2List(raw);
-                integer pi = 0;
-                integer plen = llGetListLength(pairs);
-                while (pi < plen) {
-                    OwnerKeys += [llList2String(pairs, pi)];
-                    pi += 2;
-                }
-            }
-
-            // Apply exceptions to new owners
+            // Apply to new owner
             reconcile_all();
         }
 
@@ -289,6 +297,44 @@ apply_settings_delta(string msg) {
 
             // Apply exceptions to new trustees
             reconcile_all();
+        }
+    }
+    else if (op == "list_add") {
+        if (!json_has(msg, ["key"])) return;
+        if (!json_has(msg, ["elem"])) return;
+
+        string key_name = llJsonGetValue(msg, ["key"]);
+        string elem = llJsonGetValue(msg, ["elem"]);
+
+        if (key_name == KEY_OWNER_KEYS) {
+            if (llListFindList(OwnerKeys, [elem]) == -1) {
+                OwnerKeys += [elem];
+
+                // Apply exceptions to new owner
+                key k = (key)elem;
+                apply_tp_exception(k, ExOwnerTp);
+                apply_im_exception(k, ExOwnerIm);
+            }
+        }
+    }
+    else if (op == "list_remove") {
+        if (!json_has(msg, ["key"])) return;
+        if (!json_has(msg, ["elem"])) return;
+
+        string key_name = llJsonGetValue(msg, ["key"]);
+        string elem = llJsonGetValue(msg, ["elem"]);
+
+        if (key_name == KEY_OWNER_KEYS) {
+            integer idx = llListFindList(OwnerKeys, [elem]);
+            if (idx != -1) {
+                // CRITICAL: Clear exceptions BEFORE removing from list
+                key k = (key)elem;
+                apply_tp_exception(k, FALSE);
+                apply_im_exception(k, FALSE);
+
+                // Remove from list
+                OwnerKeys = llDeleteSubList(OwnerKeys, idx, idx);
+            }
         }
     }
 }

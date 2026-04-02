@@ -32,14 +32,19 @@ integer MAX_NUMBERED_LIST_ITEMS = 11;  // 12 dialog buttons - 1 Back button
 
 /* -------------------- SETTINGS KEYS -------------------- */
 string KEY_MULTI_OWNER_MODE = "multi_owner_mode";
-string KEY_OWNERS = "owners";
+string KEY_OWNER_KEY = "owner_key";
+string KEY_OWNER_KEYS = "owner_keys";
+string KEY_OWNER_HON = "owner_hon";
+string KEY_OWNER_HONS = "owner_honorifics";
 string KEY_TRUSTEES = "trustees";
 string KEY_RUNAWAY_ENABLED = "runaway_enabled";
 
 /* -------------------- STATE -------------------- */
 integer MultiOwnerMode;
-string OwnersJson = "{}";
+key OwnerKey;
 list OwnerKeys;
+string OwnerHonorific;
+string OwnerHonJson = "{}";
 list TrusteeKeys;
 string TrusteesJson = "{}";
 integer RunawayEnabled = TRUE;
@@ -72,18 +77,20 @@ string gen_session() {
 }
 
 integer has_owner() {
-    return (llGetListLength(OwnerKeys) > 0);
+    if (MultiOwnerMode) return (llGetListLength(OwnerKeys) > 0);
+    return (OwnerKey != NULL_KEY);
 }
 
 key get_primary_owner() {
-    if (llGetListLength(OwnerKeys) > 0) {
+    if (MultiOwnerMode && llGetListLength(OwnerKeys) > 0) {
         return (key)llList2String(OwnerKeys, 0);
     }
-    return NULL_KEY;
+    return OwnerKey;
 }
 
 integer is_owner(key k) {
-    return (llListFindList(OwnerKeys, [(string)k]) != -1);
+    if (MultiOwnerMode) return (llListFindList(OwnerKeys, [(string)k]) != -1);
+    return (k == OwnerKey);
 }
 
 /* -------------------- NAMES -------------------- */
@@ -147,8 +154,10 @@ apply_settings_sync(string msg) {
     string kv = llJsonGetValue(msg, ["kv"]);
     
     MultiOwnerMode = FALSE;
-    OwnersJson = "{}";
+    OwnerKey = NULL_KEY;
     OwnerKeys = [];
+    OwnerHonorific = "";
+    OwnerHonJson = "{}";
     TrusteeKeys = [];
     TrusteesJson = "{}";
 
@@ -156,17 +165,24 @@ apply_settings_sync(string msg) {
         MultiOwnerMode = (integer)llJsonGetValue(kv, [KEY_MULTI_OWNER_MODE]);
     }
 
-    if (json_has(kv, [KEY_OWNERS])) {
-        string raw = llJsonGetValue(kv, [KEY_OWNERS]);
-        if (llJsonValueType(raw, []) == JSON_OBJECT) {
-            OwnersJson = raw;
-            list pairs = llJson2List(raw);
-            integer pi = 0;
-            integer plen = llGetListLength(pairs);
-            while (pi < plen) {
-                OwnerKeys += [llList2String(pairs, pi)];
-                pi += 2;
+    if (MultiOwnerMode) {
+        if (json_has(kv, [KEY_OWNER_KEYS])) {
+            string arr = llJsonGetValue(kv, [KEY_OWNER_KEYS]);
+            if (llGetSubString(arr, 0, 0) == "[") OwnerKeys = llJson2List(arr);
+        }
+        if (json_has(kv, [KEY_OWNER_HONS])) {
+            string obj = llJsonGetValue(kv, [KEY_OWNER_HONS]);
+            if (llJsonValueType(obj, []) == JSON_OBJECT) {
+                OwnerHonJson = obj;
             }
+        }
+    }
+    else {
+        if (json_has(kv, [KEY_OWNER_KEY])) {
+            OwnerKey = (key)llJsonGetValue(kv, [KEY_OWNER_KEY]);
+        }
+        if (json_has(kv, [KEY_OWNER_HON])) {
+            OwnerHonorific = llJsonGetValue(kv, [KEY_OWNER_HON]);
         }
     }
 
@@ -223,19 +239,11 @@ apply_settings_delta(string msg) {
             }
         }
 
-        // Owners changed (full JSON object broadcast)
-        if (json_has(changes, [KEY_OWNERS])) {
-            string obj = llJsonGetValue(changes, [KEY_OWNERS]);
+        // Owner honorifics changed (full JSON object broadcast)
+        if (json_has(changes, [KEY_OWNER_HONS])) {
+            string obj = llJsonGetValue(changes, [KEY_OWNER_HONS]);
             if (llJsonValueType(obj, []) == JSON_OBJECT) {
-                OwnersJson = obj;
-                list pairs = llJson2List(obj);
-                OwnerKeys = [];
-                integer oi = 0;
-                integer olen = llGetListLength(pairs);
-                while (oi < olen) {
-                    OwnerKeys += [llList2String(pairs, oi)];
-                    oi += 2;
-                }
+                OwnerHonJson = obj;
             }
         }
     }
@@ -244,10 +252,10 @@ apply_settings_delta(string msg) {
 
 persist_owner(key owner, string hon) {
     llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
-        "type", "obj_set",
-        "key", KEY_OWNERS,
-        "field", (string)owner,
-        "value", hon
+        "type", "set", "key", KEY_OWNER_KEY, "value", (string)owner
+    ]), NULL_KEY);
+    llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
+        "type", "set", "key", KEY_OWNER_HON, "value", hon
     ]), NULL_KEY);
 }
 
@@ -312,10 +320,8 @@ show_main() {
             body += "Multi-owner: " + (string)llGetListLength(OwnerKeys) + "\n";
         }
         else {
-            key primary = get_primary_owner();
-            body += "Owner: " + get_name(primary);
-            string hon = llJsonGetValue(OwnersJson, [(string)primary]);
-            if (hon != JSON_INVALID && hon != "") body += " (" + hon + ")";
+            body += "Owner: " + get_name(OwnerKey);
+            if (OwnerHonorific != "") body += " (" + OwnerHonorific + ")";
         }
     }
     else {
@@ -493,9 +499,8 @@ handle_button(string btn) {
         else if (btn == "Runaway: On" || btn == "Runaway: Off") {
             if (RunawayEnabled) {
                 // Disabling requires wearer consent - send dialog to WEARER
-                key primary_owner = get_primary_owner();
-                string hon = llJsonGetValue(OwnersJson, [(string)primary_owner]);
-                if (hon == JSON_INVALID || hon == "") hon = "Owner";
+                string hon = OwnerHonorific;
+                if (hon == "") hon = "Owner";
                 
                 string msg_body = "Your " + hon + " wants to disable runaway for you.\n\nPlease confirm.";
                 
@@ -620,7 +625,7 @@ handle_button(string btn) {
     else if (MenuContext == "transfer_hon") {
         if (idx >= 0 && idx < llGetListLength(OWNER_HONORIFICS)) {
             PendingHonorific = llList2String(OWNER_HONORIFICS, idx);
-            key old = get_primary_owner();
+            key old = OwnerKey;
             persist_owner(PendingCandidate, PendingHonorific);
             llRegionSayTo(old, 0, "You have transferred " + get_name(llGetOwner()) + " to " + get_name(PendingCandidate) + ".");
             llRegionSayTo(PendingCandidate, 0, get_name(llGetOwner()) + " is now your property as " + PendingHonorific + ".");
@@ -659,8 +664,7 @@ handle_button(string btn) {
     else if (MenuContext == "runaway") {
         if (btn == "Yes") {
             key old = get_primary_owner();
-            string old_hon = llJsonGetValue(OwnersJson, [(string)old]);
-            if (old_hon == JSON_INVALID) old_hon = "";
+            string old_hon = OwnerHonorific;
             clear_owner();
             
             // Notify wearer with honorific and owner name

@@ -43,7 +43,10 @@ list ALLOWED_ACL_FULL = [2, 3, 4, 5];     // Can use admin functions
 /* -------------------- ALL POSSIBLE SETTINGS -------------------- */
 list ALL_SETTINGS = [
     "multi_owner_mode",
-    "owners",
+    "owner_key",
+    "owner_keys",
+    "owner_hon",
+    "owner_honorifics",
     "trustees",
     "blacklist",
     "public_mode",
@@ -234,28 +237,50 @@ do_display_access_list() {
         multi_mode = (integer)llJsonGetValue(CachedSettings, ["multi_owner_mode"]);
     }
     
-    // Owners (unified JSON object {uuid:honorific})
-    string owners_raw = llJsonGetValue(CachedSettings, ["owners"]);
-    if (owners_raw != JSON_INVALID && llJsonValueType(owners_raw, []) == JSON_OBJECT) {
-        list pairs = llJson2List(owners_raw);
-        integer i = 0;
-        integer pairs_len = llGetListLength(pairs);
-        if (pairs_len > 0) {
-            output += "Owners:\n";
-            while (i < pairs_len) {
-                string uuid = llList2String(pairs, i);
-                string honor = llList2String(pairs, i + 1);
-                if (honor == "" || honor == JSON_INVALID) honor = "(none)";
-                output += "  " + honor + " - " + uuid + "\n";
-                i += 2;
+    // Owner(s)
+    if (multi_mode) {
+        output += "OWNERS:\n";
+        string owners_json = llJsonGetValue(CachedSettings, ["owner_keys"]);
+        string honors_json = llJsonGetValue(CachedSettings, ["owner_honorifics"]);
+        
+        if (owners_json != JSON_INVALID && is_json_arr(owners_json)) {
+            list owners = llJson2List(owners_json);
+
+            if (llGetListLength(owners) > 0) {
+                integer i = 0;
+                integer count = llGetListLength(owners);
+                while (i < count) {
+                    string owner_key = llList2String(owners, i);
+                    string honor = "Owner";
+                    // Look up honorific from JSON object
+                    if (honors_json != JSON_INVALID && llJsonValueType(honors_json, []) == JSON_OBJECT) {
+                        string h = llJsonGetValue(honors_json, [owner_key]);
+                        if (h != JSON_INVALID && h != "") honor = h;
+                    }
+                    output += "  " + honor + " - " + owner_key + "\n";
+                    i += 1;
+                }
+            }
+            else {
+                output += "  (none)\n";
             }
         }
         else {
-            output += "Owners: (none)\n";
+            output += "  (none)\n";
         }
     }
     else {
-        output += "Owners: (none)\n";
+        output += "OWNER:\n";
+        string owner_key = llJsonGetValue(CachedSettings, ["owner_key"]);
+        string honor = llJsonGetValue(CachedSettings, ["owner_hon"]);
+        
+        if (owner_key != JSON_INVALID && owner_key != "" && (key)owner_key != NULL_KEY) {
+            if (honor == JSON_INVALID || honor == "") honor = "Owner";
+            output += "  " + honor + " - " + owner_key + "\n";
+        }
+        else {
+            output += "  (none)\n";
+        }
     }
     
     // Trustees (JSON object {uuid:honorific})

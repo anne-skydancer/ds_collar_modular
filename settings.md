@@ -3,20 +3,20 @@
 Lines starting with `#` are comments and ignored by the parser.
 Key-value pairs use `=` as separator. Whitespace around `=` is trimmed.
 
-## Owners (Single or Multiple)
+## Single Owner Mode (default)
 
 ```
-owners = {"1a2b3c4d-5e6f-7890-abcd-ef1234567890":"Master"}
+owner_key = 1a2b3c4d-5e6f-7890-abcd-ef1234567890
+owner_hon = Master
 ```
 
-For multiple owners, enable multi-owner mode and add multiple entries:
+## Multi-Owner Mode
 
 ```
 multi_owner_mode = 1
-owners = {"1a2b3c4d-5e6f-7890-abcd-ef1234567890":"King", "9f8e7d6c-5b4a-3210-fedc-ba0987654321":"Mistress"}
+owner_keys = [1a2b3c4d-5e6f-7890-abcd-ef1234567890, 9f8e7d6c-5b4a-3210-fedc-ba0987654321]
+owner_honorifics = {"1a2b3c4d-5e6f-7890-abcd-ef1234567890":"King", "9f8e7d6c-5b4a-3210-fedc-ba0987654321":"Mistress"}
 ```
-
-Owner honorifics: Master, Mistress, Daddy, Mommy, King, Queen
 
 ## Trustees
 
@@ -52,9 +52,9 @@ ex_trustee_im = 0
 
 ## Format Notes
 
-- `owners` and `trustees` use JSON object format: `{"uuid":"honorific"}`
-- `blacklist` uses JSON array format: `[uuid, uuid]`
+- `trustees` and `owner_honorifics` use JSON object format: `{"uuid":"honorific"}`
+- `owner_keys`, `blacklist` use JSON array format: `[uuid, uuid]`
 - Scalar values are plain strings or integers (0/1 for booleans)
-- Array syntax `[...]` is rejected for `owners` and `trustees`
+- Array syntax `[...]` is rejected for `trustees` and `owner_honorifics`
 - Owner honorifics: Master, Mistress, Daddy, Mommy, King, Queen
 - Trustee honorifics: Sir, Madame, Milord, Milady
