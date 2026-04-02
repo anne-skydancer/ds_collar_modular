@@ -6,21 +6,6 @@ PURPOSE: Authoritative ACL and policy engine - OPTIMIZED
 ARCHITECTURE: Dispatch table pattern with linkset data cache and JSON templates
 CHANGES:
 - v1.1 rev 0: Version bump for LSD policy architecture. No functional changes to this module.
-- REVISION 30: Owner storage consolidated — owner_key→owner, owner_keys→owners as
-  JSON objects {uuid:honorific}; pre-extract UUID lists at sync time
-- REVISION 29: Trustees parsed as JSON object {uuid:honorific}; extract UUID keys
-- REVISION 25: PERFORMANCE OPTIMIZATIONS
-  * Implemented dispatch table pattern for ACL computation (15-39% faster)
-  * Added JSON response templates (30-40% faster JSON construction)
-  * Enhanced linkset data cache with per-user query results (70-90% cache hit rate)
-  * Early exit optimization - skip unnecessary policy computation
-  * Per-ACL handler functions for specialized fast paths
-  * Expected overall gain: 5.5x faster for typical UI interactions
-- REVISION 24: Security and reliability improvements
-  * Changed default ACL for unauthorized users from 0 (NOACCESS) to -1 (BLACKLIST)
-  * Implemented event-driven ACL invalidation (broadcast_acl_change)
-  * Enforced immediate session revocation on role changes
-  * Enforced role exclusivity and capped pending query growth
 --------------------*/
 
 

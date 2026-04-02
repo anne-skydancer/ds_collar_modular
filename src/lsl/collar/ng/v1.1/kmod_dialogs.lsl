@@ -6,14 +6,6 @@ PURPOSE: Centralized dialog management for shared listener handling
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
 - v1.1 rev 0: Version bump for LSD policy architecture. No functional changes to this module.
-- REVERT: Replaced delimited string storage with JSON for robustness against special chars
-- OPTIMIZATION: Replaced strided lists with Parallel Lists for O(1) lookups
-- OPTIMIZATION: Removed internal JSON serialization for button maps (Hot Path)
-- Centralized dialog sessions remove per-plugin listen management
-- Dedicated dialog bus coordinates all open and timeout events
-- Channel collision detection mitigates negative channel reuse conflicts
-- Owner change handling resets listeners for safe transfers
-- Truncation warnings added for numbered button lists
 --------------------*/
 
 

@@ -8,10 +8,6 @@ CHANGES:
 - v1.1 rev 0: Self-declares button visibility policy to LSD on registration.
   Replaces hardcoded PLUGIN_MIN_ACL, ALLOWED_ACL_LEVELS, and in_allowed_levels()
   with policy reads. Button list built from get_policy_buttons() + btn_allowed().
-- Added nearby avatar sensor flow for quick blacklist additions
-- Supports removing entries and persisting updates via settings module
-- Handles JSON array and legacy CSV formats for stored keys
-- Integrates with kernel registration and heartbeat protocols
 --------------------*/
 
 

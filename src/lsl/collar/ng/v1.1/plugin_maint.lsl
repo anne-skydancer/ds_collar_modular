@@ -9,13 +9,6 @@ CHANGES:
   Replaces hardcoded ALLOWED_ACL_FULL list with policy reads via
   get_policy_buttons() and btn_allowed(). Removed PLUGIN_MIN_ACL and
   min_acl from kernel registration message.
-- REVISION 24: Owner storage consolidated — owner/owners as JSON objects
-- REVISION 23: Trustees parsed as JSON object; removed trustee_honorifics from settings list
-- Displays full settings snapshot including unset keys
-- Presents access list with honorifics for quick review
-- Provides actions to reload settings notecard and clear leash state
-- Offers HUD and user manual handouts to authorized users
-- Enforces ACL tiers separating view and administrative functions
 --------------------*/
 
 

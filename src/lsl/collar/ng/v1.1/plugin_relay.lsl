@@ -9,11 +9,6 @@ CHANGES:
   Replaces hardcoded ACL checks with policy reads via get_policy_buttons()
   and btn_allowed(). Removed PLUGIN_MIN_ACL and min_acl from kernel
   registration message.
-- Maintains OFF/ON/HARDCORE relay modes with settings-backed persistence
-- Validates relay target UUIDs to satisfy ORG spec and prevent spoofed commands
-- Coordinates SOS integration for emergency release and safeword handling
-- Manages listener lifecycle based on attachment state and active sessions
-- Offers ACL-gated dialog interface requiring trustee level for hardcore toggles
 --------------------*/
 
 

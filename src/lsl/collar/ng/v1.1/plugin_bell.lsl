@@ -8,11 +8,6 @@ CHANGES:
 - v1.1 rev 0: Self-declares button visibility policy to LSD on registration.
   Replaces hardcoded PLUGIN_MIN_ACL with policy reads.
   Button list built from get_policy_buttons() + btn_allowed().
-- Added independent toggles for bell visibility and sound playback
-- Enabled jingle loop while wearer moves with adjustable volume levels
-- Searches linkset for bell prim to update transparency dynamically
-- Persists bell settings via settings bus sync and delta updates
-- Prevented premature resets by deferring defaults until settings load
 --------------------*/
 
 integer KERNEL_LIFECYCLE = 500;

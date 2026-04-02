@@ -6,25 +6,6 @@ PURPOSE: Leashing engine providing leash services to plugins
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
 - v1.1 rev 0: Version bump for LSD policy architecture. No functional changes to this module.
-- REVISION 29: Adjusted presence check modulus from %6 to %2 to maintain ~4s interval with 2.0s tick
-- REVISION 28: Changed FOLLOW_TICK from 0.5s to 2.0s to reduce idle sim load
-- REVISION 25: Code cleanup and optimization.
-  - Removed redundant llGetObjectDetails calls in turnToTarget (now accepts vector).
-  - Consolidated state setting logic into setLeashState helper.
-  - Simplified grab/coffle/post/pass functions to use the new helper.
-- REVISION 24: Replaced RLV @tpto with llMoveToTarget for "Yank" functionality.
-  Fixes stack-heap collision risk and provides smoother physics-based pull.
-- REVISION 23: Restricted standard "release" action to Leasher or ACL 3+.
-  ACL 2 (Owned Wearer) must use SOS emergency release.
-- REVISION 22: Added handler for "emergency_leash_release" from SOS plugin.
-  Strictly verifies sender is the wearer/owner before releasing.
-- REVISION 21: Implemented "Steal" logic in grabLeashInternal. Authorized users
-  (ACL 3+) can now take the leash from an existing holder.
-- Added avatar, coffle, and post leash modes with distance enforcement
-- Introduced offer acceptance dialog and notifications with timeout handling
-- Corrected ACL verification flow for offer and pass actions to prevent deadlocks
-- Implemented yank rate limiting
-- Improved holder detection, offsim handling, and auto-reclip resilience
 --------------------*/
 
 integer AUTH_BUS = 700;

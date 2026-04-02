@@ -9,15 +9,6 @@ CHANGES:
   Replaces hardcoded PLUGIN_MIN_ACL with policy reads.
   Button list built from get_policy_buttons() + btn_allowed() combined with
   state-dependent logic (has_owner, RunawayEnabled, is_owner, etc.).
-- REVISION 25: Owner storage consolidated — owner_key+owner_hon→owner,
-  owner_keys+owner_honorifics→owners as JSON objects {uuid:honorific}
-- REVISION 24: Trustees stored as JSON object {uuid:honorific} for atomic
-  sync; owner_honorifics stored as JSON object; removed trustee_honorifics
-- Adds multi-owner mode with ordered lists and honorific metadata
-- Guides owner transfer and release with dual confirmation dialogs
-- Supports runaway self-release and trustee roster maintenance
-- Synchronizes owner/trustee settings stores through settings bus
-- Integrates ACL validation, name caching, and dialog-driven UI flows
 --------------------*/
 
 

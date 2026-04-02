@@ -8,11 +8,6 @@ CHANGES:
 - v1.1 rev 0: Self-declares button visibility policy to LSD on registration.
   Replaces hardcoded PLUGIN_MIN_ACL with policy reads.
   Button list built from get_policy_buttons() + btn_allowed().
-- Scans inventory to build animation list dynamically
-- Provides paginated dialog with wrap-around navigation controls
-- Includes Stop action to halt active animations immediately
-- Requests and caches animation permissions for the wearer
-- Tracks last played animation to manage start/stop transitions cleanly
 --------------------*/
 
 

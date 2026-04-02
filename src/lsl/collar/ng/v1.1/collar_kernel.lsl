@@ -6,11 +6,6 @@ PURPOSE: Plugin registry, lifecycle management, heartbeat monitoring
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
 - v1.1 rev 0: Version bump for LSD policy architecture. No functional changes to this module.
-- REVISION 40: Cache llGetListLength in loop conditions for performance
-- Event-driven plugin registration queue replaces broadcast storms
-- Adaptive timer shifts between batch processing and heartbeat modes
-- Inventory discovery detects new or updated plugin scripts automatically
-- Deferred plugin list responses avoid race conditions during registration
 --------------------*/
 
 

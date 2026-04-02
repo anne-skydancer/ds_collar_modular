@@ -6,14 +6,6 @@ PURPOSE: Auto-detect nearby collars and connect automatically
 ARCHITECTURE: RLV relay-style broadcast and listen workflow
 CHANGES:
 - v1.1 rev 0: Version bump for LSD policy architecture. No functional changes to this module.
-- REVISION 8: Randomize dialog channel per session instead of fixed -98765
-- Auto-scan on attach with timeout
-- Auto-connect to single collar or show selection dialog
-- ACL level verification before menu display
-- RLV relay-style broadcast discovery protocol
-- Multi-collar selection with avatar name display
-KNOWN ISSUES: None known
-TODO: None pending
 --------------------*/
 
 

@@ -6,10 +6,6 @@ PURPOSE: External HUD communication bridge for remote control workflows
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
 - v1.1 rev 0: Version bump for LSD policy architecture. No functional changes to this module.
-- REVISION 26: Security fix - use llRegionSayTo instead of llRegionSay for PIN response
-- Simplified update protocol: Generate PIN, send to updater
-- Coordinator injected via llRemoteLoadScriptPin handles update autonomously
-- Removed complex inventory tracking and coordination logic
 --------------------*/
 
 

@@ -6,11 +6,6 @@ PURPOSE: Minimal leash-holder target responder for external objects
 ARCHITECTURE: Direct channel listener with prim discovery fallback
 CHANGES:
 - v1.1 rev 0: Version bump for LSD policy architecture. No functional changes to this module.
-- Auto-detect leash point prim by name "LeashPoint" or description "leash:point"
-- Fall back to script's own prim if no dedicated leash point found
-- Compatible with ds_collar_plugin_leash.lsl leash targeting system
-KNOWN ISSUES: None known
-TODO: None pending
 --------------------*/
 
 /* -------------------- CONSTANTS -------------------- */

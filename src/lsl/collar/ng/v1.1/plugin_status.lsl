@@ -10,16 +10,6 @@ CHANGES:
   get_policy_buttons() and btn_allowed(). Removed PLUGIN_MIN_ACL and
   min_acl from kernel registration message. View-only plugin with empty
   button lists — visible in root menu but no action buttons beyond Back.
-- REVISION 26: Owner storage consolidated — owner/owners as JSON objects
-- REVISION 25: Trustees and owner_honorifics parsed as JSON objects {uuid:honorific}
-- REVISION 24: Added trustee display name resolution via async dataserver queries
-- REVISION 23: Fixed request_settings_sync to use correct "settings_get" message type
-- REVISION 22: Added request_settings_sync() call on state_entry for independent reset recovery
-- Consolidates status presentation into single dialog page
-- Renders owner and trustee lists with honorific annotations
-- Reflects public, lock, and TPE modes from settings cache
-- Resolves avatar display names asynchronously for readability
-- Supports multi-owner mode by tracking ordered owner sets
 --------------------*/
 
 

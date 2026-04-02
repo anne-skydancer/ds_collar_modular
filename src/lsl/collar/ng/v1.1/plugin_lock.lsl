@@ -8,15 +8,6 @@ CHANGES:
 - v1.1 rev 0: Self-declares button visibility policy to LSD on registration.
   Replaces hardcoded PLUGIN_MIN_ACL and ACL checks in toggle_lock()
   with policy reads. Uses btn_allowed("toggle") for access control.
-- REVISION 24: Removed redundant if/else in apply_settings_sync (both branches identical)
-- Rev 23: Secure defaults - always revert to unlocked when settings missing/deleted
-  Visual state now synced to logical state on all settings operations
-  Prevents locked-looking collar with unlocked logic after update failures
-- Rev 22: Request settings on state_entry and register_now instead of hardcoding Locked = FALSE
-- Provides direct toggle logic without menu interactions
-- Updates kernel registration label to reflect current lock state
-- Mirrors lock state into settings storage and visual prims
-- Plays configurable toggle sound when state changes
 --------------------*/
 
 

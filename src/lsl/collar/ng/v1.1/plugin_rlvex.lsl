@@ -9,19 +9,6 @@ CHANGES:
   Replaces hardcoded PLUGIN_MIN_ACL with policy reads via get_policy_buttons()
   and btn_allowed(). Removed PLUGIN_MIN_ACL and min_acl from kernel
   registration message.
-- REVISION 30: Owner storage consolidated — owner/owners as JSON objects
-- REVISION 29: Trustees parsed as JSON object {uuid:honorific}; delta via set op
-- REVISION 28: Guard apply_settings_delta to skip reconcile when value unchanged
-- REVISION 27: Fix case mismatch in MenuContext causing silent toggle failures;
-  apply state changes and RLV commands immediately on Allow/Deny
-- REVISION 26: Batched RLV commands with comma separator; cached list lengths in loops
-- FIX: Timer-based delay before applying RLV exceptions after settings load
-- This fixes exceptions not working when only this plugin resets
-- Provides toggleable owner and trustee TP/IM exception controls
-- Mirrors multi-owner and trustee rosters from settings synchronizations
-- Issues live @accepttp/@sendim updates when exceptions change
-- Clears stale exceptions when users or roles are removed from collar
-- Presents ACL-gated dialog workflow for managing exception sets
 --------------------*/
 
 

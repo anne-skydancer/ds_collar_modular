@@ -8,19 +8,6 @@ CHANGES:
 - v1.1 rev 0: Self-declares button visibility policy to LSD on registration.
   Replaces hardcoded ALLOWED_ACL_* lists and inAllowedList() with policy reads.
   Button list built from get_policy_buttons() + state-dependent logic.
-- REVISION 26: Increased STATE_QUERY_DELAY from 0.15s to 0.5s (LSL best practice)
-- REVISION 24: Verified "Yank" button logic compatibility with kernel update.
-- REVISION 23: Removed "Unclip" button for ACL 2 (Owned Wearer). Owned wearers
-  must now use the SOS plugin for emergency release.
-- REVISION 22: Added "Take" and "Unclip" options for authorized users (ACL 3+)
-  even when not the current leasher.
-- REVISION 21: Stack-heap collision fix: Removed unused functions (ROOT_CONTEXT,
-  get_msg_type, validate_required_fields, registerSelf, sendPong). 993→968 lines.
-- Added coffle and post modes with ACL-restricted access controls
-- Leveraged llGetAgentList for efficient avatar selection on pass/offer
-- Introduced offer acceptance dialogs and state tracking
-- Simplified menu layout while preserving multi-page navigation
-- Routed leash actions and state synchronization through kernel messages
 --------------------*/
 
 

@@ -9,18 +9,6 @@ CHANGES:
   Replaces hardcoded PLUGIN_MIN_ACL / RESTRICT_MIN_ACL checks with policy reads
   via get_policy_buttons() and btn_allowed(). Removed PLUGIN_MIN_ACL,
   RESTRICT_MIN_ACL, and min_acl from kernel registration message.
-- FIX: Race condition guard - scan results now tied to initiating user via ScanInitiator
-- FIX: Added NULL_KEY guard in no_sensor() event handler
-- ADD: Force Sit functionality - scans nearby objects and presents numbered list for selection
-- ADD: Force Unsit functionality - immediately forces wearer to stand
-- Uses sensor() for object detection within configurable range (default 10m)
-- Paginated numbered list dialog with up to 9 items per page
-- CRITICAL FIX: Re-request settings on register_now to reapply RLV restrictions after kernel/module resets
-- Organizes popular RLV restrictions into inventory, speech, travel, and other groups
-- Provides paginated dialogs with trustee ACL gating for restriction management
-- Persists active restriction list via settings sync and delta updates
-- Applies and releases @ commands immediately when toggled to keep relay state accurate
-- Enforces maximum restriction count and cleans up session context on exit
 --------------------*/
 
 

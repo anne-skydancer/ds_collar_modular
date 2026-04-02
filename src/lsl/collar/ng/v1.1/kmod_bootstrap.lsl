@@ -7,14 +7,6 @@ ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
 - v1.1 rev 0: Version bump for LSD policy architecture. Bootstrap no longer
   manages UI policies — each plugin self-declares via llLinksetDataWrite.
-- REVISION 37: Owner storage consolidated — owner/owners as JSON objects
-- REVISION 36: Parse owner_honorifics as JSON object {uuid:honorific}
-- Corected the collar name
-- Rate-limited display name requests to avoid viewer throttling
-- Owner change detection prevents bootstrap on teleports and region crossings
-- Multi-channel RLV detection listens on 4711 and relay channels
-- Startup workflow delivers IM status updates during initialization
-- Delayed settings request to allow linkset data and notecard loading
 --------------------*/
 
 

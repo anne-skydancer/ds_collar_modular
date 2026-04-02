@@ -9,14 +9,6 @@ CHANGES:
   Replaces hardcoded PLUGIN_MIN_ACL with policy reads via
   get_policy_buttons() and btn_allowed(). Removed PLUGIN_MIN_ACL and
   min_acl from kernel registration message.
-- REVISION 24: Fixed request_settings_sync to use correct "settings_get" message type
-- REVISION 23: Fixed settings bus type mismatch ("sync"/"delta" -> "settings_sync"/"settings_delta")
-- Updated to use lightweight update_label mechanism for UI toggles
-- Adds wearer confirmation dialog before enabling TPE mode
-- Provides direct owner-driven deactivation returning to root menu
-- Updates button labels dynamically based on TPE state
-- Persists tpe_mode setting through sync and delta updates
-- Enforces ACL so only primary owner can manage TPE transitions
 --------------------*/
 
 

@@ -6,14 +6,6 @@ PURPOSE: Menu rendering and visual presentation service
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
 - v1.1 rev 0: Version bump for LSD policy architecture. No functional changes to this module.
-- OPTIMIZATION: Replaced iterative list building with bulk llList2List operations
-- OPTIMIZATION: Disabled profiling by default to reduce overhead
-- Improved menu performance 
-- Receives render requests from ds_collar_kmod_ui via UI bus messages
-- Constructs dialog layouts with correct bottom-to-top button ordering
-- Maintains stateless presentation separate from business logic
-- Routes dialogs through dedicated dialog module for display
-- Provides single-responsibility rendering for easier maintenance
 --------------------*/
 
 

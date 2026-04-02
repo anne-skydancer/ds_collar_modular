@@ -9,15 +9,6 @@ CHANGES:
   visibility now determined by llLinksetDataRead("policy:<context>"). Removed
   PluginMinACLs parallel list and plugin_acl_list_request/response flow.
   Each plugin self-declares its policy via llLinksetDataWrite on registration.
-- REVISION 45: Added soft_reset sender validation; replaced O(n^2) JSON counting with llJson2List
-- OPTIMIZATION: Replaced strided lists with Parallel Lists for O(1) lookups
-- OPTIMIZATION: Implemented index-based filtering to reduce memory usage
-- Improved module performance
-- Split UI logic from menu rendering to delegate visuals to ds_collar_menu.lsl
-- Added UUID-based plugin change detection to avoid registration races
-- Enforced touch range validation and blacklist checks during session start
-- Revalidated ACL levels on session return with time-based expiry
-- Guarded debug logging for production and handled owner change resets
 --------------------*/
 
 

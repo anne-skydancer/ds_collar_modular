@@ -6,11 +6,6 @@ PURPOSE: Visual connection renderer with Lockmeister compatibility
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
 - v1.1 rev 0: Version bump for LSD policy architecture. No functional changes to this module.
-- Introduced timer guard helper to stop particle updates when idle
-- Added explicit cleanup on owner change and module shutdown
-- Required Lockmeister authorization before accepting controller commands
-- Hardened handle validation and release handling for LM protocol flows
-- Improved target validation and timer lifecycle management for UI messages
 --------------------*/
 
 

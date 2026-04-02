@@ -9,11 +9,6 @@ CHANGES:
   Replaces hardcoded PLUGIN_MIN_ACL with policy reads via
   get_policy_buttons() and btn_allowed(). Removed PLUGIN_MIN_ACL and
   min_acl from kernel registration message.
-- Replaces submenu with single main-menu toggle button
-- Updates button label dynamically to reflect public mode state
-- Persists public_mode flag via settings sync and delta handlers
-- Restricts toggle to trustee and owner-tier ACL levels
-- Returns control to root context after state changes
 --------------------*/
 
 

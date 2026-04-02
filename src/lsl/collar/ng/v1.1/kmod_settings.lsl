@@ -6,22 +6,6 @@ PURPOSE: Persistent key-value store with notecard loading and delta updates
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
 - v1.1 rev 0: Version bump for LSD policy architecture. No functional changes to this module.
-- REVISION 32: Consolidated owner storage format — owner_key+owner_hon merged
-  into "owner" JSON object {uuid:honorific}; owner_keys+owner_honorifics merged
-  into "owners" JSON object {uuid:honorific}; single/multi-owner modes preserved
-  as separate keys with separate runtime behavior
-- REVISION 31: Added runaway_enabled to allowed keys (bug fix: access plugin
-  writes were silently rejected); added boolean normalization for runaway_enabled
-- REVISION 30: Trustees stored as JSON object {uuid:honorific} instead of
-  parallel arrays; owner_honorifics stored as JSON object {uuid:honorific};
-  removed trustee_honorifics key; atomic add/remove via obj_set/obj_remove
-- REVISION 28: Added RLV exception keys (ex_owner_tp/im, ex_trustee_tp/im) to allowed list
-- REVISION 27: Cache llGetListLength in loop conditions for performance
-- Enforced wearer-owner separation and TPE external owner validation rules
-- Added guard-side delta broadcasts to keep ACL modules synchronized
-- Hardened blacklist and trustee parsing with max list length enforcement
-- Guarded debug logging for production deployments
-- Consolidated settings channel handling for consistent module access
 --------------------*/
 
 

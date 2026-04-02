@@ -8,11 +8,6 @@ CHANGES:
 - v1.1 rev 0: Self-declares button visibility policy to LSD on registration.
   Replaces hardcoded PLUGIN_MIN_ACL with policy reads.
   Button list built from get_policy_buttons() + btn_allowed().
-- Provides SOS context menu accessible to ACL 0 via long-touch
-- Offers leash release, RLV clear, and relay clear emergency actions
-- Restricts execution to current wearer through UI module validation
-- Coordinates with leash and RLV modules over message bus for resets
-- Automatically returns control to root menu after handling SOS request
 --------------------*/
 
 
