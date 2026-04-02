@@ -5,8 +5,9 @@ REVISION: 29
 PURPOSE: Persistent key-value store with notecard loading and delta updates
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
-- REVISION 29: Skip list_unique for parallel-array keys (honorifics) to
-  prevent deduplication of legitimately repeated values
+- REVISION 29: Fix parallel-array keys (honorifics) being corrupted by
+  list_unique dedup and kv_list_add_unique rejecting duplicate values;
+  added kv_list_append and is_parallel_array_key guard
 - REVISION 28: Added RLV exception keys (ex_owner_tp/im, ex_trustee_tp/im) to allowed list
 - REVISION 27: Cache llGetListLength in loop conditions for performance
 - Enforced wearer-owner separation and TPE external owner validation rules
@@ -133,10 +134,25 @@ integer kv_list_add_unique(string key_name, string elem) {
     if (llJsonValueType(arr, []) == JSON_ARRAY) {
         current_list = llJson2List(arr);
     }
-    
+
     if (llListFindList(current_list, [elem]) != -1) return FALSE;
     if (llGetListLength(current_list) >= MaxListLen) return FALSE;
-    
+
+    current_list += [elem];
+    return kv_set_list(key_name, current_list);
+}
+
+// Append without uniqueness check, for parallel-array keys that may
+// legitimately contain duplicate values (e.g. two trustees both "Master").
+integer kv_list_append(string key_name, string elem) {
+    string arr = kv_get(key_name);
+    list current_list = [];
+    if (llJsonValueType(arr, []) == JSON_ARRAY) {
+        current_list = llJson2List(arr);
+    }
+
+    if (llGetListLength(current_list) >= MaxListLen) return FALSE;
+
     current_list += [elem];
     return kv_set_list(key_name, current_list);
 }
@@ -607,6 +623,9 @@ handle_list_add(string msg) {
     else if (key_name == KEY_BLACKLIST) {
         apply_blacklist_add_guard(elem);
         did_change = kv_list_add_unique(key_name, elem);
+    }
+    else if (is_parallel_array_key(key_name)) {
+        did_change = kv_list_append(key_name, elem);
     }
     else {
         did_change = kv_list_add_unique(key_name, elem);
