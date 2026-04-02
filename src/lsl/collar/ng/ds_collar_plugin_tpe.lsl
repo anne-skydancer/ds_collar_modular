@@ -1,10 +1,12 @@
 /*--------------------
 PLUGIN: ds_collar_plugin_tpe.lsl
 VERSION: 1.00
-REVISION: 22
+REVISION: 24
 PURPOSE: Manage TPE mode with wearer confirmation and owner oversight
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- REVISION 24: Fixed request_settings_sync to use correct "settings_get" message type
+- REVISION 23: Fixed settings bus type mismatch ("sync"/"delta" -> "settings_sync"/"settings_delta")
 - Updated to use lightweight update_label mechanism for UI toggles
 - Adds wearer confirmation dialog before enabling TPE mode
 - Provides direct owner-driven deactivation returning to root menu
@@ -106,7 +108,7 @@ send_pong() {
 
 request_settings_sync() {
     string msg = llList2Json(JSON_OBJECT, [
-        "type", "sync_request"
+        "type", "settings_get"
     ]);
     llMessageLinked(LINK_SET, SETTINGS_BUS, msg, NULL_KEY);
 }
@@ -327,13 +329,13 @@ default
         else if (num == SETTINGS_BUS) {
             string msg_type = llJsonGetValue(str, ["type"]);
             
-            if (msg_type == "sync") {
+            if (msg_type == "settings_sync") {
                 if (json_has(str, ["kv"])) {
                     string kv_json = llJsonGetValue(str, ["kv"]);
                     apply_settings_sync(kv_json);
                 }
             }
-            else if (msg_type == "delta") {
+            else if (msg_type == "settings_delta") {
                 apply_settings_delta(str);
             }
         }

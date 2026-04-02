@@ -1,10 +1,11 @@
 /*--------------------
 MODULE: ds_collar_kernel.lsl
 VERSION: 1.00
-REVISION: 39
+REVISION: 40
 PURPOSE: Plugin registry, lifecycle management, heartbeat monitoring
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- REVISION 40: Cache llGetListLength in loop conditions for performance
 - Event-driven plugin registration queue replaces broadcast storms
 - Adaptive timer shifts between batch processing and heartbeat modes
 - Inventory discovery detects new or updated plugin scripts automatically
@@ -107,7 +108,8 @@ integer queue_add(string op_type, string context, string label, string script, i
     // Remove any existing queue entry for this context (newest operation wins)
     list new_queue = [];
     integer i = 0;
-    while (i < llGetListLength(RegistrationQueue)) {
+    integer queue_len = llGetListLength(RegistrationQueue);
+    while (i < queue_len) {
         string queued_context = llList2String(RegistrationQueue, i + QUEUE_CONTEXT);
         if (queued_context != context) {
             new_queue += llList2List(RegistrationQueue, i, i + QUEUE_STRIDE - 1);
@@ -148,7 +150,8 @@ integer process_queue() {
     integer i = 0;
 
 
-    while (i < llGetListLength(RegistrationQueue)) {
+    integer reg_queue_len = llGetListLength(RegistrationQueue);
+    while (i < reg_queue_len) {
         string op_type = llList2String(RegistrationQueue, i + QUEUE_OP_TYPE);
         string context = llList2String(RegistrationQueue, i + QUEUE_CONTEXT);
         string label = llList2String(RegistrationQueue, i + QUEUE_LABEL);
@@ -285,8 +288,8 @@ integer prune_dead_plugins() {
     list new_contexts = [];
     list new_scripts = [];
     integer i = 0;
-    
-    while (i < llGetListLength(PluginRegistry)) {
+    integer reg_len = llGetListLength(PluginRegistry);
+    while (i < reg_len) {
         integer last_seen = llList2Integer(PluginRegistry, i + REG_LAST_SEEN);
         
         if (last_seen >= cutoff) {
@@ -316,10 +319,10 @@ integer prune_missing_scripts() {
     list new_scripts = [];
     integer pruned = 0;
     integer i = 0;
-    
-    while (i < llGetListLength(PluginRegistry)) {
+    integer reg_len2 = llGetListLength(PluginRegistry);
+    while (i < reg_len2) {
         string script = llList2String(PluginRegistry, i + REG_SCRIPT);
-        
+
         if (llGetInventoryType(script) == INVENTORY_SCRIPT) {
             // Script still exists, keep plugin
             new_registry += llList2List(PluginRegistry, i, i + REG_STRIDE - 1);
@@ -404,8 +407,8 @@ broadcast_ping() {
 broadcast_plugin_list() {
     list plugins = [];
     integer i = 0;
-
-    while (i < llGetListLength(PluginRegistry)) {
+    integer reg_len = llGetListLength(PluginRegistry);
+    while (i < reg_len) {
         string context = llList2String(PluginRegistry, i + REG_CONTEXT);
         string label = llList2String(PluginRegistry, i + REG_LABEL);
 
@@ -422,7 +425,8 @@ broadcast_plugin_list() {
     // Convert list of JSON objects into JSON array string
     string plugins_array = "[";
     integer j;
-    for (j = 0; j < llGetListLength(plugins); j = j + 1) {
+    integer plugins_len = llGetListLength(plugins);
+    for (j = 0; j < plugins_len; j = j + 1) {
         if (j > 0) plugins_array += ",";
         plugins_array += llList2String(plugins, j);
     }
@@ -589,7 +593,8 @@ handle_acl_registry_request() {
 
     integer i = 0;
 
-    while (i < llGetListLength(PluginRegistry)) {
+    integer reg_len3 = llGetListLength(PluginRegistry);
+    while (i < reg_len3) {
         string context = llList2String(PluginRegistry, i + REG_CONTEXT);
         integer min_acl = llList2Integer(PluginRegistry, i + REG_MIN_ACL);
 

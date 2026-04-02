@@ -1,10 +1,11 @@
 /*--------------------
 MODULE: ds_collar_kmod_remote.lsl
 VERSION: 1.00
-REVISION: 25
+REVISION: 26
 PURPOSE: External HUD communication bridge for remote control workflows
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- REVISION 26: Security fix - use llRegionSayTo instead of llRegionSay for PIN response
 - Simplified update protocol: Generate PIN, send to updater
 - Coordinator injected via llRemoteLoadScriptPin handles update autonomously
 - Removed complex inventory tracking and coordination logic
@@ -361,7 +362,7 @@ handle_update_discover(string message) {
         "has_receiver", (string)has_receiver
     ]);
     
-    llRegionSay(EXTERNAL_ACL_REPLY_CHAN, response);
+    llRegionSayTo(updater, EXTERNAL_ACL_REPLY_CHAN, response);
     llOwnerSay("Update ready. PIN generated for secure transfer.");
 }
 

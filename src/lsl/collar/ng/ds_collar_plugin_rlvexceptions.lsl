@@ -1,10 +1,11 @@
 /*--------------------
 PLUGIN: ds_collar_plugin_rlvexceptions.lsl
 VERSION: 1.00
-REVISION: 25
+REVISION: 26
 PURPOSE: Manage RLV teleport and IM exceptions for owners and trustees
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- REVISION 26: Batched RLV commands with comma separator; cached list lengths in loops
 - FIX: Timer-based delay before applying RLV exceptions after settings load
 - This fixes exceptions not working when only this plugin resets
 - Provides toggleable owner and trustee TP/IM exception controls
@@ -70,28 +71,18 @@ string gen_session() {
 
 apply_tp_exception(key k, integer allow) {
     if (k == NULL_KEY) return;
-    
-    if (allow) {
-        llOwnerSay("@accepttp:" + (string)k + "=add");
-        llOwnerSay("@tplure:" + (string)k + "=add");
-    }
-    else {
-        llOwnerSay("@accepttp:" + (string)k + "=rem");
-        llOwnerSay("@tplure:" + (string)k + "=rem");
-    }
+    string sk = (string)k;
+    string op = "=add";
+    if (!allow) op = "=rem";
+    llOwnerSay("@accepttp:" + sk + op + ",tplure:" + sk + op);
 }
 
 apply_im_exception(key k, integer allow) {
     if (k == NULL_KEY) return;
-    
-    if (allow) {
-        llOwnerSay("@sendim:" + (string)k + "=add");
-        llOwnerSay("@recvim:" + (string)k + "=add");
-    }
-    else {
-        llOwnerSay("@sendim:" + (string)k + "=rem");
-        llOwnerSay("@recvim:" + (string)k + "=rem");
-    }
+    string sk = (string)k;
+    string op = "=add";
+    if (!allow) op = "=rem";
+    llOwnerSay("@sendim:" + sk + op + ",recvim:" + sk + op);
 }
 
 reconcile_all() {
@@ -104,7 +95,8 @@ reconcile_all() {
     // Owner exceptions
     if (MultiOwnerMode) {
         integer i = 0;
-        while (i < llGetListLength(OwnerKeys)) {
+        integer owner_count = llGetListLength(OwnerKeys);
+        while (i < owner_count) {
             key k = (key)llList2String(OwnerKeys, i);
             apply_tp_exception(k, ExOwnerTp);
             apply_im_exception(k, ExOwnerIm);
@@ -115,10 +107,11 @@ reconcile_all() {
         apply_tp_exception(OwnerKey, ExOwnerTp);
         apply_im_exception(OwnerKey, ExOwnerIm);
     }
-    
+
     // Trustee exceptions
     integer i = 0;
-    while (i < llGetListLength(TrusteeKeys)) {
+    integer trustee_count = llGetListLength(TrusteeKeys);
+    while (i < trustee_count) {
         key k = (key)llList2String(TrusteeKeys, i);
         apply_tp_exception(k, ExTrusteeTp);
         apply_im_exception(k, ExTrusteeIm);

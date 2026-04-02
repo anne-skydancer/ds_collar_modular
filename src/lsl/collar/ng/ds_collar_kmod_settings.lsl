@@ -1,10 +1,11 @@
 /*--------------------
 MODULE: ds_collar_kmod_settings.lsl
 VERSION: 1.00
-REVISION: 26
+REVISION: 27
 PURPOSE: Persistent key-value store with notecard loading and delta updates
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- REVISION 27: Cache llGetListLength in loop conditions for performance
 - Enforced wearer-owner separation and TPE external owner validation rules
 - Added guard-side delta broadcasts to keep ACL modules synchronized
 - Hardened blacklist and trustee parsing with max list length enforcement
@@ -154,7 +155,8 @@ integer has_external_owner() {
         if (llJsonValueType(owner_keys, []) == JSON_ARRAY) {
             list owners = llJson2List(owner_keys);
             integer i = 0;
-            while (i < llGetListLength(owners)) {
+            integer owners_len = llGetListLength(owners);
+            while (i < owners_len) {
                 key owner = llList2Key(owners, i);
                 if (owner != wearer && owner != NULL_KEY) {
                     return TRUE;
@@ -392,8 +394,9 @@ parse_notecard_line(string line) {
         // Apply guards for special lists
         if (key_name == KEY_OWNER_KEYS) {
             integer i = 0;
+            integer pl_len = llGetListLength(parsed_list);
             list validated_list = [];
-            while (i < llGetListLength(parsed_list)) {
+            while (i < pl_len) {
                 string owner = llList2String(parsed_list, i);
                 if (apply_owner_set_guard(owner)) {
                     validated_list += [owner];
@@ -411,7 +414,8 @@ parse_notecard_line(string line) {
         // SECURITY FIX: Add blacklist guards for notecard
         else if (key_name == KEY_BLACKLIST) {
             integer i = 0;
-            while (i < llGetListLength(parsed_list)) {
+            integer bl_len = llGetListLength(parsed_list);
+            while (i < bl_len) {
                 apply_blacklist_add_guard(llList2String(parsed_list, i));
                 i += 1;
             }
@@ -484,8 +488,9 @@ handle_set(string msg) {
             
             if (key_name == KEY_OWNER_KEYS) {
                 integer i = 0;
+                integer nl_len = llGetListLength(new_list);
                 list validated_list = [];
-                while (i < llGetListLength(new_list)) {
+                while (i < nl_len) {
                     string owner = llList2String(new_list, i);
                     if (apply_owner_set_guard(owner)) {
                         validated_list += [owner];
@@ -502,7 +507,8 @@ handle_set(string msg) {
             }
             else if (key_name == KEY_BLACKLIST) {
                 integer i = 0;
-                while (i < llGetListLength(new_list)) {
+                integer nbl_len = llGetListLength(new_list);
+                while (i < nbl_len) {
                     apply_blacklist_add_guard(llList2String(new_list, i));
                     i += 1;
                 }
