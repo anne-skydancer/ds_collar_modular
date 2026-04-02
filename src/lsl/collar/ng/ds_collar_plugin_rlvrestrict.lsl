@@ -82,9 +82,6 @@ key ScanInitiator = NULL_KEY;  // Track who initiated the scan to prevent race c
 
 /* -------------------- HELPER FUNCTIONS -------------------- */
 
-integer json_has(string json_str, list path) {
-    return (llJsonGetValue(json_str, path) != JSON_INVALID);
-}
 
 string generate_session_id() {
     return llGetScriptName() + "_" + (string)llGetKey() + "_" + (string)llGetUnixTime();
@@ -138,12 +135,11 @@ persist_restrictions() {
 }
 
 apply_settings_sync(string msg) {
-    if (!json_has(msg, ["kv"])) return;
-    
     string kv = llJsonGetValue(msg, ["kv"]);
+    if (kv == JSON_INVALID) return;
     
-    if (json_has(kv, [KEY_RESTRICTIONS])) {
-        string csv = llJsonGetValue(kv, [KEY_RESTRICTIONS]);
+    string csv = llJsonGetValue(kv, [KEY_RESTRICTIONS]);
+    if (csv != JSON_INVALID) {
         
         if (csv != "") {
             Restrictions = llParseString2List(csv, [","], []);
@@ -164,16 +160,15 @@ apply_settings_sync(string msg) {
 }
 
 apply_settings_delta(string msg) {
-    if (!json_has(msg, ["op"])) return;
-    
     string op = llJsonGetValue(msg, ["op"]);
+    if (op == JSON_INVALID) return;
     
     if (op == "set") {
-        if (!json_has(msg, ["changes"])) return;
         string changes = llJsonGetValue(msg, ["changes"]);
+        if (changes == JSON_INVALID) return;
         
-        if (json_has(changes, [KEY_RESTRICTIONS])) {
-            string csv = llJsonGetValue(changes, [KEY_RESTRICTIONS]);
+        string csv = llJsonGetValue(changes, [KEY_RESTRICTIONS]);
+        if (csv != JSON_INVALID) {
             
             // Clear all current restrictions
             integer i = 0;
@@ -492,7 +487,7 @@ show_category_menu(string cat_name, integer page_num) {
 /* -------------------- DIALOG HANDLERS -------------------- */
 
 handle_dialog_response(string msg) {
-    if (!json_has(msg, ["session_id"]) || !json_has(msg, ["button"]) || !json_has(msg, ["user"])) return;
+    if (llJsonGetValue(msg, ["session_id"]) == JSON_INVALID || llJsonGetValue(msg, ["button"]) == JSON_INVALID || llJsonGetValue(msg, ["user"]) == JSON_INVALID) return;
     
     string recv_session = llJsonGetValue(msg, ["session_id"]);
     if (recv_session != SessionId) return;
@@ -630,9 +625,8 @@ handle_dialog_response(string msg) {
 }
 
 handle_dialog_timeout(string msg) {
-    if (!json_has(msg, ["session_id"])) return;
-    
     string recv_session = llJsonGetValue(msg, ["session_id"]);
+    if (recv_session == JSON_INVALID) return;
     if (recv_session != SessionId) return;
     
     cleanup_session();
@@ -663,9 +657,8 @@ default
     }
     
     link_message(integer sender, integer num, string msg, key id) {
-        if (!json_has(msg, ["type"])) return;
-        
         string type = llJsonGetValue(msg, ["type"]);
+        if (type == JSON_INVALID) return;
         
         // Kernel lifecycle
         if (num == KERNEL_LIFECYCLE) {
@@ -695,8 +688,8 @@ default
         // UI
         else if (num == UI_BUS) {
             if (type == "start") {
-                if (!json_has(msg, ["context"])) return;
                 string context = llJsonGetValue(msg, ["context"]);
+                if (context == JSON_INVALID) return;
 
                 if (context == PLUGIN_CONTEXT) {
                     CurrentUser = id;

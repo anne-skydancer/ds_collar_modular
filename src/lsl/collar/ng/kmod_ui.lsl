@@ -98,13 +98,11 @@ integer CachedAclTimestamp = 0;
 
 /* -------------------- HELPERS -------------------- */
 
-integer json_has(string j, list path) {
-    return (llJsonGetValue(j, path) != JSON_INVALID);
-}
 
 string get_msg_type(string msg) {
-    if (!json_has(msg, ["type"])) return "";
-    return llJsonGetValue(msg, ["type"]);
+    string t = llJsonGetValue(msg, ["type"]);
+    if (t == JSON_INVALID) return "";
+    return t;
 }
 
 // MEMORY OPTIMIZATION: Compact field validation helper
@@ -113,7 +111,7 @@ integer validate_required_fields(string json_str, list field_names) {
     integer len = llGetListLength(field_names);
     while (i < len) {
         string field = llList2String(field_names, i);
-        if (!json_has(json_str, [field])) {
+        if (llJsonGetValue(json_str, [field]) == JSON_INVALID) {
             return FALSE;
         }
         i += 1;
@@ -400,8 +398,8 @@ apply_plugin_list(string plugins_json) {
     while (i < count) {
         string plugin_obj = llJsonGetValue(plugins_json, [i]);
 
-        if (json_has(plugin_obj, ["context"]) &&
-            json_has(plugin_obj, ["label"])) {
+        if ((llJsonGetValue(plugin_obj, ["context"]) != JSON_INVALID) &&
+            (llJsonGetValue(plugin_obj, ["label"]) != JSON_INVALID)) {
 
             string context = llJsonGetValue(plugin_obj, ["context"]);
             string label = llJsonGetValue(plugin_obj, ["label"]);
@@ -445,7 +443,7 @@ apply_plugin_acl_list(string acl_json) {
     while (i < count) {
         string acl_obj = llJsonGetValue(acl_json, [i]);
 
-        if (json_has(acl_obj, ["context"]) && json_has(acl_obj, ["min_acl"])) {
+        if ((llJsonGetValue(acl_obj, ["context"]) != JSON_INVALID) && (llJsonGetValue(acl_obj, ["min_acl"]) != JSON_INVALID)) {
             string context = llJsonGetValue(acl_obj, ["context"]);
             integer min_acl = (integer)llJsonGetValue(acl_obj, ["min_acl"]);
 
@@ -648,7 +646,7 @@ update_plugin_label(string context, string new_label) {
 /* -------------------- MESSAGE HANDLERS -------------------- */
 
 handle_plugin_list(string msg) {
-    if (!json_has(msg, ["plugins"])) {
+    if (llJsonGetValue(msg, ["plugins"]) == JSON_INVALID) {
         return;
     }
 
@@ -688,9 +686,9 @@ handle_plugin_list(string msg) {
 }
 
 handle_acl_cache_update(string msg) {
-    if (!json_has(msg, ["timestamp"])) return;
-
-    integer new_timestamp = (integer)llJsonGetValue(msg, ["timestamp"]);
+    string new_timestamp_str = llJsonGetValue(msg, ["timestamp"]);
+    if (new_timestamp_str == JSON_INVALID) return;
+    integer new_timestamp = (integer)new_timestamp_str;
     if (new_timestamp <= CachedAclTimestamp) {
         return;
     }
@@ -719,7 +717,7 @@ handle_acl_result(string msg) {
 }
 
 handle_start(string msg, key user_key) {
-    if (!json_has(msg, ["context"])) {
+    if (llJsonGetValue(msg, ["context"]) == JSON_INVALID) {
         start_root_session(user_key);
         return;
     }
@@ -774,9 +772,9 @@ start_sos_session(key user_key) {
 }
 
 handle_return(string msg) {
-    if (!json_has(msg, ["user"])) return;
-
-    key user_key = (key)llJsonGetValue(msg, ["user"]);
+    string user_key_str = llJsonGetValue(msg, ["user"]);
+    if (user_key_str == JSON_INVALID) return;
+    key user_key = (key)user_key_str;
 
     // Re-validate stale sessions
     integer session_idx = find_session_idx(user_key);
@@ -824,9 +822,8 @@ handle_update_state(string msg) {
 }
 
 handle_plugin_acl_bus(string msg) {
-    if (!json_has(msg, ["acl_data"])) return;
-
     string acl_json = llJsonGetValue(msg, ["acl_data"]);
+    if (acl_json == JSON_INVALID) return;
     apply_plugin_acl_list(acl_json);
 
     // Invalidate all sessions when ACL data changes
@@ -857,8 +854,9 @@ handle_dialog_response(string msg) {
 
     // Extract context (may be empty string for navigation buttons)
     string context = "";
-    if (json_has(msg, ["context"])) {
-        context = llJsonGetValue(msg, ["context"]);
+    string tmp = llJsonGetValue(msg, ["context"]);
+    if (tmp != JSON_INVALID) {
+        context = tmp;
     }
 
     integer idx = llListFindList(SessionIDs, [session_id]);
