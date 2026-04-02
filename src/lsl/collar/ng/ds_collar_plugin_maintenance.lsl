@@ -1,10 +1,11 @@
 /*--------------------
 PLUGIN: ds_collar_plugin_maintenance.lsl
 VERSION: 1.00
-REVISION: 22
+REVISION: 23
 PURPOSE: Maintenance and utility functions for collar management
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- REVISION 23: Trustees parsed as JSON object; removed trustee_honorifics from settings list
 - Displays full settings snapshot including unset keys
 - Presents access list with honorifics for quick review
 - Provides actions to reload settings notecard and clear leash state
@@ -47,7 +48,6 @@ list ALL_SETTINGS = [
     "owner_hon",
     "owner_honorifics",
     "trustees",
-    "trustee_honorifics",
     "blacklist",
     "public_mode",
     "locked",
@@ -245,20 +245,17 @@ do_display_access_list() {
         
         if (owners_json != JSON_INVALID && is_json_arr(owners_json)) {
             list owners = llJson2List(owners_json);
-            list honors = [];
-            if (honors_json != JSON_INVALID && is_json_arr(honors_json)) {
-                honors = llJson2List(honors_json);
-            }
-            
+
             if (llGetListLength(owners) > 0) {
                 integer i = 0;
                 integer count = llGetListLength(owners);
-                integer honors_count = llGetListLength(honors);
                 while (i < count) {
                     string owner_key = llList2String(owners, i);
                     string honor = "Owner";
-                    if (i < honors_count) {
-                        honor = llList2String(honors, i);
+                    // Look up honorific from JSON object
+                    if (honors_json != JSON_INVALID && llJsonValueType(honors_json, []) == JSON_OBJECT) {
+                        string h = llJsonGetValue(honors_json, [owner_key]);
+                        if (h != JSON_INVALID && h != "") honor = h;
                     }
                     output += "  " + honor + " - " + owner_key + "\n";
                     i += 1;
@@ -286,30 +283,21 @@ do_display_access_list() {
         }
     }
     
-    // Trustees
+    // Trustees (JSON object {uuid:honorific})
     output += "\nTRUSTEES:\n";
-    string trustees_json = llJsonGetValue(CachedSettings, ["trustees"]);
-    string t_honors_json = llJsonGetValue(CachedSettings, ["trustee_honorifics"]);
-    
-    if (trustees_json != JSON_INVALID && is_json_arr(trustees_json)) {
-        list trustees = llJson2List(trustees_json);
-        list t_honors = [];
-        if (t_honors_json != JSON_INVALID && is_json_arr(t_honors_json)) {
-            t_honors = llJson2List(t_honors_json);
-        }
-        
-        if (llGetListLength(trustees) > 0) {
+    string trustees_raw = llJsonGetValue(CachedSettings, ["trustees"]);
+
+    if (trustees_raw != JSON_INVALID && llJsonValueType(trustees_raw, []) == JSON_OBJECT) {
+        list pairs = llJson2List(trustees_raw);
+        integer plen = llGetListLength(pairs);
+        if (plen > 0) {
             integer i = 0;
-            integer count = llGetListLength(trustees);
-            integer honors_count = llGetListLength(t_honors);
-            while (i < count) {
-                string trustee_key = llList2String(trustees, i);
-                string honor = "Trustee";
-                if (i < honors_count) {
-                    honor = llList2String(t_honors, i);
-                }
+            while (i < plen) {
+                string trustee_key = llList2String(pairs, i);
+                string honor = llList2String(pairs, i + 1);
+                if (honor == "") honor = "Trustee";
                 output += "  " + honor + " - " + trustee_key + "\n";
-                i += 1;
+                i += 2;
             }
         }
         else {

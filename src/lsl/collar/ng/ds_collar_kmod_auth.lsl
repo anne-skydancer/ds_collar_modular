@@ -1,10 +1,11 @@
 /*--------------------
 MODULE: ds_collar_kmod_auth.lsl
 VERSION: 1.00
-REVISION: 28
+REVISION: 29
 PURPOSE: Authoritative ACL and policy engine - OPTIMIZED
 ARCHITECTURE: Dispatch table pattern with linkset data cache and JSON templates
 CHANGES:
+- REVISION 29: Trustees parsed as JSON object {uuid:honorific}; extract UUID keys
 - REVISION 28: Added soft_reset sender validation (authorized senders only)
 - REVISION 25: PERFORMANCE OPTIMIZATIONS
   * Implemented dispatch table pattern for ACL computation (15-39% faster)
@@ -652,9 +653,19 @@ apply_settings_sync(string msg) {
     }
     
     if (json_has(kv_json, [KEY_TRUSTEES])) {
-        string trustees_json = llJsonGetValue(kv_json, [KEY_TRUSTEES]);
-        if (is_json_arr(trustees_json)) {
-            TrusteeList = llJson2List(trustees_json);
+        string trustees_raw = llJsonGetValue(kv_json, [KEY_TRUSTEES]);
+        if (llJsonValueType(trustees_raw, []) == JSON_OBJECT) {
+            // Trustees stored as {uuid:honorific} — extract UUID keys
+            list pairs = llJson2List(trustees_raw);
+            integer pi = 0;
+            integer plen = llGetListLength(pairs);
+            while (pi < plen) {
+                TrusteeList += [llList2String(pairs, pi)];
+                pi += 2;
+            }
+        }
+        else if (is_json_arr(trustees_raw)) {
+            TrusteeList = llJson2List(trustees_raw);
         }
     }
     
@@ -718,6 +729,24 @@ apply_settings_delta(string msg) {
             broadcast_acl_change("global", NULL_KEY);
             cache_dirty = TRUE;
         }
+
+        // Trustees changed (full JSON object broadcast)
+        if (json_has(changes, [KEY_TRUSTEES])) {
+            string trustees_raw = llJsonGetValue(changes, [KEY_TRUSTEES]);
+            TrusteeList = [];
+            if (llJsonValueType(trustees_raw, []) == JSON_OBJECT) {
+                list pairs = llJson2List(trustees_raw);
+                integer pi = 0;
+                integer plen = llGetListLength(pairs);
+                while (pi < plen) {
+                    TrusteeList += [llList2String(pairs, pi)];
+                    pi += 2;
+                }
+            }
+            enforce_role_exclusivity();
+            broadcast_acl_change("global", NULL_KEY);
+            cache_dirty = TRUE;
+        }
     }
     else if (op == "list_add") {
         if (!json_has(msg, ["key"])) return;
@@ -731,14 +760,6 @@ apply_settings_delta(string msg) {
                 OwnerKeys += [elem];
                 enforce_role_exclusivity();
                 broadcast_acl_change("global", NULL_KEY);
-                cache_dirty = TRUE;
-            }
-        }
-        else if (key_name == KEY_TRUSTEES) {
-            if (llListFindList(TrusteeList, [elem]) == -1) {
-                TrusteeList += [elem];
-                enforce_role_exclusivity();
-                broadcast_acl_change("avatar", (key)elem);
                 cache_dirty = TRUE;
             }
         }
@@ -764,15 +785,6 @@ apply_settings_delta(string msg) {
                 idx = llListFindList(OwnerKeys, [elem]);
             }
             broadcast_acl_change("global", NULL_KEY);
-            cache_dirty = TRUE;
-        }
-        else if (key_name == KEY_TRUSTEES) {
-            integer idx = llListFindList(TrusteeList, [elem]);
-            while (idx != -1) {
-                TrusteeList = llDeleteSubList(TrusteeList, idx, idx);
-                idx = llListFindList(TrusteeList, [elem]);
-            }
-            broadcast_acl_change("avatar", (key)elem);
             cache_dirty = TRUE;
         }
         else if (key_name == KEY_BLACKLIST) {

@@ -1,10 +1,11 @@
 /*--------------------
 MODULE: ds_collar_kmod_bootstrap.lsl
 VERSION: 1.00
-REVISION: 35
+REVISION: 36
 PURPOSE: Startup coordination, RLV detection, owner name resolution
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- REVISION 36: Parse owner_honorifics as JSON object {uuid:honorific}
 - Corected the collar name
 - Rate-limited display name requests to avoid viewer throttling
 - Owner change detection prevents bootstrap on teleports and region crossings
@@ -73,7 +74,7 @@ integer MultiOwnerMode = FALSE;
 key OwnerKey = NULL_KEY;
 list OwnerKeys = [];
 string OwnerHonorific = "";
-list OwnerHonorifics = [];
+string OwnerHonJson = "{}";
 
 // Name resolution
 list OwnerNameQueries = [];
@@ -234,7 +235,7 @@ apply_settings_sync(string msg) {
     OwnerKey = NULL_KEY;
     OwnerKeys = [];
     OwnerHonorific = "";
-    OwnerHonorifics = [];
+    OwnerHonJson = "{}";
     
     // Load
     if (json_has(kv_json, [KEY_MULTI_OWNER_MODE])) {
@@ -257,9 +258,9 @@ apply_settings_sync(string msg) {
     }
     
     if (json_has(kv_json, [KEY_OWNER_HONS])) {
-        string owner_hons_json = llJsonGetValue(kv_json, [KEY_OWNER_HONS]);
-        if (llJsonValueType(owner_hons_json, []) == JSON_ARRAY) {
-            OwnerHonorifics = llJson2List(owner_hons_json);
+        string owner_hons_raw = llJsonGetValue(kv_json, [KEY_OWNER_HONS]);
+        if (llJsonValueType(owner_hons_raw, []) == JSON_OBJECT) {
+            OwnerHonJson = owner_hons_raw;
         }
     }
     
@@ -465,10 +466,9 @@ announce_status() {
             list owner_parts = [];
             integer i = 0;
             while (i < owner_count) {
-                string hon = "";
-                if (i < llGetListLength(OwnerHonorifics)) {
-                    hon = llList2String(OwnerHonorifics, i);
-                }
+                string owner_uuid = llList2String(OwnerKeys, i);
+                string hon = llJsonGetValue(OwnerHonJson, [owner_uuid]);
+                if (hon == JSON_INVALID) hon = "";
                 
                 string display_name = "";
                 if (i < llGetListLength(OwnerDisplayNames)) {
