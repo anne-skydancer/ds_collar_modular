@@ -457,8 +457,8 @@ handle_button(string btn) {
             show_main();
         }
         else {
-            if (llSubStringIndex(MenuContext, "owner") == 0) show_owner_menu();
-            else if (llSubStringIndex(MenuContext, "trustee") == 0) show_trustee_menu();
+            if (llSubStringIndex(MenuContext, "Owner") == 0) show_owner_menu();
+            else if (llSubStringIndex(MenuContext, "Trustee") == 0) show_trustee_menu();
             else show_main();
         }
         return;
@@ -476,46 +476,62 @@ handle_button(string btn) {
         if (btn == "TP") show_toggle("Trustee", "TP", ExTrusteeTp);
         else if (btn == "IM") show_toggle("Trustee", "IM", ExTrusteeIm);
     }
-    else if (MenuContext == "owner_TP") {
+    else if (MenuContext == "Owner_TP") {
         if (btn == "Allow") {
+            ExOwnerTp = TRUE;
             persist_setting(KEY_EX_OWNER_TP, TRUE);
+            reconcile_all();
             llRegionSayTo(CurrentUser, 0, "Owner TP exception allowed.");
         }
         else if (btn == "Deny") {
+            ExOwnerTp = FALSE;
             persist_setting(KEY_EX_OWNER_TP, FALSE);
+            reconcile_all();
             llRegionSayTo(CurrentUser, 0, "Owner TP exception denied.");
         }
         show_owner_menu();
     }
-    else if (MenuContext == "owner_IM") {
+    else if (MenuContext == "Owner_IM") {
         if (btn == "Allow") {
+            ExOwnerIm = TRUE;
             persist_setting(KEY_EX_OWNER_IM, TRUE);
+            reconcile_all();
             llRegionSayTo(CurrentUser, 0, "Owner IM exception allowed.");
         }
         else if (btn == "Deny") {
+            ExOwnerIm = FALSE;
             persist_setting(KEY_EX_OWNER_IM, FALSE);
+            reconcile_all();
             llRegionSayTo(CurrentUser, 0, "Owner IM exception denied.");
         }
         show_owner_menu();
     }
-    else if (MenuContext == "trustee_TP") {
+    else if (MenuContext == "Trustee_TP") {
         if (btn == "Allow") {
+            ExTrusteeTp = TRUE;
             persist_setting(KEY_EX_TRUSTEE_TP, TRUE);
+            reconcile_all();
             llRegionSayTo(CurrentUser, 0, "Trustee TP exception allowed.");
         }
         else if (btn == "Deny") {
+            ExTrusteeTp = FALSE;
             persist_setting(KEY_EX_TRUSTEE_TP, FALSE);
+            reconcile_all();
             llRegionSayTo(CurrentUser, 0, "Trustee TP exception denied.");
         }
         show_trustee_menu();
     }
-    else if (MenuContext == "trustee_IM") {
+    else if (MenuContext == "Trustee_IM") {
         if (btn == "Allow") {
+            ExTrusteeIm = TRUE;
             persist_setting(KEY_EX_TRUSTEE_IM, TRUE);
+            reconcile_all();
             llRegionSayTo(CurrentUser, 0, "Trustee IM exception allowed.");
         }
         else if (btn == "Deny") {
+            ExTrusteeIm = FALSE;
             persist_setting(KEY_EX_TRUSTEE_IM, FALSE);
+            reconcile_all();
             llRegionSayTo(CurrentUser, 0, "Trustee IM exception denied.");
         }
         show_trustee_menu();
