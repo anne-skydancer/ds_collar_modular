@@ -1,10 +1,11 @@
 /*--------------------
 PLUGIN: ds_collar_plugin_status.lsl
 VERSION: 1.00
-REVISION: 23
+REVISION: 24
 PURPOSE: Read-only collar status display for owners and observers
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- REVISION 24: Added trustee display name resolution via async dataserver queries
 - REVISION 23: Fixed request_settings_sync to use correct "settings_get" message type
 - REVISION 22: Added request_settings_sync() call on state_entry for independent reset recovery
 - Consolidates status presentation into single dialog page
@@ -61,6 +62,10 @@ key OwnerLegacyQuery = NULL_KEY;
 // Multi-owner display names
 list OwnerDisplayNames = [];
 list OwnerNameQueries = [];
+
+// Trustee display names
+list TrusteeDisplayNames = [];
+list TrusteeNameQueries = [];
 
 // Session management
 key CurrentUser = NULL_KEY;
@@ -214,6 +219,9 @@ apply_settings_sync(string msg) {
     if (needs_refresh) {
         request_owner_names();
     }
+
+    // Always refresh trustee names on full sync
+    request_trustee_names();
 }
 
 apply_settings_delta(string msg) {
@@ -280,10 +288,13 @@ request_owner_names() {
         integer count = llGetListLength(OwnerKeys);
         for (i = 0; i < count; i++) {
             key owner_key = llList2Key(OwnerKeys, i);
+            OwnerDisplayNames += [""];  // Placeholder aligned with OwnerKeys
             if (owner_key != NULL_KEY) {
                 key query_id = llRequestDisplayName(owner_key);
                 OwnerNameQueries += [query_id];
-                OwnerDisplayNames += [""];  // Placeholder
+            }
+            else {
+                OwnerNameQueries += [NULL_KEY];
             }
         }
         
@@ -298,6 +309,25 @@ request_owner_names() {
             OwnerDisplay = "";
             OwnerDisplayQuery = NULL_KEY;
             OwnerLegacyQuery = NULL_KEY;
+        }
+    }
+}
+
+request_trustee_names() {
+    TrusteeDisplayNames = [];
+    TrusteeNameQueries = [];
+
+    integer i;
+    integer count = llGetListLength(TrusteeKeys);
+    for (i = 0; i < count; i++) {
+        key trustee_key = llList2Key(TrusteeKeys, i);
+        TrusteeDisplayNames += [""];  // Placeholder aligned with TrusteeKeys
+        if (trustee_key != NULL_KEY) {
+            key query_id = llRequestDisplayName(trustee_key);
+            TrusteeNameQueries += [query_id];
+        }
+        else {
+            TrusteeNameQueries += [NULL_KEY];
         }
     }
 }
@@ -375,27 +405,35 @@ string build_status_report() {
     // Trustee information
     integer trustee_count = llGetListLength(TrusteeKeys);
     if (trustee_count > 0) {
-        status_text += "Trustees: ";
-        
+        status_text += "Trustees:\n";
+
         integer i;
         integer hon_count = llGetListLength(TrusteeHonorifics);
+        integer tdisp_count = llGetListLength(TrusteeDisplayNames);
         for (i = 0; i < trustee_count; i++) {
-            if (i != 0) {
-                status_text += ", ";
-            }
-            
+            key trustee_key = llList2Key(TrusteeKeys, i);
             string honorific = "";
+
             if (i < hon_count) {
                 honorific = llList2String(TrusteeHonorifics, i);
             }
-            
-            if (honorific == "") {
-                honorific = "trustee";
+
+            string display_name = "";
+            if (i < tdisp_count) {
+                display_name = llList2String(TrusteeDisplayNames, i);
             }
-            
-            status_text += honorific;
+
+            if (display_name == "") {
+                display_name = llKey2Name(trustee_key);
+            }
+
+            if (honorific != "") {
+                status_text += "  " + honorific + " " + display_name + "\n";
+            }
+            else {
+                status_text += "  " + display_name + "\n";
+            }
         }
-        status_text += "\n";
     }
     else {
         status_text += "Trustees: none\n";
@@ -492,7 +530,9 @@ default {
         OwnerLegacyQuery = NULL_KEY;
         OwnerDisplayNames = [];
         OwnerNameQueries = [];
-        
+        TrusteeDisplayNames = [];
+        TrusteeNameQueries = [];
+
         register_self();
         request_settings_sync();
     }
@@ -593,6 +633,15 @@ default {
     }
     
     dataserver(key query_id, string data) {
+        // Check trustee name queries first
+        integer tidx = llListFindList(TrusteeNameQueries, [query_id]);
+        if (tidx != -1) {
+            if (tidx < llGetListLength(TrusteeDisplayNames)) {
+                TrusteeDisplayNames = llListReplaceList(TrusteeDisplayNames, [data], tidx, tidx);
+            }
+            return;
+        }
+
         // Multi-owner mode
         if (MultiOwnerMode) {
             integer idx = llListFindList(OwnerNameQueries, [query_id]);
