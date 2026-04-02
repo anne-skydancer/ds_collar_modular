@@ -23,8 +23,14 @@ integer LEASH_CHAN_DS = -192837465;
 
 string PLUGIN_CONTEXT = "core_leash";
 
-// ACL enforcement now reads from LSD policy (policy:core_leash)
-// Button labels map actions to policy entries declared by plugin_leash
+// Policy button labels (must match plugin_leash policy CSV entries)
+string POL_CLIP     = "Clip";
+string POL_UNCLIP   = "Unclip";
+string POL_PASS     = "Pass";
+string POL_OFFER    = "Offer";
+string POL_COFFLE   = "Coffle";
+string POL_POST     = "Post";
+string POL_SETTINGS = "Settings";
 
 // Leash mode constants
 integer MODE_AVATAR = 0;  // Standard leash to avatar
@@ -291,7 +297,7 @@ handleAclResult(string msg) {
     }
     // Special case: pass (current leasher OR policy-allowed can pass, then verify target)
     else if (PendingAction == "pass") {
-        if (PendingActionUser == Leasher || policy_allows("Pass", acl_level)) {
+        if (PendingActionUser == Leasher || policy_allows(POL_PASS, acl_level)) {
             requestAclForPassTarget(PendingPassTarget);
             return;  // Don't clear pending state yet
         } else {
@@ -300,7 +306,7 @@ handleAclResult(string msg) {
     }
     // Special case: offer (policy-allowed, when NOT currently leashed, then verify target)
     else if (PendingAction == "offer") {
-        if (policy_allows("Offer", acl_level) && !Leashed) {
+        if (policy_allows(POL_OFFER, acl_level) && !Leashed) {
             PendingIsOffer = TRUE;
             requestAclForPassTarget(PendingPassTarget);
             return;  // Don't clear pending state yet
@@ -345,10 +351,10 @@ handleAclResult(string msg) {
     else {
         string btn_label = "";
 
-        if (PendingAction == "grab") btn_label = "Clip";
-        else if (PendingAction == "coffle") btn_label = "Coffle";
-        else if (PendingAction == "post") btn_label = "Post";
-        else if (PendingAction == "set_length" || PendingAction == "toggle_turn") btn_label = "Settings";
+        if (PendingAction == "grab") btn_label = POL_CLIP;
+        else if (PendingAction == "coffle") btn_label = POL_COFFLE;
+        else if (PendingAction == "post") btn_label = POL_POST;
+        else if (PendingAction == "set_length" || PendingAction == "toggle_turn") btn_label = POL_SETTINGS;
 
         if (btn_label != "" && policy_allows(btn_label, acl_level)) {
             if (PendingAction == "grab") grabLeashInternal(PendingActionUser, acl_level);
