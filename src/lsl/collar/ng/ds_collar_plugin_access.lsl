@@ -62,7 +62,8 @@ list NameCache;
 key ActiveNameQuery;
 key ActiveQueryTarget;
 
-list HONORIFICS = ["Master", "Mistress", "Daddy", "Mommy", "King", "Queen"];
+list OWNER_HONORIFICS = ["Master", "Mistress", "Daddy", "Mommy", "King", "Queen"];
+list TRUSTEE_HONORIFICS = ["Sir", "Madame", "Milord", "Milady"];
 
 /* -------------------- HELPERS -------------------- */
 
@@ -398,7 +399,10 @@ show_honorific(key target, string context) {
     PendingCandidate = target;
     SessionId = gen_session();
     MenuContext = context;
-    
+
+    list choices = OWNER_HONORIFICS;
+    if (context == "trustee_hon") choices = TRUSTEE_HONORIFICS;
+
     llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
         "type", "dialog_open",
         "dialog_type", "numbered_list",
@@ -406,7 +410,7 @@ show_honorific(key target, string context) {
         "user", (string)target,
         "title", "Honorific",
         "prompt", "What would you like to be called?",
-        "items", llList2Json(JSON_ARRAY, HONORIFICS),
+        "items", llList2Json(JSON_ARRAY, choices),
         "timeout", 60
     ]), NULL_KEY);
 }
@@ -566,8 +570,8 @@ handle_button(string btn) {
         }
     }
     else if (MenuContext == "set_hon") {
-        if (idx >= 0 && idx < 6) {
-            PendingHonorific = llList2String(HONORIFICS, idx);
+        if (idx >= 0 && idx < llGetListLength(OWNER_HONORIFICS)) {
+            PendingHonorific = llList2String(OWNER_HONORIFICS, idx);
             SessionId = gen_session();
             MenuContext = "set_confirm";
             
@@ -619,8 +623,8 @@ handle_button(string btn) {
         }
     }
     else if (MenuContext == "transfer_hon") {
-        if (idx >= 0 && idx < 6) {
-            PendingHonorific = llList2String(HONORIFICS, idx);
+        if (idx >= 0 && idx < llGetListLength(OWNER_HONORIFICS)) {
+            PendingHonorific = llList2String(OWNER_HONORIFICS, idx);
             key old = OwnerKey;
             persist_owner(PendingCandidate, PendingHonorific);
             llRegionSayTo(old, 0, "You have transferred " + get_name(llGetOwner()) + " to " + get_name(PendingCandidate) + ".");
@@ -738,8 +742,8 @@ handle_button(string btn) {
         }
     }
     else if (MenuContext == "trustee_hon") {
-        if (idx >= 0 && idx < 6) {
-            PendingHonorific = llList2String(HONORIFICS, idx);
+        if (idx >= 0 && idx < llGetListLength(TRUSTEE_HONORIFICS)) {
+            PendingHonorific = llList2String(TRUSTEE_HONORIFICS, idx);
             add_trustee(PendingCandidate, PendingHonorific);
             llRegionSayTo(PendingCandidate, 0, "You are trustee of " + get_name(llGetOwner()) + " as " + PendingHonorific + ".");
             llRegionSayTo(CurrentUser, 0, get_name(PendingCandidate) + " is trustee.");
