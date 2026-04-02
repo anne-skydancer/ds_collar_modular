@@ -1,5 +1,7 @@
 # Per-Script Analysis - Plugins & UI
 
+> **NOTE (2026-04-02):** See staleness disclaimer in [ANALYSIS_OVERVIEW.md](./ANALYSIS_OVERVIEW.md). Script file names below use the old `ds_collar_` prefix; v1.1 uses short names (e.g. `plugin_access.lsl`, `kmod_ui.lsl`). The workstation-specific duplicate file mentioned at the end has been removed.
+
 ---
 
 ## UI Layer

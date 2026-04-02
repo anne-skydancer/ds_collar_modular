@@ -1,6 +1,6 @@
 # DS Collar Settings Card Reference Guide
 
-**Version 1.0** — Comprehensive reference for the DS Collar Modular settings system
+**Version 1.1** — Comprehensive reference for the DS Collar Modular settings system
 
 ---
 
@@ -403,10 +403,11 @@ bell_sound = 16fcf579-82cb-b110-c1a4-5fa5e1385406
 | 1.0 | 2025-10-01 | Initial comprehensive reference guide |
 | 1.1 | 2025-10-31 | Security fix: Added TPE mode validation to notecard parsing; documented notecard ordering requirement |
 | 1.2 | 2026-04-01 | Fact-check corrections: Fixed persistence model to document three-tier storage (LSD, script globals, notecard); corrected bell defaults (visible=0, sound=0, volume=0.3); fixed boolean normalization (only numeric values work, not `true`/`false`); corrected silent handling of unknown/invalid keys; fixed source code path |
+| 1.3 | 2026-04-02 | Updated version to 1.1 for ng branch; fixed source code path to v1.1 location |
 
 ---
 
 **Questions or Issues?**
-Please refer to the [main README](./README.md) or review the [source code](./src/lsl/collar/stable/ds_collar_kmod_settings.lsl) for implementation details.
+Please refer to the [main README](./README.md) or review the [source code](./v1.1/kmod_settings.lsl) for implementation details.
 
 

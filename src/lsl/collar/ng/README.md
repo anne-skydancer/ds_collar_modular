@@ -1,74 +1,82 @@
-# DS Collar Modular
+# DS Collar NG (Next Generation)
 
-**DS Collar Modular** is a modular, script-driven D/s collar system for Second Life.  
-It provides a modern, lightweight, and extensible framework for collars, emphasizing **security, modularity, and performance**.  
+**DS Collar NG** is the next-generation branch of the DS Collar Modular system for Second Life.  
+It introduces the **LSD (Linkset Data) policy architecture** for declarative, per-plugin button visibility, replacing the former ACL registration model.
 
-This project replaces the old monolithic collars with a clean kernel + plugin architecture, using JSON messaging and strict ABI conventions.
+This branch builds on the stable v1.0 kernel + plugin architecture, adding a policy layer that lets each plugin self-declare which buttons are visible at each ACL level.
 
 ---
 
-## ✨ Features
+## What's New in v1.1
 
-- **Modular kernel design** — central kernel (v1.0) with swappable modules and plugins.
+- **LSD Policy Architecture** — Each plugin writes a `policy:<context>` key to linkset data on registration, mapping ACL levels to CSV lists of visible buttons. `kmod_ui` reads these policies to filter menus per-user. This replaces the old `min_acl` registration field and the dead plugin ACL registry.
+- **Simplified Registration** — Plugins register with 3 fields: `context`, `label`, `script`. No `min_acl` needed.
+- **Cleaner ACL Responses** — `kmod_auth` responses contain only essential fields: `type`, `avatar`, `level`, `is_wearer`, `is_blacklisted`, `owner_set`. Dead `policy_*` fields removed.
+- **Registry Stride 5** — Kernel registry entries: `[context, label, script, script_uuid, last_seen_unix]`.
+
+---
+
+## Features
+
+- **Modular kernel design** — central kernel (v1.1) with swappable modules and plugins.
 - **Consolidated ABI** — 5-channel architecture (500/700/800/900/950) using structured JSON messaging.
+- **LSD Policy Model** — plugins self-declare button visibility per ACL level via linkset data.
 - **Access Control (ACL)** — unified ACL engine with support for owners, trustees, public access, and blacklist.
-- **Plugins** — 13 plugins covering owner management, leash, animations, RLV relay/restrictions, TPE mode, and more.
-- **Kernel Modules** — 8 specialized modules for auth, settings, dialogs, leash engine, particles, remote HUD, bootstrap, and UI.
+- **14 Plugins** — covering access management, leash, animations, RLV relay/restrictions/exceptions, bell, lock, public toggle, TPE mode, blacklist, status, maintenance, and SOS.
+- **9 Kernel Modules** — auth, settings, dialogs, leash engine, particles, remote HUD, bootstrap, menu rendering, and UI/session management.
 - **RLVa Integration** — comprehensive RLV support including relay, restrictions, exceptions, and Lockmeister protocol.
-- **Security-hardened** — v1.0 includes critical security fixes for authorization, ACL validation, and overflow protection.
+- **Security-hardened** — authorization validation, ACL re-validation, overflow protection, rate limiting.
 - **Heartbeat & auto-recover** — kernel monitors plugin health, prunes dead plugins, handles script additions/removals.
 - **Centralized dialogs** — single dialog management module eliminates per-plugin listeners.
-- **External HUD support** — remote control via separate HUD with ACL enforcement.  
+- **External HUD support** — remote control via separate HUD with ACL enforcement.
 
 ---
 
-## 📂 Project Structure
+## Project Structure
 
 ```
-ds_collar_modular/
-├── LICENSE
-├── README.md
-├── agents.md                    # LSL coding requirements & best practices
-└── src/stable/
-    ├── ds_collar_kernel.lsl                  # Core kernel (v1.0)
-    ├── ds_collar_control_hud.lsl             # External HUD controller
-    ├── ds_collar_leash_holder.lsl            # Leash holder object
-    │
-    ├── Kernel Modules (kmod_*)
-    │   ├── ds_collar_kmod_auth.lsl           # ACL and policy engine
-    │   ├── ds_collar_kmod_bootstrap.lsl      # Startup coordination, RLV detection
-    │   ├── ds_collar_kmod_dialogs.lsl        # Centralized dialog management
-    │   ├── ds_collar_kmod_leash.lsl          # Leashing engine services
-    │   ├── ds_collar_kmod_particles.lsl      # Visual renderer + Lockmeister
-    │   ├── ds_collar_kmod_remote.lsl         # External HUD bridge
-    │   ├── ds_collar_kmod_settings.lsl       # Persistent key-value store
-    │   └── ds_collar_kmod_ui.lsl             # Root touch menu
-    │
-    └── Plugins (plugin_*)
-        ├── ds_collar_plugin_animate.lsl      # Animation menu
-        ├── ds_collar_plugin_bell.lsl         # Bell controls
-        ├── ds_collar_plugin_blacklist.lsl    # Blacklist management
-        ├── ds_collar_plugin_leash.lsl        # Leash UI and config
-        ├── ds_collar_plugin_lock.lsl         # Lock/unlock toggle
-        ├── ds_collar_plugin_maintenance.lsl  # Maintenance utilities
-        ├── ds_collar_plugin_owner.lsl        # Owner/trustee management
-        ├── ds_collar_plugin_public.lsl       # Public access toggle
-        ├── ds_collar_plugin_rlvexceptions.lsl # RLV exception management
-        ├── ds_collar_plugin_rlvrelay.lsl     # RLV relay modes
-        ├── ds_collar_plugin_rlvrestrict.lsl  # RLV restriction management
-        ├── ds_collar_plugin_status.lsl       # Status information display
-        └── ds_collar_plugin_tpe.lsl          # Total Power Exchange mode
+src/lsl/collar/ng/v1.1/
+├── collar_kernel.lsl              # Core kernel (v1.1)
+├── control_hud.lsl                # External HUD controller
+├── leash_holder.lsl               # Leash holder object
+│
+├── Kernel Modules (kmod_*)
+│   ├── kmod_auth.lsl              # ACL and policy engine
+│   ├── kmod_bootstrap.lsl         # Startup coordination, RLV detection
+│   ├── kmod_dialogs.lsl           # Centralized dialog management
+│   ├── kmod_leash.lsl             # Leashing engine services
+│   ├── kmod_menu.lsl              # Menu rendering service
+│   ├── kmod_particles.lsl         # Visual renderer + Lockmeister
+│   ├── kmod_remote.lsl            # External HUD bridge
+│   ├── kmod_settings.lsl          # Persistent key-value store
+│   └── kmod_ui.lsl                # UI session management + touch handler
+│
+└── Plugins (plugin_*)
+    ├── plugin_access.lsl          # Owner/trustee management
+    ├── plugin_animate.lsl         # Animation menu
+    ├── plugin_bell.lsl            # Bell controls
+    ├── plugin_blacklist.lsl       # Blacklist management
+    ├── plugin_leash.lsl           # Leash UI and config
+    ├── plugin_lock.lsl            # Lock/unlock toggle
+    ├── plugin_maint.lsl           # Maintenance utilities
+    ├── plugin_public.lsl          # Public access toggle
+    ├── plugin_relay.lsl           # RLV relay modes
+    ├── plugin_restrict.lsl        # RLV restriction management
+    ├── plugin_rlvex.lsl           # RLV exception management
+    ├── plugin_sos.lsl             # Emergency SOS menu
+    ├── plugin_status.lsl          # Status information display
+    └── plugin_tpe.lsl             # Total Power Exchange mode
 ```
 
-- **Kernel** — manages plugin registry, lifecycle, heartbeats, and consolidated ABI (v1.0).
-- **Modules** — headless system components providing core services (auth, settings, dialogs, leash engine, particles, remote communication, UI).
-- **Plugins** — user-facing features that register with the kernel and provide menu-driven functionality.  
+- **Kernel** — manages plugin registry, lifecycle, heartbeats, and consolidated ABI.
+- **Modules** — headless system components providing core services.
+- **Plugins** — user-facing features that register with the kernel, declare LSD policies, and provide menu-driven functionality.
 
 ---
 
-## 🏗️ Architecture & ABI
+## Architecture & ABI
 
-### Consolidated ABI v1.0
+### Consolidated ABI v1.1
 
 The system uses a **5-channel architecture** for all inter-script communication:
 
@@ -79,6 +87,20 @@ The system uses a **5-channel architecture** for all inter-script communication:
 | **800** | `SETTINGS_BUS` | Settings sync, delta updates, notecard loading |
 | **900** | `UI_BUS` | UI navigation (start, return, close) |
 | **950** | `DIALOG_BUS` | Centralized dialog management |
+
+### LSD Policy Architecture
+
+Each plugin declares its button visibility in linkset data on registration:
+
+```lsl
+llLinksetDataWrite("policy:" + PLUGIN_CONTEXT, llList2Json(JSON_OBJECT, [
+    "3", "Clip,Unclip,Settings",    // Trustee sees these buttons
+    "4", "Clip,Unclip,Settings",    // Unowned wearer
+    "5", "Clip,Unclip,Pass,Settings" // Owner sees all buttons
+]));
+```
+
+`kmod_ui` reads these policies to filter which buttons each user sees, decluttering the interface based on ACL level.
 
 ### ACL Levels
 
@@ -92,53 +114,50 @@ The system uses a **5-channel architecture** for all inter-script communication:
 | **4** | Unowned | Wearer (when no owner is set) |
 | **5** | Primary Owner | Full administrative control |
 
-### Security Features (v1.0)
+### Plugin Registration (v1.1)
 
-- **Authorization validation** for soft resets (only bootstrap/maintenance can trigger)
-- **Integer overflow protection** for Unix timestamps (Year 2038 handling)
-- **JSON injection prevention** using proper encoding
-- **ACL re-validation** with time-based session checks
-- **Rate limiting** on remote HUD requests
-- **Touch range validation** (rejects ZERO_VECTOR)
-- **Owner change detection** with automatic script reset
+Plugins register with 3 fields (no `min_acl`):
+
+```json
+{
+    "type": "register",
+    "context": "plugin_leash",
+    "label": "Leash",
+    "script": "plugin_leash"
+}
+```
+
+The kernel maintains a 5-stride registry: `[context, label, script, script_uuid, last_seen_unix]`.
 
 ---
 
-## 🚀 Installation & Setup
+## Installation & Setup
 
 1. Rez a prim in Second Life.
-2. Drop `ds_collar_kernel.lsl` and all **8 kernel modules** (`ds_collar_kmod_*.lsl`) into it.
-3. Add the **plugins** you want to use (all 13 recommended for full functionality).
-4. (Optional) Add a "settings" notecard for pre-configured owners/trustees.
+2. Drop `collar_kernel.lsl` and all **9 kernel modules** (`kmod_*.lsl`) into it.
+3. Add the **plugins** you want (all 14 recommended for full functionality).
+4. (Optional) Add a `settings` notecard for pre-configured owners/trustees.
 5. Wear the prim as a collar.
 6. On reset, the collar will:
    - Bootstrap and detect RLV capability
    - Load settings from notecard (if present)
-   - Register all plugins with the kernel
+   - Register all plugins with the kernel (each writes its LSD policy)
    - Open the UI menu on touch
 
-**Note:** All scripts are in `src/stable/` directory. The HUD and leash holder are separate objects.  
+**Note:** All scripts are in `src/lsl/collar/ng/v1.1/`. The HUD and leash holder are separate objects.
 
 ---
 
-## 📚 Documentation
+## Documentation
 
-- **[agents.md](./agents.md)** — Comprehensive LSL reference covering quirks, limitations, coding standards, review checklist, documentation guidelines, and versioning specification
-
----
-
-## 🔧 Contributing
-
-1. Fork the repo.
-2. Read **[agents.md](./agents.md)** thoroughly — it contains all LSL quirks, coding standards, versioning rules, and the review checklist.
-3. Work from the **authoritative baselines** (kernel, modules, plugin skeleton).
-4. Ensure your scripts compile in Second Life.
-5. Use the **Code Review Checklist** in agents.md before submitting.
-6. Apply appropriate version numbers according to the **Versioning Specification** in agents.md.
-7. Submit a pull request with a clear description of your changes.  
+- **[CLAUDE.md](../../../../CLAUDE.md)** — LSL coding requirements & best practices
+- **[SETTINGS_REFERENCE.md](./SETTINGS_REFERENCE.md)** — Settings card reference
+- **[USER_GUIDE.md](./USER_GUIDE.md)** — End-user guide
+- **[TODO.md](./TODO.md)** — Major outstanding work items
+- **[ANALYSIS_OVERVIEW.md](./ANALYSIS_OVERVIEW.md)** — LSL best practices analysis
 
 ---
 
-## 📜 License
+## License
 
-GPL v3 License – see [LICENSE](./LICENSE) for details.
+GPL v3 License — see [LICENSE](../../../../LICENSE) for details.

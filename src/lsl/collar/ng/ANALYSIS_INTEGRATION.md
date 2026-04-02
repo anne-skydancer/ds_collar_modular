@@ -1,5 +1,7 @@
 # Integration vs. Separation Deep Dive
 
+> **NOTE (2026-04-02):** See staleness disclaimer in [ANALYSIS_OVERVIEW.md](./ANALYSIS_OVERVIEW.md). Script counts below (28 scripts) reflect the pre-cleanup codebase. v1.1 has 26 scripts. References to `min_acl` in merge candidate code (e.g. the public+lock+tpe merge example) are stale — registration no longer uses `min_acl`. Script file names use the old `ds_collar_` prefix; v1.1 uses short names.
+
 **What works best inside one script vs. as separate scripts?**
 
 This analysis maps the DS Collar NG architecture against LSL's concrete runtime
