@@ -1,10 +1,12 @@
 /*--------------------
 PLUGIN: ds_collar_plugin_rlvexceptions.lsl
 VERSION: 1.00
-REVISION: 26
+REVISION: 27
 PURPOSE: Manage RLV teleport and IM exceptions for owners and trustees
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- REVISION 27: Fix case mismatch in MenuContext causing silent toggle failures;
+  apply state changes and RLV commands immediately on Allow/Deny
 - REVISION 26: Batched RLV commands with comma separator; cached list lengths in loops
 - FIX: Timer-based delay before applying RLV exceptions after settings load
 - This fixes exceptions not working when only this plugin resets
