@@ -617,9 +617,8 @@ The collar supports pre-configuration via a notecard named **"settings"** in the
 # Format: key = value
 # IMPORTANT: Do NOT use quotes around UUIDs!
 
-# Ownership
-owner_key = a1b2c3d4-e5f6-7890-abcd-ef1234567890
-owner_hon = Master
+# Ownership (JSON object format: {"uuid":"honorific"})
+owner = {"a1b2c3d4-e5f6-7890-abcd-ef1234567890":"Master"}
 multi_owner_mode = 0
 
 # Access Control
@@ -648,10 +647,8 @@ bell_sound = 16fcf579-82cb-b110-c1a4-5fa5e1385406
 
 | Key | Type | Description | Example |
 |-----|------|-------------|---------|
-| `owner_key` | UUID | Owner's avatar UUID (single owner mode) | `a1b2c3d4-e5f6-7890-abcd-ef1234567890` |
-| `owner_keys` | JSON array | Owner UUIDs (multi-owner mode, notecard only) | `[uuid1, uuid2]` |
-| `owner_hon` | String | Owner's honorific (single owner) | `Master`, `Mistress` |
-| `owner_honorifics` | JSON object | Owner honorifics keyed by UUID (multi-owner) | `{"uuid1":"Master", "uuid2":"Mistress"}` |
+| `owner` | JSON object | Owner with honorific (single owner mode) | `{"uuid":"Master"}` |
+| `owners` | JSON object | Owners with honorifics (multi-owner mode, notecard only) | `{"uuid1":"Master", "uuid2":"Mistress"}` |
 | `multi_owner_mode` | 0/1 | Enable multi-owner (notecard only) | `0` = off, `1` = on |
 | `trustees` | JSON object | Trusted users keyed by UUID with honorifics | `{"uuid1":"Sir", "uuid2":"Lady"}` |
 | `blacklist` | JSON array | Blacklisted UUIDs | `[uuid1, uuid2]` |
@@ -687,7 +684,7 @@ bell_sound = 16fcf579-82cb-b110-c1a4-5fa5e1385406
 - Keys marked "notecard only" can only be set via settings notecard, not via runtime messages
 - RLV relay mode, RLV restrictions, and leash settings are **not supported** in notecard configuration
 - RLV exception settings (`ex_owner_tp/im`, `ex_trustee_tp/im`) **are** supported in notecard configuration
-- `trustees` and `owner_honorifics` use JSON object format `{"uuid":"honorific"}` — array syntax `[...]` is rejected for these keys
+- `owner`, `owners`, and `trustees` use JSON object format `{"uuid":"honorific"}` — array syntax `[...]` is rejected for these keys
 - All non-notecard-only settings persist automatically when changed via menus
 
 ### Finding Avatar UUIDs

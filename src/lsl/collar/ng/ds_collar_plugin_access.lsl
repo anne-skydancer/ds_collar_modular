@@ -1,10 +1,12 @@
 /*--------------------
 PLUGIN: ds_collar_plugin_access.lsl
 VERSION: 1.00
-REVISION: 24
+REVISION: 25
 PURPOSE: Owner, trustee, and honorific management workflows
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- REVISION 25: Owner storage consolidated — owner_key+owner_hon→owner,
+  owner_keys+owner_honorifics→owners as JSON objects {uuid:honorific}
 - REVISION 24: Trustees stored as JSON object {uuid:honorific} for atomic
   sync; owner_honorifics stored as JSON object; removed trustee_honorifics
 - Adds multi-owner mode with ordered lists and honorific metadata
@@ -32,10 +34,8 @@ integer MAX_NUMBERED_LIST_ITEMS = 11;  // 12 dialog buttons - 1 Back button
 
 /* -------------------- SETTINGS KEYS -------------------- */
 string KEY_MULTI_OWNER_MODE = "multi_owner_mode";
-string KEY_OWNER_KEY = "owner_key";
-string KEY_OWNER_KEYS = "owner_keys";
-string KEY_OWNER_HON = "owner_hon";
-string KEY_OWNER_HONS = "owner_honorifics";
+string KEY_OWNER = "owner";
+string KEY_OWNERS = "owners";
 string KEY_TRUSTEES = "trustees";
 string KEY_RUNAWAY_ENABLED = "runaway_enabled";
 
@@ -44,7 +44,8 @@ integer MultiOwnerMode;
 key OwnerKey;
 list OwnerKeys;
 string OwnerHonorific;
-string OwnerHonJson = "{}";
+string OwnerJson = "{}";
+string OwnersJson = "{}";
 list TrusteeKeys;
 string TrusteesJson = "{}";
 integer RunawayEnabled = TRUE;
@@ -157,7 +158,8 @@ apply_settings_sync(string msg) {
     OwnerKey = NULL_KEY;
     OwnerKeys = [];
     OwnerHonorific = "";
-    OwnerHonJson = "{}";
+    OwnerJson = "{}";
+    OwnersJson = "{}";
     TrusteeKeys = [];
     TrusteesJson = "{}";
 
@@ -166,23 +168,32 @@ apply_settings_sync(string msg) {
     }
 
     if (MultiOwnerMode) {
-        if (json_has(kv, [KEY_OWNER_KEYS])) {
-            string arr = llJsonGetValue(kv, [KEY_OWNER_KEYS]);
-            if (llGetSubString(arr, 0, 0) == "[") OwnerKeys = llJson2List(arr);
-        }
-        if (json_has(kv, [KEY_OWNER_HONS])) {
-            string obj = llJsonGetValue(kv, [KEY_OWNER_HONS]);
+        if (json_has(kv, [KEY_OWNERS])) {
+            string obj = llJsonGetValue(kv, [KEY_OWNERS]);
             if (llJsonValueType(obj, []) == JSON_OBJECT) {
-                OwnerHonJson = obj;
+                OwnersJson = obj;
+                // Extract UUID keys for list lookups
+                list pairs = llJson2List(obj);
+                integer oi = 0;
+                integer olen = llGetListLength(pairs);
+                while (oi < olen) {
+                    OwnerKeys += [llList2String(pairs, oi)];
+                    oi += 2;
+                }
             }
         }
     }
     else {
-        if (json_has(kv, [KEY_OWNER_KEY])) {
-            OwnerKey = (key)llJsonGetValue(kv, [KEY_OWNER_KEY]);
-        }
-        if (json_has(kv, [KEY_OWNER_HON])) {
-            OwnerHonorific = llJsonGetValue(kv, [KEY_OWNER_HON]);
+        if (json_has(kv, [KEY_OWNER])) {
+            string obj = llJsonGetValue(kv, [KEY_OWNER]);
+            if (llJsonValueType(obj, []) == JSON_OBJECT) {
+                OwnerJson = obj;
+                list pairs = llJson2List(obj);
+                if (llGetListLength(pairs) >= 2) {
+                    OwnerKey = (key)llList2String(pairs, 0);
+                    OwnerHonorific = llList2String(pairs, 1);
+                }
+            }
         }
     }
 
@@ -239,11 +250,36 @@ apply_settings_delta(string msg) {
             }
         }
 
-        // Owner honorifics changed (full JSON object broadcast)
-        if (json_has(changes, [KEY_OWNER_HONS])) {
-            string obj = llJsonGetValue(changes, [KEY_OWNER_HONS]);
+        // Single owner changed (full JSON object broadcast)
+        if (json_has(changes, [KEY_OWNER])) {
+            string obj = llJsonGetValue(changes, [KEY_OWNER]);
+            OwnerKey = NULL_KEY;
+            OwnerHonorific = "";
+            OwnerJson = "{}";
             if (llJsonValueType(obj, []) == JSON_OBJECT) {
-                OwnerHonJson = obj;
+                OwnerJson = obj;
+                list pairs = llJson2List(obj);
+                if (llGetListLength(pairs) >= 2) {
+                    OwnerKey = (key)llList2String(pairs, 0);
+                    OwnerHonorific = llList2String(pairs, 1);
+                }
+            }
+        }
+
+        // Multi-owner changed (full JSON object broadcast)
+        if (json_has(changes, [KEY_OWNERS])) {
+            string obj = llJsonGetValue(changes, [KEY_OWNERS]);
+            OwnerKeys = [];
+            OwnersJson = "{}";
+            if (llJsonValueType(obj, []) == JSON_OBJECT) {
+                OwnersJson = obj;
+                list pairs = llJson2List(obj);
+                integer oi = 0;
+                integer olen = llGetListLength(pairs);
+                while (oi < olen) {
+                    OwnerKeys += [llList2String(pairs, oi)];
+                    oi += 2;
+                }
             }
         }
     }
@@ -251,11 +287,9 @@ apply_settings_delta(string msg) {
 
 
 persist_owner(key owner, string hon) {
+    string obj = llList2Json(JSON_OBJECT, [(string)owner, hon]);
     llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
-        "type", "set", "key", KEY_OWNER_KEY, "value", (string)owner
-    ]), NULL_KEY);
-    llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
-        "type", "set", "key", KEY_OWNER_HON, "value", hon
+        "type", "set", "key", KEY_OWNER, "value", obj
     ]), NULL_KEY);
 }
 
@@ -277,7 +311,9 @@ remove_trustee(key trustee) {
 }
 
 clear_owner() {
-    persist_owner(NULL_KEY, "");
+    llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
+        "type", "set", "key", KEY_OWNER, "value", "{}"
+    ]), NULL_KEY);
 }
 
 /* -------------------- ACL -------------------- */
