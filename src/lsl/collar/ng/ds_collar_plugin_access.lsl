@@ -1,10 +1,13 @@
 /*--------------------
 PLUGIN: ds_collar_plugin_access.lsl
 VERSION: 1.00
-REVISION: 22
+REVISION: 23
 PURPOSE: Owner, trustee, and honorific management workflows
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- REVISION 23: Fix trustee honorific removal to use index-based bulk set
+  instead of value-based list_remove, preventing parallel array corruption
+  when multiple trustees share the same honorific
 - Adds multi-owner mode with ordered lists and honorific metadata
 - Guides owner transfer and release with dual confirmation dialogs
 - Supports runaway self-release and trustee roster maintenance
@@ -236,14 +239,20 @@ add_trustee(key trustee, string hon) {
 remove_trustee(key trustee) {
     integer idx = llListFindList(TrusteeKeys, [(string)trustee]);
     if (idx == -1) return;
-    
+
     llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
         "type", "list_remove", "key", KEY_TRUSTEES, "elem", (string)trustee
     ]), NULL_KEY);
-    
+
+    // Remove honorific by index using bulk set, not by value.
+    // Value-based removal would corrupt the parallel array when
+    // multiple trustees share the same honorific (e.g. two "Master"s).
     if (idx < llGetListLength(TrusteeHonorifics)) {
+        list new_hons = llDeleteSubList(TrusteeHonorifics, idx, idx);
         llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
-            "type", "list_remove", "key", KEY_TRUSTEE_HONS, "elem", llList2String(TrusteeHonorifics, idx)
+            "type", "set",
+            "key", KEY_TRUSTEE_HONS,
+            "values", llList2Json(JSON_ARRAY, new_hons)
         ]), NULL_KEY);
     }
 }

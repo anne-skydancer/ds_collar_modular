@@ -1,10 +1,12 @@
 /*--------------------
 MODULE: ds_collar_kmod_settings.lsl
 VERSION: 1.00
-REVISION: 28
+REVISION: 29
 PURPOSE: Persistent key-value store with notecard loading and delta updates
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- REVISION 29: Skip list_unique for parallel-array keys (honorifics) to
+  prevent deduplication of legitimately repeated values
 - REVISION 28: Added RLV exception keys (ex_owner_tp/im, ex_trustee_tp/im) to allowed list
 - REVISION 27: Cache llGetListLength in loop conditions for performance
 - Enforced wearer-owner separation and TPE external owner validation rules
@@ -362,6 +364,14 @@ integer is_allowed_key(string k) {
     return (llListFindList(allowed, [k]) != -1);
 }
 
+// Parallel-array keys may contain legitimate duplicates (e.g. two trustees
+// both named "Master") and must NOT be deduplicated by list_unique.
+integer is_parallel_array_key(string k) {
+    if (k == KEY_TRUSTEE_HONS) return TRUE;
+    if (k == KEY_OWNER_HONS) return TRUE;
+    return FALSE;
+}
+
 integer is_notecard_only_key(string k) {
     if (k == KEY_MULTI_OWNER_MODE) return TRUE;
     if (k == KEY_OWNER_KEYS) return TRUE;
@@ -393,8 +403,10 @@ parse_notecard_line(string line) {
         // Parse as CSV list
         string list_contents = llGetSubString(value, 1, -2);  // Strip [ ]
         list parsed_list = llCSV2List(list_contents);
-        parsed_list = list_unique(parsed_list);
-        
+        if (!is_parallel_array_key(key_name)) {
+            parsed_list = list_unique(parsed_list);
+        }
+
         // SECURITY FIX: Enforce MaxListLen for notecard
         if (llGetListLength(parsed_list) > MaxListLen) {
             parsed_list = llList2List(parsed_list, 0, MaxListLen - 1);
@@ -494,8 +506,10 @@ handle_set(string msg) {
         string values_arr = llJsonGetValue(msg, ["values"]);
         if (llJsonValueType(values_arr, []) == JSON_ARRAY) {
             list new_list = llJson2List(values_arr);
-            new_list = list_unique(new_list);
-            
+            if (!is_parallel_array_key(key_name)) {
+                new_list = list_unique(new_list);
+            }
+
             if (key_name == KEY_OWNER_KEYS) {
                 integer i = 0;
                 integer nl_len = llGetListLength(new_list);
