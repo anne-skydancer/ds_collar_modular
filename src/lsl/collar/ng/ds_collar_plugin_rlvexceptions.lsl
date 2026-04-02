@@ -1,10 +1,11 @@
 /*--------------------
 PLUGIN: ds_collar_plugin_rlvexceptions.lsl
 VERSION: 1.00
-REVISION: 27
+REVISION: 28
 PURPOSE: Manage RLV teleport and IM exceptions for owners and trustees
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- REVISION 28: Guard apply_settings_delta to skip reconcile when value unchanged
 - REVISION 27: Fix case mismatch in MenuContext causing silent toggle failures;
   apply state changes and RLV commands immediately on Allow/Deny
 - REVISION 26: Batched RLV commands with comma separator; cached list lengths in loops
@@ -220,20 +221,20 @@ apply_settings_delta(string msg) {
         string changes = llJsonGetValue(msg, ["changes"]);
         
         if (json_has(changes, [KEY_EX_OWNER_TP])) {
-            ExOwnerTp = (integer)llJsonGetValue(changes, [KEY_EX_OWNER_TP]);
-            reconcile_all();
+            integer val = (integer)llJsonGetValue(changes, [KEY_EX_OWNER_TP]);
+            if (val != ExOwnerTp) { ExOwnerTp = val; reconcile_all(); }
         }
         if (json_has(changes, [KEY_EX_OWNER_IM])) {
-            ExOwnerIm = (integer)llJsonGetValue(changes, [KEY_EX_OWNER_IM]);
-            reconcile_all();
+            integer val = (integer)llJsonGetValue(changes, [KEY_EX_OWNER_IM]);
+            if (val != ExOwnerIm) { ExOwnerIm = val; reconcile_all(); }
         }
         if (json_has(changes, [KEY_EX_TRUSTEE_TP])) {
-            ExTrusteeTp = (integer)llJsonGetValue(changes, [KEY_EX_TRUSTEE_TP]);
-            reconcile_all();
+            integer val = (integer)llJsonGetValue(changes, [KEY_EX_TRUSTEE_TP]);
+            if (val != ExTrusteeTp) { ExTrusteeTp = val; reconcile_all(); }
         }
         if (json_has(changes, [KEY_EX_TRUSTEE_IM])) {
-            ExTrusteeIm = (integer)llJsonGetValue(changes, [KEY_EX_TRUSTEE_IM]);
-            reconcile_all();
+            integer val = (integer)llJsonGetValue(changes, [KEY_EX_TRUSTEE_IM]);
+            if (val != ExTrusteeIm) { ExTrusteeIm = val; reconcile_all(); }
         }
         
         // Handle multi_owner_mode changes
