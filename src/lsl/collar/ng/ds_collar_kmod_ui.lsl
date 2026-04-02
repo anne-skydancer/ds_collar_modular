@@ -623,7 +623,8 @@ handle_button_click(key user, string button, string context) {
             string msg = llList2Json(JSON_OBJECT, [
                 "type", "start",
                 "context", context,
-                "user", (string)user
+                "user", (string)user,
+                "acl", user_acl
             ]);
 
             llMessageLinked(LINK_SET, UI_BUS, msg, user);

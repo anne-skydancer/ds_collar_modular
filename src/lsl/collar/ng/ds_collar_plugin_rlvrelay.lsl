@@ -15,7 +15,6 @@ CHANGES:
 
 /* -------------------- CONSOLIDATED ABI -------------------- */
 integer KERNEL_LIFECYCLE = 500;
-integer AUTH_BUS = 700;
 integer SETTINGS_BUS = 800;
 integer UI_BUS = 900;
 integer DIALOG_BUS = 950;
@@ -66,7 +65,6 @@ list Relays = [];
 // Session management
 key CurrentUser = NULL_KEY;
 integer UserAcl = -999;
-integer AclPending = FALSE;
 string SessionId = "";
 
 // Menu state for object list pagination
@@ -266,42 +264,6 @@ persist_hardcore(integer new_hardcore) {
         "value", (string)new_hardcore
     ]);
     llMessageLinked(LINK_SET, SETTINGS_BUS, msg, NULL_KEY);
-}
-
-/* -------------------- ACL VALIDATION -------------------- */
-
-request_acl(key user) {
-    AclPending = TRUE;
-    
-    string msg = llList2Json(JSON_OBJECT, [
-        "type", "acl_query",
-        "avatar", (string)user,
-        "id", PLUGIN_CONTEXT + "_acl"
-    ]);
-    llMessageLinked(LINK_SET, AUTH_BUS, msg, NULL_KEY);
-}
-
-handle_acl_result(string msg) {
-    if (!json_has(msg, ["avatar"])) return;
-    if (!json_has(msg, ["level"])) return;
-    
-    key avatar = (key)llJsonGetValue(msg, ["avatar"]);
-    if (avatar != CurrentUser) return;
-    
-    integer level = (integer)llJsonGetValue(msg, ["level"]);
-    
-    AclPending = FALSE;
-    UserAcl = level;
-    
-    // Check if user has sufficient access
-    if (level < PLUGIN_MIN_ACL) {
-        llRegionSayTo(CurrentUser, 0, "Access denied.");
-        cleanup_session();
-        return;
-    }
-    
-    // User has access, show menu
-    show_main_menu();
 }
 
 /* -------------------- UI / MENU SYSTEM -------------------- */
@@ -527,7 +489,6 @@ close_silent() {
 cleanup_session() {
     CurrentUser = NULL_KEY;
     UserAcl = -999;
-    AclPending = FALSE;
     SessionId = "";
     ObjectListPage = 0;
 }
@@ -565,8 +526,8 @@ handle_start(string msg) {
     
     // Start new session
     CurrentUser = user;
-    request_acl(user);
-    
+    UserAcl = (integer)llJsonGetValue(msg, ["acl"]);
+    show_main_menu();
 }
 
 handle_dialog_response(string msg) {
@@ -739,13 +700,6 @@ default
             }
             else if (msg_type == "settings_delta") {
                 apply_settings_delta(msg);
-            }
-        }
-        
-        /* -------------------- AUTH -------------------- */
-        else if (num == AUTH_BUS) {
-            if (msg_type == "acl_result") {
-                handle_acl_result(msg);
             }
         }
         

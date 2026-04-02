@@ -23,7 +23,6 @@ CHANGES:
 
 /* -------------------- CONSOLIDATED ABI -------------------- */
 integer KERNEL_LIFECYCLE = 500;
-integer AUTH_BUS = 700;
 integer UI_BUS = 900;
 integer DIALOG_BUS = 950;
 
@@ -52,7 +51,6 @@ key LeashTarget = NULL_KEY;  // Target for coffle/post
 // Session/menu state
 key CurrentUser = NULL_KEY;
 integer UserAcl = -999;
-integer AclPending = FALSE;
 string SessionId = "";
 string MenuContext = "";
 string SensorMode = "";
@@ -100,15 +98,6 @@ showMenu(string context, string title, string body, list buttons) {
         "buttons", llList2Json(JSON_ARRAY, buttons),
         "timeout", 60
     ]), NULL_KEY);
-}
-
-/* -------------------- ACL QUERIES -------------------- */
-requestAcl(key user) {
-    AclPending = TRUE;
-    llMessageLinked(LINK_SET, AUTH_BUS, llList2Json(JSON_OBJECT, [
-        "type", "acl_query",
-        "avatar", (string)user
-    ]), user);
 }
 
 /* -------------------- PLUGIN REGISTRATION -------------------- */
@@ -366,8 +355,7 @@ handleOfferResponse(string button) {
         // Send grab action to kernel with target as leasher
         llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
             "type", "leash_action",
-            "action", "grab",
-            "acl_verified", "1"
+            "action", "grab"
         ]), OfferTarget);
         
         llRegionSayTo(OfferOriginator, 0, llKey2Name(OfferTarget) + " accepted your leash offer.");
@@ -414,8 +402,7 @@ giveHolderObject() {
 sendLeashAction(string action) {
     llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
         "type", "leash_action",
-        "action", action,
-        "acl_verified", "1"
+        "action", action
     ]), CurrentUser);
 }
 
@@ -423,8 +410,7 @@ sendLeashActionWithTarget(string action, key target) {
     llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
         "type", "leash_action",
         "action", action,
-        "target", (string)target,
-        "acl_verified", "1"
+        "target", (string)target
     ]), CurrentUser);
 }
 
@@ -432,8 +418,7 @@ sendSetLength(integer length) {
     llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
         "type", "leash_action",
         "action", "set_length",
-        "length", (string)length,
-        "acl_verified", "1"
+        "length", (string)length
     ]), CurrentUser);
 }
 
@@ -650,7 +635,6 @@ returnToRoot() {
 cleanupSession() {
     CurrentUser = NULL_KEY;
     UserAcl = -999;
-    AclPending = FALSE;
     SessionId = "";
     MenuContext = "";
     SensorMode = "";
@@ -726,7 +710,8 @@ default
                 if (!json_has(msg, ["context"])) return;
                 if (llJsonGetValue(msg, ["context"]) != PLUGIN_CONTEXT) return;
                 CurrentUser = id;
-                requestAcl(id);
+                UserAcl = (integer)llJsonGetValue(msg, ["acl"]);
+                scheduleStateQuery("main");
                 return;
             }
 
@@ -775,27 +760,6 @@ default
                 showOfferDialog(target, originator);
                 return;
             }
-        }
-
-        if (num == AUTH_BUS) {
-            if (!json_has(msg, ["type"])) return;
-            string msg_type = llJsonGetValue(msg, ["type"]);
-
-            if (msg_type == "acl_result") {
-                if (!AclPending) return;
-                if (!json_has(msg, ["avatar"])) return;
-
-                key avatar = (key)llJsonGetValue(msg, ["avatar"]);
-                if (avatar != CurrentUser) return;
-
-                if (json_has(msg, ["level"])) {
-                    UserAcl = (integer)llJsonGetValue(msg, ["level"]);
-                    AclPending = FALSE;
-                    scheduleStateQuery("main");
-                }
-                return;
-            }
-            return;
         }
 
         if (num == DIALOG_BUS) {

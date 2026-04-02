@@ -17,7 +17,6 @@ CHANGES:
 
 /* -------------------- CONSOLIDATED ABI -------------------- */
 integer KERNEL_LIFECYCLE = 500;
-integer AUTH_BUS = 700;
 integer SETTINGS_BUS = 800;
 integer UI_BUS = 900;
 integer DIALOG_BUS = 950;
@@ -38,7 +37,6 @@ integer PLUGIN_MIN_ACL = 1;  // Public can view (limited options)
 */
 
 /* -------------------- ACL TIERS -------------------- */
-list ALLOWED_ACL_VIEW = [1, 2, 3, 4, 5];  // Can see menu
 list ALLOWED_ACL_FULL = [2, 3, 4, 5];     // Can use admin functions
 
 /* -------------------- ALL POSSIBLE SETTINGS -------------------- */
@@ -124,34 +122,6 @@ apply_settings_delta() {
     llMessageLinked(LINK_SET, SETTINGS_BUS, request, NULL_KEY);
 }
 
-/* -------------------- ACL MANAGEMENT -------------------- */
-
-request_acl(key user_key) {
-    string msg = llList2Json(JSON_OBJECT, [
-        "type", "acl_query",
-        "avatar", (string)user_key
-    ]);
-    llMessageLinked(LINK_SET, AUTH_BUS, msg, NULL_KEY);
-}
-
-handle_acl_result(string msg) {
-    if (!json_has(msg, ["avatar"])) return;
-    if (!json_has(msg, ["level"])) return;
-    
-    key avatar = (key)llJsonGetValue(msg, ["avatar"]);
-    if (avatar != CurrentUser) return;
-    
-    integer level = (integer)llJsonGetValue(msg, ["level"]);
-    CurrentUserAcl = level;
-    
-    if (llListFindList(ALLOWED_ACL_VIEW, [level]) == -1) {
-        llRegionSayTo(CurrentUser, 0, "Access denied.");
-        return_to_root();
-        return;
-    }
-    
-    show_main_menu();
-}
 
 /* -------------------- MENU DISPLAY -------------------- */
 
@@ -344,8 +314,7 @@ do_reload_settings() {
 do_clear_leash() {
     string msg = llList2Json(JSON_OBJECT, [
         "type", "leash_action",
-        "action", "release",
-        "acl_verified", "1"
+        "action", "release"
     ]);
     llMessageLinked(LINK_SET, UI_BUS, msg, CurrentUser);
 
@@ -428,44 +397,34 @@ handle_dialog_response(string msg) {
         return;
     }
     
-    // Admin actions (ACL check)
+    // Admin actions (button only shown to qualified ACL)
     if (button == "View Settings") {
-        if (llListFindList(ALLOWED_ACL_FULL, [CurrentUserAcl]) != -1) {
-            do_view_settings();
-            show_main_menu();
-        }
+        do_view_settings();
+        show_main_menu();
         return;
     }
-    
+
     if (button == "Access List") {
-        if (llListFindList(ALLOWED_ACL_FULL, [CurrentUserAcl]) != -1) {
-            do_display_access_list();
-            show_main_menu();
-        }
+        do_display_access_list();
+        show_main_menu();
         return;
     }
-    
+
     if (button == "Reload Settings") {
-        if (llListFindList(ALLOWED_ACL_FULL, [CurrentUserAcl]) != -1) {
-            do_reload_settings();
-            show_main_menu();
-        }
+        do_reload_settings();
+        show_main_menu();
         return;
     }
-    
+
     if (button == "Clear Leash") {
-        if (llListFindList(ALLOWED_ACL_FULL, [CurrentUserAcl]) != -1) {
-            do_clear_leash();
-            show_main_menu();
-        }
+        do_clear_leash();
+        show_main_menu();
         return;
     }
-    
+
     if (button == "Reload Collar") {
-        if (llListFindList(ALLOWED_ACL_FULL, [CurrentUserAcl]) != -1) {
-            do_reload_collar();
-            show_main_menu();
-        }
+        do_reload_collar();
+        show_main_menu();
         return;
     }
     
@@ -563,18 +522,6 @@ default {
             return;
         }
         
-        /* -------------------- ACL RESULTS -------------------- */if (num == AUTH_BUS) {
-            if (!json_has(msg, ["type"])) return;
-            string msg_type = llJsonGetValue(msg, ["type"]);
-            
-            if (msg_type == "acl_result") {
-                handle_acl_result(msg);
-                return;
-            }
-            
-            return;
-        }
-        
         /* -------------------- UI START -------------------- */if (num == UI_BUS) {
             if (!json_has(msg, ["type"])) return;
             string msg_type = llJsonGetValue(msg, ["type"]);
@@ -586,7 +533,8 @@ default {
                 if (id == NULL_KEY) return;
                 
                 CurrentUser = id;
-                request_acl(id);
+                CurrentUserAcl = (integer)llJsonGetValue(msg, ["acl"]);
+                show_main_menu();
                 return;
             }
             

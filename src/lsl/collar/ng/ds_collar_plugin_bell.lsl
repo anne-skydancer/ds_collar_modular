@@ -13,7 +13,6 @@ CHANGES:
 --------------------*/
 
 integer KERNEL_LIFECYCLE = 500;
-integer AUTH_BUS = 700;
 integer SETTINGS_BUS = 800;
 integer UI_BUS = 900;
 integer DIALOG_BUS = 950;
@@ -42,7 +41,6 @@ float JINGLE_INTERVAL = 1.75;  // Play sound every 1.75 seconds while moving
 // Session state
 key CurrentUser = NULL_KEY;
 integer UserAcl = -999;
-integer AclPending = FALSE;
 string SessionId = "";
 string MenuContext = "";
 
@@ -105,15 +103,6 @@ show_menu(string context, string title, string body, list buttons) {
         "buttons", llList2Json(JSON_ARRAY, buttons),
         "timeout", 60
     ]), NULL_KEY);
-}
-
-/* -------------------- ACL QUERIES -------------------- */
-request_acl(key user) {
-    AclPending = TRUE;
-    llMessageLinked(LINK_SET, AUTH_BUS, llList2Json(JSON_OBJECT, [
-        "type", "acl_query",
-        "avatar", (string)user
-    ]), user);
 }
 
 /* -------------------- PLUGIN REGISTRATION -------------------- */
@@ -247,7 +236,6 @@ return_to_root() {
 cleanup_session() {
     CurrentUser = NULL_KEY;
     UserAcl = -999;
-    AclPending = FALSE;
     SessionId = "";
     MenuContext = "";
 }
@@ -381,36 +369,8 @@ default {
                 if (llJsonGetValue(msg, ["context"]) != PLUGIN_CONTEXT) return;
                 
                 CurrentUser = id;
-                request_acl(id);
-                return;
-            }
-            
-            return;
-        }
-        
-        /* -------------------- AUTH RESULT -------------------- */if (num == AUTH_BUS) {
-            if (!json_has(msg, ["type"])) return;
-            string msg_type = llJsonGetValue(msg, ["type"]);
-            
-            if (msg_type == "acl_result") {
-                if (!AclPending) return;
-                if (!json_has(msg, ["avatar"])) return;
-                
-                key avatar = (key)llJsonGetValue(msg, ["avatar"]);
-                if (avatar != CurrentUser) return;
-                
-                if (json_has(msg, ["level"])) {
-                    UserAcl = (integer)llJsonGetValue(msg, ["level"]);
-                    AclPending = FALSE;
-                    
-                    if (UserAcl < PLUGIN_MIN_ACL) {
-                        llRegionSayTo(CurrentUser, 0, "Access denied.");
-                        cleanup_session();
-                        return;
-                    }
-                    
-                    show_main_menu();
-                }
+                UserAcl = (integer)llJsonGetValue(msg, ["acl"]);
+                show_main_menu();
                 return;
             }
             

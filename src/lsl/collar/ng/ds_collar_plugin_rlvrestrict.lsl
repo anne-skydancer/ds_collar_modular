@@ -24,7 +24,6 @@ CHANGES:
 /* -------------------- CHANNELS (v2 Consolidated Architecture) -------------------- */
 
 integer KERNEL_LIFECYCLE = 500;  // register, ping/pong, soft_reset
-integer AUTH_BUS         = 700;  // ACL queries and results
 integer SETTINGS_BUS     = 800;  // Settings sync and delta
 integer UI_BUS           = 900;  // UI navigation (start, return, close)
 integer DIALOG_BUS       = 950;  // Centralized dialog management
@@ -203,33 +202,6 @@ apply_settings_delta(string msg) {
             }
         }
     }
-}
-
-/* -------------------- ACL -------------------- */
-
-request_acl(key user) {
-    llMessageLinked(LINK_SET, AUTH_BUS, llList2Json(JSON_OBJECT, [
-        "type", "acl_query",
-        "avatar", (string)user,
-        "id", PLUGIN_CONTEXT + "_acl"
-    ]), NULL_KEY);
-}
-
-handle_acl_result(string msg) {
-    if (!json_has(msg, ["avatar"]) || !json_has(msg, ["level"])) return;
-    
-    key avatar = (key)llJsonGetValue(msg, ["avatar"]);
-    if (avatar != CurrentUser) return;
-    
-    UserAcl = (integer)llJsonGetValue(msg, ["level"]);
-    
-    if (UserAcl < PLUGIN_MIN_ACL) {
-        llRegionSayTo(CurrentUser, 0, "Access denied.");
-        cleanup_session();
-        return;
-    }
-    
-    show_main();
 }
 
 /* -------------------- RESTRICTION LOGIC -------------------- */
@@ -720,21 +692,16 @@ default
                 apply_settings_delta(msg);
             }
         }
-        // ACL
-        else if (num == AUTH_BUS) {
-            if (type == "acl_result") {
-                handle_acl_result(msg);
-            }
-        }
         // UI
         else if (num == UI_BUS) {
             if (type == "start") {
                 if (!json_has(msg, ["context"])) return;
                 string context = llJsonGetValue(msg, ["context"]);
-                
+
                 if (context == PLUGIN_CONTEXT) {
                     CurrentUser = id;
-                    request_acl(CurrentUser);
+                    UserAcl = (integer)llJsonGetValue(msg, ["acl"]);
+                    show_main();
                 }
             }
         }

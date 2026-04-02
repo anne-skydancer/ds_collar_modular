@@ -19,7 +19,6 @@ CHANGES:
 
 /* -------------------- ABI CHANNELS -------------------- */
 integer KERNEL_LIFECYCLE = 500;
-integer AUTH_BUS = 700;
 integer SETTINGS_BUS = 800;
 integer UI_BUS = 900;
 integer DIALOG_BUS = 950;
@@ -314,33 +313,6 @@ clear_owner() {
     llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
         "type", "set", "key", KEY_OWNER, "value", "{}"
     ]), NULL_KEY);
-}
-
-/* -------------------- ACL -------------------- */
-
-request_acl(key user) {
-    llMessageLinked(LINK_SET, AUTH_BUS, llList2Json(JSON_OBJECT, [
-        "type", "acl_query",
-        "avatar", (string)user,
-        "id", PLUGIN_CONTEXT + "_acl"
-    ]), NULL_KEY);
-}
-
-handle_acl_result(string msg) {
-    if (!json_has(msg, ["avatar"]) || !json_has(msg, ["level"])) return;
-    
-    key avatar = (key)llJsonGetValue(msg, ["avatar"]);
-    if (avatar != CurrentUser) return;
-    
-    UserAcl = (integer)llJsonGetValue(msg, ["level"]);
-    
-    if (UserAcl < PLUGIN_MIN_ACL) {
-        llRegionSayTo(CurrentUser, 0, "Access denied.");
-        cleanup();
-        return;
-    }
-    
-    show_main();
 }
 
 /* -------------------- MENUS -------------------- */
@@ -845,12 +817,18 @@ default {
             if (type == "start" && json_has(msg, ["context"])) {
                 if (llJsonGetValue(msg, ["context"]) == PLUGIN_CONTEXT) {
                     CurrentUser = id;
-                    request_acl(id);
+                    // ACL level provided by UI module
+                    UserAcl = (integer)llJsonGetValue(msg, ["acl"]);
+
+                    if (UserAcl < PLUGIN_MIN_ACL) {
+                        llRegionSayTo(CurrentUser, 0, "Access denied.");
+                        cleanup();
+                        return;
+                    }
+
+                    show_main();
                 }
             }
-        }
-        else if (num == AUTH_BUS) {
-            if (type == "acl_result") handle_acl_result(msg);
         }
         else if (num == DIALOG_BUS) {
             if (type == "dialog_response") {

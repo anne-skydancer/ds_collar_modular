@@ -15,7 +15,6 @@ CHANGES:
 
 /* -------------------- CONSOLIDATED ABI -------------------- */
 integer KERNEL_LIFECYCLE = 500;
-integer AUTH_BUS = 700;
 integer SETTINGS_BUS = 800;
 integer UI_BUS = 900;
 integer DIALOG_BUS = 950;
@@ -218,36 +217,6 @@ persist_blacklist() {
         "values", llList2Json(JSON_ARRAY, Blacklist)
     ]);
     llMessageLinked(LINK_SET, SETTINGS_BUS, msg, NULL_KEY);
-}
-
-/* -------------------- ACL MANAGEMENT -------------------- */
-
-request_acl(key user_key) {
-    string msg = llList2Json(JSON_OBJECT, [
-        "type", "acl_query",
-        "avatar", (string)user_key
-    ]);
-    llMessageLinked(LINK_SET, AUTH_BUS, msg, NULL_KEY);
-}
-
-handle_acl_result(string msg) {
-    if (!json_has(msg, ["avatar"])) return;
-    if (!json_has(msg, ["level"])) return;
-    
-    key avatar = (key)llJsonGetValue(msg, ["avatar"]);
-    if (avatar != CurrentUser) return;
-    
-    integer level = (integer)llJsonGetValue(msg, ["level"]);
-    CurrentUserAcl = level;
-    
-    // Check access
-    if (!in_allowed_levels(level)) {
-        llRegionSayTo(CurrentUser, 0, "Access denied.");
-        return_to_root();
-        return;
-    }
-    
-    show_main_menu();
 }
 
 /* -------------------- MENU DISPLAY -------------------- */
@@ -509,17 +478,8 @@ default {
                 
                 // User wants to start this plugin
                 CurrentUser = id;
-                request_acl(id);
-                return;
-            }
-            
-            return;
-        }
-        
-        /* -------------------- AUTH RESULT -------------------- */
-        if (num == AUTH_BUS) {
-            if (msg_type == "acl_result") {
-                handle_acl_result(msg);
+                CurrentUserAcl = (integer)llJsonGetValue(msg, ["acl"]);
+                show_main_menu();
                 return;
             }
             
