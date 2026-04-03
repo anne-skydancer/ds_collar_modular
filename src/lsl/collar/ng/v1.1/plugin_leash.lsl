@@ -131,7 +131,6 @@ showMainMenu() {
         if (btn_allowed("Clip"))    buttons += ["Clip"];
         if (btn_allowed("Offer"))   buttons += ["Offer"];
         if (btn_allowed("Coffle"))  buttons += ["Coffle"];
-        if (btn_allowed("Post"))    buttons += ["Post"];
     }
     else {
         // Unclip: policy + must be leasher or ACL 3+
@@ -148,6 +147,8 @@ showMainMenu() {
             buttons += ["Take"];
         }
     }
+    // Post: available regardless of leash state
+    if (btn_allowed("Post"))    buttons += ["Post"];
 
     if (btn_allowed("Get Holder")) buttons += ["Get Holder"];
     if (btn_allowed("Settings"))   buttons += ["Settings"];
