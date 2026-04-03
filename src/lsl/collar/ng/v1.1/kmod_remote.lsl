@@ -1,5 +1,5 @@
 /*--------------------
-MODULE: ds_collar_kmod_remote.lsl
+MODULE: kmod_remote.lsl
 VERSION: 1.10
 REVISION: 0
 PURPOSE: External HUD communication bridge for remote control workflows
@@ -338,8 +338,8 @@ handle_update_discover(string message) {
     if (distance > MAX_DETECTION_RANGE) return;
     
     // Check inventory status for install/update determination
-    integer has_kernel = (llGetInventoryType("ds_collar_kernel") == INVENTORY_SCRIPT);
-    integer has_receiver = (llGetInventoryType("ds_collar_receiver") == INVENTORY_SCRIPT);
+    integer has_kernel = (llGetInventoryType("collar_kernel") == INVENTORY_SCRIPT);
+    integer has_receiver = (llGetInventoryType("ds_collar_receiver") == INVENTORY_SCRIPT);  // receiver script is external, retains old name
     
     // Generate random PIN for script transfer
     integer script_pin = (integer)(llFrand(1E08));

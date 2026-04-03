@@ -1,5 +1,5 @@
 /*--------------------
-PLUGIN: ds_collar_plugin_maintenance.lsl
+PLUGIN: plugin_maint.lsl
 VERSION: 1.10
 REVISION: 0
 PURPOSE: Maintenance and utility functions for collar management

@@ -1,5 +1,5 @@
 /*--------------------
-PLUGIN: ds_collar_plugin_sos.lsl
+PLUGIN: plugin_sos.lsl
 VERSION: 1.10
 REVISION: 0
 PURPOSE: Emergency wearer-accessible actions when ACL is locked out

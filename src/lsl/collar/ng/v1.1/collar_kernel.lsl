@@ -1,5 +1,5 @@
 /*--------------------
-MODULE: ds_collar_kernel.lsl
+MODULE: collar_kernel.lsl
 VERSION: 1.10
 REVISION: 1
 PURPOSE: Plugin registry, lifecycle management, heartbeat monitoring
@@ -71,8 +71,8 @@ integer count_scripts() {
 }
 
 integer is_plugin_script(string script_name) {
-    // Plugins all start with ds_collar_plugin_
-    return (llSubStringIndex(script_name, "ds_collar_plugin_") == 0);
+    // Plugins all start with plugin_
+    return (llSubStringIndex(script_name, "plugin_") == 0);
 }
 
 /* -------------------- QUEUE MANAGEMENT (Unix modprobe-style) -------------------- */

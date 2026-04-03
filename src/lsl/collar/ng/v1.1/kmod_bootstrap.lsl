@@ -1,5 +1,5 @@
 /*--------------------
-MODULE: ds_collar_kmod_bootstrap.lsl
+MODULE: kmod_bootstrap.lsl
 VERSION: 1.10
 REVISION: 0
 PURPOSE: Startup coordination, RLV detection, owner name resolution

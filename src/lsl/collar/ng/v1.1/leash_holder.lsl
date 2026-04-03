@@ -1,5 +1,5 @@
 /*--------------------
-SCRIPT: ds_collar_leash_holder.lsl
+SCRIPT: leash_holder.lsl
 VERSION: 1.10
 REVISION: 0
 PURPOSE: Minimal leash-holder target responder for external objects

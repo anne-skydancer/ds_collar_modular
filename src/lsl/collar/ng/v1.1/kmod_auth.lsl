@@ -1,5 +1,5 @@
 /*--------------------
-MODULE: ds_collar_kmod_auth.lsl
+MODULE: kmod_auth.lsl
 VERSION: 1.10
 REVISION: 1
 PURPOSE: Authoritative ACL engine - OPTIMIZED

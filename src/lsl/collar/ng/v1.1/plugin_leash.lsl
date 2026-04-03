@@ -1,5 +1,5 @@
 /*--------------------
-PLUGIN: ds_collar_plugin_leash.lsl
+PLUGIN: plugin_leash.lsl
 VERSION: 1.10
 REVISION: 0
 PURPOSE: User interface and configuration for the leashing system

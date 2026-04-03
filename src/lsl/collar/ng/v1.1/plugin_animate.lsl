@@ -1,5 +1,5 @@
 /*--------------------
-PLUGIN: ds_collar_plugin_animate.lsl
+PLUGIN: plugin_animate.lsl
 VERSION: 1.10
 REVISION: 0
 PURPOSE: Paginated animation menu driven by inventory contents

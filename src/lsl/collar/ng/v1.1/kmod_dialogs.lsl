@@ -1,5 +1,5 @@
 /*--------------------
-MODULE: ds_collar_kmod_dialogs.lsl
+MODULE: kmod_dialogs.lsl
 VERSION: 1.10
 REVISION: 0
 PURPOSE: Centralized dialog management for shared listener handling

@@ -1,5 +1,5 @@
 /*--------------------
-PLUGIN: ds_collar_plugin_tpe.lsl
+PLUGIN: plugin_tpe.lsl
 VERSION: 1.10
 REVISION: 0
 PURPOSE: Manage TPE mode with wearer confirmation and owner oversight

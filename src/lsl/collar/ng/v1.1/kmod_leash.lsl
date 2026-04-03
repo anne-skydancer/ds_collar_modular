@@ -1,5 +1,5 @@
 /*--------------------
-MODULE: ds_collar_kmod_leash.lsl
+MODULE: kmod_leash.lsl
 VERSION: 1.10
 REVISION: 1
 PURPOSE: Leashing engine providing leash services to plugins
