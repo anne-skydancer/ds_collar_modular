@@ -25,6 +25,7 @@ string PLUGIN_CONTEXT = "core_leash";
 
 // Policy button labels (must match plugin_leash policy CSV entries)
 string POL_CLIP     = "Clip";
+string POL_TAKE     = "Take";
 string POL_UNCLIP   = "Unclip";
 string POL_PASS     = "Pass";
 string POL_OFFER    = "Offer";
@@ -351,7 +352,11 @@ handleAclResult(string msg) {
     else {
         string btn_label = "";
 
-        if (PendingAction == "grab") btn_label = POL_CLIP;
+        if (PendingAction == "grab") {
+            // "grab" is "Take" (take-over) when already leashed, "Clip" otherwise
+            if (Leashed) btn_label = POL_TAKE;
+            else btn_label = POL_CLIP;
+        }
         else if (PendingAction == "coffle") btn_label = POL_COFFLE;
         else if (PendingAction == "post") btn_label = POL_POST;
         else if (PendingAction == "set_length" || PendingAction == "toggle_turn") btn_label = POL_SETTINGS;
