@@ -1,10 +1,13 @@
 /*--------------------
-MODULE: ds_collar_kmod_leash.lsl
+MODULE: kmod_leash.lsl
 VERSION: 1.10
-REVISION: 0
+REVISION: 1
 PURPOSE: Leashing engine providing leash services to plugins
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- v1.1 rev 1: Replaced hardcoded ALLOWED_ACL_* lists and inAllowedList() with
+  LSD policy reads via policy_allows(). Action permissions now read from the
+  same policy:core_leash LSD key that plugin_leash declares.
 - v1.1 rev 0: Version bump for LSD policy architecture. No functional changes to this module.
 --------------------*/
 
@@ -20,13 +23,15 @@ integer LEASH_CHAN_DS = -192837465;
 
 string PLUGIN_CONTEXT = "core_leash";
 
-// ACL definitions for leash operations
-list ALLOWED_ACL_GRAB = [1, 3, 4, 5];     // Public, Trustee, Unowned, Owner
-list ALLOWED_ACL_SETTINGS = [3, 4, 5];    // Trustee, Unowned, Owner
-list ALLOWED_ACL_PASS = [3, 4, 5];        // Trustee, Unowned, Owner (plus current leasher)
-list ALLOWED_ACL_OFFER = [2];             // Owned wearer only (when not currently leashed)
-list ALLOWED_ACL_COFFLE = [3, 5];         // Trustee, Owner only
-list ALLOWED_ACL_POST = [1, 3, 5];        // Public, Trustee, Owner
+// Policy button labels (must match plugin_leash policy CSV entries)
+string POL_CLIP     = "Clip";
+string POL_TAKE     = "Take";
+string POL_UNCLIP   = "Unclip";
+string POL_PASS     = "Pass";
+string POL_OFFER    = "Offer";
+string POL_COFFLE   = "Coffle";
+string POL_POST     = "Post";
+string POL_SETTINGS = "Settings";
 
 // Leash mode constants
 integer MODE_AVATAR = 0;  // Standard leash to avatar
@@ -111,8 +116,13 @@ string jsonGet(string j, string k, string default_val) {
 integer now() {
     return llGetUnixTime();
 }
-integer inAllowedList(integer level, list allowed) {
-    return (llListFindList(allowed, [level]) != -1);
+// Check if a button label is allowed at the given ACL level via LSD policy
+integer policy_allows(string btn_label, integer acl_level) {
+    string policy = llLinksetDataRead("policy:" + PLUGIN_CONTEXT);
+    if (policy == "") return FALSE;
+    string csv = llJsonGetValue(policy, [(string)acl_level]);
+    if (csv == JSON_INVALID) return FALSE;
+    return (llListFindList(llCSV2List(csv), [btn_label]) != -1);
 }
 denyAccess(key user, string reason) {
     llRegionSayTo(user, 0, "Access denied: " + reason);
@@ -277,27 +287,26 @@ handleAclResult(string msg) {
     
     // Execute pending action with ACL verification
 
-    // Special case: release (current leasher OR level 3+ can release)
-    // ACL 2 (Owned Wearer) must use SOS emergency release
+    // Release: current leasher can always release (safety); otherwise policy-gated
     if (PendingAction == "release") {
-        if (PendingActionUser == Leasher || acl_level >= 3) {
+        if (PendingActionUser == Leasher || policy_allows(POL_UNCLIP, acl_level)) {
             releaseLeashInternal(PendingActionUser);
         } else {
             denyAccess(PendingActionUser, "only leasher or authorized users can release");
         }
     }
-    // Special case: pass (current leasher OR level 3+ can pass, then verify target)
+    // Special case: pass (current leasher OR policy-allowed can pass, then verify target)
     else if (PendingAction == "pass") {
-        if (PendingActionUser == Leasher || inAllowedList(acl_level, ALLOWED_ACL_PASS)) {
+        if (PendingActionUser == Leasher || policy_allows(POL_PASS, acl_level)) {
             requestAclForPassTarget(PendingPassTarget);
             return;  // Don't clear pending state yet
         } else {
             denyAccess(PendingActionUser, "insufficient permissions to pass leash");
         }
     }
-    // Special case: offer (ACL 2 only, when NOT currently leashed, then verify target)
+    // Special case: offer (policy-allowed, when NOT currently leashed, then verify target)
     else if (PendingAction == "offer") {
-        if (inAllowedList(acl_level, ALLOWED_ACL_OFFER) && !Leashed) {
+        if (policy_allows(POL_OFFER, acl_level) && !Leashed) {
             PendingIsOffer = TRUE;
             requestAclForPassTarget(PendingPassTarget);
             return;  // Don't clear pending state yet
@@ -338,16 +347,20 @@ handleAclResult(string msg) {
         PendingPassOriginalUser = NULL_KEY;
         PendingIsOffer = FALSE;
     }
-    // Standard ACL pattern for simple actions
+    // Standard ACL pattern for simple actions — read from LSD policy
     else {
-        list allowed_acl = [];
-        
-        if (PendingAction == "grab") allowed_acl = ALLOWED_ACL_GRAB;
-        else if (PendingAction == "coffle") allowed_acl = ALLOWED_ACL_COFFLE;
-        else if (PendingAction == "post") allowed_acl = ALLOWED_ACL_POST;
-        else if (PendingAction == "set_length" || PendingAction == "toggle_turn") allowed_acl = ALLOWED_ACL_SETTINGS;
-        
-        if (inAllowedList(acl_level, allowed_acl)) {
+        string btn_label = "";
+
+        if (PendingAction == "grab") {
+            // "grab" is "Take" (take-over) when already leashed, "Clip" otherwise
+            if (Leashed) btn_label = POL_TAKE;
+            else btn_label = POL_CLIP;
+        }
+        else if (PendingAction == "coffle") btn_label = POL_COFFLE;
+        else if (PendingAction == "post") btn_label = POL_POST;
+        else if (PendingAction == "set_length" || PendingAction == "toggle_turn") btn_label = POL_SETTINGS;
+
+        if (btn_label != "" && policy_allows(btn_label, acl_level)) {
             if (PendingAction == "grab") grabLeashInternal(PendingActionUser, acl_level);
             else if (PendingAction == "coffle") coffleLeashInternal(PendingActionUser, PendingPassTarget);
             else if (PendingAction == "post") postLeashInternal(PendingActionUser, PendingPassTarget);

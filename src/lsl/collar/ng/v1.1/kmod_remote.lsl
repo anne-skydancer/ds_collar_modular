@@ -1,5 +1,5 @@
 /*--------------------
-MODULE: ds_collar_kmod_remote.lsl
+MODULE: kmod_remote.lsl
 VERSION: 1.10
 REVISION: 0
 PURPOSE: External HUD communication bridge for remote control workflows
@@ -42,6 +42,9 @@ integer MENU_REQUEST_STRIDE = 2;
 list QueryTimestamps = [];
 integer MAX_PENDING_QUERIES = 20;
 float QUERY_TIMEOUT = 30.0;  // 30 seconds
+
+// Kernel presence — set TRUE on first heartbeat ping received
+integer KernelAlive = FALSE;
 
 /* Per-request-type rate limiting: [avatar_key, request_type, timestamp, ...] */
 list RateLimitTimestamps = [];
@@ -337,9 +340,9 @@ handle_update_discover(string message) {
     
     if (distance > MAX_DETECTION_RANGE) return;
     
-    // Check inventory status for install/update determination
-    integer has_kernel = (llGetInventoryType("ds_collar_kernel") == INVENTORY_SCRIPT);
-    integer has_receiver = (llGetInventoryType("ds_collar_receiver") == INVENTORY_SCRIPT);
+    // Determine install vs update: kernel presence via heartbeat signal, not name
+    integer has_kernel = KernelAlive;
+    integer has_receiver = (llGetInventoryType("ds_collar_receiver") == INVENTORY_SCRIPT);  // receiver script is external
     
     // Generate random PIN for script transfer
     integer script_pin = (integer)(llFrand(1E08));
@@ -450,6 +453,7 @@ default {
 
         /* -------------------- KERNEL LIFECYCLE -------------------- */
         if (num == KERNEL_LIFECYCLE) {
+            KernelAlive = TRUE;  // Any kernel message proves kernel is present
             if (msg_type == "soft_reset" || msg_type == "soft_reset_all") {
                 llResetScript();
             }

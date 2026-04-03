@@ -1,7 +1,16 @@
 # DS Collar NG Scripts - LSL Best Practices Analysis
 
+> **NOTE (2026-04-02):** This analysis was written against the v1.0 codebase before the v1.1 dead code cleanup. Several references are now stale:
+> - The plugin ACL registry (`broadcast_plugin_acl_list`, `filter_plugins_for_user`, `register_acl`, `PluginAclContexts/Levels`) has been removed — superseded by LSD policies.
+> - Dead `policy_*` response fields in `kmod_auth` have been removed.
+> - `min_acl` is no longer part of plugin registration or the kernel registry.
+> - Registry stride is now 5 (was 6). Script file names use short form (e.g. `kmod_auth.lsl` not `ds_collar_kmod_auth.lsl`).
+> - The codebase has 26 scripts (not 30 as stated below — the "30" figure predated chat command removal and file consolidation).
+> 
+> Performance and memory findings that reference still-existing code remain valid.
+
 **Date:** 2026-04-01
-**Scope:** All 26 LSL scripts in `src/lsl/collar/ng/` (after chat command removal)
+**Scope:** All 26 LSL scripts in `src/lsl/collar/ng/v1.1/` (after chat command removal)
 **Method:** Cross-reference against Second Life Wiki LSL best practices, LSL Script Efficiency guidelines, LSL Script Memory documentation, and project CLAUDE.md conventions.
 
 ---
@@ -44,7 +53,7 @@ However, cross-referencing against the SL Wiki's LSL Script Efficiency, LSL Scri
 ### 2.1 Performance Issues (Cross-Codebase)
 
 #### P1: Double JSON Path Reads
-**Affects:** All 30 scripts
+**Affects:** All 26 scripts
 **Pattern:**
 ```lsl
 // Current: 2 function calls, ~4-6ms total
@@ -59,7 +68,7 @@ if (t != JSON_INVALID) { ... }
 **Impact:** Every link_message handler pays this double cost. With ~15 plugins pinging every 5s, this adds up.
 
 #### P2: Manual JSON Array Construction
-**Affects:** `kernel.lsl:425-457`, `kmod_auth.lsl:146-177`
+**Affects:** `kernel.lsl:425-457` (~~`kmod_auth.lsl:146-177`~~ removed in v1.1)
 **Pattern:**
 ```lsl
 // Current: O(n) string concatenation with temporaries

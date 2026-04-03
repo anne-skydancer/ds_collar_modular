@@ -1,5 +1,5 @@
 /*--------------------
-MODULE: ds_collar_kmod_settings.lsl
+MODULE: kmod_settings.lsl
 VERSION: 1.10
 REVISION: 0
 PURPOSE: Persistent key-value store with notecard loading and delta updates

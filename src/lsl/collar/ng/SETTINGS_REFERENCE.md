@@ -1,6 +1,6 @@
 # DS Collar Settings Card Reference Guide
 
-**Version 1.0** — Comprehensive reference for the DS Collar Modular settings system
+**Version 1.1** — Comprehensive reference for the DS Collar Modular settings system
 
 ---
 
@@ -69,12 +69,10 @@ The collar uses a **three-tier persistence model**, not simple RAM-only storage:
 
 # Owner Settings (Single Owner Mode)
 multi_owner_mode = 0
-owner_key = 12345678-1234-1234-1234-123456789abc
-owner_hon = Master
+owner = {"12345678-1234-1234-1234-123456789abc": "Master"}
 
-# Trustees (optional)
-trustees = [uuid-of-trusted-person-1, uuid-of-trusted-person-2]
-trustee_honorifics = [Sir, Lady]
+# Trustees (optional — JSON object, NOT array)
+trustees = {"uuid-of-trusted-person-1": "Sir", "uuid-of-trusted-person-2": "Lady"}
 
 # Access Control
 public_mode = 0
@@ -105,13 +103,10 @@ To get someone's UUID in Second Life:
 | Key | Type | Default | Description | Notes |
 |-----|------|---------|-------------|-------|
 | `multi_owner_mode` | boolean (0/1) | `0` | Enable multiple owners | **Notecard-only** — Cannot be changed via UI |
-| `owner_key` | UUID | `NULL_KEY` | Single owner UUID | Used when `multi_owner_mode = 0` |
-| `owner_keys` | JSON array | `[]` | List of owner UUIDs | Used when `multi_owner_mode = 1`; **Notecard-only** for bulk set |
-| `owner_hon` | string | `""` | Owner's honorific | e.g., "Master", "Mistress", "Owner" |
-| `owner_honorifics` | JSON array | `[]` | List of honorifics | Parallel array to `owner_keys` |
-| `trustees` | JSON array | `[]` | List of trusted user UUIDs | Trustees have elevated permissions (ACL level 3) |
-| `trustee_honorifics` | JSON array | `[]` | List of trustee honorifics | Parallel array to `trustees` |
-| `blacklist` | JSON array | `[]` | List of blocked UUIDs | Blacklisted users have no access (ACL level -1) |
+| `owner` | JSON object | `{}` | Single owner `{uuid: honorific}` | Used when `multi_owner_mode = 0` |
+| `owners` | JSON object | `{}` | Multiple owners `{uuid: hon, ...}` | Used when `multi_owner_mode = 1`; **Notecard-only** for bulk set |
+| `trustees` | JSON object | `{}` | Trusted users `{uuid: hon, ...}` | Trustees have elevated permissions (ACL level 3) |
+| `blacklist` | CSV in brackets | `[]` | List of blocked UUIDs | Blacklisted users have no access (ACL level -1) |
 
 ### Access Modes
 
@@ -148,10 +143,15 @@ key = value
 key = value  # This is NOT supported (no inline comments)
 ```
 
-**Lists:** Enclosed in brackets, comma-separated
+**JSON Objects:** Owner/trustee keys use `{uuid: honorific}` format
 ```
-trustees = [uuid1, uuid2, uuid3]
-owner_honorifics = [Master, Mistress, Owner]
+owner = {"12345678-1234-1234-1234-123456789abc": "Master"}
+trustees = {"uuid1": "Sir", "uuid2": "Lady"}
+```
+
+**Bracketed lists (CSV):** Blacklist uses comma-separated values in brackets
+```
+blacklist = [uuid1, uuid2, uuid3]
 ```
 
 **Booleans:** Automatically normalized to `0` or `1` using integer cast
@@ -165,12 +165,12 @@ tpe_mode = 0         # Disabled
 
 ### Syntax Rules (CRITICAL)
 
-*   **No Quotes:** Do **NOT** enclose UUIDs or strings in quotes. The system reads values literally.
-    *   ✅ `owner_key = 12345678-1234-1234-1234-123456789abc`
-    *   ❌ `owner_key = "12345678-1234-1234-1234-123456789abc"`
-*   **Lists:** Enclosed in brackets `[]`, comma-separated. Quotes are optional but recommended to be omitted for consistency.
-    *   ✅ `trustees = [uuid1, uuid2]`
-*   **Case Sensitivity:** Keys are case-sensitive (e.g., `owner_key`, not `Owner_Key`).
+*   **JSON Objects:** `owner`, `owners`, and `trustees` use `{uuid: honorific}` format. Quotes around keys/values are required for valid JSON.
+    *   ✅ `owner = {"12345678-1234-1234-1234-123456789abc": "Master"}`
+    *   ❌ `owner = 12345678-1234-1234-1234-123456789abc` (bare UUID not accepted for this key)
+*   **JSON Arrays:** `blacklist` uses bracket notation.
+    *   ✅ `blacklist = [uuid1, uuid2]`
+*   **Case Sensitivity:** Keys are case-sensitive (e.g., `owner`, not `Owner`).
 *   **Whitespace:** Spaces around `=` are optional but recommended for readability.
 
 ### Configuration Patterns
@@ -178,31 +178,26 @@ tpe_mode = 0         # Disabled
 #### Pattern A: Single Owner (Default)
 ```
 multi_owner_mode = 0
-owner_key = 12345678-1234-1234-1234-123456789abc
-owner_hon = Master
+owner = {"12345678-1234-1234-1234-123456789abc": "Master"}
 ```
 
 #### Pattern B: Multiple Owners
 ```
 multi_owner_mode = 1
-owner_keys = [uuid1, uuid2, uuid3]
-owner_honorifics = [Master, Mistress, Owner]
+owners = {"uuid1": "Master", "uuid2": "Mistress", "uuid3": "Owner"}
 ```
 **Note:** With multi-owner mode, all owners have equal administrative access (ACL level 5).
 
 #### Pattern C: Owner + Trustees
 ```
 multi_owner_mode = 0
-owner_key = 12345678-1234-1234-1234-123456789abc
-owner_hon = Master
-trustees = [uuid-friend-1, uuid-friend-2]
-trustee_honorifics = [Sir, Lady]
+owner = {"12345678-1234-1234-1234-123456789abc": "Master"}
+trustees = {"uuid-friend-1": "Sir", "uuid-friend-2": "Lady"}
 ```
 
 #### Pattern D: Public Access (No Owner)
 ```
 multi_owner_mode = 0
-owner_key = 00000000-0000-0000-0000-000000000000
 public_mode = 1
 ```
 **Warning:** This allows anyone to access the collar. Use with caution!
@@ -210,7 +205,7 @@ public_mode = 1
 #### Pattern E: TPE Mode (Total Power Exchange)
 ```
 multi_owner_mode = 0
-owner_key = 12345678-1234-1234-1234-123456789abc
+owner = {"12345678-1234-1234-1234-123456789abc": "Master"}
 tpe_mode = 1
 ```
 **Important:** TPE mode removes all control from the wearer. The wearer cannot:
@@ -221,7 +216,7 @@ tpe_mode = 1
 
 **Security Requirement:** Cannot enable TPE mode without an external owner set.
 
-**⚠️ CRITICAL NOTECARD ORDERING:** When configuring TPE mode in the notecard, you MUST set `owner_key` (or `owner_keys`) BEFORE `tpe_mode`. The collar validates the external owner requirement line-by-line during notecard parsing. If `tpe_mode = 1` appears before the owner is set, the collar will reject it and display an error.
+**CRITICAL NOTECARD ORDERING:** When configuring TPE mode in the notecard, you MUST set `owner` (or `owners`) BEFORE `tpe_mode`. The collar validates the external owner requirement line-by-line during notecard parsing. If `tpe_mode = 1` appears before the owner is set, the collar will reject it and display an error.
 
 ---
 
@@ -307,7 +302,7 @@ owner_key = 12345678-1234-1234-1234-123456789abc
 1. Ensure list exists in notecard as `key = []` or `key = [item1,item2]`
 2. Check list hasn't reached maximum size (64 items)
 3. Verify target element exists before removing
-4. Confirm proper JSON array format: `[uuid1,uuid2]` not `uuid1,uuid2` (no quotes needed)
+4. Confirm proper bracketed CSV format: `[uuid1,uuid2]` not `uuid1,uuid2` (no quotes needed)
 
 ### Notecard Changes Not Detected
 
@@ -343,20 +338,19 @@ owner_key = 12345678-1234-1234-1234-123456789abc
 # OWNERSHIP SETTINGS
 # ------------------
 # Single owner mode (default)
+# owner and trustees use JSON object format: {uuid: honorific}
+# Omit owner or use {} for unowned; replace with real UUID to set owner
 multi_owner_mode = 0
-owner_key = 00000000-0000-0000-0000-000000000000
-owner_hon =
+# owner = {"your-owner-uuid-here": "Master"}
 
 # Multi-owner mode (uncomment to use)
 # multi_owner_mode = 1
-# owner_keys = [uuid1, uuid2, uuid3]
-# owner_honorifics = [Master, Mistress, Owner]
+# owners = {"uuid1": "Master", "uuid2": "Mistress", "uuid3": "Owner"}
 
 # TRUSTEES
 # --------
 # Trusted users with elevated permissions (ACL level 3)
-trustees = []
-trustee_honorifics = []
+trustees = {}
 
 # BLACKLIST
 # ---------
@@ -403,10 +397,11 @@ bell_sound = 16fcf579-82cb-b110-c1a4-5fa5e1385406
 | 1.0 | 2025-10-01 | Initial comprehensive reference guide |
 | 1.1 | 2025-10-31 | Security fix: Added TPE mode validation to notecard parsing; documented notecard ordering requirement |
 | 1.2 | 2026-04-01 | Fact-check corrections: Fixed persistence model to document three-tier storage (LSD, script globals, notecard); corrected bell defaults (visible=0, sound=0, volume=0.3); fixed boolean normalization (only numeric values work, not `true`/`false`); corrected silent handling of unknown/invalid keys; fixed source code path |
+| 1.3 | 2026-04-02 | Updated version to 1.1 for ng branch; fixed source code path to v1.1 location |
 
 ---
 
 **Questions or Issues?**
-Please refer to the [main README](./README.md) or review the [source code](./src/lsl/collar/stable/ds_collar_kmod_settings.lsl) for implementation details.
+Please refer to the [main README](./README.md) or review the [source code](./v1.1/kmod_settings.lsl) for implementation details.
 
 

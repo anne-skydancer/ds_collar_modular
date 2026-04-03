@@ -1,5 +1,5 @@
 /*--------------------
-MODULE: ds_collar_kmod_ui.lsl
+MODULE: kmod_ui.lsl
 VERSION: 1.10
 REVISION: 0
 PURPOSE: Session management, LSD policy filtering, and plugin list orchestration
@@ -421,7 +421,7 @@ apply_plugin_list(string plugins_json) {
 
 // apply_plugin_acl_list removed in v1.1 — ACL filtering via LSD policies
 
-/* -------------------- MENU RENDERING (delegated to ds_collar_menu.lsl) -------------------- */
+/* -------------------- MENU RENDERING (delegated to kmod_menu.lsl) -------------------- */
 
 send_message(key user, string message_text) {
     string msg = llList2Json(JSON_OBJECT, [

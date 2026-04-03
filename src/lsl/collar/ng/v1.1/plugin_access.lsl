@@ -1,5 +1,5 @@
 /*--------------------
-PLUGIN: ds_collar_plugin_access.lsl
+PLUGIN: plugin_access.lsl
 VERSION: 1.10
 REVISION: 0
 PURPOSE: Owner, trustee, and honorific management workflows

@@ -1,5 +1,5 @@
 /*--------------------
-PLUGIN: ds_collar_plugin_rlvrelay.lsl
+PLUGIN: plugin_relay.lsl
 VERSION: 1.10
 REVISION: 0
 PURPOSE: Provide ORG-compliant RLV relay with hardcore mode and safeword hooks

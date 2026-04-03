@@ -1,5 +1,5 @@
 /*--------------------
-PLUGIN: ds_collar_plugin_lock.lsl
+PLUGIN: plugin_lock.lsl
 VERSION: 1.10
 REVISION: 0
 PURPOSE: Toggle collar lock and RLV detach control labels

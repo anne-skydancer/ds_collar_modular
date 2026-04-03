@@ -1,5 +1,5 @@
 /*--------------------
-SCRIPT: ds_collar_control_hud.lsl
+SCRIPT: control_hud.lsl
 VERSION: 1.10
 REVISION: 0
 PURPOSE: Auto-detect nearby collars and connect automatically

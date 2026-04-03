@@ -1,5 +1,5 @@
 /*--------------------
-PLUGIN: ds_collar_plugin_status.lsl
+PLUGIN: plugin_status.lsl
 VERSION: 1.10
 REVISION: 0
 PURPOSE: Read-only collar status display for owners and observers

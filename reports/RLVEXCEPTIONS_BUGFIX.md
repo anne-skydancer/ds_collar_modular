@@ -5,6 +5,8 @@
 **Severity**: HIGH
 **Status**: FIXED
 
+> **Scope:** This report documents a bug in the **stable branch**. The ng/v1.1 branch uses short script names (`plugin_rlvex.lsl`) and should be independently verified for the same pattern.
+
 ---
 
 ## Problem Description

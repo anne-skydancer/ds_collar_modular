@@ -1,5 +1,5 @@
 /*--------------------
-PLUGIN: ds_collar_plugin_public.lsl
+PLUGIN: plugin_public.lsl
 VERSION: 1.10
 REVISION: 0
 PURPOSE: Toggle public access mode directly from main menu

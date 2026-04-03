@@ -835,7 +835,7 @@ default {
 If problems persist:
 
 1. **Check Documentation:** Review this guide and README.md
-2. **Check GitHub Issues:** https://github.com/anne-skydancer/ds_collar_modular/issues
+2. **Check GitHub Issues:** https://github.com/d-s-collar-project/ds_collar_modular/issues
 3. **Report Bugs:** Create detailed issue report with:
    - Exact steps to reproduce
    - Error messages from console
@@ -856,13 +856,13 @@ A: No. Basic features (owner management, leash, animations, bell) work without R
 A: Yes. The collar is a standard Second Life prim object. You can texture it, resize it, and make it invisible. The scripts work independently of appearance.
 
 **Q: How many plugins can I add?**
-A: The collar supports unlimited plugins within Second Life's script limits (typically 64 scripts per object in most regions). Currently there are 13 standard plugins.
+A: The collar supports unlimited plugins within Second Life's script limits (typically 64 scripts per object in most regions). Currently there are 14 standard plugins.
 
 **Q: Is this compatible with OpenCollar?**
 A: Partially. The leash system supports OpenCollar 8.x holder protocol. However, menus and commands are not compatible. This is a separate, independent collar system.
 
 **Q: Can I copy this collar to give to others?**
-A: Check the LICENSE (MIT) and object permissions. Generally yes, but respect creator permissions and attribution.
+A: Check the LICENSE (GPL v3) and object permissions. Generally yes, but respect the license terms and attribution.
 
 ### Ownership Questions
 
@@ -932,7 +932,7 @@ A: The modular architecture uses one script per feature (plugin). This improves 
 A: Each LSL script has 64KB memory limit. The collar kernel and modules are optimized to stay well under this limit.
 
 **Q: Can I see the source code?**
-A: Yes. The collar is open source. All scripts are available at: https://github.com/anne-skydancer/ds_collar_modular
+A: Yes. The collar is open source. All scripts are available at: https://github.com/d-s-collar-project/ds_collar_modular
 
 **Q: How do I update to a new version?**
 A: Replace old scripts with new scripts from the latest release. The kernel compatibility ensures plugins work across revisions. Always backup your settings notecard first.
@@ -956,24 +956,19 @@ A: Modify `kmod_ui.lsl` for main menu structure. Individual plugin menus are in 
 ## Additional Resources
 
 - **Main README:** [README.md](README.md) - Technical overview and architecture
-- **Developer Guide:** [agents.md](agents.md) - LSL coding standards and plugin development
-- **Security Documentation:** [SECURITY_AUDIT_REPORT.md](SECURITY_AUDIT_REPORT.md)
-- **GitHub Repository:** https://github.com/anne-skydancer/ds_collar_modular
+- **Developer Guide:** [CLAUDE.md](../../../../CLAUDE.md) - LSL coding requirements and best practices
+- **Settings Reference:** [SETTINGS_REFERENCE.md](SETTINGS_REFERENCE.md) - Settings card reference
+- **GitHub Repository:** https://github.com/d-s-collar-project/ds_collar_modular
 
 ---
 
 ## Version Information
 
-The DS Collar Modular system uses a **Revision-based** versioning scheme.
-- **System Version:** Currently **1.0**
-- **Revision:** Increments with each update.
+The DS Collar NG system uses a **Version + Revision** scheme.
+- **System Version:** Currently **1.1** (v1.10)
+- **Revision:** Increments with each update within the version.
 
-This user guide corresponds to:
-- **Kernel Revision:** 39
-- **Module Revisions:** 26 - 44
-- **Plugin Revisions:** 22 - 25
-
-The revision number can be found in the header of each script.
+The version and revision numbers can be found in the header of each script.
 
 ---
 
@@ -989,4 +984,4 @@ For support:
 ---
 
 *D/s Collar Modular - A modern, secure, and extensible D/s collar system for Second Life.*
-*Licensed as open source software under MIT License
+*Licensed under GPL v3 — see LICENSE for details.*

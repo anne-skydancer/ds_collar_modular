@@ -1,5 +1,7 @@
 # Per-Script Analysis - DS Collar NG
 
+> **NOTE (2026-04-02):** See staleness disclaimer in [ANALYSIS_OVERVIEW.md](./ANALYSIS_OVERVIEW.md). Script file names below use the old `ds_collar_` prefix; v1.1 uses short names (e.g. `collar_kernel.lsl`, `kmod_auth.lsl`). References to removed functions (`broadcast_plugin_acl_list`, `filter_plugins_for_user`, `enforce_role_exclusivity` line numbers) are stale.
+
 **Cross-referenced against:** SL Wiki LSL Script Efficiency, LSL Script Memory, LSL Style Guide, project CLAUDE.md
 
 ---

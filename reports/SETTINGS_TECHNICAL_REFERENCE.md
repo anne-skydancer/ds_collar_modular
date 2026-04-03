@@ -4,7 +4,7 @@
 
 ### Core Module: `ds_collar_kmod_settings.lsl`
 
-**Location:** `src/stable/ds_collar_kmod_settings.lsl`
+**Location:** `src/lsl/collar/ng/v1.1/kmod_settings.lsl` (ng branch) / `src/lsl/collar/stable/ds_collar_kmod_settings.lsl` (stable branch)
 
 **Responsibilities:**
 - Load settings from notecard at startup
@@ -436,7 +436,7 @@ integer kv_list_remove_all(string key_name, string elem)
 
 ## Related Documentation
 
-- **[README.md](./README.md)** — Project overview and architecture
-- **[agents.md](./agents.md)** — LSL coding standards and best practices
-- **[src/stable/ds_collar_kmod_settings.lsl](./src/stable/ds_collar_kmod_settings.lsl)** — Settings module source code
-- **[src/stable/ds_collar_kmod_auth.lsl](./src/stable/ds_collar_kmod_auth.lsl)** — ACL and authorization engine
+- **[README.md](../README.md)** — Project overview and architecture
+- **[CLAUDE.md](../CLAUDE.md)** — LSL coding requirements and best practices
+- **ng branch source:** `src/lsl/collar/ng/v1.1/kmod_settings.lsl` — Settings module
+- **ng branch source:** `src/lsl/collar/ng/v1.1/kmod_auth.lsl` — ACL and authorization engine

@@ -1,5 +1,5 @@
 /*--------------------
-PLUGIN: ds_collar_plugin_bell.lsl
+PLUGIN: plugin_bell.lsl
 VERSION: 1.10
 REVISION: 0
 PURPOSE: Bell visibility and jingling control for the collar

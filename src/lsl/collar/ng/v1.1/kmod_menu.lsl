@@ -1,5 +1,5 @@
 /*--------------------
-MODULE: ds_collar_menu.lsl
+MODULE: kmod_menu.lsl
 VERSION: 1.10
 REVISION: 0
 PURPOSE: Menu rendering and visual presentation service

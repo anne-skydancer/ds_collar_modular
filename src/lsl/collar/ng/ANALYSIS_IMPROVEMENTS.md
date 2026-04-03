@@ -1,5 +1,7 @@
 # Proposed Improvements - Prioritized
 
+> **NOTE (2026-04-02):** See staleness disclaimer in [ANALYSIS_OVERVIEW.md](./ANALYSIS_OVERVIEW.md). IMP-3 reference to `kmod_auth.lsl:166-177` is stale (that code was in the removed plugin ACL registry). IMP-6 (`enforce_role_exclusivity`) line numbers may have shifted. The "30 scripts" count in IMP-1 is now 26.
+
 **Principle:** All improvements preserve existing functionality and function signatures. Changes are categorized by impact and effort.
 
 ---
@@ -24,7 +26,7 @@ string t = llJsonGetValue(msg, ["type"]);
 if (t != JSON_INVALID) { ... }
 ```
 
-**Affected scripts:** All 30. Highest-traffic paths:
+**Affected scripts:** All 26. Highest-traffic paths:
 - `kernel.lsl` link_message handler (~every 5s per plugin)
 - `kmod_auth.lsl` ACL queries
 - `kmod_ui.lsl` button clicks and session management
@@ -72,7 +74,7 @@ plugins_array += "]";
 string plugins_array = "[" + llDumpList2String(plugins, ",") + "]";
 ```
 
-Apply same pattern in `kmod_auth.lsl:166-177`.
+~~Apply same pattern in `kmod_auth.lsl:166-177`.~~ (Removed in v1.1 — was in dead plugin ACL registry code.)
 
 ### IMP-4: Remove Unused function_name Parameter (6 scripts)
 **Impact:** ~48 bytes saved across scripts
@@ -235,7 +237,7 @@ Use `llDumpList2String(parts, "\n")` instead of repeated `+=` concatenation.
 
 | ID | Category | Scripts Affected | Memory Saved | Speed Gain | Risk |
 |----|----------|-----------------|-------------|------------|------|
-| IMP-1 | Performance | 30 | - | ~2-3ms/msg | None |
+| IMP-1 | Performance | 26 | - | ~2-3ms/msg | None |
 | IMP-2 | Performance | 1 | ~80 bytes | Negligible | None |
 | IMP-3 | Perf/Memory | 2 | Variable | Reduced fragmentation | None |
 | IMP-4 | Memory | 6 | ~48 bytes | - | None |

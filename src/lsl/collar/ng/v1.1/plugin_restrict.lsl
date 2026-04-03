@@ -1,5 +1,5 @@
 /*--------------------
-PLUGIN: ds_collar_plugin_rlvrestrict.lsl
+PLUGIN: plugin_restrict.lsl
 VERSION: 1.10
 REVISION: 0
 PURPOSE: Manage RLV restriction toggles grouped by functional category

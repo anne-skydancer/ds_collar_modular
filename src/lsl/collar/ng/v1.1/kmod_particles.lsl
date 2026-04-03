@@ -1,5 +1,5 @@
 /*--------------------
-MODULE: ds_collar_kmod_particles.lsl
+MODULE: kmod_particles.lsl
 VERSION: 1.10
 REVISION: 0
 PURPOSE: Visual connection renderer with Lockmeister compatibility

@@ -1,10 +1,14 @@
 /*--------------------
-MODULE: ds_collar_kmod_auth.lsl
+MODULE: kmod_auth.lsl
 VERSION: 1.10
-REVISION: 0
-PURPOSE: Authoritative ACL and policy engine - OPTIMIZED
+REVISION: 1
+PURPOSE: Authoritative ACL engine - OPTIMIZED
 ARCHITECTURE: Dispatch table pattern with linkset data cache and JSON templates
 CHANGES:
+- v1.1 rev 1: Removed dead policy_* fields from JSON templates. Removed
+  plugin ACL registry (PluginAclContexts/Levels, register_acl, filter_plugins,
+  broadcast_plugin_acl_list, plugin_acl_list_request) — superseded by LSD
+  policy architecture where plugins self-declare visibility.
 - v1.1 rev 0: Version bump for LSD policy architecture. No functional changes to this module.
 --------------------*/
 
@@ -68,9 +72,7 @@ list PendingQueries = [];  // [avatar_key, correlation_id, avatar_key, correlati
 integer PENDING_STRIDE = 2;
 integer MAX_PENDING_QUERIES = 50;
 
-/* Plugin ACL registry - Parallel Lists for O(1) lookups */
-list PluginAclContexts = []; // [context1, context2, ...]
-list PluginAclLevels = [];   // [min_acl1, min_acl2, ...]
+/* Plugin ACL registry removed in v1.1 rev 1 — superseded by LSD policies */
 
 /* -------------------- HELPER FUNCTIONS -------------------- */
 
@@ -101,22 +103,16 @@ integer is_owner(key av) {
 /* -------------------- JSON TEMPLATE INITIALIZATION -------------------- */
 
 init_json_templates() {
-    // Blacklist: No access, all policies 0
+    // Blacklist: No access
     JSON_TEMPLATE_BLACKLIST = llList2Json(JSON_OBJECT, [
         "type", "acl_result",
         "avatar", "AVATAR_PLACEHOLDER",
         "level", ACL_BLACKLIST,
         "is_wearer", 0,
         "is_blacklisted", 1,
-        "owner_set", 0,
-        "policy_tpe", 0,
-        "policy_public_only", 0,
-        "policy_owned_only", 0,
-        "policy_trustee_access", 0,
-        "policy_wearer_unowned", 0,
-        "policy_primary_owner", 0
+        "owner_set", 0
     ]);
-    
+
     // No Access: TPE wearer
     JSON_TEMPLATE_NOACCESS = llList2Json(JSON_OBJECT, [
         "type", "acl_result",
@@ -124,15 +120,9 @@ init_json_templates() {
         "level", ACL_NOACCESS,
         "is_wearer", 1,
         "is_blacklisted", 0,
-        "owner_set", "OWNER_SET_PLACEHOLDER",
-        "policy_tpe", 1,
-        "policy_public_only", 0,
-        "policy_owned_only", 0,
-        "policy_trustee_access", 0,
-        "policy_wearer_unowned", 0,
-        "policy_primary_owner", 0
+        "owner_set", "OWNER_SET_PLACEHOLDER"
     ]);
-    
+
     // Public: Non-wearer with public access
     JSON_TEMPLATE_PUBLIC = llList2Json(JSON_OBJECT, [
         "type", "acl_result",
@@ -140,15 +130,9 @@ init_json_templates() {
         "level", ACL_PUBLIC,
         "is_wearer", 0,
         "is_blacklisted", 0,
-        "owner_set", "OWNER_SET_PLACEHOLDER",
-        "policy_tpe", 0,
-        "policy_public_only", 1,
-        "policy_owned_only", 0,
-        "policy_trustee_access", 0,
-        "policy_wearer_unowned", 0,
-        "policy_primary_owner", 0
+        "owner_set", "OWNER_SET_PLACEHOLDER"
     ]);
-    
+
     // Owned: Wearer with owner set
     JSON_TEMPLATE_OWNED = llList2Json(JSON_OBJECT, [
         "type", "acl_result",
@@ -156,15 +140,9 @@ init_json_templates() {
         "level", ACL_OWNED,
         "is_wearer", 1,
         "is_blacklisted", 0,
-        "owner_set", 1,
-        "policy_tpe", 0,
-        "policy_public_only", 0,
-        "policy_owned_only", 1,
-        "policy_trustee_access", 0,
-        "policy_wearer_unowned", 0,
-        "policy_primary_owner", 0
+        "owner_set", 1
     ]);
-    
+
     // Trustee: Trustee access
     JSON_TEMPLATE_TRUSTEE = llList2Json(JSON_OBJECT, [
         "type", "acl_result",
@@ -172,15 +150,9 @@ init_json_templates() {
         "level", ACL_TRUSTEE,
         "is_wearer", 0,
         "is_blacklisted", 0,
-        "owner_set", "OWNER_SET_PLACEHOLDER",
-        "policy_tpe", 0,
-        "policy_public_only", 0,
-        "policy_owned_only", 0,
-        "policy_trustee_access", 1,
-        "policy_wearer_unowned", 0,
-        "policy_primary_owner", 0
+        "owner_set", "OWNER_SET_PLACEHOLDER"
     ]);
-    
+
     // Unowned: Wearer with no owner
     JSON_TEMPLATE_UNOWNED = llList2Json(JSON_OBJECT, [
         "type", "acl_result",
@@ -188,15 +160,9 @@ init_json_templates() {
         "level", ACL_UNOWNED,
         "is_wearer", 1,
         "is_blacklisted", 0,
-        "owner_set", 0,
-        "policy_tpe", 0,
-        "policy_public_only", 0,
-        "policy_owned_only", 0,
-        "policy_trustee_access", 1,
-        "policy_wearer_unowned", 1,
-        "policy_primary_owner", 0
+        "owner_set", 0
     ]);
-    
+
     // Primary Owner: Owner access
     JSON_TEMPLATE_PRIMARY = llList2Json(JSON_OBJECT, [
         "type", "acl_result",
@@ -204,13 +170,7 @@ init_json_templates() {
         "level", ACL_PRIMARY_OWNER,
         "is_wearer", 0,
         "is_blacklisted", 0,
-        "owner_set", 1,
-        "policy_tpe", 0,
-        "policy_public_only", 0,
-        "policy_owned_only", 0,
-        "policy_trustee_access", 1,
-        "policy_wearer_unowned", 0,
-        "policy_primary_owner", 1
+        "owner_set", 1
     ]);
 }
 
@@ -471,86 +431,7 @@ broadcast_acl_change(string scope, key avatar) {
     llMessageLinked(LINK_SET, AUTH_BUS, msg, NULL_KEY);
 }
 
-/* -------------------- PLUGIN ACL MANAGEMENT -------------------- */
-
-register_plugin_acl(string context, integer min_acl) {
-    integer idx = llListFindList(PluginAclContexts, [context]);
-    if (idx != -1) {
-        // Update existing - only level changes
-        PluginAclLevels = llListReplaceList(PluginAclLevels, [min_acl], idx, idx);
-        return;
-    }
-    // Add new - append to both lists to maintain sync
-    PluginAclContexts += [context];
-    PluginAclLevels += [min_acl];
-}
-
-broadcast_plugin_acl_list() {
-    list acl_data = [];
-    integer i = 0;
-    integer len = llGetListLength(PluginAclContexts);
-
-    while (i < len) {
-        string context = llList2String(PluginAclContexts, i);
-        integer min_acl = llList2Integer(PluginAclLevels, i);
-
-        string acl_obj = llList2Json(JSON_OBJECT, [
-            "context", context,
-            "min_acl", min_acl
-        ]);
-
-        acl_data += [acl_obj];
-        i++;
-    }
-
-    string acl_array = "[" + llDumpList2String(acl_data, ",") + "]";
-    string msg = "{\"type\":\"plugin_acl_list\",\"acl_data\":" + acl_array + "}";
-    llMessageLinked(LINK_SET, AUTH_BUS, msg, NULL_KEY);
-}
-
-// Compute ACL level for plugin filtering (doesn't send response)
-integer compute_acl_level(key avatar) {
-    key wearer = llGetOwner();
-    integer owner_set = has_owner();
-    integer is_wearer = (avatar == wearer);
-    
-    if (list_has_key(Blacklist, avatar)) return ACL_BLACKLIST;
-    if (is_owner(avatar)) return ACL_PRIMARY_OWNER;
-    
-    if (is_wearer) {
-        if (TpeMode) return ACL_NOACCESS;
-        if (owner_set) return ACL_OWNED;
-        return ACL_UNOWNED;
-    }
-    
-    if (list_has_key(TrusteeList, avatar)) return ACL_TRUSTEE;
-    if (PublicMode) return ACL_PUBLIC;
-    
-    return ACL_BLACKLIST;
-}
-
-list filter_plugins_for_user(key user, list plugin_contexts) {
-    list accessible = [];
-    integer user_acl = compute_acl_level(user);
-
-    integer i = 0;
-    integer len = llGetListLength(plugin_contexts);
-    while (i < len) {
-        string context = llList2String(plugin_contexts, i);
-
-        // Optimized lookup using parallel list
-        integer idx = llListFindList(PluginAclContexts, [context]);
-        if (idx != -1) {
-            integer required_acl = llList2Integer(PluginAclLevels, idx);
-            if (user_acl >= required_acl) {
-                accessible += [context];
-            }
-        }
-        i = i + 1;
-    }
-
-    return accessible;
-}
+/* Plugin ACL management removed in v1.1 rev 1 — superseded by LSD policies */
 
 /* -------------------- ROLE EXCLUSIVITY VALIDATION -------------------- */
 
@@ -835,39 +716,8 @@ handle_acl_query(string msg) {
     route_acl_query(av, correlation_id);
 }
 
-handle_register_acl(string msg) {
-    string context = llJsonGetValue(msg, ["context"]);
-    if (context == JSON_INVALID) return;
-    string min_acl_str = llJsonGetValue(msg, ["min_acl"]);
-    if (min_acl_str == JSON_INVALID) return;
-    integer min_acl = (integer)min_acl_str;
-
-    register_plugin_acl(context, min_acl);
-}
-
-handle_filter_plugins(string msg) {
-    string user_str = llJsonGetValue(msg, ["user"]);
-    if (user_str == JSON_INVALID) return;
-    string contexts_json = llJsonGetValue(msg, ["contexts"]);
-    if (contexts_json == JSON_INVALID) return;
-    key user = (key)user_str;
-
-    list contexts = llJson2List(contexts_json);
-    list accessible = filter_plugins_for_user(user, contexts);
-
-    string accessible_json = llList2Json(JSON_ARRAY, accessible);
-    string response = llList2Json(JSON_OBJECT, [
-        "type", "filtered_plugins",
-        "user", (string)user,
-        "contexts", accessible_json
-    ]);
-
-    llMessageLinked(LINK_SET, AUTH_BUS, response, NULL_KEY);
-}
-
-handle_plugin_acl_list_request() {
-    broadcast_plugin_acl_list();
-}
+/* handle_register_acl, handle_filter_plugins, handle_plugin_acl_list_request
+   removed in v1.1 rev 1 — superseded by LSD policies */
 
 /* -------------------- EVENTS -------------------- */
 
@@ -876,16 +726,9 @@ default
     state_entry() {
         SettingsReady = FALSE;
         PendingQueries = [];
-        PluginAclContexts = [];
-        PluginAclLevels = [];
-        
+
         // Initialize JSON templates for fast response construction
         init_json_templates();
-
-        string acl_request = llList2Json(JSON_OBJECT, [
-            "type", "acl_registry_request"
-        ]);
-        llMessageLinked(LINK_SET, AUTH_BUS, acl_request, NULL_KEY);
 
         string request = llList2Json(JSON_OBJECT, [
             "type", "settings_get"
@@ -905,15 +748,6 @@ default
         else if (num == AUTH_BUS) {
             if (msg_type == "acl_query") {
                 handle_acl_query(msg);
-            }
-            else if (msg_type == "register_acl") {
-                handle_register_acl(msg);
-            }
-            else if (msg_type == "filter_plugins") {
-                handle_filter_plugins(msg);
-            }
-            else if (msg_type == "plugin_acl_list_request") {
-                handle_plugin_acl_list_request();
             }
         }
         else if (num == SETTINGS_BUS) {

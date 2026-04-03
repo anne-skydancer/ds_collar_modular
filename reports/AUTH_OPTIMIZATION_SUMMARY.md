@@ -1,5 +1,7 @@
 # ACL Module Optimization Summary
 
+> **Scope:** This report documents optimizations applied to the **stable branch** `ds_collar_kmod_auth.lsl`. In the **ng/v1.1 branch**, the plugin ACL registry (`broadcast_plugin_acl_list`, `filter_plugins_for_user`, `PluginAclContexts/Levels`) has been removed entirely — superseded by LSD policies. Testing checklist items referencing "plugin ACL filtering" are not applicable to ng/v1.1.
+
 ## Overview
 Optimized `ds_collar_kmod_auth.lsl` with dispatch table pattern, JSON templates, and enhanced linkset data caching.
 

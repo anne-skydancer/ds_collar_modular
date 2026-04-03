@@ -1,5 +1,5 @@
 /*--------------------
-PLUGIN: ds_collar_plugin_rlvexceptions.lsl
+PLUGIN: plugin_rlvex.lsl
 VERSION: 1.10
 REVISION: 0
 PURPOSE: Manage RLV teleport and IM exceptions for owners and trustees

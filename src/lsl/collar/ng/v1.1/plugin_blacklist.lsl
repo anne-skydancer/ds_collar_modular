@@ -1,5 +1,5 @@
 /*--------------------
-PLUGIN: ds_collar_plugin_blacklist.lsl
+PLUGIN: plugin_blacklist.lsl
 VERSION: 1.10
 REVISION: 0
 PURPOSE: Blacklist management with sensor-based avatar selection
