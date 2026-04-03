@@ -351,28 +351,23 @@ handleAclResult(string msg) {
     else {
         string btn_label = "";
 
-        // Post leashes to an object — no permission gating needed,
-        // must work even when the collar is rezzed on the ground.
-        if (PendingAction == "post") {
-            postLeashInternal(PendingActionUser, PendingPassTarget);
+        if (PendingAction == "grab") {
+            // "grab" is "Take" (take-over) when already leashed, "Clip" otherwise
+            if (Leashed) btn_label = POL_TAKE;
+            else btn_label = POL_CLIP;
         }
-        else {
-            if (PendingAction == "grab") {
-                // "grab" is "Take" (take-over) when already leashed, "Clip" otherwise
-                if (Leashed) btn_label = POL_TAKE;
-                else btn_label = POL_CLIP;
-            }
-            else if (PendingAction == "coffle") btn_label = POL_COFFLE;
-            else if (PendingAction == "set_length" || PendingAction == "toggle_turn") btn_label = POL_SETTINGS;
+        else if (PendingAction == "coffle") btn_label = POL_COFFLE;
+        else if (PendingAction == "post") btn_label = POL_POST;
+        else if (PendingAction == "set_length" || PendingAction == "toggle_turn") btn_label = POL_SETTINGS;
 
-            if (btn_label != "" && policy_allows(btn_label, acl_level)) {
-                if (PendingAction == "grab") grabLeashInternal(PendingActionUser, acl_level);
-                else if (PendingAction == "coffle") coffleLeashInternal(PendingActionUser, PendingPassTarget);
-                else if (PendingAction == "set_length") setLengthInternal((integer)((string)PendingPassTarget));
-                else if (PendingAction == "toggle_turn") toggleTurnInternal();
-            } else {
-                denyAccess(PendingActionUser, "insufficient permissions");
-            }
+        if (btn_label != "" && policy_allows(btn_label, acl_level)) {
+            if (PendingAction == "grab") grabLeashInternal(PendingActionUser, acl_level);
+            else if (PendingAction == "coffle") coffleLeashInternal(PendingActionUser, PendingPassTarget);
+            else if (PendingAction == "post") postLeashInternal(PendingActionUser, PendingPassTarget);
+            else if (PendingAction == "set_length") setLengthInternal((integer)((string)PendingPassTarget));
+            else if (PendingAction == "toggle_turn") toggleTurnInternal();
+        } else {
+            denyAccess(PendingActionUser, "insufficient permissions");
         }
     }
     
