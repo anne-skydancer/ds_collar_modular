@@ -160,6 +160,7 @@ start_rlv_probe() {
         RlvReady = TRUE;
         RlvActive = FALSE;
         RlvVersion = "";
+        llLinksetDataWrite("rlv_active", "0");
         return;
     }
     
@@ -190,6 +191,7 @@ stop_rlv_probe() {
     clearProbeChannels();
     RlvProbing = FALSE;
     RlvReady = TRUE;
+    llLinksetDataWrite("rlv_active", (string)RlvActive);
 }
 
 /* -------------------- SETTINGS LOADING -------------------- */
