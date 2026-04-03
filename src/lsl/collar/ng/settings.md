@@ -27,7 +27,7 @@ trustees={"uuid-trustee-1": "Sir"}
 | `owner` | JSON object `{uuid: honorific}` | |
 | `owners` | JSON object `{uuid: hon, ...}` | Yes (bulk) |
 | `trustees` | JSON object `{uuid: hon, ...}` | |
-| `blacklist` | JSON array `[uuid, ...]` | |
+| `blacklist` | CSV in brackets `[uuid, ...]` | |
 | `public_mode` | 0/1 | |
 | `locked` | 0/1 | |
 | `tpe_mode` | 0/1 | |

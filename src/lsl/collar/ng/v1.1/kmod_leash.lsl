@@ -287,10 +287,9 @@ handleAclResult(string msg) {
     
     // Execute pending action with ACL verification
 
-    // Special case: release (current leasher OR level 3+ can release)
-    // ACL 2 (Owned Wearer) must use SOS emergency release
+    // Release: current leasher can always release (safety); otherwise policy-gated
     if (PendingAction == "release") {
-        if (PendingActionUser == Leasher || acl_level >= 3) {
+        if (PendingActionUser == Leasher || policy_allows(POL_UNCLIP, acl_level)) {
             releaseLeashInternal(PendingActionUser);
         } else {
             denyAccess(PendingActionUser, "only leasher or authorized users can release");

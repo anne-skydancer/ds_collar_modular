@@ -106,7 +106,7 @@ To get someone's UUID in Second Life:
 | `owner` | JSON object | `{}` | Single owner `{uuid: honorific}` | Used when `multi_owner_mode = 0` |
 | `owners` | JSON object | `{}` | Multiple owners `{uuid: hon, ...}` | Used when `multi_owner_mode = 1`; **Notecard-only** for bulk set |
 | `trustees` | JSON object | `{}` | Trusted users `{uuid: hon, ...}` | Trustees have elevated permissions (ACL level 3) |
-| `blacklist` | JSON array | `[]` | List of blocked UUIDs | Blacklisted users have no access (ACL level -1) |
+| `blacklist` | CSV in brackets | `[]` | List of blocked UUIDs | Blacklisted users have no access (ACL level -1) |
 
 ### Access Modes
 
@@ -149,7 +149,7 @@ owner = {"12345678-1234-1234-1234-123456789abc": "Master"}
 trustees = {"uuid1": "Sir", "uuid2": "Lady"}
 ```
 
-**JSON Arrays:** Blacklist uses bracket notation
+**Bracketed lists (CSV):** Blacklist uses comma-separated values in brackets
 ```
 blacklist = [uuid1, uuid2, uuid3]
 ```
@@ -302,7 +302,7 @@ owner_key = 12345678-1234-1234-1234-123456789abc
 1. Ensure list exists in notecard as `key = []` or `key = [item1,item2]`
 2. Check list hasn't reached maximum size (64 items)
 3. Verify target element exists before removing
-4. Confirm proper JSON array format: `[uuid1,uuid2]` not `uuid1,uuid2` (no quotes needed)
+4. Confirm proper bracketed CSV format: `[uuid1,uuid2]` not `uuid1,uuid2` (no quotes needed)
 
 ### Notecard Changes Not Detected
 
@@ -339,8 +339,9 @@ owner_key = 12345678-1234-1234-1234-123456789abc
 # ------------------
 # Single owner mode (default)
 # owner and trustees use JSON object format: {uuid: honorific}
+# Omit owner or use {} for unowned; replace with real UUID to set owner
 multi_owner_mode = 0
-owner = {"00000000-0000-0000-0000-000000000000": "Master"}
+# owner = {"your-owner-uuid-here": "Master"}
 
 # Multi-owner mode (uncomment to use)
 # multi_owner_mode = 1
