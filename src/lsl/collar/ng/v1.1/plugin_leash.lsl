@@ -131,7 +131,6 @@ showMainMenu() {
         if (btn_allowed("Clip"))    buttons += ["Clip"];
         if (btn_allowed("Offer"))   buttons += ["Offer"];
         if (btn_allowed("Coffle"))  buttons += ["Coffle"];
-        if (btn_allowed("Post"))    buttons += ["Post"];
     }
     else {
         // Unclip: policy + must be leasher or ACL 3+
@@ -148,6 +147,8 @@ showMainMenu() {
             buttons += ["Take"];
         }
     }
+    // Post: available regardless of leash state
+    if (btn_allowed("Post"))    buttons += ["Post"];
 
     if (btn_allowed("Get Holder")) buttons += ["Get Holder"];
     if (btn_allowed("Settings"))   buttons += ["Settings"];
@@ -355,6 +356,12 @@ handleOfferResponse(string button) {
 }
 
 cleanupOfferDialog() {
+    if (OfferDialogSession != "") {
+        llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
+            "type", "dialog_close",
+            "session_id", OfferDialogSession
+        ]), NULL_KEY);
+    }
     if (OfferOriginator != NULL_KEY) {
         llRegionSayTo(OfferOriginator, 0, "Leash offer to " + llKey2Name(OfferTarget) + " timed out.");
     }
@@ -614,6 +621,12 @@ returnToRoot() {
 }
 
 cleanupSession() {
+    if (SessionId != "") {
+        llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
+            "type", "dialog_close",
+            "session_id", SessionId
+        ]), NULL_KEY);
+    }
     CurrentUser = NULL_KEY;
     UserAcl = -999;
     gPolicyButtons = [];

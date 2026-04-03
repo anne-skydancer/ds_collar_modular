@@ -127,6 +127,9 @@ reconcile_all() {
 /* -------------------- LIFECYCLE -------------------- */
 
 register_self() {
+    // RLV-adjacent plugin: only register when RLV is active
+    if (llLinksetDataRead("rlv_active") != "1") return;
+
     // Write button visibility policy to LSD (default-deny per ACL level)
     llLinksetDataWrite("policy:" + PLUGIN_CONTEXT, llList2Json(JSON_OBJECT, [
         "3", "Owner,Trustee,TP,IM",
@@ -565,6 +568,12 @@ handle_button(string btn) {
 /* -------------------- CLEANUP -------------------- */
 
 cleanup() {
+    if (SessionId != "") {
+        llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
+            "type", "dialog_close",
+            "session_id", SessionId
+        ]), NULL_KEY);
+    }
     llSetTimerEvent(0.0);
     PendingReconcile = FALSE;
     CurrentUser = NULL_KEY;

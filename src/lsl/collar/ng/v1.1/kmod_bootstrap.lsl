@@ -154,7 +154,10 @@ start_rlv_probe() {
     if (RlvProbing) {
         return;
     }
-    
+
+    // Default to off until probe confirms otherwise
+    llLinksetDataWrite("rlv_active", "0");
+
     if (!isAttached()) {
         // Not attached, can't detect RLV
         RlvReady = TRUE;
@@ -190,6 +193,7 @@ stop_rlv_probe() {
     clearProbeChannels();
     RlvProbing = FALSE;
     RlvReady = TRUE;
+    llLinksetDataWrite("rlv_active", (string)RlvActive);
 }
 
 /* -------------------- SETTINGS LOADING -------------------- */

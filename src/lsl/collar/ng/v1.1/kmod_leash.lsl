@@ -712,9 +712,9 @@ coffleLeashInternal(key user, key target_collar) {
 }
 
 postLeashInternal(key user, key post_object) {
+    // If already leashed, release first then re-post
     if (Leashed) {
-        llRegionSayTo(user, 0, "Already leashed. Unclip first.");
-        return;
+        releaseLeashInternal(user);
     }
 
     // Verify target is a valid object
