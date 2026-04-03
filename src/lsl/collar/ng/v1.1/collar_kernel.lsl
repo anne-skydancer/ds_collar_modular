@@ -70,10 +70,6 @@ integer count_scripts() {
     return llGetInventoryNumber(INVENTORY_SCRIPT);
 }
 
-integer is_plugin_script(string script_name) {
-    // Plugins all start with plugin_
-    return (llSubStringIndex(script_name, "plugin_") == 0);
-}
 
 /* -------------------- QUEUE MANAGEMENT (Unix modprobe-style) -------------------- */
 
@@ -324,8 +320,11 @@ integer prune_missing_scripts() {
 
 /* -------------------- PLUGIN DISCOVERY (Active pull-based detection) -------------------- */
 
-// Actively discover new or changed plugin scripts
-// Enumerates inventory, detects new/recompiled plugins, triggers registration
+// Track all known script UUIDs to detect new/recompiled scripts.
+// Name-agnostic: any unrecognized script triggers register_now,
+// letting plugins self-identify via registration protocol.
+list KnownScriptUUIDs = [];
+
 integer discover_plugins() {
     integer inv_count = llGetInventoryNumber(INVENTORY_SCRIPT);
     integer i;
@@ -333,28 +332,27 @@ integer discover_plugins() {
 
     for (i = 0; i < inv_count; i = i + 1) {
         string script_name = llGetInventoryName(INVENTORY_SCRIPT, i);
+        key script_uuid = llGetInventoryKey(script_name);
 
-        // Only check plugin scripts (not kernel modules)
-        if (is_plugin_script(script_name)) {
-            key script_uuid = llGetInventoryKey(script_name);
-            integer idx = registry_find_by_script(script_name);
+        // Skip self (kernel)
+        if (script_name == llGetScriptName()) jump next_script;
 
-            // New script - not in registry
-            if (idx == -1) {
-                discoveries = discoveries + 1;
-            }
-            else {
-                // Check if UUID changed (recompiled/replaced)
-                key registered_uuid = llList2Key(PluginRegistry, idx + REG_SCRIPT_UUID);
-                if (registered_uuid != script_uuid) {
-                    discoveries = discoveries + 1;
-                }
-            }
+        if (llListFindList(KnownScriptUUIDs, [script_uuid]) == -1) {
+            discoveries = discoveries + 1;
         }
+
+        @next_script;
     }
 
-    // If we found new/changed scripts, broadcast register_now
     if (discoveries > 0) {
+        // Rebuild known UUIDs from current inventory
+        KnownScriptUUIDs = [];
+        for (i = 0; i < inv_count; i = i + 1) {
+            string sn = llGetInventoryName(INVENTORY_SCRIPT, i);
+            if (sn != llGetScriptName()) {
+                KnownScriptUUIDs += [llGetInventoryKey(sn)];
+            }
+        }
         broadcast_register_now();
     }
 
@@ -472,6 +470,7 @@ handle_soft_reset() {
     PluginContexts = [];
     PluginScripts = [];
     RegistrationQueue = [];
+    KnownScriptUUIDs = [];
     PendingBatchTimer = FALSE;
     PendingPluginListRequest = FALSE;
     LastPingUnix = now();
@@ -497,7 +496,7 @@ default
         LastInvSweepUnix = now();
         LastDiscoveryUnix = now();
         LastScriptCount = count_scripts();
-
+        KnownScriptUUIDs = [];
 
         // Immediately broadcast register_now (plugins add to queue)
         broadcast_register_now();
@@ -618,11 +617,12 @@ default
             if (current_script_count != LastScriptCount) {
                 LastScriptCount = current_script_count;
 
-                // Clear registry and queue, trigger re-registration
+                // Clear registry, known UUIDs, and queue — trigger re-registration
                 PluginRegistry = [];
                 PluginContexts = [];
                 PluginScripts = [];
                 RegistrationQueue = [];
+                KnownScriptUUIDs = [];
                 PendingBatchTimer = FALSE;
                 PendingPluginListRequest = FALSE;
                 llSetTimerEvent(PING_INTERVAL_SEC);
