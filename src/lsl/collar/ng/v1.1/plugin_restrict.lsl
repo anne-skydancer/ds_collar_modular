@@ -94,7 +94,10 @@ integer btn_allowed(string label) {
 
 register_self() {
     // RLV-adjacent plugin: only register when RLV is active
-    if (llLinksetDataRead("rlv_active") != "1") return;
+    if (llLinksetDataRead("rlv_active") != "1") {
+        llLinksetDataDelete("policy:" + PLUGIN_CONTEXT);
+        return;
+    }
 
     // Write button visibility policy to LSD (default-deny per ACL level)
     llLinksetDataWrite("policy:" + PLUGIN_CONTEXT, llList2Json(JSON_OBJECT, [
