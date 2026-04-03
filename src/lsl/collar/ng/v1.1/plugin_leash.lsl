@@ -97,7 +97,7 @@ register_self() {
     // Write button visibility policy to LSD (default-deny per ACL level)
     llLinksetDataWrite("policy:" + PLUGIN_CONTEXT, llList2Json(JSON_OBJECT, [
         "1", "Clip,Post,Get Holder,Settings",
-        "2", "Offer,Post",
+        "2", "Offer",
         "3", "Clip,Unclip,Pass,Yank,Take,Coffle,Post,Get Holder,Settings",
         "4", "Clip,Unclip,Pass,Yank,Coffle,Post,Get Holder,Settings",
         "5", "Clip,Unclip,Pass,Yank,Take,Coffle,Post,Get Holder,Settings"
