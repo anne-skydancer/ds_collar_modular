@@ -54,7 +54,7 @@ string KEY_RELAY_HARDCORE = "relay.hardcoremode";
 
 /* -------------------- STATE -------------------- */
 // Relay state
-integer Mode = MODE_ON;
+integer Mode = MODE_ASK;
 integer Hardcore = FALSE;
 integer IsAttached = FALSE;
 integer RelayListenHandle = 0;
@@ -334,7 +334,7 @@ apply_settings_sync(string msg) {
     }
     else {
         // First wear: LSD is empty, seed from notecard defaults and persist.
-        Mode = MODE_ON;
+        Mode = MODE_ASK;
         Hardcore = FALSE;
         string tmp = llJsonGetValue(kv_json, [KEY_RELAY_MODE]);
         if (tmp != JSON_INVALID) Mode = (integer)tmp;
@@ -845,7 +845,7 @@ default
         }
         else {
             // Attached: restore runtime state from LSD immediately
-            Mode = lsd_int(KEY_RELAY_MODE, MODE_ON);
+            Mode = lsd_int(KEY_RELAY_MODE, MODE_ASK);
             Hardcore = lsd_int(KEY_RELAY_HARDCORE, FALSE);
             update_relay_listen_state();
         }

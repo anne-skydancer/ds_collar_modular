@@ -1,0 +1,1 @@
+- [LSD registration migration](project_lsd_registration.md) — Replace heartbeat-based plugin registration with LSD-persistent model for sim restart resilience

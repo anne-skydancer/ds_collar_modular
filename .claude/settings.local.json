@@ -3,7 +3,8 @@
     "allow": [
       "WebFetch(domain:wiki.secondlife.com)",
       "WebSearch",
-      "Bash(\"/c/Users/Anne Skydancer/.local/bin/lslint\" \"c:/Users/Anne Skydancer/OneDrive/Documents/GitHub/ds_collar_modular/src/lsl/collar/experimental/plugin_maint.lsl\")"
+      "Bash(\"/c/Users/Anne Skydancer/.local/bin/lslint\" \"c:/Users/Anne Skydancer/OneDrive/Documents/GitHub/ds_collar_modular/src/lsl/collar/experimental/plugin_maint.lsl\")",
+      "Bash(lslint src/lsl/collar/experimental/plugin_relay.lsl)"
     ]
   }
 }
