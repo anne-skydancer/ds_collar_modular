@@ -493,6 +493,31 @@ parse_notecard_line(string line) {
     }
 }
 
+// After notecard parsing, recover runtime-set values from LSD that the
+// notecard doesn't contain.  This ensures that ownership, trustees, and
+// other settings set via menus survive script restarts.
+recover_lsd_settings() {
+    list keys = [
+        KEY_MULTI_OWNER_MODE, KEY_OWNER, KEY_OWNERS, KEY_TRUSTEES,
+        KEY_BLACKLIST, KEY_PUBLIC_ACCESS, KEY_TPE_MODE, KEY_LOCKED,
+        KEY_EX_OWNER_TP, KEY_EX_OWNER_IM, KEY_EX_TRUSTEE_TP, KEY_EX_TRUSTEE_IM,
+        KEY_RUNAWAY_ENABLED
+    ];
+    integer i = 0;
+    integer len = llGetListLength(keys);
+    while (i < len) {
+        string k = llList2String(keys, i);
+        // Only recover if KvJson doesn't already have this key (notecard wins)
+        if (llJsonGetValue(KvJson, [k]) == JSON_INVALID) {
+            string lsd_val = llLinksetDataRead(k);
+            if (lsd_val != "") {
+                KvJson = llJsonSetValue(KvJson, [k], lsd_val);
+            }
+        }
+        i += 1;
+    }
+}
+
 integer start_notecard_reading() {
     if (llGetInventoryType(NOTECARD_NAME) != INVENTORY_NOTECARD) {
         return FALSE;
@@ -538,6 +563,7 @@ handle_set(string msg) {
             did_change = kv_set_list(key_name, new_list);
 
             if (did_change) {
+                llLinksetDataWrite(key_name, kv_get(key_name));
                 broadcast_full_sync();  // Bulk operations get full sync
             }
         }
@@ -577,6 +603,8 @@ handle_set(string msg) {
         did_change = kv_set_scalar(key_name, value);
 
         if (did_change) {
+            // Persist to LSD so value survives script restarts
+            llLinksetDataWrite(key_name, value);
             broadcast_delta_scalar(key_name, value);
         }
     }
@@ -605,6 +633,8 @@ handle_list_add(string msg) {
     }
     
     if (did_change) {
+        // Persist full list to LSD so value survives script restarts
+        llLinksetDataWrite(key_name, kv_get(key_name));
         broadcast_delta_list_add(key_name, elem);
     }
 }
@@ -643,7 +673,9 @@ handle_obj_set(string msg) {
 
     integer did_change = kv_obj_set_field(key_name, field, value);
     if (did_change) {
-        broadcast_delta_scalar(key_name, kv_get(key_name));
+        string updated = kv_get(key_name);
+        llLinksetDataWrite(key_name, updated);
+        broadcast_delta_scalar(key_name, updated);
     }
 }
 
@@ -659,7 +691,9 @@ handle_obj_remove(string msg) {
 
     integer did_change = kv_obj_remove_field(key_name, field);
     if (did_change) {
-        broadcast_delta_scalar(key_name, kv_get(key_name));
+        string updated = kv_get(key_name);
+        llLinksetDataWrite(key_name, updated);
+        broadcast_delta_scalar(key_name, updated);
     }
 }
 
@@ -673,8 +707,9 @@ handle_list_remove(string msg) {
 
     
     integer did_change = kv_list_remove_all(key_name, elem);
-    
+
     if (did_change) {
+        llLinksetDataWrite(key_name, kv_get(key_name));
         broadcast_delta_list_remove(key_name, elem);
     }
 }
@@ -700,6 +735,7 @@ default
         integer notecard_found = start_notecard_reading();
 
         if (!notecard_found) {
+            recover_lsd_settings();
             broadcast_full_sync();
         }
     }
@@ -761,6 +797,7 @@ default
         else {
             IsLoadingNotecard = FALSE;
             ForceReseed = FALSE;
+            recover_lsd_settings();
             broadcast_full_sync();
 
             // Trigger bootstrap after notecard load completes

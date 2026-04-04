@@ -837,6 +837,17 @@ default
         /* -------------------- AUTH BUS -------------------- */
         if (num == AUTH_BUS) {
             if (msg_type == "acl_result") handle_acl_result(msg);
+            else if (msg_type == "acl_update") {
+                // ACL roles changed (ownership, trustees, public, TPE, etc.)
+                // Invalidate all active sessions so they re-create with fresh ACL
+                // on next touch. This prevents stale ACL from granting wrong buttons.
+                integer si = llGetListLength(SessionUsers) - 1;
+                while (si >= 0) {
+                    key sess_user = llList2Key(SessionUsers, si);
+                    cleanup_session(sess_user);
+                    si--;
+                }
+            }
             return;
         }
 

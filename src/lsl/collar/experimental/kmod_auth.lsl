@@ -57,6 +57,7 @@ integer CACHE_MAX_USERS = 800;  // Safety limit for cache size
 /* -------------------- JSON RESPONSE TEMPLATES -------------------- */
 // Pre-built templates for fast response construction (30-40% faster than llList2Json)
 string JSON_TEMPLATE_BLACKLIST = "";
+string JSON_TEMPLATE_UNAUTHORIZED = "";
 string JSON_TEMPLATE_NOACCESS = "";
 string JSON_TEMPLATE_PUBLIC = "";
 string JSON_TEMPLATE_OWNED = "";
@@ -109,7 +110,7 @@ integer is_owner(key av) {
 /* -------------------- JSON TEMPLATE INITIALIZATION -------------------- */
 
 init_json_templates() {
-    // Blacklist: No access
+    // Blacklist: No access (actually on blacklist)
     JSON_TEMPLATE_BLACKLIST = llList2Json(JSON_OBJECT, [
         "type", "acl_result",
         "avatar", "AVATAR_PLACEHOLDER",
@@ -117,6 +118,16 @@ init_json_templates() {
         "is_wearer", 0,
         "is_blacklisted", 1,
         "owner_set", 0
+    ]);
+
+    // Unauthorized: stranger with public off (not blacklisted, just no access)
+    JSON_TEMPLATE_UNAUTHORIZED = llList2Json(JSON_OBJECT, [
+        "type", "acl_result",
+        "avatar", "AVATAR_PLACEHOLDER",
+        "level", ACL_BLACKLIST,
+        "is_wearer", 0,
+        "is_blacklisted", 0,
+        "owner_set", "OWNER_SET_PLACEHOLDER"
     ]);
 
     // No Access: TPE wearer
@@ -305,6 +316,14 @@ process_blacklist_query(key avatar, string correlation_id) {
     store_cached_acl(avatar, ACL_BLACKLIST);
 }
 
+// Unauthorized stranger - not blacklisted, just no access (public off)
+process_unauthorized_query(key avatar, string correlation_id) {
+    integer owner_set = has_owner();
+    send_acl_from_template(JSON_TEMPLATE_UNAUTHORIZED, avatar, owner_set, correlation_id);
+    // Do NOT cache unauthorized strangers — their ACL can change at any time
+    // if they are later added as owner/trustee, or public mode is toggled.
+}
+
 // TPE wearer - locked out
 process_noaccess_query(key avatar, string correlation_id) {
     integer owner_set = has_owner();
@@ -412,8 +431,8 @@ route_acl_query(key avatar, string correlation_id) {
         return;
     }
     
-    // DEFAULT: Unauthorized user (treat as blacklist)
-    process_blacklist_query(avatar, correlation_id);
+    // DEFAULT: Unauthorized stranger (not blacklisted, just no access)
+    process_unauthorized_query(avatar, correlation_id);
 }
 
 // Helper for cache hits - reconstruct response from cached level

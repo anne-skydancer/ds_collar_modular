@@ -4,7 +4,10 @@
       "WebFetch(domain:wiki.secondlife.com)",
       "WebSearch",
       "Bash(\"/c/Users/Anne Skydancer/.local/bin/lslint\" \"c:/Users/Anne Skydancer/OneDrive/Documents/GitHub/ds_collar_modular/src/lsl/collar/experimental/plugin_maint.lsl\")",
-      "Bash(lslint src/lsl/collar/experimental/plugin_relay.lsl)"
+      "Bash(lslint src/lsl/collar/experimental/plugin_relay.lsl)",
+      "Bash(lslint src/lsl/collar/experimental/kmod_auth.lsl)",
+      "Bash(lslint src/lsl/collar/experimental/kmod_ui.lsl)",
+      "Bash(lslint src/lsl/collar/experimental/kmod_settings.lsl)"
     ]
   }
 }
