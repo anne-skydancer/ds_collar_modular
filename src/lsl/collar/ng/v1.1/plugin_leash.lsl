@@ -97,7 +97,7 @@ register_self() {
     // Write button visibility policy to LSD (default-deny per ACL level)
     llLinksetDataWrite("policy:" + PLUGIN_CONTEXT, llList2Json(JSON_OBJECT, [
         "1", "Clip,Post,Get Holder,Settings",
-        "2", "Offer",
+        "2", "Offer,Post",
         "3", "Clip,Unclip,Pass,Yank,Take,Coffle,Post,Get Holder,Settings",
         "4", "Clip,Unclip,Pass,Yank,Coffle,Post,Get Holder,Settings",
         "5", "Clip,Unclip,Pass,Yank,Take,Coffle,Post,Get Holder,Settings"
@@ -131,6 +131,7 @@ showMainMenu() {
         if (btn_allowed("Clip"))    buttons += ["Clip"];
         if (btn_allowed("Offer"))   buttons += ["Offer"];
         if (btn_allowed("Coffle"))  buttons += ["Coffle"];
+        if (btn_allowed("Post"))    buttons += ["Post"];
     }
     else {
         // Unclip: policy + must be leasher or ACL 3+
@@ -147,8 +148,6 @@ showMainMenu() {
             buttons += ["Take"];
         }
     }
-    // Post: available regardless of leash state
-    if (btn_allowed("Post"))    buttons += ["Post"];
 
     if (btn_allowed("Get Holder")) buttons += ["Get Holder"];
     if (btn_allowed("Settings"))   buttons += ["Settings"];
