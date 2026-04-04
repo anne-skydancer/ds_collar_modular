@@ -221,7 +221,7 @@ do_view_settings() {
     if (rcnt > 0) restr_str = (string)rcnt + " active";
     else          restr_str = "none";
 
-    string output = "=== Collar Settings ===\n";
+    string output = "\n=== Collar Settings ===\n";
 
     // --- Owner(s) ---
     if (multi) {
