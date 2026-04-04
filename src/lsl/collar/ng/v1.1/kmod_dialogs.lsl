@@ -493,11 +493,6 @@ default
         /* -------------------- KERNEL LIFECYCLE -------------------- */
         if (num == KERNEL_LIFECYCLE) {
             if (msg_type == "soft_reset" || msg_type == "soft_reset_all") {
-                integer i = llGetListLength(SessionListens) - 1;
-                while (i >= 0) {
-                    close_session_at_idx(i);
-                    i -= 1;
-                }
                 llResetScript();
             }
             return;

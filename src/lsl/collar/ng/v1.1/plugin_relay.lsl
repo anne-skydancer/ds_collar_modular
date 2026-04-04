@@ -97,9 +97,6 @@ integer btn_allowed(string label) {
 /* -------------------- LIFECYCLE MANAGEMENT -------------------- */
 
 register_self() {
-    // RLV-adjacent plugin: only register when RLV is active
-    if (llLinksetDataRead("rlv_active") != "1") return;
-
     // Write button visibility policy to LSD (default-deny per ACL level)
     llLinksetDataWrite("policy:" + PLUGIN_CONTEXT, llList2Json(JSON_OBJECT, [
         "2", "Mode,Bound by...,Safeword",
@@ -508,12 +505,6 @@ close_silent() {
 /* -------------------- SESSION MANAGEMENT -------------------- */
 
 cleanup_session() {
-    if (SessionId != "") {
-        llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
-            "type", "dialog_close",
-            "session_id", SessionId
-        ]), NULL_KEY);
-    }
     CurrentUser = NULL_KEY;
     UserAcl = -999;
     gPolicyButtons = [];
