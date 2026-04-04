@@ -332,19 +332,13 @@ create_session(key user, integer acl, integer is_blacklisted, string context_fil
         // Check LSD policy for this plugin at the user's ACL level
         string policy = llLinksetDataRead("policy:" + context);
         if (policy != "") {
-            // Skip RLV-adjacent plugins when RLV is not active
-            if (llJsonGetValue(policy, ["rlv"]) == "1" &&
-                llLinksetDataRead("rlv_active") != "1") {
-                // hidden
-            }
-            else {
-                string csv = llJsonGetValue(policy, [(string)acl]);
-                if (csv != JSON_INVALID) {
-                    if (context_filter == SOS_CONTEXT) {
-                        should_include = is_sos_plugin;
-                    } else {
-                        should_include = !is_sos_plugin;
-                    }
+            string csv = llJsonGetValue(policy, [(string)acl]);
+            if (csv != JSON_INVALID) {
+                // Policy exists for this ACL level — apply context filter
+                if (context_filter == SOS_CONTEXT) {
+                    should_include = is_sos_plugin;
+                } else {
+                    should_include = !is_sos_plugin;
                 }
             }
         }
