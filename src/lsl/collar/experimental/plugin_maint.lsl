@@ -32,26 +32,6 @@ string PLUGIN_LABEL = "Maintenance";
     5 = Primary Owner
 */
 
-/* -------------------- ALL POSSIBLE SETTINGS -------------------- */
-list ALL_SETTINGS = [
-    "access.multiowner",
-    "access.owner",
-    "access.owners",
-    "access.trustees",
-    "access.blacklist",
-    "access.enablerunaway",
-    "public.mode",
-    "lock.locked",
-    "tpe.mode",
-    "relay.mode",
-    "relay.hardcoremode",
-    "restrict.list",
-    "rlvex.ownertp",
-    "rlvex.ownerim",
-    "rlvex.trusteetp",
-    "rlvex.trusteeim"
-];
-
 /* -------------------- INVENTORY ITEMS -------------------- */
 string HUD_ITEM = "D/s Collar control HUD";
 string MANUAL_NOTECARD = "D/s Collar User Manual";
@@ -182,6 +162,13 @@ show_main_menu() {
 
 /* -------------------- ACTIONS -------------------- */
 
+// Format a single boolean setting value as ON/OFF
+string fmt_bool(string raw) {
+    if (raw == JSON_INVALID || raw == "") return "(not set)";
+    if ((integer)raw) return "ON";
+    return "OFF";
+}
+
 do_view_settings() {
     if (!SettingsReady || CachedSettings == "") {
         llRegionSayTo(CurrentUser, 0, "Settings not loaded yet. Try again.");
@@ -189,21 +176,55 @@ do_view_settings() {
     }
 
     string output = "=== Collar Settings ===\n";
+    string val;
 
-    // Iterate through ALL known settings
-    integer i = 0;
+    // --- Access ---
+    output += "Multi-owner:  " + fmt_bool(llJsonGetValue(CachedSettings, ["access.multiowner"])) + "\n";
+    output += "Runaway:      " + fmt_bool(llJsonGetValue(CachedSettings, ["access.enablerunaway"])) + "\n";
 
-    while (i < llGetListLength(ALL_SETTINGS)) {
-        string setting_key = llList2String(ALL_SETTINGS, i);
-        string value = llJsonGetValue(CachedSettings, [setting_key]);
+    // --- Lock ---
+    val = llJsonGetValue(CachedSettings, ["lock.locked"]);
+    if (val == JSON_INVALID || val == "") output += "Lock:         (not set)\n";
+    else if ((integer)val)               output += "Lock:         LOCKED\n";
+    else                                 output += "Lock:         UNLOCKED\n";
 
-        // Show (not set) for missing keys
-        if (value == JSON_INVALID || value == "") {
-            value = "(not set)";
-        }
+    // --- Public ---
+    output += "Public:       " + fmt_bool(llJsonGetValue(CachedSettings, ["public.mode"])) + "\n";
 
-        output += setting_key + " = " + value + "\n";
-        i += 1;
+    // --- TPE ---
+    output += "TPE:          " + fmt_bool(llJsonGetValue(CachedSettings, ["tpe.mode"])) + "\n";
+
+    // --- Relay ---
+    val = llJsonGetValue(CachedSettings, ["relay.mode"]);
+    if (val == JSON_INVALID || val == "") {
+        output += "Relay:        (not set)\n";
+    }
+    else {
+        integer mode_int = (integer)val;
+        string mode_label;
+        if (mode_int == 0)      mode_label = "OFF";
+        else if (mode_int == 1) mode_label = "ON";
+        else if (mode_int == 2) mode_label = "ASK";
+        else                    mode_label = "(unknown:" + val + ")";
+        output += "Relay:        " + mode_label + "\n";
+    }
+    output += "Relay HC:     " + fmt_bool(llJsonGetValue(CachedSettings, ["relay.hardcoremode"])) + "\n";
+
+    // --- RLVex ---
+    output += "Owner TP:     " + fmt_bool(llJsonGetValue(CachedSettings, ["rlvex.ownertp"])) + "\n";
+    output += "Owner IM:     " + fmt_bool(llJsonGetValue(CachedSettings, ["rlvex.ownerim"])) + "\n";
+    output += "Trustee TP:   " + fmt_bool(llJsonGetValue(CachedSettings, ["rlvex.trusteetp"])) + "\n";
+    output += "Trustee IM:   " + fmt_bool(llJsonGetValue(CachedSettings, ["rlvex.trusteeim"])) + "\n";
+
+    // --- Restrictions ---
+    val = llJsonGetValue(CachedSettings, ["restrict.list"]);
+    if (val == JSON_INVALID || val == "" || !is_json_arr(val)) {
+        output += "Restrictions: (none)\n";
+    }
+    else {
+        integer cnt = llGetListLength(llJson2List(val));
+        if (cnt == 0) output += "Restrictions: (none)\n";
+        else          output += "Restrictions: " + (string)cnt + " active\n";
     }
 
     llRegionSayTo(CurrentUser, 0, output);

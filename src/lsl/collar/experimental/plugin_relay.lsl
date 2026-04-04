@@ -38,7 +38,10 @@ integer RLV_RESP_CHANNEL = 4711;
 integer MAX_RELAYS = 5;
 
 integer MODE_OFF = 0;
-integer MODE_ON = 1;
+integer MODE_ON  = 1;
+integer MODE_ASK = 2;
+
+integer ASK_TIMEOUT_SEC = 30;  // Wearer has 30 seconds to respond to an ASK dialog
 
 integer SOS_MSG_NUM = 555;  // SOS emergency channel
 
@@ -59,6 +62,18 @@ key WearerKey = NULL_KEY;  // Cached owner UUID for performance
 
 // Relays: [obj_key, obj_name, session_chan, restrictions_csv] * N
 list Relays = [];
+
+// ASK mode: objects the wearer has accepted this session (not re-prompted)
+list SessionTrustedKeys = [];
+
+// ASK mode: one pending prompt at a time
+// Batches all commands from the same object until wearer responds
+key PendingAskKey = NULL_KEY;
+string PendingAskName = "";
+integer PendingAskChan = 0;
+list PendingAskCommands = [];
+integer AskListenHandle = 0;
+integer AskDialogChan = 0;
 
 // Session management
 key CurrentUser = NULL_KEY;
@@ -212,6 +227,9 @@ clear_restrictions(key obj) {
 }
 
 safeword_clear_all() {
+    clear_pending_ask();
+    SessionTrustedKeys = [];
+
     integer relay_count = llGetListLength(Relays);
     integer i = 0;
     while (i < relay_count) {
@@ -220,6 +238,83 @@ safeword_clear_all() {
         i = i + 4;
     }
     Relays = [];
+}
+
+/* -------------------- ASK MODE HELPERS -------------------- */
+
+// Returns TRUE if a command removes restrictions rather than adding them.
+// Removal commands are always auto-accepted in ASK mode per ORG spec.
+integer is_removal_command(string cmd) {
+    if (llGetSubString(cmd, -2, -1) == "=y") return TRUE;
+    if (llSubStringIndex(cmd, "@clear") == 0) return TRUE;
+    return FALSE;
+}
+
+// Opens a direct llDialog prompt to the wearer for an incoming ASK request.
+// Uses its own private negative channel — independent of the collar UI dialog system.
+show_ask_dialog() {
+    AskDialogChan = -1000000 - (integer)llFrand(1000000000.0);
+    if (AskListenHandle) llListenRemove(AskListenHandle);
+    AskListenHandle = llListen(AskDialogChan, "", WearerKey, "");
+
+    integer cmd_count = llGetListLength(PendingAskCommands);
+    string body = "[RELAY] " + PendingAskName +
+                  "\nwants to apply " + (string)cmd_count +
+                  " restriction(s).\n\nAllow or deny?";
+
+    // Three buttons: Deny left, Allow right, blank centre for spacing
+    llDialog(WearerKey, body, ["Deny", " ", "Allow"], AskDialogChan);
+    llSetTimerEvent((float)ASK_TIMEOUT_SEC);
+}
+
+// Wearer accepted: trust the object for this session and execute pending commands.
+accept_ask() {
+    if (llListFindList(SessionTrustedKeys, [(string)PendingAskKey]) == -1) {
+        SessionTrustedKeys += [(string)PendingAskKey];
+    }
+
+    add_relay(PendingAskKey, PendingAskName, PendingAskChan);
+
+    integer i = 0;
+    while (i < llGetListLength(PendingAskCommands)) {
+        string cmd = llList2String(PendingAskCommands, i);
+        store_restriction(PendingAskKey, cmd);
+        llOwnerSay(cmd);
+        llRegionSayTo(PendingAskKey, PendingAskChan,
+            "RLV," + (string)llGetKey() + "," + cmd + ",ok");
+        i++;
+    }
+
+    llRegionSayTo(WearerKey, 0, "[RELAY] Allowed: " + PendingAskName);
+    clear_pending_ask();
+}
+
+// Wearer declined or dialog timed out: reject all pending commands with ko.
+decline_ask() {
+    integer i = 0;
+    while (i < llGetListLength(PendingAskCommands)) {
+        string cmd = llList2String(PendingAskCommands, i);
+        llRegionSayTo(PendingAskKey, PendingAskChan,
+            "RLV," + (string)llGetKey() + "," + cmd + ",ko");
+        i++;
+    }
+
+    llRegionSayTo(WearerKey, 0, "[RELAY] Denied: " + PendingAskName);
+    clear_pending_ask();
+}
+
+// Cleans up ASK listener, timer, and all pending state.
+clear_pending_ask() {
+    if (AskListenHandle) {
+        llListenRemove(AskListenHandle);
+        AskListenHandle = 0;
+    }
+    llSetTimerEvent(0.0);
+    PendingAskKey = NULL_KEY;
+    PendingAskName = "";
+    PendingAskChan = 0;
+    PendingAskCommands = [];
+    AskDialogChan = 0;
 }
 
 /* -------------------- SETTINGS CONSUMPTION -------------------- */
@@ -312,6 +407,9 @@ show_main_menu() {
     else if (Mode == MODE_OFF) {
         mode_str = "OFF";
     }
+    else if (Mode == MODE_ASK) {
+        mode_str = "ASK";
+    }
     else if (Hardcore) {
         mode_str = "HARDCORE";
     }
@@ -360,6 +458,9 @@ show_mode_menu() {
     else if (Mode == MODE_OFF) {
         mode_str = "OFF";
     }
+    else if (Mode == MODE_ASK) {
+        mode_str = "ASK";
+    }
     else if (Hardcore) {
         mode_str = "HARDCORE";
     }
@@ -369,14 +470,16 @@ show_mode_menu() {
 
     string message = "RLV Relay Mode: " + mode_str;
 
-    list buttons = ["Back", "OFF", "ON"];
+    list buttons = ["Back", "OFF", "ASK", "ON"];
 
-    // Hardcore toggle only if policy allows
-    if (Hardcore) {
-        if (btn_allowed("HC OFF")) buttons += ["HC OFF"];
-    }
-    else {
-        if (btn_allowed("HC ON")) buttons += ["HC ON"];
+    // Hardcore toggle only available in ON mode, and only if policy allows
+    if (Mode == MODE_ON) {
+        if (Hardcore) {
+            if (btn_allowed("HC OFF")) buttons += ["HC OFF"];
+        }
+        else {
+            if (btn_allowed("HC ON")) buttons += ["HC ON"];
+        }
     }
 
     string buttons_json = llList2Json(JSON_ARRAY, buttons);
@@ -454,6 +557,8 @@ handle_button_click(string button) {
         }
     }
     else if (button == "OFF") {
+        clear_pending_ask();
+        SessionTrustedKeys = [];
         Mode = MODE_OFF;
         Hardcore = FALSE;
         persist_mode(MODE_OFF);
@@ -462,7 +567,18 @@ handle_button_click(string button) {
         llRegionSayTo(CurrentUser, 0, "[RELAY] Mode set to OFF");
         show_mode_menu();
     }
+    else if (button == "ASK") {
+        clear_pending_ask();
+        Mode = MODE_ASK;
+        Hardcore = FALSE;
+        persist_mode(MODE_ASK);
+        persist_hardcore(FALSE);
+        update_relay_listen_state();
+        llRegionSayTo(CurrentUser, 0, "[RELAY] Mode set to ASK");
+        show_mode_menu();
+    }
     else if (button == "ON") {
+        clear_pending_ask();
         Mode = MODE_ON;
         persist_mode(MODE_ON);
         update_relay_listen_state();
@@ -543,6 +659,10 @@ cleanup_session() {
 /* -------------------- GROUND REZ HANDLER -------------------- */
 
 handle_ground_rez() {
+    // Dismiss any outstanding ASK prompt and clear session trust
+    clear_pending_ask();
+    SessionTrustedKeys = [];
+
     // Turn off relay mode
     Mode = MODE_OFF;
     Hardcore = FALSE;
@@ -667,7 +787,35 @@ handle_relay_message(key sender_id, string sender_name, string raw_msg) {
             return;
         }
 
-        // Accept command
+        // ASK mode: prompt wearer before executing restrictive commands from untrusted objects.
+        // Removal commands (=y, @clear) are always auto-accepted per ORG spec.
+        // Objects the wearer has accepted this session are also auto-accepted without re-prompting.
+        if (Mode == MODE_ASK && !is_removal_command(command)) {
+            integer already_trusted = (llListFindList(SessionTrustedKeys, [(string)sender_id]) != -1);
+            if (!already_trusted) {
+                if (PendingAskKey == NULL_KEY) {
+                    // No active prompt — start one for this object
+                    PendingAskKey = sender_id;
+                    PendingAskName = sender_name;
+                    PendingAskChan = session_chan;
+                    PendingAskCommands = [command];
+                    show_ask_dialog();
+                }
+                else if (PendingAskKey == sender_id) {
+                    // Same object sent another command before wearer responded — batch it
+                    PendingAskCommands += [command];
+                }
+                else {
+                    // Different object arrived while a prompt is already open — reject
+                    llRegionSayTo(sender_id, session_chan,
+                        "RLV," + (string)llGetKey() + "," + command + ",ko");
+                }
+                return;
+            }
+            // already_trusted: fall through to accept below
+        }
+
+        // Accept command (MODE_ON, or MODE_ASK for trusted objects / removal commands)
         add_relay(sender_id, sender_name, session_chan);
         store_restriction(sender_id, command);
         llOwnerSay(command);  // Forward to viewer
@@ -684,6 +832,8 @@ default
 {
     state_entry() {
         cleanup_session();
+        clear_pending_ask();
+        SessionTrustedKeys = [];
 
         // Check attachment state
         IsAttached = (llGetAttached() != 0);
@@ -711,9 +861,19 @@ default
         llResetScript();
     }
 
+    timer() {
+        // ASK dialog timed out — treat as denial
+        if (PendingAskKey != NULL_KEY) {
+            llRegionSayTo(WearerKey, 0, "[RELAY] Request timed out: " + PendingAskName);
+            decline_ask();
+        }
+    }
+
     attach(key id) {
         if (id == NULL_KEY) {
-            // Detached
+            // Detached — dismiss any pending ASK and reset session trust
+            clear_pending_ask();
+            SessionTrustedKeys = [];
             IsAttached = FALSE;
             handle_ground_rez();
         }
@@ -782,6 +942,14 @@ default
     listen(integer chan, string name, key id, string msg) {
         if (chan == RELAY_CHANNEL) {
             handle_relay_message(id, name, msg);
+        }
+        else if (chan == AskDialogChan && id == WearerKey) {
+            if (msg == "Allow") {
+                accept_ask();
+            }
+            else if (msg == "Deny") {
+                decline_ask();
+            }
         }
     }
 
