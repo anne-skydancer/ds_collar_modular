@@ -92,11 +92,10 @@ integer btn_allowed(string label) {
 /* -------------------- KERNEL MESSAGES -------------------- */
 
 register_with_kernel() {
-    // RLV-adjacent plugin: only register when RLV is active
-    if (llLinksetDataRead("rlv_active") != "1") return;
-
     // Write button visibility policy to LSD (only primary owner ACL 5 gets toggle)
+    // rlv flag: UI hides this plugin when RLV is not active
     llLinksetDataWrite("policy:" + PLUGIN_CONTEXT, llList2Json(JSON_OBJECT, [
+        "rlv", "1",
         "5", "toggle"
     ]));
 

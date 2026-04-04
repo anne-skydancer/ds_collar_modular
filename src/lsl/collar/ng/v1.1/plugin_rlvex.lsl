@@ -127,11 +127,10 @@ reconcile_all() {
 /* -------------------- LIFECYCLE -------------------- */
 
 register_self() {
-    // RLV-adjacent plugin: only register when RLV is active
-    if (llLinksetDataRead("rlv_active") != "1") return;
-
     // Write button visibility policy to LSD (default-deny per ACL level)
+    // rlv flag: UI hides this plugin when RLV is not active
     llLinksetDataWrite("policy:" + PLUGIN_CONTEXT, llList2Json(JSON_OBJECT, [
+        "rlv", "1",
         "3", "Owner,Trustee,TP,IM",
         "4", "Owner,Trustee,TP,IM",
         "5", "Owner,Trustee,TP,IM"
