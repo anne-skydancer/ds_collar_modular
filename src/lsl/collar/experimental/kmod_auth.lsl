@@ -44,6 +44,12 @@ string LSD_KEY_ACL_PUBLIC    = "ACL.PUBLIC";
 string LSD_KEY_ACL_TPE       = "ACL.TPE";
 string LSD_KEY_ACL_TIMESTAMP = "ACL.TIMESTAMP";
 
+// Per-user ACL query cache prefix. Full key = LSD_ACL_CACHE_PREFIX + (string)avatar_uuid.
+// Value format: "<level>|<unix_timestamp>" — e.g. "5|1712345678".
+// kmod_ui.lsl reads this prefix directly to skip the AUTH_BUS round-trip on touch.
+// CROSS-MODULE CONTRACT: this constant must match LSD_ACL_CACHE_PREFIX in kmod_ui.lsl.
+string LSD_ACL_CACHE_PREFIX = "acl_cache_";
+
 /* -------------------- CACHE CONSTANTS -------------------- */
 integer CACHE_TTL = 60;  // Cache query results for 60 seconds
 integer CACHE_MAX_USERS = 800;  // Safety limit for cache size
@@ -178,7 +184,7 @@ init_json_templates() {
 
 // Build cache key for a user's ACL query result
 string get_cache_key(key avatar) {
-    return "acl_cache_" + (string)avatar;
+    return LSD_ACL_CACHE_PREFIX + (string)avatar;
 }
 
 // Try to retrieve cached ACL result (returns TRUE if cache hit)
@@ -233,7 +239,7 @@ store_cached_acl(key avatar, integer level) {
 clear_acl_query_cache() {
     // OPTIMIZED: Use regex search instead of iterating all keys
     // This pushes the search workload to the simulator (C++)
-    list keys = llLinksetDataFindKeys("^acl_cache_", 0, 0); 
+    list keys = llLinksetDataFindKeys("^" + LSD_ACL_CACHE_PREFIX, 0, 0);
     integer i = 0;
     while (i < llGetListLength(keys)) {
         llLinksetDataDelete(llList2String(keys, i));

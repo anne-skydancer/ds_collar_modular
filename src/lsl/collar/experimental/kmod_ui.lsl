@@ -31,6 +31,12 @@ float LONG_TOUCH_THRESHOLD = 1.5;
 integer MAX_SESSIONS = 5;
 integer SESSION_MAX_AGE = 60;  // Seconds before ACL refresh required
 
+// Per-user ACL cache prefix written by kmod_auth.lsl.
+// Reading "LSD_ACL_CACHE_PREFIX + avatar_uuid" skips the AUTH_BUS round-trip on touch.
+// Value format: "<level>|<unix_timestamp>" — must match kmod_auth.lsl's store_cached_acl().
+// CROSS-MODULE CONTRACT: this constant must match LSD_ACL_CACHE_PREFIX in kmod_auth.lsl.
+string LSD_ACL_CACHE_PREFIX = "acl_cache_";
+
 /* ACL levels (mirrors auth module) */
 integer ACL_BLACKLIST = -1;
 integer ACL_NOACCESS = 0;
@@ -137,7 +143,7 @@ set_plugin_state(string context, integer button_state) {
 // zero link_messages. Falls through to AUTH_BUS only on a true cold miss
 // (unknown user whose entry was never written or has been cleared).
 integer try_cached_session(key user_key, string context_filter) {
-    string raw = llLinksetDataRead("acl_cache_" + (string)user_key);
+    string raw = llLinksetDataRead(LSD_ACL_CACHE_PREFIX + (string)user_key);
     if (raw == "") return FALSE;
     integer sep = llSubStringIndex(raw, "|");
     if (sep == -1) return FALSE;
