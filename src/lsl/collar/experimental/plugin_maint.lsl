@@ -162,11 +162,45 @@ show_main_menu() {
 
 /* -------------------- ACTIONS -------------------- */
 
-// Format a single boolean setting value as ON/OFF
+// Format a boolean as ON/OFF; unset defaults to OFF (matches runtime behaviour)
 string fmt_bool(string raw) {
-    if (raw == JSON_INVALID || raw == "") return "(not set)";
     if ((integer)raw) return "ON";
     return "OFF";
+}
+
+// Format relay.mode integer as label
+string fmt_relay_mode(string raw) {
+    integer m = (integer)raw;
+    if (m == 1) return "ON";
+    if (m == 2) return "ASK";
+    return "OFF";
+}
+
+// Count items in a JSON array; returns 0 for missing/invalid
+integer json_arr_count(string raw) {
+    if (raw == JSON_INVALID || raw == "" || !is_json_arr(raw)) return 0;
+    return llGetListLength(llJson2List(raw));
+}
+
+// Append one person line per {uuid:honorific} pair in a JSON object.
+// Returns the formatted block, or fallback_str if the object is empty/invalid.
+string fmt_person_lines(string json_obj, string fallback_str) {
+    if (json_obj == JSON_INVALID || llJsonValueType(json_obj, []) != JSON_OBJECT) {
+        return fallback_str;
+    }
+    list pairs = llJson2List(json_obj);
+    integer plen = llGetListLength(pairs);
+    if (plen < 2) return fallback_str;
+
+    string block = "";
+    integer i = 0;
+    while (i < plen) {
+        string p_uuid = llList2String(pairs, i);
+        string p_name = llList2String(pairs, i + 1);
+        block += "  " + p_name + " (" + p_uuid + ")\n";
+        i += 2;
+    }
+    return block;
 }
 
 do_view_settings() {
@@ -175,57 +209,72 @@ do_view_settings() {
         return;
     }
 
+    integer multi = (integer)llJsonGetValue(CachedSettings, ["access.multiowner"]);
+
+    string locked = llJsonGetValue(CachedSettings, ["lock.locked"]);
+    string lock_str;
+    if ((integer)locked) lock_str = "LOCKED";
+    else                 lock_str = "UNLOCKED";
+
+    integer rcnt = json_arr_count(llJsonGetValue(CachedSettings, ["restrict.list"]));
+    string restr_str;
+    if (rcnt > 0) restr_str = (string)rcnt + " active";
+    else          restr_str = "none";
+
     string output = "=== Collar Settings ===\n";
-    string val;
 
-    // --- Access ---
-    output += "Multi-owner:  " + fmt_bool(llJsonGetValue(CachedSettings, ["access.multiowner"])) + "\n";
-    output += "Runaway:      " + fmt_bool(llJsonGetValue(CachedSettings, ["access.enablerunaway"])) + "\n";
-
-    // --- Lock ---
-    val = llJsonGetValue(CachedSettings, ["lock.locked"]);
-    if (val == JSON_INVALID || val == "") output += "Lock:         (not set)\n";
-    else if ((integer)val)               output += "Lock:         LOCKED\n";
-    else                                 output += "Lock:         UNLOCKED\n";
-
-    // --- Public ---
-    output += "Public:       " + fmt_bool(llJsonGetValue(CachedSettings, ["public.mode"])) + "\n";
-
-    // --- TPE ---
-    output += "TPE:          " + fmt_bool(llJsonGetValue(CachedSettings, ["tpe.mode"])) + "\n";
-
-    // --- Relay ---
-    val = llJsonGetValue(CachedSettings, ["relay.mode"]);
-    if (val == JSON_INVALID || val == "") {
-        output += "Relay:        (not set)\n";
+    // --- Owner(s) ---
+    if (multi) {
+        string owner_block = fmt_person_lines(
+            llJsonGetValue(CachedSettings, ["access.owners"]), "");
+        if (owner_block == "") {
+            output += "Owners: Uncommitted\n";
+        }
+        else {
+            output += "Owners:\n" + owner_block;
+        }
     }
     else {
-        integer mode_int = (integer)val;
-        string mode_label;
-        if (mode_int == 0)      mode_label = "OFF";
-        else if (mode_int == 1) mode_label = "ON";
-        else if (mode_int == 2) mode_label = "ASK";
-        else                    mode_label = "(unknown:" + val + ")";
-        output += "Relay:        " + mode_label + "\n";
+        string owner_raw = llJsonGetValue(CachedSettings, ["access.owner"]);
+        if (owner_raw != JSON_INVALID && llJsonValueType(owner_raw, []) == JSON_OBJECT) {
+            list pairs = llJson2List(owner_raw);
+            if (llGetListLength(pairs) >= 2) {
+                string p_uuid = llList2String(pairs, 0);
+                string p_name = llList2String(pairs, 1);
+                output += "Owner: " + p_name + " (" + p_uuid + ")\n";
+            }
+            else {
+                output += "Owner: Uncommitted\n";
+            }
+        }
+        else {
+            output += "Owner: Uncommitted\n";
+        }
     }
-    output += "Relay HC:     " + fmt_bool(llJsonGetValue(CachedSettings, ["relay.hardcoremode"])) + "\n";
 
-    // --- RLVex ---
-    output += "Owner TP:     " + fmt_bool(llJsonGetValue(CachedSettings, ["rlvex.ownertp"])) + "\n";
-    output += "Owner IM:     " + fmt_bool(llJsonGetValue(CachedSettings, ["rlvex.ownerim"])) + "\n";
-    output += "Trustee TP:   " + fmt_bool(llJsonGetValue(CachedSettings, ["rlvex.trusteetp"])) + "\n";
-    output += "Trustee IM:   " + fmt_bool(llJsonGetValue(CachedSettings, ["rlvex.trusteeim"])) + "\n";
-
-    // --- Restrictions ---
-    val = llJsonGetValue(CachedSettings, ["restrict.list"]);
-    if (val == JSON_INVALID || val == "" || !is_json_arr(val)) {
-        output += "Restrictions: (none)\n";
+    // --- Trustees ---
+    string trustee_block = fmt_person_lines(
+        llJsonGetValue(CachedSettings, ["access.trustees"]), "");
+    if (trustee_block == "") {
+        output += "Trustees: none\n";
     }
     else {
-        integer cnt = llGetListLength(llJson2List(val));
-        if (cnt == 0) output += "Restrictions: (none)\n";
-        else          output += "Restrictions: " + (string)cnt + " active\n";
+        output += "Trustees:\n" + trustee_block;
     }
+
+    // --- Behavioural settings ---
+    output += "Access: multi-owner " + fmt_bool(llJsonGetValue(CachedSettings, ["access.multiowner"]));
+    output += " | runaway " + fmt_bool(llJsonGetValue(CachedSettings, ["access.enablerunaway"])) + "\n";
+    output += "Lock: " + lock_str;
+    output += " | public " + fmt_bool(llJsonGetValue(CachedSettings, ["public.mode"]));
+    output += " | TPE " + fmt_bool(llJsonGetValue(CachedSettings, ["tpe.mode"])) + "\n";
+    output += "Relay: " + fmt_relay_mode(llJsonGetValue(CachedSettings, ["relay.mode"]));
+    output += " | hardcore " + fmt_bool(llJsonGetValue(CachedSettings, ["relay.hardcoremode"])) + "\n";
+    output += "Owner TP/IM: " + fmt_bool(llJsonGetValue(CachedSettings, ["rlvex.ownertp"]));
+    output += "/" + fmt_bool(llJsonGetValue(CachedSettings, ["rlvex.ownerim"])) + "\n";
+    output += "Trustee TP/IM: " + fmt_bool(llJsonGetValue(CachedSettings, ["rlvex.trusteetp"]));
+    output += "/" + fmt_bool(llJsonGetValue(CachedSettings, ["rlvex.trusteeim"])) + "\n";
+    output += "Restrictions: " + restr_str;
 
     llRegionSayTo(CurrentUser, 0, output);
 }
