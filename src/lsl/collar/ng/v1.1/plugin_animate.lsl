@@ -344,12 +344,6 @@ ui_return_root() {
 /* -------------------- SESSION CLEANUP -------------------- */
 
 cleanup_session() {
-    if (SessionId != "") {
-        llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
-            "type", "dialog_close",
-            "session_id", SessionId
-        ]), NULL_KEY);
-    }
     CurrentUser = NULL_KEY;
     UserAcl = -999;
     gPolicyButtons = [];
