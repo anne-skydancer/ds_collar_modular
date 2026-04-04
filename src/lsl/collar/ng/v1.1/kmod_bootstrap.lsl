@@ -163,10 +163,6 @@ start_rlv_probe() {
         RlvReady = TRUE;
         RlvActive = FALSE;
         RlvVersion = "";
-        // Trigger re-registration so RLV-adjacent plugins can clean up stale policies
-        llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
-            "type", "register_now"
-        ]), NULL_KEY);
         return;
     }
     
@@ -198,11 +194,6 @@ stop_rlv_probe() {
     RlvProbing = FALSE;
     RlvReady = TRUE;
     llLinksetDataWrite("rlv_active", (string)RlvActive);
-
-    // Trigger re-registration so RLV-adjacent plugins can register/unregister
-    llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
-        "type", "register_now"
-    ]), NULL_KEY);
 }
 
 /* -------------------- SETTINGS LOADING -------------------- */

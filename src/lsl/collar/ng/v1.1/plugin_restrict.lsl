@@ -93,14 +93,10 @@ integer btn_allowed(string label) {
 /* -------------------- LIFECYCLE -------------------- */
 
 register_self() {
-    // RLV-adjacent plugin: only register when RLV is active
-    if (llLinksetDataRead("rlv_active") != "1") {
-        llLinksetDataDelete("policy:" + PLUGIN_CONTEXT);
-        return;
-    }
-
     // Write button visibility policy to LSD (default-deny per ACL level)
+    // rlv flag: UI hides this plugin when RLV is not active
     llLinksetDataWrite("policy:" + PLUGIN_CONTEXT, llList2Json(JSON_OBJECT, [
+        "rlv", "1",
         "1", "Force Sit,Force Unsit",
         "2", "Force Sit,Force Unsit",
         "3", "Inventory,Speech,Travel,Other,Clear all,Force Sit,Force Unsit",
