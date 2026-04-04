@@ -232,12 +232,13 @@ apply_settings_sync(string msg) {
     string lsd_hardcore = llLinksetDataRead(KEY_RELAY_HARDCORE);
 
     if (lsd_mode != "") {
-        // LSD is authoritative — use persisted runtime state
+        // LSD is authoritative — state_entry already initialised from LSD (or
+        // handle_ground_rez wrote MODE_OFF there). This pass just re-confirms.
         Mode = (integer)lsd_mode;
         Hardcore = (integer)lsd_hardcore;
     }
     else {
-        // First wear: seed from notecard and write to LSD
+        // First wear: LSD is empty, seed from notecard defaults and persist.
         Mode = MODE_ON;
         Hardcore = FALSE;
         string tmp = llJsonGetValue(kv_json, [KEY_RELAY_MODE]);
@@ -248,7 +249,6 @@ apply_settings_sync(string msg) {
         llLinksetDataWrite(KEY_RELAY_HARDCORE, (string)Hardcore);
     }
 
-    // Update relay listen state
     update_relay_listen_state();
 }
 
@@ -305,14 +305,18 @@ show_main_menu() {
     // Load policy-allowed buttons for this user's ACL level
     gPolicyButtons = get_policy_buttons(PLUGIN_CONTEXT, UserAcl);
 
-    string mode_str = "OFF";
-    if (Mode == MODE_ON) {
-        if (Hardcore) {
-            mode_str = "HARDCORE";
-        }
-        else {
-            mode_str = "ON";
-        }
+    string mode_str;
+    if (!IsAttached) {
+        mode_str = "OFF (not worn)";
+    }
+    else if (Mode == MODE_OFF) {
+        mode_str = "OFF";
+    }
+    else if (Hardcore) {
+        mode_str = "HARDCORE";
+    }
+    else {
+        mode_str = "ON";
     }
 
     integer relay_count = llGetListLength(Relays) / 4;
@@ -349,14 +353,18 @@ show_main_menu() {
 show_mode_menu() {
     SessionId = generate_session_id();
 
-    string mode_str = "OFF";
-    if (Mode == MODE_ON) {
-        if (Hardcore) {
-            mode_str = "HARDCORE";
-        }
-        else {
-            mode_str = "ON";
-        }
+    string mode_str;
+    if (!IsAttached) {
+        mode_str = "OFF (not worn)";
+    }
+    else if (Mode == MODE_OFF) {
+        mode_str = "OFF";
+    }
+    else if (Hardcore) {
+        mode_str = "HARDCORE";
+    }
+    else {
+        mode_str = "ON";
     }
 
     string message = "RLV Relay Mode: " + mode_str;
