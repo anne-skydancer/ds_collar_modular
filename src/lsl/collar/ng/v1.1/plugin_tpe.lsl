@@ -34,7 +34,7 @@ string PLUGIN_LABEL_OFF = "TPE: N";
 */
 
 /* -------------------- SETTINGS KEYS -------------------- */
-string KEY_TPE_MODE = "tpe_mode";
+string KEY_TPE_MODE = "tpe.mode";
 
 /* -------------------- STATE -------------------- */
 integer TpeModeEnabled = FALSE;
@@ -48,7 +48,11 @@ key WearerKey = NULL_KEY;          // Owner of the collar (for confirmation)
 
 /* -------------------- HELPERS -------------------- */
 
-
+integer lsd_int(string lsd_key, integer fallback) {
+    string v = llLinksetDataRead(lsd_key);
+    if (v == "") return fallback;
+    return (integer)v;
+}
 
 string gen_session() {
     return (string)llGetKey() + "_" + (string)llGetUnixTime();
@@ -132,12 +136,14 @@ request_settings_sync() {
 persist_tpe_mode(integer new_value) {
     if (new_value != 0) new_value = 1;
 
-    string msg = llList2Json(JSON_OBJECT, [
+    // Write to LSD so state survives relog
+    llLinksetDataWrite(KEY_TPE_MODE, (string)new_value);
+
+    llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
         "type", "set",
         "key", KEY_TPE_MODE,
         "value", (string)new_value
-    ]);
-    llMessageLinked(LINK_SET, SETTINGS_BUS, msg, NULL_KEY);
+    ]), NULL_KEY);
 }
 
 /* -------------------- UI LABEL UPDATE -------------------- */
@@ -275,9 +281,18 @@ handle_tpe_click(key user, integer acl_level) {
 /* -------------------- SETTINGS CONSUMPTION -------------------- */
 
 apply_settings_sync(string kv_json) {
-    string tmp = llJsonGetValue(kv_json, [KEY_TPE_MODE]);
-    if (tmp != JSON_INVALID) {
-        TpeModeEnabled = (integer)tmp;
+    string lsd_val = llLinksetDataRead(KEY_TPE_MODE);
+    if (lsd_val != "") {
+        // LSD is authoritative — restore persisted runtime state
+        TpeModeEnabled = (integer)lsd_val;
+    }
+    else {
+        // First wear: seed from notecard and write to LSD
+        string tmp = llJsonGetValue(kv_json, [KEY_TPE_MODE]);
+        if (tmp != JSON_INVALID) {
+            TpeModeEnabled = (integer)tmp;
+        }
+        llLinksetDataWrite(KEY_TPE_MODE, (string)TpeModeEnabled);
     }
 }
 
@@ -292,6 +307,7 @@ apply_settings_delta(string msg) {
         string tmp = llJsonGetValue(changes, [KEY_TPE_MODE]);
         if (tmp != JSON_INVALID) {
             TpeModeEnabled = (integer)tmp;
+            llLinksetDataWrite(KEY_TPE_MODE, tmp);
         }
     }
 }
@@ -301,7 +317,8 @@ apply_settings_delta(string msg) {
 default
 {
     state_entry() {
-        TpeModeEnabled = FALSE;
+        // Restore from LSD immediately; first-wear seeding happens via settings_sync
+        TpeModeEnabled = lsd_int(KEY_TPE_MODE, FALSE);
         WearerKey = llGetOwner();
         cleanup_session();
         register_with_kernel();

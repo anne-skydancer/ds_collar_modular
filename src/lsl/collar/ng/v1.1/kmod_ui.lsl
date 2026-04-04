@@ -40,13 +40,6 @@ integer ACL_TRUSTEE = 3;
 integer ACL_UNOWNED = 4;
 integer ACL_PRIMARY_OWNER = 5;
 
-/* Linkset data cache keys */
-string LSD_KEY_ACL_OWNERS    = "ACL.OWNERS";
-string LSD_KEY_ACL_TRUSTEES  = "ACL.TRUSTEES";
-string LSD_KEY_ACL_BLACKLIST = "ACL.BLACKLIST";
-string LSD_KEY_ACL_PUBLIC    = "ACL.PUBLIC";
-string LSD_KEY_ACL_TPE       = "ACL.TPE";
-string LSD_KEY_ACL_TIMESTAMP = "ACL.TIMESTAMP";
 
 /* -------------------- STATE -------------------- */
 // Parallel Lists for Plugins
@@ -80,13 +73,6 @@ list TouchStartTimes;
 list PluginStateContexts;
 list PluginStateValues;
 
-// Cache
-list CachedOwners = [];
-list CachedTrustees = [];
-list CachedBlacklist = [];
-integer CachedPublicMode = FALSE;
-integer CachedTpeMode = FALSE;
-integer CachedAclTimestamp = 0;
 
 /* -------------------- HELPERS -------------------- */
 
@@ -145,102 +131,18 @@ set_plugin_state(string context, integer button_state) {
 
 /* -------------------- ACL CACHE MANAGEMENT -------------------- */
 
-integer refresh_acl_cache() {
-    string timestamp_str = llLinksetDataRead(LSD_KEY_ACL_TIMESTAMP);
-    if (timestamp_str == "") {
-        return FALSE;
-    }
-    integer timestamp = (integer)timestamp_str;
-    if (timestamp == CachedAclTimestamp) {
-        return TRUE;
-    }
-
-    string owners_json = llLinksetDataRead(LSD_KEY_ACL_OWNERS);
-    if (owners_json == "") {
-        owners_json = "[]";
-    }
-    CachedOwners = llJson2List(owners_json);
-
-    string trustees_json = llLinksetDataRead(LSD_KEY_ACL_TRUSTEES);
-    if (trustees_json == "") {
-        trustees_json = "[]";
-    }
-    CachedTrustees = llJson2List(trustees_json);
-
-    string blacklist_json = llLinksetDataRead(LSD_KEY_ACL_BLACKLIST);
-    if (blacklist_json == "") {
-        blacklist_json = "[]";
-    }
-    CachedBlacklist = llJson2List(blacklist_json);
-
-    string public_str = llLinksetDataRead(LSD_KEY_ACL_PUBLIC);
-    if (public_str == "") {
-        public_str = "0";
-    }
-    CachedPublicMode = (integer)public_str;
-
-    string tpe_str = llLinksetDataRead(LSD_KEY_ACL_TPE);
-    if (tpe_str == "") {
-        tpe_str = "0";
-    }
-    CachedTpeMode = (integer)tpe_str;
-
-    CachedAclTimestamp = timestamp;
-    return TRUE;
-}
-
-list get_cached_acl_result(key av) {
-    if (!refresh_acl_cache()) {
-        return [];
-    }
-
-    integer is_blacklisted = (llListFindList(CachedBlacklist, [(string)av]) != -1);
-    if (is_blacklisted) {
-        return [ACL_BLACKLIST, TRUE];
-    }
-
-    integer owner_set = (llGetListLength(CachedOwners) > 0);
-    integer is_owner = (llListFindList(CachedOwners, [(string)av]) != -1);
-    integer is_trustee = (llListFindList(CachedTrustees, [(string)av]) != -1);
-    integer is_wearer = (av == llGetOwner());
-
-    integer level;
-    if (is_owner) {
-        level = ACL_PRIMARY_OWNER;
-    }
-    else if (is_wearer) {
-        if (CachedTpeMode) {
-            level = ACL_NOACCESS;
-        }
-        else if (owner_set) {
-            level = ACL_OWNED;
-        }
-        else {
-            level = ACL_UNOWNED;
-        }
-    }
-    else if (is_trustee) {
-        level = ACL_TRUSTEE;
-    }
-    else if (CachedPublicMode) {
-        level = ACL_PUBLIC;
-    }
-    else {
-        level = ACL_BLACKLIST;
-    }
-
-    return [level, FALSE];
-}
-
+// Reads the pre-computed ACL result written by kmod_auth into LSD.
+// kmod_auth populates acl_cache_<uuid> for all named actors on every settings
+// load/change via precompute_known_acl(). This path costs one LSD read and
+// zero link_messages. Falls through to AUTH_BUS only on a true cold miss
+// (unknown user whose entry was never written or has been cleared).
 integer try_cached_session(key user_key, string context_filter) {
-    list cached = get_cached_acl_result(user_key);
-    if (llGetListLength(cached) == 0) {
-        return FALSE;
-    }
-
-    integer level = llList2Integer(cached, 0);
-    integer is_blacklisted = llList2Integer(cached, 1);
-
+    string raw = llLinksetDataRead("acl_cache_" + (string)user_key);
+    if (raw == "") return FALSE;
+    integer sep = llSubStringIndex(raw, "|");
+    if (sep == -1) return FALSE;
+    integer level = (integer)llGetSubString(raw, 0, sep - 1);
+    integer is_blacklisted = (level == ACL_BLACKLIST);
     create_session(user_key, level, is_blacklisted, context_filter);
     send_render_menu(user_key, context_filter);
     return TRUE;
@@ -653,18 +555,6 @@ handle_plugin_list(string msg) {
     }
 }
 
-handle_acl_cache_update(string msg) {
-    string new_timestamp_str = llJsonGetValue(msg, ["timestamp"]);
-    if (new_timestamp_str == JSON_INVALID) return;
-    integer new_timestamp = (integer)new_timestamp_str;
-    if (new_timestamp <= CachedAclTimestamp) {
-        return;
-    }
-
-    CachedAclTimestamp = 0;
-    refresh_acl_cache();
-}
-
 handle_acl_result(string msg) {
     if (!validate_required_fields(msg, ["avatar", "level", "is_blacklisted"])) return;
 
@@ -854,14 +744,6 @@ default
         PluginStateContexts = [];
         PluginStateValues = [];
         
-        CachedOwners = [];
-        CachedTrustees = [];
-        CachedBlacklist = [];
-        CachedPublicMode = FALSE;
-        CachedTpeMode = FALSE;
-        CachedAclTimestamp = 0;
-        refresh_acl_cache();
-
         // Request plugin list (kernel defers response during active registration)
         string request = llList2Json(JSON_OBJECT, [
             "type", "plugin_list_request"
@@ -949,7 +831,6 @@ default
         /* -------------------- AUTH BUS -------------------- */
         if (num == AUTH_BUS) {
             if (msg_type == "acl_result") handle_acl_result(msg);
-            else if (msg_type == "acl_cache_updated") handle_acl_cache_update(msg);
             return;
         }
 

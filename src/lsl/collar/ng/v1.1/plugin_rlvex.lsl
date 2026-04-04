@@ -23,14 +23,14 @@ string PLUGIN_CONTEXT = "core_rlv_exceptions";
 string PLUGIN_LABEL = "Exceptions";
 
 /* -------------------- SETTINGS KEYS -------------------- */
-string KEY_EX_OWNER_TP = "ex_owner_tp";
-string KEY_EX_OWNER_IM = "ex_owner_im";
-string KEY_EX_TRUSTEE_TP = "ex_trustee_tp";
-string KEY_EX_TRUSTEE_IM = "ex_trustee_im";
-string KEY_OWNER = "owner";
-string KEY_OWNERS = "owners";
-string KEY_TRUSTEES = "trustees";
-string KEY_MULTI_OWNER_MODE = "multi_owner_mode";
+string KEY_EX_OWNER_TP   = "rlvex.ownertp";
+string KEY_EX_OWNER_IM   = "rlvex.ownerim";
+string KEY_EX_TRUSTEE_TP = "rlvex.trusteetp";
+string KEY_EX_TRUSTEE_IM = "rlvex.trusteeim";
+string KEY_OWNER          = "access.owner";
+string KEY_OWNERS         = "access.owners";
+string KEY_TRUSTEES       = "access.trustees";
+string KEY_MULTI_OWNER_MODE = "access.multiowner";
 
 /* -------------------- STATE -------------------- */
 integer ExOwnerTp = TRUE;
@@ -53,7 +53,11 @@ integer PendingReconcile = FALSE;
 
 /* -------------------- HELPERS -------------------- */
 
-
+integer lsd_int(string lsd_key, integer fallback) {
+    string v = llLinksetDataRead(lsd_key);
+    if (v == "") return fallback;
+    return (integer)v;
+}
 
 string gen_session() {
     return PLUGIN_CONTEXT + "_" + (string)llGetUnixTime();
@@ -156,36 +160,66 @@ apply_settings_sync(string msg) {
     string kv = llJsonGetValue(msg, ["kv"]);
     if (kv == JSON_INVALID) return;
 
-    // Reset defaults
-    ExOwnerTp = TRUE;
-    ExOwnerIm = TRUE;
-    ExTrusteeTp = FALSE;
-    ExTrusteeIm = FALSE;
     OwnerKey = NULL_KEY;
     OwnerKeys = [];
     TrusteeKeys = [];
     MultiOwnerMode = FALSE;
 
-    // Load exception settings
+    // Exception settings: restore from LSD if present, else seed from notecard (first wear)
     integer has_owner_tp = FALSE;
-    if ((llJsonGetValue(kv, [KEY_EX_OWNER_TP]) != JSON_INVALID)) {
-        ExOwnerTp = (integer)llJsonGetValue(kv, [KEY_EX_OWNER_TP]);
+    if (llLinksetDataRead(KEY_EX_OWNER_TP) != "") {
+        ExOwnerTp = lsd_int(KEY_EX_OWNER_TP, TRUE);
         has_owner_tp = TRUE;
+    }
+    else if ((llJsonGetValue(kv, [KEY_EX_OWNER_TP]) != JSON_INVALID)) {
+        ExOwnerTp = (integer)llJsonGetValue(kv, [KEY_EX_OWNER_TP]);
+        llLinksetDataWrite(KEY_EX_OWNER_TP, (string)ExOwnerTp);
+        has_owner_tp = TRUE;
+    }
+    else {
+        ExOwnerTp = TRUE;
     }
 
     integer has_owner_im = FALSE;
-    if ((llJsonGetValue(kv, [KEY_EX_OWNER_IM]) != JSON_INVALID)) {
-        ExOwnerIm = (integer)llJsonGetValue(kv, [KEY_EX_OWNER_IM]);
+    if (llLinksetDataRead(KEY_EX_OWNER_IM) != "") {
+        ExOwnerIm = lsd_int(KEY_EX_OWNER_IM, TRUE);
         has_owner_im = TRUE;
     }
-
-    string tmp = llJsonGetValue(kv, [KEY_EX_TRUSTEE_TP]);
-    if (tmp != JSON_INVALID) {
-        ExTrusteeTp = (integer)tmp;
+    else if ((llJsonGetValue(kv, [KEY_EX_OWNER_IM]) != JSON_INVALID)) {
+        ExOwnerIm = (integer)llJsonGetValue(kv, [KEY_EX_OWNER_IM]);
+        llLinksetDataWrite(KEY_EX_OWNER_IM, (string)ExOwnerIm);
+        has_owner_im = TRUE;
     }
-    tmp = llJsonGetValue(kv, [KEY_EX_TRUSTEE_IM]);
-    if (tmp != JSON_INVALID) {
-        ExTrusteeIm = (integer)tmp;
+    else {
+        ExOwnerIm = TRUE;
+    }
+
+    if (llLinksetDataRead(KEY_EX_TRUSTEE_TP) != "") {
+        ExTrusteeTp = lsd_int(KEY_EX_TRUSTEE_TP, FALSE);
+    }
+    else {
+        string tmp = llJsonGetValue(kv, [KEY_EX_TRUSTEE_TP]);
+        if (tmp != JSON_INVALID) {
+            ExTrusteeTp = (integer)tmp;
+            llLinksetDataWrite(KEY_EX_TRUSTEE_TP, tmp);
+        }
+        else {
+            ExTrusteeTp = FALSE;
+        }
+    }
+
+    if (llLinksetDataRead(KEY_EX_TRUSTEE_IM) != "") {
+        ExTrusteeIm = lsd_int(KEY_EX_TRUSTEE_IM, FALSE);
+    }
+    else {
+        string tmp = llJsonGetValue(kv, [KEY_EX_TRUSTEE_IM]);
+        if (tmp != JSON_INVALID) {
+            ExTrusteeIm = (integer)tmp;
+            llLinksetDataWrite(KEY_EX_TRUSTEE_IM, tmp);
+        }
+        else {
+            ExTrusteeIm = FALSE;
+        }
     }
 
     // Load owner/trustee lists
@@ -259,18 +293,22 @@ apply_settings_delta(string msg) {
 
         if ((llJsonGetValue(changes, [KEY_EX_OWNER_TP]) != JSON_INVALID)) {
             integer val = (integer)llJsonGetValue(changes, [KEY_EX_OWNER_TP]);
+            llLinksetDataWrite(KEY_EX_OWNER_TP, (string)val);
             if (val != ExOwnerTp) { ExOwnerTp = val; reconcile_all(); }
         }
         if ((llJsonGetValue(changes, [KEY_EX_OWNER_IM]) != JSON_INVALID)) {
             integer val = (integer)llJsonGetValue(changes, [KEY_EX_OWNER_IM]);
+            llLinksetDataWrite(KEY_EX_OWNER_IM, (string)val);
             if (val != ExOwnerIm) { ExOwnerIm = val; reconcile_all(); }
         }
         if ((llJsonGetValue(changes, [KEY_EX_TRUSTEE_TP]) != JSON_INVALID)) {
             integer val = (integer)llJsonGetValue(changes, [KEY_EX_TRUSTEE_TP]);
+            llLinksetDataWrite(KEY_EX_TRUSTEE_TP, (string)val);
             if (val != ExTrusteeTp) { ExTrusteeTp = val; reconcile_all(); }
         }
         if ((llJsonGetValue(changes, [KEY_EX_TRUSTEE_IM]) != JSON_INVALID)) {
             integer val = (integer)llJsonGetValue(changes, [KEY_EX_TRUSTEE_IM]);
+            llLinksetDataWrite(KEY_EX_TRUSTEE_IM, (string)val);
             if (val != ExTrusteeIm) { ExTrusteeIm = val; reconcile_all(); }
         }
 
@@ -361,6 +399,7 @@ apply_settings_delta(string msg) {
 }
 
 persist_setting(string setting_key, integer value) {
+    llLinksetDataWrite(setting_key, (string)value);
     llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
         "type", "set",
         "key", setting_key,

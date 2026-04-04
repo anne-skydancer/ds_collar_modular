@@ -34,18 +34,22 @@ string PLUGIN_LABEL = "Maintenance";
 
 /* -------------------- ALL POSSIBLE SETTINGS -------------------- */
 list ALL_SETTINGS = [
-    "multi_owner_mode",
-    "owner",
-    "owners",
-    "trustees",
-    "blacklist",
-    "public_mode",
-    "locked",
-    "tpe_mode",
-    "runaway_enabled",
-    "restrictions",
-    "rlv_tp_exceptions",
-    "rlv_im_exceptions"
+    "access.multiowner",
+    "access.owner",
+    "access.owners",
+    "access.trustees",
+    "access.blacklist",
+    "access.enablerunaway",
+    "public.mode",
+    "lock.locked",
+    "tpe.mode",
+    "relay.mode",
+    "relay.hardcoremode",
+    "restrict.list",
+    "rlvex.ownertp",
+    "rlvex.ownerim",
+    "rlvex.trusteetp",
+    "rlvex.trusteeim"
 ];
 
 /* -------------------- INVENTORY ITEMS -------------------- */
@@ -215,7 +219,7 @@ do_display_access_list() {
 
     // Multi-owner mode check
     integer multi_mode = 0;
-    string tmp = llJsonGetValue(CachedSettings, ["multi_owner_mode"]);
+    string tmp = llJsonGetValue(CachedSettings, ["access.multiowner"]);
     if (tmp != JSON_INVALID) {
         multi_mode = (integer)tmp;
     }
@@ -223,7 +227,7 @@ do_display_access_list() {
     // Owner(s) — stored as JSON objects {uuid:honorific}
     if (multi_mode) {
         output += "OWNERS:\n";
-        string owners_raw = llJsonGetValue(CachedSettings, ["owners"]);
+        string owners_raw = llJsonGetValue(CachedSettings, ["access.owners"]);
 
         if (owners_raw != JSON_INVALID && llJsonValueType(owners_raw, []) == JSON_OBJECT) {
             list pairs = llJson2List(owners_raw);
@@ -248,7 +252,7 @@ do_display_access_list() {
     }
     else {
         output += "OWNER:\n";
-        string owner_raw = llJsonGetValue(CachedSettings, ["owner"]);
+        string owner_raw = llJsonGetValue(CachedSettings, ["access.owner"]);
 
         if (owner_raw != JSON_INVALID && llJsonValueType(owner_raw, []) == JSON_OBJECT) {
             list pairs = llJson2List(owner_raw);
@@ -269,7 +273,7 @@ do_display_access_list() {
 
     // Trustees (JSON object {uuid:honorific})
     output += "\nTRUSTEES:\n";
-    string trustees_raw = llJsonGetValue(CachedSettings, ["trustees"]);
+    string trustees_raw = llJsonGetValue(CachedSettings, ["access.trustees"]);
 
     if (trustees_raw != JSON_INVALID && llJsonValueType(trustees_raw, []) == JSON_OBJECT) {
         list pairs = llJson2List(trustees_raw);
@@ -294,7 +298,7 @@ do_display_access_list() {
 
     // Blacklist
     output += "\nBLACKLISTED:\n";
-    string blacklist_json = llJsonGetValue(CachedSettings, ["blacklist"]);
+    string blacklist_json = llJsonGetValue(CachedSettings, ["access.blacklist"]);
 
     if (blacklist_json != JSON_INVALID && is_json_arr(blacklist_json)) {
         list blacklist = llJson2List(blacklist_json);

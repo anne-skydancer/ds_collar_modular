@@ -26,7 +26,7 @@ string  PLUGIN_LABEL   = "Restrict";
 
 /* -------------------- SETTINGS KEYS -------------------- */
 
-string KEY_RESTRICTIONS = "rlvrestrict_list";
+string KEY_RESTRICTIONS = "restrict.list";
 
 /* -------------------- RESTRICTION STATE -------------------- */
 
@@ -72,6 +72,11 @@ key ScanInitiator = NULL_KEY;  // Track who initiated the scan to prevent race c
 
 /* -------------------- HELPER FUNCTIONS -------------------- */
 
+integer lsd_int(string lsd_key, integer fallback) {
+    string v = llLinksetDataRead(lsd_key);
+    if (v == "") return fallback;
+    return (integer)v;
+}
 
 string generate_session_id() {
     return llGetScriptName() + "_" + (string)llGetKey() + "_" + (string)llGetUnixTime();
@@ -140,6 +145,9 @@ cleanup_session() {
 persist_restrictions() {
     string csv = llDumpList2String(Restrictions, ",");
 
+    // Write to LSD immediately so restrictions survive relog
+    llLinksetDataWrite(KEY_RESTRICTIONS, csv);
+
     llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
         "type", "set",
         "key", KEY_RESTRICTIONS,
@@ -151,23 +159,23 @@ apply_settings_sync(string msg) {
     string kv = llJsonGetValue(msg, ["kv"]);
     if (kv == JSON_INVALID) return;
 
-    string csv = llJsonGetValue(kv, [KEY_RESTRICTIONS]);
-    if (csv != JSON_INVALID) {
-
-        if (csv != "") {
-            Restrictions = llParseString2List(csv, [","], []);
-
-            // Reapply all restrictions
-            integer i = 0;
-            integer count = llGetListLength(Restrictions);
-            while (i < count) {
-                string restr_cmd = llList2String(Restrictions, i);
-                llOwnerSay(restr_cmd + "=y");
-                i = i + 1;
+    // Plugin-owned key: only seed from notecard when LSD is empty (first wear)
+    if (llLinksetDataRead(KEY_RESTRICTIONS) == "") {
+        string csv = llJsonGetValue(kv, [KEY_RESTRICTIONS]);
+        if (csv != JSON_INVALID) {
+            if (csv != "") {
+                Restrictions = llParseString2List(csv, [","], []);
+                integer i = 0;
+                integer count = llGetListLength(Restrictions);
+                while (i < count) {
+                    llOwnerSay(llList2String(Restrictions, i) + "=y");
+                    i = i + 1;
+                }
             }
-        }
-        else {
-            Restrictions = [];
+            else {
+                Restrictions = [];
+            }
+            llLinksetDataWrite(KEY_RESTRICTIONS, csv);
         }
     }
 }
@@ -182,7 +190,6 @@ apply_settings_delta(string msg) {
 
         string csv = llJsonGetValue(changes, [KEY_RESTRICTIONS]);
         if (csv != JSON_INVALID) {
-
             // Clear all current restrictions
             integer i = 0;
             integer count = llGetListLength(Restrictions);
@@ -200,14 +207,14 @@ apply_settings_delta(string msg) {
                 Restrictions = [];
             }
 
-            // Apply new restrictions
+            // Apply new restrictions and persist to LSD
             i = 0;
             count = llGetListLength(Restrictions);
             while (i < count) {
-                string restr_cmd = llList2String(Restrictions, i);
-                llOwnerSay(restr_cmd + "=y");
+                llOwnerSay(llList2String(Restrictions, i) + "=y");
                 i = i + 1;
             }
+            llLinksetDataWrite(KEY_RESTRICTIONS, csv);
         }
     }
 }
@@ -641,9 +648,22 @@ default
 {
     state_entry() {
         cleanup_session();
+
+        // Restore restrictions from LSD (survives relog)
+        string lsd_csv = llLinksetDataRead(KEY_RESTRICTIONS);
+        if (lsd_csv != "") {
+            Restrictions = llParseString2List(lsd_csv, [","], []);
+            integer i = 0;
+            integer count = llGetListLength(Restrictions);
+            while (i < count) {
+                llOwnerSay(llList2String(Restrictions, i) + "=y");
+                i = i + 1;
+            }
+        }
+
         register_self();
 
-        // Request settings
+        // Request settings for absent-guard seeding on first wear
         llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
             "type", "settings_get"
         ]), NULL_KEY);

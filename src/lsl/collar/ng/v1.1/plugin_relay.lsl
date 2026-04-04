@@ -46,8 +46,8 @@ integer SOS_MSG_NUM = 555;  // SOS emergency channel
 key WILDCARD_UUID = "ffffffff-ffff-ffff-ffff-ffffffffffff";
 
 /* -------------------- SETTINGS KEYS -------------------- */
-string KEY_RELAY_MODE = "relay_mode";
-string KEY_RELAY_HARDCORE = "relay_hardcore";
+string KEY_RELAY_MODE = "relay.mode";
+string KEY_RELAY_HARDCORE = "relay.hardcoremode";
 
 /* -------------------- STATE -------------------- */
 // Relay state
@@ -71,6 +71,11 @@ integer ObjectListPage = 0;
 
 /* -------------------- HELPERS -------------------- */
 
+integer lsd_int(string lsd_key, integer fallback) {
+    string v = llLinksetDataRead(lsd_key);
+    if (v == "") return fallback;
+    return (integer)v;
+}
 
 string generate_session_id() {
     return PLUGIN_CONTEXT + "_" + (string)llGetUnixTime();
@@ -223,24 +228,28 @@ apply_settings_sync(string msg) {
     string kv_json = llJsonGetValue(msg, ["kv"]);
     if (kv_json == JSON_INVALID) return;
 
-    // Reset to defaults
-    Mode = MODE_ON;
-    Hardcore = FALSE;
+    string lsd_mode = llLinksetDataRead(KEY_RELAY_MODE);
+    string lsd_hardcore = llLinksetDataRead(KEY_RELAY_HARDCORE);
 
-    // Load persisted values
-    string tmp = llJsonGetValue(kv_json, [KEY_RELAY_MODE]);
-    if (tmp != JSON_INVALID) {
-        Mode = (integer)tmp;
+    if (lsd_mode != "") {
+        // LSD is authoritative — use persisted runtime state
+        Mode = (integer)lsd_mode;
+        Hardcore = (integer)lsd_hardcore;
     }
-
-    tmp = llJsonGetValue(kv_json, [KEY_RELAY_HARDCORE]);
-    if (tmp != JSON_INVALID) {
-        Hardcore = (integer)tmp;
+    else {
+        // First wear: seed from notecard and write to LSD
+        Mode = MODE_ON;
+        Hardcore = FALSE;
+        string tmp = llJsonGetValue(kv_json, [KEY_RELAY_MODE]);
+        if (tmp != JSON_INVALID) Mode = (integer)tmp;
+        tmp = llJsonGetValue(kv_json, [KEY_RELAY_HARDCORE]);
+        if (tmp != JSON_INVALID) Hardcore = (integer)tmp;
+        llLinksetDataWrite(KEY_RELAY_MODE, (string)Mode);
+        llLinksetDataWrite(KEY_RELAY_HARDCORE, (string)Hardcore);
     }
 
     // Update relay listen state
     update_relay_listen_state();
-
 }
 
 apply_settings_delta(string msg) {
@@ -251,14 +260,17 @@ apply_settings_delta(string msg) {
         string changes = llJsonGetValue(msg, ["changes"]);
         if (changes == JSON_INVALID) return;
 
-        if ((llJsonGetValue(changes, [KEY_RELAY_MODE]) != JSON_INVALID)) {
-            Mode = (integer)llJsonGetValue(changes, [KEY_RELAY_MODE]);
+        string tmp = llJsonGetValue(changes, [KEY_RELAY_MODE]);
+        if (tmp != JSON_INVALID) {
+            Mode = (integer)tmp;
+            llLinksetDataWrite(KEY_RELAY_MODE, tmp);
             update_relay_listen_state();
         }
 
-        string tmp = llJsonGetValue(changes, [KEY_RELAY_HARDCORE]);
+        tmp = llJsonGetValue(changes, [KEY_RELAY_HARDCORE]);
         if (tmp != JSON_INVALID) {
             Hardcore = (integer)tmp;
+            llLinksetDataWrite(KEY_RELAY_HARDCORE, tmp);
         }
     }
 }
@@ -266,6 +278,7 @@ apply_settings_delta(string msg) {
 /* -------------------- SETTINGS MODIFICATION -------------------- */
 
 persist_mode(integer new_mode) {
+    llLinksetDataWrite(KEY_RELAY_MODE, (string)new_mode);
     string msg = llList2Json(JSON_OBJECT, [
         "type", "set",
         "key", KEY_RELAY_MODE,
@@ -275,6 +288,7 @@ persist_mode(integer new_mode) {
 }
 
 persist_hardcore(integer new_hardcore) {
+    llLinksetDataWrite(KEY_RELAY_HARDCORE, (string)new_hardcore);
     string msg = llList2Json(JSON_OBJECT, [
         "type", "set",
         "key", KEY_RELAY_HARDCORE,
@@ -667,13 +681,18 @@ default
         IsAttached = (llGetAttached() != 0);
         WearerKey = llGetOwner();
 
-        // Handle ground rez
         if (!IsAttached) {
+            // Ground rez: reset to safe defaults (LSD will be updated via handle_ground_rez)
             handle_ground_rez();
         }
+        else {
+            // Attached: restore runtime state from LSD immediately
+            Mode = lsd_int(KEY_RELAY_MODE, MODE_ON);
+            Hardcore = lsd_int(KEY_RELAY_HARDCORE, FALSE);
+            update_relay_listen_state();
+        }
 
-
-        // Request settings
+        // Request settings (seeding first-wear or rebroadcasting for other modules)
         string request = llList2Json(JSON_OBJECT, [
             "type", "settings_get"
         ]);

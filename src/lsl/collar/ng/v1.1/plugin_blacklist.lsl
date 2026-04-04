@@ -35,7 +35,7 @@ integer MAX_NUMBERED_LIST_ITEMS = 11;  // 12 dialog buttons - 1 Back button
 */
 
 /* -------------------- SETTINGS KEYS -------------------- */
-string KEY_BLACKLIST = "blacklist";
+string KEY_BLACKLIST = "access.blacklist";
 
 /* -------------------- UI CONSTANTS -------------------- */
 string BTN_BACK = "Back";

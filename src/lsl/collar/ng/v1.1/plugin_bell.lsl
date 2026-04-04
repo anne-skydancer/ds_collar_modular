@@ -19,10 +19,10 @@ string PLUGIN_CONTEXT = "bell";
 string PLUGIN_LABEL = "Bell";
 
 // Settings keys
-string KEY_BELL_VISIBLE = "bell_visible";
-string KEY_BELL_SOUND_ENABLED = "bell_sound_enabled";
-string KEY_BELL_VOLUME = "bell_volume";
-string KEY_BELL_SOUND = "bell_sound";
+string KEY_BELL_VISIBLE = "bell.visible";
+string KEY_BELL_SOUND_ENABLED = "bell.enablesound";
+string KEY_BELL_VOLUME = "bell.volume";
+string KEY_BELL_SOUND = "bell.sound";
 
 // State
 integer BellVisible = FALSE;
@@ -48,6 +48,19 @@ string MenuContext = "";
 
 string generate_session_id() {
     return PLUGIN_CONTEXT + "_" + (string)llGetUnixTime();
+}
+
+/* -------------------- LSD PERSISTENCE HELPERS -------------------- */
+integer lsd_int(string lsd_key, integer fallback) {
+    string v = llLinksetDataRead(lsd_key);
+    if (v == "") return fallback;
+    return (integer)v;
+}
+
+float lsd_float(string lsd_key, float fallback) {
+    string v = llLinksetDataRead(lsd_key);
+    if (v == "") return fallback;
+    return (float)v;
 }
 
 /* -------------------- LSD POLICY HELPER -------------------- */
@@ -178,13 +191,14 @@ show_main_menu() {
 
 /* -------------------- SETTINGS MODIFICATION -------------------- */
 persist_bell_setting(string setting_key, string value) {
-    string msg = llList2Json(JSON_OBJECT, [
+    // Write to LSD immediately so state survives relog
+    llLinksetDataWrite(setting_key, value);
+
+    llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
         "type", "set",
         "key", setting_key,
         "value", value
-    ]);
-
-    llMessageLinked(LINK_SET, SETTINGS_BUS, msg, NULL_KEY);
+    ]), NULL_KEY);
 }
 
 /* -------------------- BUTTON HANDLER -------------------- */
@@ -276,22 +290,35 @@ apply_settings_sync(string msg) {
     string kv_json = llJsonGetValue(msg, ["kv"]);
     if (kv_json == JSON_INVALID) return;
 
-    if ((llJsonGetValue(kv_json, [KEY_BELL_VISIBLE]) != JSON_INVALID)) {
-        integer new_visible = (integer)llJsonGetValue(kv_json, [KEY_BELL_VISIBLE]);
-        set_bell_visibility(new_visible);
+    // Plugin-owned keys: only seed from notecard when LSD is empty (first wear).
+    // After that, LSD is the authority — runtime changes survive relog.
+    if (llLinksetDataRead(KEY_BELL_VISIBLE) == "") {
+        string tmp = llJsonGetValue(kv_json, [KEY_BELL_VISIBLE]);
+        if (tmp != JSON_INVALID) {
+            integer new_visible = (integer)tmp;
+            set_bell_visibility(new_visible);
+            llLinksetDataWrite(KEY_BELL_VISIBLE, tmp);
+        }
     }
 
-    string tmp = llJsonGetValue(kv_json, [KEY_BELL_SOUND_ENABLED]);
-    if (tmp != JSON_INVALID) {
-        BellSoundEnabled = (integer)tmp;
+    if (llLinksetDataRead(KEY_BELL_SOUND_ENABLED) == "") {
+        string tmp = llJsonGetValue(kv_json, [KEY_BELL_SOUND_ENABLED]);
+        if (tmp != JSON_INVALID) {
+            BellSoundEnabled = (integer)tmp;
+            llLinksetDataWrite(KEY_BELL_SOUND_ENABLED, tmp);
+        }
     }
 
-    tmp = llJsonGetValue(kv_json, [KEY_BELL_VOLUME]);
-    if (tmp != JSON_INVALID) {
-        BellVolume = (float)tmp;
+    if (llLinksetDataRead(KEY_BELL_VOLUME) == "") {
+        string tmp = llJsonGetValue(kv_json, [KEY_BELL_VOLUME]);
+        if (tmp != JSON_INVALID) {
+            BellVolume = (float)tmp;
+            llLinksetDataWrite(KEY_BELL_VOLUME, tmp);
+        }
     }
 
-    tmp = llJsonGetValue(kv_json, [KEY_BELL_SOUND]);
+    // BellSound is set-once from notecard (not user-changeable); always apply
+    string tmp = llJsonGetValue(kv_json, [KEY_BELL_SOUND]);
     if (tmp != JSON_INVALID) {
         BellSound = tmp;
     }
@@ -301,19 +328,23 @@ apply_settings_delta(string msg) {
     string changes = llJsonGetValue(msg, ["changes"]);
     if (changes == JSON_INVALID) return;
 
+    // Deltas represent intentional runtime changes: apply AND write to LSD
     if ((llJsonGetValue(changes, [KEY_BELL_VISIBLE]) != JSON_INVALID)) {
-        integer new_visible = (integer)llJsonGetValue(changes, [KEY_BELL_VISIBLE]);
-        set_bell_visibility(new_visible);
+        string tmp = llJsonGetValue(changes, [KEY_BELL_VISIBLE]);
+        set_bell_visibility((integer)tmp);
+        llLinksetDataWrite(KEY_BELL_VISIBLE, tmp);
     }
 
     string tmp = llJsonGetValue(changes, [KEY_BELL_SOUND_ENABLED]);
     if (tmp != JSON_INVALID) {
         BellSoundEnabled = (integer)tmp;
+        llLinksetDataWrite(KEY_BELL_SOUND_ENABLED, tmp);
     }
 
     tmp = llJsonGetValue(changes, [KEY_BELL_VOLUME]);
     if (tmp != JSON_INVALID) {
         BellVolume = (float)tmp;
+        llLinksetDataWrite(KEY_BELL_VOLUME, tmp);
     }
 
     tmp = llJsonGetValue(changes, [KEY_BELL_SOUND]);
@@ -327,15 +358,16 @@ default {
     state_entry() {
         cleanup_session();
 
-        // Always start with safe defaults (bell hidden, sound off)
-        // Settings sync will override these immediately if saved state exists
-        BellVisible = FALSE;
-        BellSoundEnabled = FALSE;
-        set_bell_visibility(FALSE);
+        // Restore from LSD (persists through relog); fall back to safe defaults on first wear
+        BellVisible = lsd_int(KEY_BELL_VISIBLE, FALSE);
+        BellSoundEnabled = lsd_int(KEY_BELL_SOUND_ENABLED, FALSE);
+        BellVolume = lsd_float(KEY_BELL_VOLUME, 0.3);
+        set_bell_visibility(BellVisible);
 
         register_self();
 
-        // Request settings from settings module
+        // Request settings for BellSound UUID (notecard-only, not LSD-persisted)
+        // and to trigger absent-guard seeding on first wear
         llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
             "type", "settings_get"
         ]), NULL_KEY);

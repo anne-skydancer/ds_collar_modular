@@ -33,13 +33,20 @@ string PLUGIN_LABEL_OFF = "Public: N";
 */
 
 /* -------------------- SETTINGS KEYS -------------------- */
-string KEY_PUBLIC_MODE = "public_mode";
+string KEY_PUBLIC_MODE = "public.mode";
 
 /* -------------------- STATE -------------------- */
 integer PublicModeEnabled = FALSE;
 list gPolicyButtons = [];
 
 /* -------------------- HELPERS -------------------- */
+
+integer lsd_int(string lsd_key, integer fallback) {
+    string v = llLinksetDataRead(lsd_key);
+    if (v == "") return fallback;
+    return (integer)v;
+}
+
 
 
 
@@ -95,18 +102,26 @@ apply_settings_sync(string msg) {
     string kv_json = llJsonGetValue(msg, ["kv"]);
     if (kv_json == JSON_INVALID) return;
 
-    integer old_state = PublicModeEnabled;
-    PublicModeEnabled = FALSE;
-
-    string tmp = llJsonGetValue(kv_json, [KEY_PUBLIC_MODE]);
-    if (tmp != JSON_INVALID) {
-        PublicModeEnabled = (integer)tmp;
+    string lsd_val = llLinksetDataRead(KEY_PUBLIC_MODE);
+    if (lsd_val != "") {
+        // LSD is authoritative — restore persisted runtime state
+        integer old_state = PublicModeEnabled;
+        PublicModeEnabled = (integer)lsd_val;
+        if (old_state != PublicModeEnabled) {
+            register_self();
+        }
     }
-
-
-    // If state changed, update label
-    if (old_state != PublicModeEnabled) {
-        register_self();
+    else {
+        // First wear: seed from notecard and write to LSD
+        integer old_state = PublicModeEnabled;
+        string tmp = llJsonGetValue(kv_json, [KEY_PUBLIC_MODE]);
+        if (tmp != JSON_INVALID) {
+            PublicModeEnabled = (integer)tmp;
+        }
+        llLinksetDataWrite(KEY_PUBLIC_MODE, (string)PublicModeEnabled);
+        if (old_state != PublicModeEnabled) {
+            register_self();
+        }
     }
 }
 
@@ -120,7 +135,9 @@ apply_settings_delta(string msg) {
 
         if ((llJsonGetValue(changes, [KEY_PUBLIC_MODE]) != JSON_INVALID)) {
             integer old_state = PublicModeEnabled;
-            PublicModeEnabled = (integer)llJsonGetValue(changes, [KEY_PUBLIC_MODE]);
+            string tmp = llJsonGetValue(changes, [KEY_PUBLIC_MODE]);
+            PublicModeEnabled = (integer)tmp;
+            llLinksetDataWrite(KEY_PUBLIC_MODE, tmp);
 
             // If state changed, update label
             if (old_state != PublicModeEnabled) {
@@ -134,6 +151,8 @@ apply_settings_delta(string msg) {
 
 persist_public_mode(integer new_value) {
     if (new_value != 0) new_value = 1;
+
+    llLinksetDataWrite(KEY_PUBLIC_MODE, (string)new_value);
 
     string msg = llList2Json(JSON_OBJECT, [
         "type", "set",
@@ -200,7 +219,7 @@ toggle_public_access(key user, integer acl_level) {
 
 default {
     state_entry() {
-        PublicModeEnabled = FALSE;
+        PublicModeEnabled = lsd_int(KEY_PUBLIC_MODE, FALSE);
         gPolicyButtons = [];
 
         register_self();

@@ -22,7 +22,7 @@ string PLUGIN_LABEL_LOCKED = "Locked: Y";    // Label when locked
 string PLUGIN_LABEL_UNLOCKED = "Locked: N";    // Label when unlocked
 
 /* -------------------- SETTINGS KEYS -------------------- */
-string KEY_LOCKED = "locked";
+string KEY_LOCKED = "lock.locked";
 
 /* -------------------- SOUND -------------------- */
 string SOUND_TOGGLE = "3aacf116-f060-b4c8-bb58-07aefc0af33a";
@@ -38,7 +38,11 @@ list gPolicyButtons = [];
 
 /* -------------------- HELPERS -------------------- */
 
-
+integer lsd_int(string lsd_key, integer fallback) {
+    string v = llLinksetDataRead(lsd_key);
+    if (v == "") return fallback;
+    return (integer)v;
+}
 
 play_toggle_sound() {
     llTriggerSound(SOUND_TOGGLE, SOUND_VOLUME);
@@ -95,17 +99,22 @@ apply_settings_sync(string msg) {
     string kv_json = llJsonGetValue(msg, ["kv"]);
     if (kv_json == JSON_INVALID) return;
 
-    integer old_locked = Locked;
-    Locked = FALSE;  // Secure default: unlocked if no settings
-
-    string tmp = llJsonGetValue(kv_json, [KEY_LOCKED]);
-    if (tmp != JSON_INVALID) {
-        Locked = (integer)tmp;
+    string lsd_val = llLinksetDataRead(KEY_LOCKED);
+    if (lsd_val != "") {
+        // LSD is authoritative — restore persisted runtime state
+        Locked = (integer)lsd_val;
+        apply_lock_state();
     }
-
-    // Always sync visual state to logical state
-    // Ensures visual consistency even on recovery from corrupted state
-    apply_lock_state();
+    else {
+        // First wear: seed from notecard and write to LSD
+        Locked = FALSE;  // Secure default
+        string tmp = llJsonGetValue(kv_json, [KEY_LOCKED]);
+        if (tmp != JSON_INVALID) {
+            Locked = (integer)tmp;
+        }
+        apply_lock_state();
+        llLinksetDataWrite(KEY_LOCKED, (string)Locked);
+    }
 }
 
 apply_settings_delta(string msg) {
@@ -119,6 +128,7 @@ apply_settings_delta(string msg) {
         if ((llJsonGetValue(changes, [KEY_LOCKED]) != JSON_INVALID)) {
             integer old_locked = Locked;
             Locked = (integer)llJsonGetValue(changes, [KEY_LOCKED]);
+            llLinksetDataWrite(KEY_LOCKED, (string)Locked);
 
             if (old_locked != Locked) {
                 apply_lock_state();
@@ -145,6 +155,7 @@ apply_settings_delta(string msg) {
             if (Locked) {
                 // Was locked, now reverting to unlocked
                 Locked = FALSE;
+                llLinksetDataWrite(KEY_LOCKED, "0");
                 apply_lock_state();
                 llOwnerSay("Lock setting deleted - reverting to unlocked state");
 
@@ -163,12 +174,14 @@ apply_settings_delta(string msg) {
 /* -------------------- SETTINGS MODIFICATION -------------------- */
 
 persist_locked(integer new_value) {
-    string msg = llList2Json(JSON_OBJECT, [
+    // Write to LSD immediately so state survives relog
+    llLinksetDataWrite(KEY_LOCKED, (string)new_value);
+
+    llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
         "type", "set",
         "key", KEY_LOCKED,
         "value", (string)new_value
-    ]);
-    llMessageLinked(LINK_SET, SETTINGS_BUS, msg, NULL_KEY);
+    ]), NULL_KEY);
 }
 
 /* -------------------- LOCK STATE APPLICATION -------------------- */
@@ -287,7 +300,13 @@ toggle_lock(key user, integer acl_level) {
 default {
     state_entry() {
         gPolicyButtons = [];
-        // Request settings to restore persisted lock state
+        // Restore from LSD immediately (survives relog); first-wear seeding happens via settings_sync
+        string lsd_val = llLinksetDataRead(KEY_LOCKED);
+        if (lsd_val != "") {
+            Locked = (integer)lsd_val;
+            apply_lock_state();
+        }
+        // Request settings to complete registration and handle first-wear seeding
         llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
             "type", "settings_get"
         ]), NULL_KEY);

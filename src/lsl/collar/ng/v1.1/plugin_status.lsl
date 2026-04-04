@@ -24,14 +24,14 @@ string PLUGIN_CONTEXT = "core_status";
 string PLUGIN_LABEL = "Status";
 
 /* -------------------- SETTINGS KEYS -------------------- */
-string KEY_MULTI_OWNER_MODE = "multi_owner_mode";
-string KEY_OWNER = "owner";
-string KEY_OWNERS = "owners";
-string KEY_TRUSTEES = "trustees";
-string KEY_BLACKLIST = "blacklist";
-string KEY_PUBLIC_ACCESS = "public_mode";
-string KEY_LOCKED = "locked";
-string KEY_TPE_MODE = "tpe_mode";
+string KEY_MULTI_OWNER_MODE = "access.multiowner";
+string KEY_OWNER = "access.owner";
+string KEY_OWNERS = "access.owners";
+string KEY_TRUSTEES = "access.trustees";
+string KEY_BLACKLIST = "access.blacklist";
+string KEY_PUBLIC_ACCESS = "public.mode";
+string KEY_LOCKED = "lock.locked";
+string KEY_TPE_MODE = "tpe.mode";
 
 /* -------------------- STATE -------------------- */
 // Settings cache
@@ -208,19 +208,33 @@ apply_settings_sync(string msg) {
         }
     }
 
-    tmp = llJsonGetValue(kv_json, [KEY_PUBLIC_ACCESS]);
-    if (tmp != JSON_INVALID) {
-        PublicAccess = (integer)tmp;
+    // Read lock/tpe/public directly from LSD (authoritative runtime state).
+    // Fall back to kv_json only on first wear (LSD empty).
+    string lsd_locked = llLinksetDataRead(KEY_LOCKED);
+    if (lsd_locked != "") {
+        Locked = (integer)lsd_locked;
+    }
+    else {
+        tmp = llJsonGetValue(kv_json, [KEY_LOCKED]);
+        if (tmp != JSON_INVALID) Locked = (integer)tmp;
     }
 
-    tmp = llJsonGetValue(kv_json, [KEY_LOCKED]);
-    if (tmp != JSON_INVALID) {
-        Locked = (integer)tmp;
+    string lsd_tpe = llLinksetDataRead(KEY_TPE_MODE);
+    if (lsd_tpe != "") {
+        TpeMode = (integer)lsd_tpe;
+    }
+    else {
+        tmp = llJsonGetValue(kv_json, [KEY_TPE_MODE]);
+        if (tmp != JSON_INVALID) TpeMode = (integer)tmp;
     }
 
-    tmp = llJsonGetValue(kv_json, [KEY_TPE_MODE]);
-    if (tmp != JSON_INVALID) {
-        TpeMode = (integer)tmp;
+    string lsd_public = llLinksetDataRead(KEY_PUBLIC_ACCESS);
+    if (lsd_public != "") {
+        PublicAccess = (integer)lsd_public;
+    }
+    else {
+        tmp = llJsonGetValue(kv_json, [KEY_PUBLIC_ACCESS]);
+        if (tmp != JSON_INVALID) PublicAccess = (integer)tmp;
     }
 
     // Check if we need to refresh owner names

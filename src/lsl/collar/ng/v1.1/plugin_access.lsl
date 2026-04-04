@@ -26,11 +26,11 @@ string PLUGIN_LABEL = "Access";
 integer MAX_NUMBERED_LIST_ITEMS = 11;  // 12 dialog buttons - 1 Back button
 
 /* -------------------- SETTINGS KEYS -------------------- */
-string KEY_MULTI_OWNER_MODE = "multi_owner_mode";
-string KEY_OWNER = "owner";
-string KEY_OWNERS = "owners";
-string KEY_TRUSTEES = "trustees";
-string KEY_RUNAWAY_ENABLED = "runaway_enabled";
+string KEY_MULTI_OWNER_MODE = "access.multiowner";
+string KEY_OWNER = "access.owner";
+string KEY_OWNERS = "access.owners";
+string KEY_TRUSTEES = "access.trustees";
+string KEY_RUNAWAY_ENABLED = "access.enablerunaway";
 
 /* -------------------- STATE -------------------- */
 integer MultiOwnerMode;
@@ -62,7 +62,11 @@ list TRUSTEE_HONORIFICS = ["Sir", "Madame", "Milord", "Milady"];
 
 /* -------------------- HELPERS -------------------- */
 
-
+integer lsd_int(string lsd_key, integer fallback) {
+    string v = llLinksetDataRead(lsd_key);
+    if (v == "") return fallback;
+    return (integer)v;
+}
 
 string gen_session() {
     return PLUGIN_CONTEXT + "_" + (string)llGetUnixTime();
@@ -228,12 +232,21 @@ apply_settings_sync(string msg) {
         }
     }
 
-    tmp = llJsonGetValue(kv, [KEY_RUNAWAY_ENABLED]);
-    if (tmp != JSON_INVALID) {
-        RunawayEnabled = (integer)tmp;
+    string lsd_runaway = llLinksetDataRead(KEY_RUNAWAY_ENABLED);
+    if (lsd_runaway != "") {
+        // LSD is authoritative
+        RunawayEnabled = (integer)lsd_runaway;
     }
     else {
-        RunawayEnabled = TRUE;
+        // First wear: seed from notecard and write to LSD
+        tmp = llJsonGetValue(kv, [KEY_RUNAWAY_ENABLED]);
+        if (tmp != JSON_INVALID) {
+            RunawayEnabled = (integer)tmp;
+        }
+        else {
+            RunawayEnabled = TRUE;
+        }
+        llLinksetDataWrite(KEY_RUNAWAY_ENABLED, (string)RunawayEnabled);
     }
 }
 
@@ -248,6 +261,7 @@ apply_settings_delta(string msg) {
         string tmp = llJsonGetValue(changes, [KEY_RUNAWAY_ENABLED]);
         if (tmp != JSON_INVALID) {
             RunawayEnabled = (integer)tmp;
+            llLinksetDataWrite(KEY_RUNAWAY_ENABLED, tmp);
         }
 
         // Trustees changed (full JSON object broadcast)
@@ -559,6 +573,7 @@ handle_button(string btn) {
             else {
                 // Enabling is direct (no consent needed)
                 RunawayEnabled = TRUE;
+                llLinksetDataWrite(KEY_RUNAWAY_ENABLED, "1");
 
                 llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
                     "type", "set",
@@ -731,6 +746,7 @@ handle_button(string btn) {
         if (btn == "Yes") {
             // Wearer consented - disable runaway
             RunawayEnabled = FALSE;
+            llLinksetDataWrite(KEY_RUNAWAY_ENABLED, "0");
 
             llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
                 "type", "set",
@@ -824,6 +840,7 @@ cleanup() {
 
 default {
     state_entry() {
+        RunawayEnabled = lsd_int(KEY_RUNAWAY_ENABLED, TRUE);
         cleanup();
         register_self();
         llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [

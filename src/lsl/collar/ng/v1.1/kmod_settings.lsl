@@ -14,35 +14,29 @@ integer KERNEL_LIFECYCLE = 500;
 integer SETTINGS_BUS = 800;
 
 /* -------------------- SETTINGS KEYS -------------------- */
-string KEY_MULTI_OWNER_MODE = "multi_owner_mode";
-string KEY_OWNER            = "owner";
-string KEY_OWNERS           = "owners";
-string KEY_TRUSTEES         = "trustees";
-string KEY_BLACKLIST        = "blacklist";
-string KEY_PUBLIC_ACCESS    = "public_mode";
-string KEY_TPE_MODE         = "tpe_mode";
-string KEY_LOCKED           = "locked";
+string KEY_MULTI_OWNER_MODE = "access.multiowner";
+string KEY_OWNER            = "access.owner";
+string KEY_OWNERS           = "access.owners";
+string KEY_TRUSTEES         = "access.trustees";
+string KEY_BLACKLIST        = "access.blacklist";
+string KEY_PUBLIC_ACCESS    = "public.mode";
+string KEY_TPE_MODE         = "tpe.mode";
+string KEY_LOCKED           = "lock.locked";
 
 // RLV exception keys
-string KEY_EX_OWNER_TP = "ex_owner_tp";
-string KEY_EX_OWNER_IM = "ex_owner_im";
-string KEY_EX_TRUSTEE_TP = "ex_trustee_tp";
-string KEY_EX_TRUSTEE_IM = "ex_trustee_im";
+string KEY_EX_OWNER_TP   = "rlvex.ownertp";
+string KEY_EX_OWNER_IM   = "rlvex.ownerim";
+string KEY_EX_TRUSTEE_TP = "rlvex.trusteetp";
+string KEY_EX_TRUSTEE_IM = "rlvex.trusteeim";
 
 // Access plugin keys
-string KEY_RUNAWAY_ENABLED = "runaway_enabled";
+string KEY_RUNAWAY_ENABLED = "access.enablerunaway";
 
-// Bell plugin keys
-string KEY_BELL_VISIBLE = "bell_visible";
-string KEY_BELL_SOUND_ENABLED = "bell_sound_enabled";
-string KEY_BELL_VOLUME = "bell_volume";
-string KEY_BELL_SOUND = "bell_sound";
 
 /* -------------------- NOTECARD CONFIG -------------------- */
 string NOTECARD_NAME = "settings";
 string COMMENT_PREFIX = "#";
 string SEPARATOR = "=";
-
 /* -------------------- STATE -------------------- */
 key LastOwner = NULL_KEY;
 string KvJson = "{}";
@@ -51,6 +45,7 @@ key NotecardQuery = NULL_KEY;
 integer NotecardLine = 0;
 integer IsLoadingNotecard = FALSE;
 key NotecardKey = NULL_KEY;  // Track settings notecard changes
+integer ForceReseed = FALSE; // TRUE when notecard UUID changed — overwrite plugin LSD keys
 
 integer MaxListLen = 64;
 
@@ -378,20 +373,18 @@ broadcast_delta_list_remove(string key_name, string elem) {
     llMessageLinked(LINK_SET, SETTINGS_BUS, msg, NULL_KEY);
 }
 
-/* -------------------- KEY VALIDATION -------------------- */
-
-integer is_allowed_key(string k) {
-    list allowed = [
-        KEY_MULTI_OWNER_MODE, KEY_OWNER, KEY_OWNERS,
-        KEY_TRUSTEES, KEY_BLACKLIST, KEY_PUBLIC_ACCESS,
-        KEY_TPE_MODE, KEY_LOCKED, KEY_RUNAWAY_ENABLED,
-        KEY_EX_OWNER_TP, KEY_EX_OWNER_IM,
-        KEY_EX_TRUSTEE_TP, KEY_EX_TRUSTEE_IM,
-        KEY_BELL_VISIBLE, KEY_BELL_SOUND_ENABLED,
-        KEY_BELL_VOLUME, KEY_BELL_SOUND
-    ];
-    return (llListFindList(allowed, [k]) != -1);
-}
+/* -------------------- KEY NAMING CONVENTION -------------------- */
+// No whitelist is enforced. LSL link_message is sandboxed to the same linkset,
+// so any script that can write to SETTINGS_BUS is already trusted by the owner.
+//
+// Convention (not enforced in code):
+//   Access keys — access.<setting>  (owner, trustees, blacklist, multi_owner_mode, runaway_enabled)
+//   Plugin keys — <plugin>.<setting>
+//                 e.g. bell.volume, restrict.list, lock.locked, relay.mode
+//
+// is_notecard_only_key() and all business-logic guards (role exclusivity, TPE
+// validation, MaxListLen) remain active — those are correctness constraints, not
+// access control.
 
 // Keys stored as JSON objects (not arrays or scalars)
 integer is_json_object_key(string k) {
@@ -422,11 +415,16 @@ parse_notecard_line(string line) {
     
     string key_name = llStringTrim(llGetSubString(line, 0, sep_pos - 1), STRING_TRIM);
     string value = llStringTrim(llGetSubString(line, sep_pos + 1, -1), STRING_TRIM);
-    
-    if (!is_allowed_key(key_name)) {
-        return;
+
+    // Dotted keys (<plugin>.<setting>): write to LSD on forced reseed or first wear.
+    // Fall through for session KvJson broadcasting.
+    if (llSubStringIndex(key_name, ".") != -1) {
+        if (ForceReseed || llLinksetDataRead(key_name) == "") {
+            llLinksetDataWrite(key_name, value);
+        }
+        // Fall through: still add to KvJson so session delta broadcasting works
     }
-    
+
     // Check for JSON object (owner, owners, trustees)
     if (is_json_object_key(key_name) && llGetSubString(value, 0, 0) == "{") {
         if (llJsonValueType(value, []) == JSON_OBJECT) {
@@ -514,7 +512,7 @@ handle_settings_get() {
 handle_set(string msg) {
     string key_name = llJsonGetValue(msg, ["key"]);
     if (key_name == JSON_INVALID) return;
-    if (!is_allowed_key(key_name)) return;
+
     if (is_notecard_only_key(key_name)) {
         return;
     }
@@ -591,7 +589,7 @@ handle_list_add(string msg) {
     string key_name = llJsonGetValue(msg, ["key"]);
     string elem = llJsonGetValue(msg, ["elem"]);
     
-    if (!is_allowed_key(key_name)) return;
+
     if (is_notecard_only_key(key_name)) {
         return;
     }
@@ -620,7 +618,7 @@ handle_obj_set(string msg) {
     string field = llJsonGetValue(msg, ["field"]);
     string value = llJsonGetValue(msg, ["value"]);
 
-    if (!is_allowed_key(key_name)) return;
+
     if (!is_json_object_key(key_name)) return;
 
     // Guard: trustee can't be an owner
@@ -656,7 +654,7 @@ handle_obj_remove(string msg) {
     string key_name = llJsonGetValue(msg, ["key"]);
     string field = llJsonGetValue(msg, ["field"]);
 
-    if (!is_allowed_key(key_name)) return;
+
     if (!is_json_object_key(key_name)) return;
 
     integer did_change = kv_obj_remove_field(key_name, field);
@@ -672,7 +670,7 @@ handle_list_remove(string msg) {
     string key_name = llJsonGetValue(msg, ["key"]);
     string elem = llJsonGetValue(msg, ["elem"]);
     
-    if (!is_allowed_key(key_name)) return;
+
     
     integer did_change = kv_list_remove_all(key_name, elem);
     
@@ -697,9 +695,10 @@ default
     state_entry() {
         LastOwner = llGetOwner();
         NotecardKey = llGetInventoryKey(NOTECARD_NAME);
-        
+        ForceReseed = FALSE;
+
         integer notecard_found = start_notecard_reading();
-        
+
         if (!notecard_found) {
             broadcast_full_sync();
         }
@@ -741,8 +740,9 @@ default
                     llResetScript();
                 }
                 else {
-                    // Notecard edited or re-added -> reload and overlay
+                    // Notecard edited or re-added -> reload and overwrite plugin LSD keys
                     NotecardKey = current_notecard_key;
+                    ForceReseed = TRUE;
                     start_notecard_reading();
                 }
             }
@@ -760,8 +760,9 @@ default
         }
         else {
             IsLoadingNotecard = FALSE;
+            ForceReseed = FALSE;
             broadcast_full_sync();
-            
+
             // Trigger bootstrap after notecard load completes
             string bootstrap_msg = llList2Json(JSON_OBJECT, [
                 "type", "notecard_loaded"
