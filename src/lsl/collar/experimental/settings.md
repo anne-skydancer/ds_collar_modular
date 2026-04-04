@@ -5,40 +5,40 @@ See [SETTINGS_REFERENCE.md](./SETTINGS_REFERENCE.md) for the full reference guid
 ### Minimal Example
 
 ```
-multi_owner_mode=0
-owner={"12345678-1234-1234-1234-123456789abc": "Master"}
-public_mode=0
-locked=0
+access.multiowner = 0
+access.owner = {"12345678-1234-1234-1234-123456789abc": "Master"}
+public.mode = 0
+lock.locked = 0
 ```
 
 ### Multi-Owner Example
 
 ```
-multi_owner_mode=1
-owners={"uuid-owner-1": "Master", "uuid-owner-2": "Mistress"}
-trustees={"uuid-trustee-1": "Sir"}
+access.multiowner = 1
+access.owners = {"uuid-owner-1": "Master", "uuid-owner-2": "Mistress"}
+access.trustees = {"uuid-trustee-1": "Sir"}
 ```
 
 ### All Recognized Keys
 
 | Key | Type | Notecard-only |
 |-----|------|:---:|
-| `multi_owner_mode` | 0/1 | Yes |
-| `owner` | JSON object `{uuid: honorific}` | |
-| `owners` | JSON object `{uuid: hon, ...}` | Yes (bulk) |
-| `trustees` | JSON object `{uuid: hon, ...}` | |
-| `blacklist` | CSV in brackets `[uuid, ...]` | |
-| `public_mode` | 0/1 | |
-| `locked` | 0/1 | |
-| `tpe_mode` | 0/1 | |
-| `runaway_enabled` | 0/1 | |
-| `ex_owner_tp` | 0/1 | |
-| `ex_owner_im` | 0/1 | |
-| `ex_trustee_tp` | 0/1 | |
-| `ex_trustee_im` | 0/1 | |
-| `bell_visible` | 0/1 | |
-| `bell_sound_enabled` | 0/1 | |
-| `bell_volume` | 0.0-1.0 | |
-| `bell_sound` | UUID | |
+| `access.multiowner` | 0/1 | Yes |
+| `access.owner` | JSON object `{uuid: honorific}` | |
+| `access.owners` | JSON object `{uuid: hon, ...}` | Yes (bulk) |
+| `access.trustees` | JSON object `{uuid: hon, ...}` | |
+| `access.blacklist` | CSV in brackets `[uuid, ...]` | |
+| `public.mode` | 0/1 | |
+| `lock.locked` | 0/1 | |
+| `tpe.mode` | 0/1 | |
+| `access.enablerunaway` | 0/1 | |
+| `rlvex.ownertp` | 0/1 | |
+| `rlvex.ownerim` | 0/1 | |
+| `rlvex.trusteetp` | 0/1 | |
+| `rlvex.trusteeim` | 0/1 | |
+| `bell.visible` | 0/1 | |
+| `bell.enablesound` | 0/1 | |
+| `bell.volume` | 0.0-1.0 | |
+| `bell.sound` | UUID | |
 
-**Note:** `owner`, `owners`, and `trustees` use JSON object format `{uuid: honorific}`, not arrays. Arrays are rejected for these keys.
+**Note:** `access.owner`, `access.owners`, and `access.trustees` use JSON object format `{uuid: honorific}`, not arrays. Arrays are rejected for these keys.
