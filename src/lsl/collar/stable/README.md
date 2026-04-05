@@ -1,144 +1,173 @@
-# DS Collar Modular
+# D/s Collar Modular
 
-**DS Collar Modular** is a modular, script-driven D/s collar system for Second Life.  
-It provides a modern, lightweight, and extensible framework for collars, emphasizing **security, modularity, and performance**.  
+A modern, modular D/s (Dominant/submissive) collar system for Second Life.
 
-This project replaces the old monolithic collars with a clean kernel + plugin architecture, using JSON messaging and strict ABI conventions.
-
----
-
-## ✨ Features
-
-- **Modular kernel design** — central kernel (v1.0) with swappable modules and plugins.
-- **Consolidated ABI** — 5-channel architecture (500/700/800/900/950) using structured JSON messaging.
-- **Access Control (ACL)** — unified ACL engine with support for owners, trustees, public access, and blacklist.
-- **Plugins** — 13 plugins covering owner management, leash, animations, RLV relay/restrictions, TPE mode, and more.
-- **Kernel Modules** — 8 specialized modules for auth, settings, dialogs, leash engine, particles, remote HUD, bootstrap, and UI.
-- **RLVa Integration** — comprehensive RLV support including relay, restrictions, exceptions, and Lockmeister protocol.
-- **Security-hardened** — v1.0 includes critical security fixes for authorization, ACL validation, and overflow protection.
-- **Heartbeat & auto-recover** — kernel monitors plugin health, prunes dead plugins, handles script additions/removals.
-- **Centralized dialogs** — single dialog management module eliminates per-plugin listeners.
-- **External HUD support** — remote control via separate HUD with ACL enforcement.  
+The collar is built around a central kernel with swappable plugins. It supports owner and trustee management, leashing, RLV integration, animations, and more — all controlled through in-world menus.
 
 ---
 
-## 📂 Project Structure
+## What's Included
+
+The collar system has three parts:
+
+- **Collar** — the wearable object containing the kernel, modules, and plugins
+- **Control HUD** — an optional remote control attachment for owners and trustees
+- **Leash Holder** — an optional object that acts as a leash handle
+
+### Collar Scripts
+
+The collar contains a **kernel**, **9 modules**, and up to **14 plugins**.
+
+**Kernel** — `collar_kernel.lsl`
+Manages plugin registration, health monitoring, and communication between all scripts.
+
+**Modules** provide behind-the-scenes services:
+
+| Module | Purpose |
+|--------|---------|
+| `kmod_auth` | Determines who has access and at what level |
+| `kmod_bootstrap` | Handles startup, RLV detection, and owner name lookup |
+| `kmod_dialogs` | Manages all menu dialog windows |
+| `kmod_leash` | Provides the leash movement engine |
+| `kmod_menu` | Renders menu buttons and page layouts |
+| `kmod_particles` | Draws the visual leash chain effect |
+| `kmod_remote` | Bridges communication with the Control HUD |
+| `kmod_settings` | Stores and loads all collar settings |
+| `kmod_ui` | Decides which menu options each person can see |
+
+**Plugins** are the features you interact with:
+
+| Plugin | What It Does |
+|--------|-------------|
+| `plugin_access` | Add or remove owners and trustees, manage honorifics |
+| `plugin_animate` | Play animations from the collar's inventory |
+| `plugin_bell` | Show or hide the bell, toggle its sound and volume |
+| `plugin_blacklist` | Block specific people from using the collar |
+| `plugin_leash` | Leash controls — clip, unclip, length, and mode |
+| `plugin_lock` | Lock or unlock the collar |
+| `plugin_maint` | View current settings and system information |
+| `plugin_public` | Toggle whether strangers can interact with the collar |
+| `plugin_relay` | Built-in RLV relay for furniture and traps |
+| `plugin_restrict` | Apply RLV restrictions (block chat, teleport, etc.) |
+| `plugin_rlvex` | Set RLV exceptions so owners/trustees can bypass restrictions |
+| `plugin_sos` | Emergency menu for TPE wearers via long-touch |
+| `plugin_status` | Display collar status information |
+| `plugin_tpe` | Total Power Exchange mode (gives full control to owner) |
+
+### Companion Objects
+
+| Script | Purpose |
+|--------|---------|
+| `control_hud` | Remote control HUD for owners and trustees |
+| `leash_holder` | Leash handle that responds to leash requests |
+
+---
+
+## Getting Started
+
+### Setting Up the Collar
+
+1. Rez a prim in Second Life
+2. Drop **all** `.lsl` scripts (except `control_hud.lsl` and `leash_holder.lsl`) into it
+3. Optionally add a notecard named `settings` to pre-configure owners (see below)
+4. Wear the prim as a collar attachment
+
+On startup the collar will detect RLV support, load any settings notecard, and register all plugins automatically.
+
+### Setting Up the Control HUD
+
+1. Rez a separate prim
+2. Drop `control_hud.lsl` into it
+3. Attach it to your HUD
+4. It will automatically detect nearby collars
+
+### Setting Up the Leash Holder
+
+1. Rez a prim
+2. Drop `leash_holder.lsl` into it
+3. Wear or hold the object — it responds to leash requests from the collar
+
+---
+
+## Using the Collar
+
+**Touch** the collar to open the main menu. You'll see only the options your access level allows.
+
+**Long-touch** (hold for 1.5+ seconds) to access the emergency SOS menu. This is a safety net for the wearer in TPE mode, who has lost normal collar access.
+
+### Who Can Do What
+
+| Role | Access |
+|------|--------|
+| **Primary Owner** | Full control over all features and settings |
+| **Trustee** | Elevated access — can leash, restrict, animate, but cannot change ownership |
+| **Wearer (unowned)** | Full self-control until an owner is set |
+| **Wearer (owned)** | Personal features only (animations, bell, status) |
+| **Public** | Limited features when public mode is enabled |
+| **Blacklisted** | No access at all |
+
+### Main Menu
+
+With all plugins installed, the main menu shows (alphabetically):
 
 ```
-ds_collar_modular/
-├── LICENSE
-├── README.md
-├── agents.md                    # LSL coding requirements & best practices
-└── src/stable/
-    ├── ds_collar_kernel.lsl                  # Core kernel (v1.0)
-    ├── ds_collar_control_hud.lsl             # External HUD controller
-    ├── ds_collar_leash_holder.lsl            # Leash holder object
-    │
-    ├── Kernel Modules (kmod_*)
-    │   ├── ds_collar_kmod_auth.lsl           # ACL and policy engine
-    │   ├── ds_collar_kmod_bootstrap.lsl      # Startup coordination, RLV detection
-    │   ├── ds_collar_kmod_dialogs.lsl        # Centralized dialog management
-    │   ├── ds_collar_kmod_leash.lsl          # Leashing engine services
-    │   ├── ds_collar_kmod_particles.lsl      # Visual renderer + Lockmeister
-    │   ├── ds_collar_kmod_remote.lsl         # External HUD bridge
-    │   ├── ds_collar_kmod_settings.lsl       # Persistent key-value store
-    │   └── ds_collar_kmod_ui.lsl             # Root touch menu
-    │
-    └── Plugins (plugin_*)
-        ├── ds_collar_plugin_animate.lsl      # Animation menu
-        ├── ds_collar_plugin_bell.lsl         # Bell controls
-        ├── ds_collar_plugin_blacklist.lsl    # Blacklist management
-        ├── ds_collar_plugin_leash.lsl        # Leash UI and config
-        ├── ds_collar_plugin_lock.lsl         # Lock/unlock toggle
-        ├── ds_collar_plugin_maintenance.lsl  # Maintenance utilities
-        ├── ds_collar_plugin_owner.lsl        # Owner/trustee management
-        ├── ds_collar_plugin_public.lsl       # Public access toggle
-        ├── ds_collar_plugin_rlvexceptions.lsl # RLV exception management
-        ├── ds_collar_plugin_rlvrelay.lsl     # RLV relay modes
-        ├── ds_collar_plugin_rlvrestrict.lsl  # RLV restriction management
-        ├── ds_collar_plugin_status.lsl       # Status information display
-        └── ds_collar_plugin_tpe.lsl          # Total Power Exchange mode
+Access         — Manage owners and trustees
+Animate        — Play animations
+Bell           — Bell visibility and sound
+Blacklist      — Block or unblock users
+Exceptions     — RLV bypass rules for owners/trustees
+Leash          — Leashing controls
+Locked: Y/N    — Lock or unlock the collar
+Maintenance    — View settings
+Public: Y/N    — Toggle public access
+Restrict       — Apply RLV restrictions
+RLV Relay      — Configure the RLV relay
+Status         — View collar information
+TPE: Y/N       — Toggle Total Power Exchange
 ```
 
-- **Kernel** — manages plugin registry, lifecycle, heartbeats, and consolidated ABI (v1.0).
-- **Modules** — headless system components providing core services (auth, settings, dialogs, leash engine, particles, remote communication, UI).
-- **Plugins** — user-facing features that register with the kernel and provide menu-driven functionality.  
+The **SOS** menu (wearer long-touch in TPE mode) provides emergency unleash, RLV clear, and relay clear.
 
 ---
 
-## 🏗️ Architecture & ABI
+## Settings Notecard
 
-### Consolidated ABI v1.0
+You can pre-configure the collar by placing a notecard named `settings` in its inventory. The format is `key = value`, one per line. Lines starting with `#` are comments.
 
-The system uses a **5-channel architecture** for all inter-script communication:
+### Minimal Example
 
-| Channel | Name | Purpose |
-|---------|------|---------|
-| **500** | `KERNEL_LIFECYCLE` | Plugin registration, heartbeat (ping/pong), soft resets |
-| **700** | `AUTH_BUS` | ACL queries and results |
-| **800** | `SETTINGS_BUS` | Settings sync, delta updates, notecard loading |
-| **900** | `UI_BUS` | UI navigation (start, return, close) |
-| **950** | `DIALOG_BUS` | Centralized dialog management |
+```
+access.owner = {"12345678-1234-1234-1234-123456789abc": "Master"}
+lock.locked = 0
+```
 
-### ACL Levels
+### Common Settings
 
-| Level | Name | Description |
-|-------|------|-------------|
-| **-1** | Blacklisted | Explicitly denied access |
-| **0** | No Access | Default for unknown users, wearer in TPE mode |
-| **1** | Public | Any user (when public mode enabled) |
-| **2** | Owned | Wearer (when owner is set) |
-| **3** | Trustee | Trusted users with elevated permissions |
-| **4** | Unowned | Wearer (when no owner is set) |
-| **5** | Primary Owner | Full administrative control |
+| Key | Values | What It Controls |
+|-----|--------|-----------------|
+| `access.multiowner` | `0` or `1` | Allow multiple owners (notecard only) |
+| `access.owner` | `{"uuid": "Honorific"}` | Set the primary owner |
+| `access.trustees` | `{"uuid": "Title", ...}` | Set trusted users |
+| `access.blacklist` | `[uuid1, uuid2]` | Block specific users |
+| `public.mode` | `0` or `1` | Allow public access |
+| `tpe.mode` | `0` or `1` | Total Power Exchange |
+| `lock.locked` | `0` or `1` | Lock the collar |
+| `bell.visible` | `0` or `1` | Show the bell |
+| `bell.enablesound` | `0` or `1` | Enable bell sound |
+| `bell.volume` | `0.0` to `1.0` | Bell volume |
 
-### Security Features (v1.0)
-
-- **Authorization validation** for soft resets (only bootstrap/maintenance can trigger)
-- **Integer overflow protection** for Unix timestamps (Year 2038 handling)
-- **JSON injection prevention** using proper encoding
-- **ACL re-validation** with time-based session checks
-- **Rate limiting** on remote HUD requests
-- **Touch range validation** (rejects ZERO_VECTOR)
-- **Owner change detection** with automatic script reset
+For the full list of settings keys, notecard syntax rules, and configuration patterns, see [SETTINGS_REFERENCE.md](SETTINGS_REFERENCE.md).
 
 ---
 
-## 🚀 Installation & Setup
+## Further Reading
 
-1. Rez a prim in Second Life.
-2. Drop `ds_collar_kernel.lsl` and all **8 kernel modules** (`ds_collar_kmod_*.lsl`) into it.
-3. Add the **plugins** you want to use (all 13 recommended for full functionality).
-4. (Optional) Add a "settings" notecard for pre-configured owners/trustees.
-5. Wear the prim as a collar.
-6. On reset, the collar will:
-   - Bootstrap and detect RLV capability
-   - Load settings from notecard (if present)
-   - Register all plugins with the kernel
-   - Open the UI menu on touch
-
-**Note:** All scripts are in `src/stable/` directory. The HUD and leash holder are separate objects.  
+- [USER_GUIDE.md](USER_GUIDE.md) — Detailed walkthrough of every feature
+- [SETTINGS_REFERENCE.md](SETTINGS_REFERENCE.md) — Complete settings key reference and notecard format
+- [TECHNICAL_REFERENCE.md](TECHNICAL_REFERENCE.md) — Architecture and internals for developers
 
 ---
 
-## 📚 Documentation
+## License
 
-- **[agents.md](./agents.md)** — Comprehensive LSL reference covering quirks, limitations, coding standards, review checklist, documentation guidelines, and versioning specification
-
----
-
-## 🔧 Contributing
-
-1. Fork the repo.
-2. Read **[agents.md](./agents.md)** thoroughly — it contains all LSL quirks, coding standards, versioning rules, and the review checklist.
-3. Work from the **authoritative baselines** (kernel, modules, plugin skeleton).
-4. Ensure your scripts compile in Second Life.
-5. Use the **Code Review Checklist** in agents.md before submitting.
-6. Apply appropriate version numbers according to the **Versioning Specification** in agents.md.
-7. Submit a pull request with a clear description of your changes.  
-
----
-
-## 📜 License
-
-GPL v3 License – see [LICENSE](./LICENSE) for details.
+GPL v3 — see [LICENSE](../../../../LICENSE) for details.

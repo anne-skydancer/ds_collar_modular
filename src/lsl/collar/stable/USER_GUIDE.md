@@ -28,11 +28,13 @@ Welcome to the D/s Collar system! This guide will help you understand and use al
 
 - Owner and trustee management
 - Multi-mode leashing system
-- RLV (Restrained Love) integration
+- RLV (Restrained Love) integration with built-in relay
 - Animation controls
 - Bell system with customizable sounds
 - Total Power Exchange (TPE) mode
 - Emergency safety features
+
+**Important:** The collar includes an **RLV relay** that allows external objects (furniture, traps, cages) to send RLV commands to the wearer. By default, the relay starts in **ASK mode** — the wearer is prompted to accept or deny each request before it takes effect. See the [RLV Relay](#rlv-relay) section for details on how to configure this.
 
 The collar uses a modular architecture with a central kernel and plugins, making it both powerful and efficient.
 
@@ -55,6 +57,8 @@ The collar uses a modular architecture with a central kernel and plugins, making
 2. **Touch the collar** - This opens the main menu
 3. **Explore available options** - You'll see menus based on your access level
 4. **Long-touch (1.5+ seconds)** - Access emergency SOS menu at any time
+
+**Note:** The collar has a built-in RLV relay that defaults to **ASK mode**. When RLV-enabled furniture or objects try to control you, you'll be prompted to accept or deny. You can change this in **RLV Relay** → **Mode**.
 
 ### For Owners/Dominants
 
@@ -123,22 +127,24 @@ The collar controls who can do what based on roles and relationships:
 
 ### Menu Structure (assuming a D/s Collar installation with all plugins installed)
 
+Plugins are sorted alphabetically in the main menu. The exact order and which buttons appear depends on the user's access level.
+
 ```
-Main Menu
+Main Menu (alphabetical order)
 ├── Access         (Owner & trustee management)
-├── Leash          (Leashing controls)
-├── RLV Relay      (RLV relay settings)
-├── Restrict       (RLV restrictions)
-├── Exceptions     (RLV bypass rules)
 ├── Animate        (Animation menu)
 ├── Bell           (Bell settings)
-├── Locked: Y/N    (Lock/unlock toggle)
-├── Public: Y/N    (Public access toggle)
-├── TPE: Y/N       (Total Power Exchange mode)
-├── Status         (View collar status)
 ├── Blacklist      (Manage blocked users)
+├── Exceptions     (RLV bypass rules)
+├── Leash          (Leashing controls)
+├── Locked: Y/N    (Lock/unlock toggle)
 ├── Maintenance    (View settings)
-└── SOS            (Emergency menu - long touch)
+├── Public: Y/N    (Public access toggle)
+├── Restrict       (RLV restrictions)
+├── RLV Relay      (RLV relay settings)
+├── Status         (View collar status)
+├── TPE: Y/N       (Total Power Exchange mode)
+└── SOS            (Emergency menu - long touch only)
 ```
 
 ---
@@ -151,10 +157,11 @@ Main Menu
 
 1. Touch collar → **Access**
 2. Select **Add Owner**
-3. Select the new owner from the list
-4. Owner will receive a confirmation dialog
-5. Owner clicks **Accept** to claim ownership
-6. Ownership is established
+3. A sensor scan finds nearby avatars and displays a numbered list
+4. Select the new owner from the list
+5. The selected person receives a confirmation dialog
+6. They click **Yes** to accept, then choose their honorific
+7. Ownership is established
 
 **Important:** Once a primary owner is set, the wearer loses the ability to change owners.
 
@@ -162,25 +169,29 @@ Main Menu
 
 **Owner-Initiated Release:**
 1. Touch collar → **Access** → **Release**
-2. Both owner and wearer receive confirmation dialogs
-3. Both must accept to complete the release
-4. Wearer returns to unowned status (full self-control)
+2. Owner confirms via dialog
+3. Wearer then receives a separate confirmation dialog
+4. Both must accept to complete the release
+5. Wearer returns to unowned status (full self-control)
 
 **Wearer Self-Release (Runaway):**
 - Allows wearer to release themselves without owner permission
 - Owner can enable/disable this feature: Touch collar → **Access** (as owner) → **Runaway: On/Off**
-- Disabling runaway requires wearer consent (wearer receives confirmation dialog)
+- Disabling runaway requires wearer consent (the wearer, not the owner, receives the confirmation dialog)
 - Enabling runaway requires no consent (owner decision only)
 - When available: Touch collar → **Access** → **Runaway** (if button shown)
-- Immediate self-release without confirmation
+- Requires confirmation before executing
+- **Note:** Runaway is only available in single-owner mode. In multi-owner mode, the Runaway button is hidden.
 
 ### Transferring Ownership
 
 1. Current owner: Touch collar → **Access** → **Transfer**
-2. Touch the new owner avatar
-3. New owner receives offer dialog
-4. Current owner and new owner must both accept
-5. Ownership transfers completely
+2. A sensor scan finds nearby avatars and displays a numbered list
+3. Select the new owner from the list
+4. The selected person receives an acceptance dialog
+5. They click **Yes** and choose their honorific
+6. Ownership transfers; the previous owner receives a notification
+7. **Note:** Transfer is only available in single-owner mode
 
 ### Managing Trustees
 
@@ -217,18 +228,19 @@ The collar supports multiple owners sharing equal owner access.
 Blacklisted users (ACL -1) are completely blocked from collar interaction.
 
 **Adding to Blacklist:**
-1. Touch collar → **Blacklist** → **Add**
-2. Touch the person to blacklist
-3. They are immediately blocked
+1. Touch collar → **Blacklist** → **+Blacklist**
+2. A sensor scan finds nearby avatars and displays a numbered list
+3. Select the person from the list
+4. They are immediately blocked
 
 **Removing from Blacklist:**
-1. Touch collar → **Blacklist** → **Remove**
-2. Select person from list
+1. Touch collar → **Blacklist** → **-Blacklist**
+2. Select person from the numbered list
 3. They are unblocked
 
-**Viewing Blacklist:**
-- Touch collar → **Blacklist** → **List**
-- Shows all blacklisted users with display names
+**Viewing Blacklist Count:**
+- The blacklist main menu displays the count of currently blacklisted users
+- There is no separate "List" button; the count is shown in the menu body
 
 ---
 
@@ -247,7 +259,7 @@ Leash the wearer to follow another avatar.
 3. Wearer will follow you automatically
 
 **To Unleash:**
-1. Touch collar → **Leash** → **Unleash**
+1. Touch collar → **Leash** → **Unclip**
 2. Or: Wearer uses SOS menu → **Unleash**
 
 **Features:**
@@ -284,12 +296,13 @@ Leash wearer to a fixed object or position.
 ### Leash Settings
 
 **Adjusting Leash Length:**
-1. Touch collar → **Leash** → **Length**
-2. Select from: 1m, 2m, 3m, 5m, 10m, 15m, 20m
-3. Length changes immediately
+1. Touch collar → **Leash** → **Settings** → **Length**
+2. Select from: 1m, 3m, 5m, 10m, 15m, 20m
+3. Use **<<** / **>>** to fine-tune in 1m increments
+4. Length changes immediately
 
 **Turn-to-Face:**
-1. Touch collar → **Leash** → **Turn2Face**
+1. Touch collar → **Leash** → **Settings** → **Turn: On/Off**
 2. Toggle ON/OFF
 3. When ON: Wearer automatically faces leash holder
 
@@ -320,18 +333,23 @@ RLV (Restrained Love Viewer) provides advanced control over the wearer's viewer 
 
 ### RLV Relay
 
-The RLV Relay allows scripted objects (furniture, traps, cages) to send RLV commands that control the collar wearer. The relay is the mechanism that receives and processes these commands.
+The collar includes a built-in RLV Relay that allows scripted objects (furniture, traps, cages) to send RLV commands that control the collar wearer. The relay is the mechanism that receives and processes these commands.
+
+**The relay defaults to ASK mode** on first wear — the wearer is always prompted before any external object can take control. This can be changed to ON (auto-accept) or OFF (ignore all) via the menu.
 
 **Relay Modes:**
 
 1. **OFF** - Relay disabled, furniture cannot control you
-2. **ON** - Relay enabled, furniture can send RLV commands. Wearer can use safeword to escape
-3. **HARDCORE** - Relay enabled, but wearer cannot use safeword. Only owners/trustees can release
+2. **ASK** (default) - Relay enabled, but wearer is prompted to accept or deny each relay request before it takes effect. Objects the wearer has already accepted in the current session are not re-prompted.
+3. **ON** - Relay enabled, furniture can send RLV commands automatically. Wearer can use safeword to escape
+
+**Hardcore Toggle:**
+When the relay is in **ON** mode, Trustees and Primary Owners can additionally toggle **Hardcore** (HC ON / HC OFF). Hardcore mode prevents the wearer from using the safeword — only owners/trustees can release.
 
 **Setting Relay Mode:**
 1. Touch collar → **RLV Relay** → **Mode**
-2. Select: **OFF** or **ON**
-3. Owners and Trustees can also enable **Hardcore** mode
+2. Select: **OFF**, **ON**, or **ASK**
+3. Trustees and Primary Owners see additional **HC ON** / **HC OFF** buttons (only when mode is ON)
 4. Mode persists across sessions
 
 ### RLV Restrictions
@@ -341,29 +359,34 @@ RLV Restrictions directly limit what the wearer can do in Second Life.
 **Restriction Categories:**
 
 #### Inventory Restrictions
-- **Detach** - Prevent removing worn items
-- **Add/Remove Outfit** - Block outfit changes
-- **Add/Remove Clothing** - Control clothing layers
-- **Show/Edit Scripts** - Hide script contents
+- **Det. All** - Prevent removing all worn items
+- **+ Outfit / - Outfit** - Block adding/removing outfits
+- **- Attach / + Attach** - Block removing/adding attachments
+- **Att. All** - Block all attachment changes
+- **Inv** - Hide inventory contents
+- **Notes** - Block viewing notecards
+- **Scripts** - Block viewing scripts
 
 #### Speech Restrictions
-- **Send Chat** - Block local chat
-- **Send IM** - Block instant messages
-- **Receive Chat** - Block receiving chat
-- **Receive IM** - Block receiving IMs
-- **Hear/Read Chat** - Sensory deprivation options
+- **Chat** - Block sending local chat
+- **Send IM** - Block sending instant messages
+- **Recv IM** - Block receiving IMs
+- **Start IM** - Block starting new IM sessions
+- **Shout** - Block shouting
+- **Whisper** - Block whispering
 
 #### Travel Restrictions
-- **Teleport** - Block teleporting
-- **Accept TP** - Block accepting TP offers
-- **Stand** - Force sitting
-- **Sit** - Block sitting
+- **Map TP** - Block map-based teleporting
+- **Loc. TP** - Block location-based teleporting
+- **TP** - Block teleport lure acceptance
 
 #### Other Restrictions
 - **Edit** - Prevent building/editing
 - **Rez** - Block rezzing objects
-- **Touch** - Limit touching objects
-- **Show Names** - Hide avatar names (anonymity)
+- **Touch / Touch Wld** - Limit touching objects/world
+- **OK TP** - Block accepting TP offers
+- **Names** - Hide avatar names (anonymity)
+- **Sit / Unsit / Stand** - Control sitting and standing
 
 **Applying Restrictions:**
 1. Touch collar → **Restrict**
@@ -384,17 +407,21 @@ RLV Restrictions directly limit what the wearer can do in Second Life.
 
 Exceptions allow specific people to bypass certain RLV restrictions.
 
-**Common Exceptions:**
+**Available Exceptions:**
 
 - **IM Exception** - Allow IMs from owner/trustees even when IMs blocked
 - **TP Exception** - Allow TPs from owner/trustees even when TPs blocked
-- **Touch Exception** - Allow owner/trustees to be touched
+
+Each exception can be toggled independently for the owner and for trustees, giving four individual settings:
+- Owner TP exception (`rlvex.ownertp`)
+- Owner IM exception (`rlvex.ownerim`)
+- Trustee TP exception (`rlvex.trusteetp`)
+- Trustee IM exception (`rlvex.trusteeim`)
 
 **Setting Exceptions:**
-1. Touch collar → **RLV Exceptions**
-2. Select exception type
-3. Choose who gets exception: Owner, Trustees, or Both
-4. Exception applies immediately
+1. Touch collar → **Exceptions**
+2. Select exception type and target (Owner or Trustee)
+3. Exception applies immediately
 
 **Why Use Exceptions?**
 - Maintain control channel even under heavy restrictions
@@ -579,13 +606,12 @@ The D/s Collar Control HUD allows owners/trustees to control the collar from a d
 **Remote Menu Access:**
 - All collar menus accessible through HUD
 - Same ACL restrictions apply
-- Works within 20 meter range
+- Uses region-wide broadcast channels for communication
 
 **HUD Features:**
 - ACL level verification
-- Rate limiting (2 second cooldown per request)
 - Session management
-- Range checking
+- Automatic collar detection via broadcast
 
 **Benefits:**
 - Control collar without being physically next to wearer
@@ -605,39 +631,40 @@ The collar supports pre-configuration via a notecard named **"settings"** in the
 
 1. Edit the collar object
 2. Create new notecard named exactly: **settings**
-3. Add configuration in `key=value` format
+3. Add configuration in `key = value` format (dotted namespace keys)
 4. Save notecard
 5. Reset collar scripts to load
 
 **Settings Notecard Format:**
 
+All settings keys use **dotted `namespace.setting` format**. Owner and trustee keys use **JSON objects** with `{uuid: honorific}` pairs.
+
 ```
 # D/s Collar Settings
 # Lines starting with # are comments
-# Format: key=value
-# IMPORTANT: Do NOT use quotes around UUIDs!
-# Lists use comma-separated UUIDs in brackets: key=[uuid1,uuid2,uuid3]
+# Format: key = value
+# IMPORTANT: JSON objects require quotes around keys and values
 
-# Ownership
-owner_key=a1b2c3d4-e5f6-7890-abcd-ef1234567890
-owner_hon=Master
-multi_owner_mode=0
+# Ownership (Single Owner)
+access.multiowner = 0
+access.owner = {"a1b2c3d4-e5f6-7890-abcd-ef1234567890": "Master"}
+
+# Trustees (JSON object — NOT an array)
+access.trustees = {"12345678-90ab-cdef-1234-567890abcdef": "Mistress", "abcdef01-2345-6789-abcd-ef0123456789": "Daddy"}
+
+# Blacklist (CSV in brackets)
+access.blacklist = [fedcba98-7654-3210-fedc-ba9876543210]
 
 # Access Control
-public_mode=1
-trustees=[12345678-90ab-cdef-1234-567890abcdef,abcdef01-2345-6789-abcd-ef0123456789]
-trustee_honorifics=[Mistress,Master,Daddy]
-blacklist=[fedcba98-7654-3210-fedc-ba9876543210]
-
-# Collar State
-locked=0
-tpe_mode=0
+public.mode = 0
+tpe.mode = 0
+lock.locked = 0
 
 # Bell Settings
-bell_visible=1
-bell_sound_enabled=1
-bell_volume=0.3
-bell_sound=bell_sound_name
+bell.visible = 1
+bell.enablesound = 1
+bell.volume = 0.3
+bell.sound = 16fcf579-82cb-b110-c1a4-5fa5e1385406
 ```
 
 **Note:** RLV settings (relay mode, restrictions, exceptions) and leash settings (length, turn-to-face) cannot be pre-configured via notecard. These must be set through the collar menus after startup.
@@ -648,45 +675,58 @@ bell_sound=bell_sound_name
 
 | Key | Type | Description | Example |
 |-----|------|-------------|---------|
-| `owner_key` | UUID | Owner's avatar UUID (single owner mode) | `a1b2c3d4-e5f6-7890-abcd-ef1234567890` |
-| `owner_keys` | List | Owner UUIDs (multi-owner mode, notecard only) | `[a1b2c3d4-e5f6-7890-abcd-ef1234567890,12345678-90ab-cdef-1234-567890abcdef]` |
-| `owner_hon` | String | Owner's honorific (single owner) | `Master`, `Mistress` |
-| `owner_honorifics` | List | Owner honorifics (multi-owner mode) | `[Master,Mistress]` |
-| `multi_owner_mode` | 0/1 | Enable multi-owner (notecard only) | `0` = off, `1` = on |
-| `trustees` | List | Trustee UUIDs | `[12345678-90ab-cdef-1234-567890abcdef,abcdef01-2345-6789-abcd-ef0123456789]` |
-| `trustee_honorifics` | List | Trustee titles | `[Master,Mistress]` |
-| `blacklist` | List | Blacklisted UUIDs | `[fedcba98-7654-3210-fedc-ba9876543210,00000000-0000-0000-0000-000000000000]` |
+| `access.multiowner` | 0/1 | Enable multi-owner (notecard only) | `0` = off, `1` = on |
+| `access.owner` | JSON object | Single owner `{uuid: honorific}` | `{"a1b2c3d4-...": "Master"}` |
+| `access.owners` | JSON object | Multiple owners (multi-owner mode, notecard only for bulk set) | `{"uuid1": "Sir", "uuid2": "Ma'am"}` |
+| `access.trustees` | JSON object | Trusted users `{uuid: honorific}` | `{"uuid1": "Sir", "uuid2": "Lady"}` |
+| `access.blacklist` | CSV in brackets | Blacklisted UUIDs | `[fedcba98-..., 00000000-...]` |
+| `access.enablerunaway` | 0/1 | Enable runaway feature for wearer | `0` = off, `1` = on |
+
+**Note:** Honorifics are embedded in the JSON objects alongside UUIDs. There are no separate honorific keys.
 
 **Collar State:**
 
 | Key | Type | Description | Example |
 |-----|------|-------------|---------|
-| `public_mode` | 0/1 | Public access | `0` = off, `1` = on |
-| `locked` | 0/1 | Lock state | `0` = unlocked, `1` = locked |
-| `tpe_mode` | 0/1 | TPE mode | `0` = off, `1` = on |
+| `public.mode` | 0/1 | Public access | `0` = off, `1` = on |
+| `lock.locked` | 0/1 | Lock state | `0` = unlocked, `1` = locked |
+| `tpe.mode` | 0/1 | TPE mode | `0` = off, `1` = on |
 
 **Bell Settings:**
 
 | Key | Type | Description | Example |
 |-----|------|-------------|---------|
-| `bell_visible` | 0/1 | Bell visibility | `0` = hidden, `1` = visible |
-| `bell_sound_enabled` | 0/1 | Bell sound | `0` = silent, `1` = enabled |
-| `bell_volume` | Float | Bell volume | `0.0` to `1.0` |
-| `bell_sound` | String | Bell sound name from inventory | `bell_jingle` |
+| `bell.visible` | 0/1 | Bell visibility | `0` = hidden, `1` = visible |
+| `bell.enablesound` | 0/1 | Bell sound | `0` = silent, `1` = enabled |
+| `bell.volume` | Float | Bell volume | `0.0` to `1.0` |
+| `bell.sound` | UUID | Bell sound asset UUID | `16fcf579-82cb-b110-c1a4-5fa5e1385406` |
+
+**RLV Exception Settings:**
+
+| Key | Type | Description | Example |
+|-----|------|-------------|---------|
+| `rlvex.ownertp` | 0/1 | Allow owner to TP wearer despite restrictions | `0` = off, `1` = on |
+| `rlvex.ownerim` | 0/1 | Allow owner to IM wearer despite restrictions | `0` = off, `1` = on |
+| `rlvex.trusteetp` | 0/1 | Allow trustees to TP wearer despite restrictions | `0` = off, `1` = on |
+| `rlvex.trusteeim` | 0/1 | Allow trustees to IM wearer despite restrictions | `0` = off, `1` = on |
 
 **Notes:**
 - Keys marked "notecard only" can only be set via settings notecard, not via runtime messages
-- RLV settings (relay, restrictions, exceptions) are **not supported** in notecard configuration
+- RLV relay mode and restriction lists are **not supported** in notecard configuration
 - Leash settings (length, turn-to-face) are **not supported** in notecard configuration
 - All non-notecard-only settings persist automatically when changed via menus
+- For full details on notecard syntax and configuration patterns, see [SETTINGS_REFERENCE.md](SETTINGS_REFERENCE.md)
 
 ### Finding Avatar UUIDs
 
 To add UUIDs to the settings notecard:
 
-**Method 1: In-World Script**
+**Method 1: Viewer Feature**
+- Right-click avatar → Select "Copy Key" (available in Firestorm and most modern viewers)
+
+**Method 2: In-World Script**
 ```lsl
-// Touch this prim to get your UUID
+// Drop in a prim and touch it to see your UUID, or touch another avatar
 default {
     touch_start(integer num) {
         llSay(0, "UUID: " + (string)llDetectedKey(0));
@@ -694,13 +734,14 @@ default {
 }
 ```
 
-**Method 2: Viewer Profile**
-- Right-click avatar
-- Select "Copy Key" (if available in your viewer)
-
-**Method 3: Online Tools**
-- Use a web-based UUID lookup service
-- Search by avatar name
+**Method 3: Your Own UUID**
+```lsl
+default {
+    state_entry() {
+        llOwnerSay((string)llGetOwner());
+    }
+}
+```
 
 ### Viewing Current Settings
 
@@ -811,7 +852,8 @@ default {
 #### "Invalid UUID"
 - Avatar UUID format incorrect in settings
 - Verify UUID format: `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`
-- Ensure NO quotes are used around the UUID
+- For owner/trustee keys, ensure valid JSON object format: `{"uuid": "honorific"}`
+- For blacklist, use bracket format: `[uuid1, uuid2]`
 - Check for typos in settings notecard
 
 ### Performance Issues
@@ -880,8 +922,8 @@ A: If you have no owner set, you already have full owner-level access to your co
 
 ### RLV Questions
 
-**Q: What's the difference between ON and HARDCORE relay modes?**
-A: Both allow external devices to control the collar. HARDCORE mode typically allows more severe/permanent restrictions. Check specific relay device documentation for details.
+**Q: What are the relay modes?**
+A: The relay defaults to **ASK** mode, which prompts the wearer to accept or deny each request from external objects. **ON** allows external devices to send RLV commands automatically; the wearer can safeword out. **OFF** disables the relay entirely. When the relay is **ON**, an owner or trustee can additionally toggle **Hardcore** mode, which prevents the wearer from using the safeword.
 
 **Q: Can I use a safeword with RLV relay?**
 A: Yes. The collar implements ORG relay specification which includes safeword support. Configure your safeword in your RLV viewer settings.
@@ -890,7 +932,7 @@ A: Yes. The collar implements ORG relay specification which includes safeword su
 A: Use the SOS menu (long-touch collar) → **Clear RLV** or **Clear Relay**. This always works regardless of restrictions.
 
 **Q: Do RLV exceptions work for everyone?**
-A: No. Exceptions only apply to owner and/or trustees as configured. They bypass specific restrictions only for authorized users.
+A: No. Only TP and IM exceptions are available, and each can be toggled independently for the owner and for trustees. They bypass specific restrictions only for authorized users.
 
 ### Leash Questions
 
@@ -938,7 +980,7 @@ A: Yes. The collar is open source. All scripts are available at: https://github.
 A: Replace old scripts with new scripts from the latest release. The kernel compatibility ensures plugins work across revisions. Always backup your settings notecard first.
 
 **Q: How does the collar implement menus?**
-A: The collar uses llDialog extensively. All menus are standard SL dialog boxes. The centralized dialog system (channel 950) ensures efficient dialog management across all plugins.
+A: The collar uses llDialog extensively. All menus are standard SL dialog boxes. A centralized dialog bus (link message lane 950) ensures efficient dialog management across all plugins.
 
 ### Feature Requests
 
@@ -956,6 +998,7 @@ A: Modify `kmod_ui.lsl` for main menu structure. Individual plugin menus are in 
 ## Additional Resources
 
 - **Main README:** [README.md](README.md) - Technical overview and architecture
+- **Settings Reference:** [SETTINGS_REFERENCE.md](SETTINGS_REFERENCE.md) - Complete settings key documentation and notecard syntax
 - **Developer Guide:** [agents.md](agents.md) - LSL coding standards and plugin development
 - **Security Documentation:** [SECURITY_AUDIT_REPORT.md](SECURITY_AUDIT_REPORT.md)
 - **GitHub Repository:** https://github.com/anne-skydancer/ds_collar_modular
