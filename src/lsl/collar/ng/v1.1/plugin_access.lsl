@@ -721,6 +721,17 @@ handle_button(string btn) {
             string old_hon = OwnerHonorific;
             clear_owner();
 
+            // Clear ownership-scoped settings: trustees, lock, TPE
+            llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
+                "type", "set", "key", KEY_TRUSTEES, "value", "{}"
+            ]), NULL_KEY);
+            llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
+                "type", "set", "key", "lock.locked", "value", "0"
+            ]), NULL_KEY);
+            llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
+                "type", "set", "key", "tpe.mode", "value", "0"
+            ]), NULL_KEY);
+
             // Notify wearer with honorific and owner name
             if (old != NULL_KEY) {
                 string notify_msg = "You have run away from ";
