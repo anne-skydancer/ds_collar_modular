@@ -14,7 +14,10 @@
       "Bash(grep -n \"\\\\\"notify\\\\\"\" src/lsl/collar/experimental/*.lsl)",
       "Bash(grep -n \"\\\\\"type\\\\\", \\\\\"start\\\\\"\\\\|\\\\\"type\\\\\", \\\\\"return\\\\\"\\\\|\\\\\"type\\\\\", \\\\\"close\\\\\"\" src/lsl/collar/experimental/*.lsl)",
       "Bash(lslint src/lsl/collar/experimental/plugin_access.lsl)",
-      "Bash(lslint src/lsl/collar/ng/v1.1/plugin_access.lsl)"
+      "Bash(lslint src/lsl/collar/ng/v1.1/plugin_access.lsl)",
+      "Bash(grep -r \"KERNEL_LIFECYCLE\\\\|AUTH_BUS\\\\|SETTINGS_BUS\\\\|UI_BUS\\\\|DIALOG_BUS\" src/lsl/collar/dev/*.lsl)",
+      "Bash(grep -r \"\\\\\"type\\\\\".*:\" src/lsl/collar/dev/*.lsl)",
+      "Bash(bash scripts/setup-lsl-tools.sh)"
     ]
   }
 }
