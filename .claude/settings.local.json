@@ -17,7 +17,21 @@
       "Bash(lslint src/lsl/collar/ng/v1.1/plugin_access.lsl)",
       "Bash(grep -r \"KERNEL_LIFECYCLE\\\\|AUTH_BUS\\\\|SETTINGS_BUS\\\\|UI_BUS\\\\|DIALOG_BUS\" src/lsl/collar/dev/*.lsl)",
       "Bash(grep -r \"\\\\\"type\\\\\".*:\" src/lsl/collar/dev/*.lsl)",
-      "Bash(bash scripts/setup-lsl-tools.sh)"
+      "Bash(bash scripts/setup-lsl-tools.sh)",
+      "Bash(curl -sL \"https://wiki.secondlife.com/wiki/SLua\")",
+      "Bash(ls -1 *.lsl)",
+      "Bash(wc -l *.lsl)",
+      "WebFetch(domain:community.secondlife.com)",
+      "WebFetch(domain:suzanna-linn.github.io)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:create.secondlife.com)",
+      "WebFetch(domain:slua.dev)",
+      "Bash(curl -s -L \"https://wiki.secondlife.com/wiki/Luau_Examples\")",
+      "Bash(curl -s -L \"https://wiki.secondlife.com/wiki/SLua_FAQ\")",
+      "Bash(curl -s -L \"https://wiki.secondlife.com/wiki/SLua_Alpha\")",
+      "Bash(curl -s -L \"https://create.secondlife.com/script/learn-slua/\")",
+      "WebFetch(domain:luau.org)",
+      "Bash(wc -l \"c:/Users/Anne Skydancer/OneDrive/Documents/GitHub/ds_collar_modular/src/slua/collar/alpha/\"*.lua)"
     ]
   }
 }
