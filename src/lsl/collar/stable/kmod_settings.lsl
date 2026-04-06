@@ -1,14 +1,18 @@
 /*--------------------
 MODULE: kmod_settings.lsl
 VERSION: 1.10
-REVISION: 1
-PURPOSE: Persistent key-value store with notecard loading and LSD writes
-ARCHITECTURE: Consolidated message bus lanes
+REVISION: 2
+PURPOSE: Notecard parser, validation guards, and LSD settings store
+ARCHITECTURE: Consolidated message bus lanes, LSD-backed storage
 CHANGES:
+- v1.1 rev 2: Remove KvJson. All kv_* operations now read/write LSD
+  directly. Remove recover_lsd_settings (LSD is authoritative). Remove
+  ForceReseed (notecard parsing always writes to LSD). Simplify
+  handle_settings_restore to write each key to LSD.
 - v1.1 rev 1: Simplify broadcasts to lightweight signals. Consumers now
-  read directly from LSD; broadcast_full_sync, broadcast_delta_scalar,
-  broadcast_delta_list_add, broadcast_delta_list_remove all replaced by
-  a single broadcast_settings_changed() signal on SETTINGS_BUS.
+  read directly from LSD; four broadcast functions replaced by a single
+  broadcast_settings_changed() signal. Notecard parsing now always writes
+  validated values to LSD. Notecard removal clears LSD settings keys.
 - v1.1 rev 0: Version bump for LSD policy architecture. No functional changes to this module.
 --------------------*/
 
@@ -43,13 +47,11 @@ string COMMENT_PREFIX = "#";
 string SEPARATOR = "=";
 /* -------------------- STATE -------------------- */
 key LastOwner = NULL_KEY;
-string KvJson = "{}";
 
 key NotecardQuery = NULL_KEY;
 integer NotecardLine = 0;
 integer IsLoadingNotecard = FALSE;
-key NotecardKey = NULL_KEY;  // Track settings notecard changes
-integer ForceReseed = FALSE; // TRUE when notecard UUID changed — overwrite plugin LSD keys
+key NotecardKey = NULL_KEY;
 
 integer MaxListLen = 64;
 
@@ -91,33 +93,27 @@ list list_unique(list source_list) {
     return source_list;
 }
 
-/* -------------------- KV OPERATIONS -------------------- */
+/* -------------------- LSD OPERATIONS -------------------- */
 
 string kv_get(string key_name) {
-    string val = llJsonGetValue(KvJson, [key_name]);
-    if (val == JSON_INVALID) return "";
-    return val;
+    return llLinksetDataRead(key_name);
 }
 
 integer kv_set_scalar(string key_name, string value) {
-    string old_val = kv_get(key_name);
-    if (old_val == value) return FALSE;
-    
-    KvJson = llJsonSetValue(KvJson, [key_name], value);
+    if (llLinksetDataRead(key_name) == value) return FALSE;
+    llLinksetDataWrite(key_name, value);
     return TRUE;
 }
 
 integer kv_set_list(string key_name, list values) {
     string new_arr = llList2Json(JSON_ARRAY, values);
-    string old_arr = kv_get(key_name);
-    if (old_arr == new_arr) return FALSE;
-    
-    KvJson = llJsonSetValue(KvJson, [key_name], new_arr);
+    if (llLinksetDataRead(key_name) == new_arr) return FALSE;
+    llLinksetDataWrite(key_name, new_arr);
     return TRUE;
 }
 
 integer kv_list_add_unique(string key_name, string elem) {
-    string arr = kv_get(key_name);
+    string arr = llLinksetDataRead(key_name);
     list current_list = [];
     if (llJsonValueType(arr, []) == JSON_ARRAY) {
         current_list = llJson2List(arr);
@@ -130,11 +126,10 @@ integer kv_list_add_unique(string key_name, string elem) {
     return kv_set_list(key_name, current_list);
 }
 
-/* ---- JSON OBJECT KV OPERATIONS ---- */
+/* ---- JSON OBJECT LSD OPERATIONS ---- */
 
-// Set a field in a JSON object stored at key_name
 integer kv_obj_set_field(string key_name, string field, string value) {
-    string obj = kv_get(key_name);
+    string obj = llLinksetDataRead(key_name);
     if (obj == "" || llJsonValueType(obj, []) != JSON_OBJECT) {
         obj = "{}";
     }
@@ -142,9 +137,8 @@ integer kv_obj_set_field(string key_name, string field, string value) {
     return kv_set_scalar(key_name, new_obj);
 }
 
-// Remove a field from a JSON object stored at key_name
 integer kv_obj_remove_field(string key_name, string field) {
-    string obj = kv_get(key_name);
+    string obj = llLinksetDataRead(key_name);
     if (obj == "" || llJsonValueType(obj, []) != JSON_OBJECT) return FALSE;
     if (llJsonGetValue(obj, [field]) == JSON_INVALID) return FALSE;
     string new_obj = llJsonSetValue(obj, [field], JSON_DELETE);
@@ -152,14 +146,14 @@ integer kv_obj_remove_field(string key_name, string field) {
 }
 
 integer kv_list_remove_all(string key_name, string elem) {
-    string arr = kv_get(key_name);
+    string arr = llLinksetDataRead(key_name);
     if (llJsonValueType(arr, []) != JSON_ARRAY) return FALSE;
-    
+
     list current_list = llJson2List(arr);
     list new_list = list_remove_all(current_list, elem);
-    
+
     if (llGetListLength(new_list) == llGetListLength(current_list)) return FALSE;
-    
+
     return kv_set_list(key_name, new_list);
 }
 
@@ -382,15 +376,6 @@ parse_notecard_line(string line) {
     string key_name = llStringTrim(llGetSubString(line, 0, sep_pos - 1), STRING_TRIM);
     string value = llStringTrim(llGetSubString(line, sep_pos + 1, -1), STRING_TRIM);
 
-    // Dotted keys (<plugin>.<setting>): write to LSD on forced reseed or first wear.
-    // Fall through for session KvJson broadcasting.
-    if (llSubStringIndex(key_name, ".") != -1) {
-        if (ForceReseed || llLinksetDataRead(key_name) == "") {
-            llLinksetDataWrite(key_name, value);
-        }
-        // Fall through: still add to KvJson so session delta broadcasting works
-    }
-
     // Check for JSON object (owner, owners, trustees)
     if (is_json_object_key(key_name) && llGetSubString(value, 0, 0) == "{") {
         if (llJsonValueType(value, []) == JSON_OBJECT) {
@@ -404,6 +389,7 @@ parse_notecard_line(string line) {
             }
             kv_set_scalar(key_name, value);
         }
+        return;
     }
     // Check if it's a list (starts with [)
     else if (llGetSubString(value, 0, 0) == "[") {
@@ -459,10 +445,9 @@ parse_notecard_line(string line) {
     }
 }
 
-// After notecard parsing, recover runtime-set values from LSD that the
-// notecard doesn't contain.  This ensures that ownership, trustees, and
-// other settings set via menus survive script restarts.
-recover_lsd_settings() {
+// Clear all known settings keys from LSD so removed notecard entries
+// don't persist as stale data.
+clear_lsd_settings() {
     list keys = [
         KEY_MULTI_OWNER_MODE, KEY_OWNER, KEY_OWNERS, KEY_TRUSTEES,
         KEY_BLACKLIST, KEY_PUBLIC_ACCESS, KEY_TPE_MODE, KEY_LOCKED,
@@ -472,14 +457,7 @@ recover_lsd_settings() {
     integer i = 0;
     integer len = llGetListLength(keys);
     while (i < len) {
-        string k = llList2String(keys, i);
-        // Only recover if KvJson doesn't already have this key (notecard wins)
-        if (llJsonGetValue(KvJson, [k]) == JSON_INVALID) {
-            string lsd_val = llLinksetDataRead(k);
-            if (lsd_val != "") {
-                KvJson = llJsonSetValue(KvJson, [k], lsd_val);
-            }
-        }
+        llLinksetDataDelete(llList2String(keys, i));
         i += 1;
     }
 }
@@ -529,8 +507,7 @@ handle_set(string msg) {
             did_change = kv_set_list(key_name, new_list);
 
             if (did_change) {
-                llLinksetDataWrite(key_name, kv_get(key_name));
-                broadcast_settings_changed();  // Bulk operations get full sync
+                broadcast_settings_changed();
             }
         }
         return;
@@ -569,8 +546,6 @@ handle_set(string msg) {
         did_change = kv_set_scalar(key_name, value);
 
         if (did_change) {
-            // Persist to LSD so value survives script restarts
-            llLinksetDataWrite(key_name, value);
             broadcast_settings_changed();
         }
     }
@@ -599,8 +574,6 @@ handle_list_add(string msg) {
     }
     
     if (did_change) {
-        // Persist full list to LSD so value survives script restarts
-        llLinksetDataWrite(key_name, kv_get(key_name));
         broadcast_settings_changed();
     }
 }
@@ -639,8 +612,6 @@ handle_obj_set(string msg) {
 
     integer did_change = kv_obj_set_field(key_name, field, value);
     if (did_change) {
-        string updated = kv_get(key_name);
-        llLinksetDataWrite(key_name, updated);
         broadcast_settings_changed();
     }
 }
@@ -657,8 +628,6 @@ handle_obj_remove(string msg) {
 
     integer did_change = kv_obj_remove_field(key_name, field);
     if (did_change) {
-        string updated = kv_get(key_name);
-        llLinksetDataWrite(key_name, updated);
         broadcast_settings_changed();
     }
 }
@@ -675,17 +644,23 @@ handle_list_remove(string msg) {
     integer did_change = kv_list_remove_all(key_name, elem);
 
     if (did_change) {
-        llLinksetDataWrite(key_name, kv_get(key_name));
         broadcast_settings_changed();
     }
 }
 
 handle_settings_restore(string msg) {
-    if (llJsonGetValue(msg, ["kv"]) == JSON_INVALID) return;
-    
-    KvJson = llJsonGetValue(msg, ["kv"]);
-    
-    // After restoring state, broadcast full sync to all other modules
+    string kv = llJsonGetValue(msg, ["kv"]);
+    if (kv == JSON_INVALID) return;
+
+    // Write each key-value pair from the restore payload to LSD
+    list pairs = llJson2List(kv);
+    integer i = 0;
+    integer len = llGetListLength(pairs);
+    while (i < len) {
+        llLinksetDataWrite(llList2String(pairs, i), llList2String(pairs, i + 1));
+        i += 2;
+    }
+
     broadcast_settings_changed();
 }
 
@@ -696,12 +671,11 @@ default
     state_entry() {
         LastOwner = llGetOwner();
         NotecardKey = llGetInventoryKey(NOTECARD_NAME);
-        ForceReseed = FALSE;
 
         integer notecard_found = start_notecard_reading();
 
         if (!notecard_found) {
-            recover_lsd_settings();
+            // No notecard — LSD already has settings from previous session
             broadcast_settings_changed();
         }
     }
@@ -737,14 +711,15 @@ default
             // Only act if the settings notecard specifically changed
             key current_notecard_key = llGetInventoryKey(NOTECARD_NAME);
             if (current_notecard_key != NotecardKey) {
-                // Notecard was deleted -> reset to defaults
+                // Notecard was deleted -> clear LSD and reset to defaults
                 if (current_notecard_key == NULL_KEY) {
+                    clear_lsd_settings();
+                    broadcast_settings_changed();
                     llResetScript();
                 }
                 else {
-                    // Notecard edited or re-added -> reload and overwrite plugin LSD keys
+                    // Notecard edited or re-added -> reload
                     NotecardKey = current_notecard_key;
-                    ForceReseed = TRUE;
                     start_notecard_reading();
                 }
             }
@@ -762,8 +737,6 @@ default
         }
         else {
             IsLoadingNotecard = FALSE;
-            ForceReseed = FALSE;
-            recover_lsd_settings();
             broadcast_settings_changed();
 
             // Trigger bootstrap after notecard load completes
