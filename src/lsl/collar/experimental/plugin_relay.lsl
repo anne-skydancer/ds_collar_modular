@@ -1,10 +1,15 @@
 /*--------------------
 PLUGIN: plugin_relay.lsl
 VERSION: 1.10
-REVISION: 0
+REVISION: 1
 PURPOSE: Provide ORG-compliant RLV relay with hardcore mode and safeword hooks
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
+- v1.1 rev 1: Migrate settings reads from JSON broadcast to direct LSD reads.
+  Remove apply_settings_delta(); fold side effects into apply_settings_sync()
+  via previous-state comparison. Both settings_sync and settings_delta call
+  parameterless apply_settings_sync(). Remove settings_get request; call
+  apply_settings_sync() directly from state_entry.
 - v1.1 rev 0: Self-declares button visibility policy to LSD on registration.
   Replaces hardcoded ACL checks with policy reads via get_policy_buttons()
   and btn_allowed(). Removed PLUGIN_MIN_ACL and min_acl from kernel
@@ -319,54 +324,17 @@ clear_pending_ask() {
 
 /* -------------------- SETTINGS CONSUMPTION -------------------- */
 
-apply_settings_sync(string msg) {
-    string kv_json = llJsonGetValue(msg, ["kv"]);
-    if (kv_json == JSON_INVALID) return;
+apply_settings_sync() {
+    // Read all settings directly from LSD; compare with previous state
+    // and trigger side effects only when values actually change.
+    integer prev_mode = Mode;
 
-    string lsd_mode = llLinksetDataRead(KEY_RELAY_MODE);
-    string lsd_hardcore = llLinksetDataRead(KEY_RELAY_HARDCORE);
+    Mode = lsd_int(KEY_RELAY_MODE, Mode);
+    Hardcore = lsd_int(KEY_RELAY_HARDCORE, Hardcore);
 
-    if (lsd_mode != "") {
-        // LSD is authoritative — state_entry already initialised from LSD (or
-        // handle_ground_rez wrote MODE_OFF there). This pass just re-confirms.
-        Mode = (integer)lsd_mode;
-        Hardcore = (integer)lsd_hardcore;
-    }
-    else {
-        // First wear: LSD is empty, seed from notecard defaults and persist.
-        Mode = MODE_ASK;
-        Hardcore = FALSE;
-        string tmp = llJsonGetValue(kv_json, [KEY_RELAY_MODE]);
-        if (tmp != JSON_INVALID) Mode = (integer)tmp;
-        tmp = llJsonGetValue(kv_json, [KEY_RELAY_HARDCORE]);
-        if (tmp != JSON_INVALID) Hardcore = (integer)tmp;
-        llLinksetDataWrite(KEY_RELAY_MODE, (string)Mode);
-        llLinksetDataWrite(KEY_RELAY_HARDCORE, (string)Hardcore);
-    }
-
-    update_relay_listen_state();
-}
-
-apply_settings_delta(string msg) {
-    string op = llJsonGetValue(msg, ["op"]);
-    if (op == JSON_INVALID) return;
-
-    if (op == "set") {
-        string changes = llJsonGetValue(msg, ["changes"]);
-        if (changes == JSON_INVALID) return;
-
-        string tmp = llJsonGetValue(changes, [KEY_RELAY_MODE]);
-        if (tmp != JSON_INVALID) {
-            Mode = (integer)tmp;
-            llLinksetDataWrite(KEY_RELAY_MODE, tmp);
-            update_relay_listen_state();
-        }
-
-        tmp = llJsonGetValue(changes, [KEY_RELAY_HARDCORE]);
-        if (tmp != JSON_INVALID) {
-            Hardcore = (integer)tmp;
-            llLinksetDataWrite(KEY_RELAY_HARDCORE, tmp);
-        }
+    // Side effect: relay mode changed — update listener state
+    if (Mode != prev_mode) {
+        update_relay_listen_state();
     }
 }
 
@@ -850,11 +818,7 @@ default
             update_relay_listen_state();
         }
 
-        // Request settings (seeding first-wear or rebroadcasting for other modules)
-        string request = llList2Json(JSON_OBJECT, [
-            "type", "settings_get"
-        ]);
-        llMessageLinked(LINK_SET, SETTINGS_BUS, request, NULL_KEY);
+        register_self();
     }
 
     on_rez(integer start_param) {
@@ -905,11 +869,8 @@ default
 
         /* -------------------- SETTINGS -------------------- */
         else if (num == SETTINGS_BUS) {
-            if (msg_type == "settings_sync") {
-                apply_settings_sync(msg);
-            }
-            else if (msg_type == "settings_delta") {
-                apply_settings_delta(msg);
+            if (msg_type == "settings_sync" || msg_type == "settings_delta") {
+                apply_settings_sync();
             }
         }
 

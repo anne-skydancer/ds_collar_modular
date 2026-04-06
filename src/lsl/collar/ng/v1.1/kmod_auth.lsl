@@ -1,10 +1,12 @@
 /*--------------------
 MODULE: kmod_auth.lsl
 VERSION: 1.10
-REVISION: 1
+REVISION: 2
 PURPOSE: Authoritative ACL engine - OPTIMIZED
 ARCHITECTURE: Dispatch table pattern with linkset data cache and JSON templates
 CHANGES:
+- v1.1 rev 2: Read settings from LSD instead of kv_json broadcast. Remove
+  apply_settings_delta; side effects triggered by state comparison.
 - v1.1 rev 1: Removed dead policy_* fields from JSON templates. Removed
   plugin ACL registry (PluginAclContexts/Levels, register_acl, filter_plugins,
   broadcast_plugin_acl_list, plugin_acl_list_request) — superseded by LSD
@@ -527,10 +529,17 @@ enforce_role_exclusivity() {
 
 /* -------------------- SETTINGS CONSUMPTION -------------------- */
 
-apply_settings_sync(string msg) {
-    string kv_json = llJsonGetValue(msg, ["kv"]);
-    if (kv_json == JSON_INVALID) return;
-    
+apply_settings_sync() {
+    // Save previous state for change detection
+    integer prev_multi = MultiOwnerMode;
+    key prev_owner = OwnerKey;
+    list prev_owners = OwnerKeys;
+    list prev_trustees = TrusteeList;
+    list prev_blacklist = Blacklist;
+    integer prev_public = PublicMode;
+    integer prev_tpe = TpeMode;
+
+    // Reset state before reading from LSD
     MultiOwnerMode = FALSE;
     OwnerKey = NULL_KEY;
     OwnerKeys = [];
@@ -538,15 +547,15 @@ apply_settings_sync(string msg) {
     Blacklist = [];
     PublicMode = FALSE;
     TpeMode = FALSE;
-    
-    string tmp = llJsonGetValue(kv_json, [KEY_MULTI_OWNER_MODE]);
-    if (tmp != JSON_INVALID) {
+
+    string tmp = llLinksetDataRead(KEY_MULTI_OWNER_MODE);
+    if (tmp != "") {
         MultiOwnerMode = (integer)tmp;
     }
 
     // Single owner: JSON object {uuid:honorific} — extract UUID
-    string owner_obj = llJsonGetValue(kv_json, [KEY_OWNER]);
-    if (owner_obj != JSON_INVALID) {
+    string owner_obj = llLinksetDataRead(KEY_OWNER);
+    if (owner_obj != "") {
         if (llJsonValueType(owner_obj, []) == JSON_OBJECT) {
             list pairs = llJson2List(owner_obj);
             if (llGetListLength(pairs) >= 2) {
@@ -556,8 +565,8 @@ apply_settings_sync(string msg) {
     }
 
     // Multi-owner: JSON object {uuid:honorific, ...} — extract UUID list
-    string owners_obj = llJsonGetValue(kv_json, [KEY_OWNERS]);
-    if (owners_obj != JSON_INVALID) {
+    string owners_obj = llLinksetDataRead(KEY_OWNERS);
+    if (owners_obj != "") {
         if (llJsonValueType(owners_obj, []) == JSON_OBJECT) {
             list pairs = llJson2List(owners_obj);
             integer pi = 0;
@@ -568,9 +577,9 @@ apply_settings_sync(string msg) {
             }
         }
     }
-    
-    string trustees_raw = llJsonGetValue(kv_json, [KEY_TRUSTEES]);
-    if (trustees_raw != JSON_INVALID) {
+
+    string trustees_raw = llLinksetDataRead(KEY_TRUSTEES);
+    if (trustees_raw != "") {
         if (llJsonValueType(trustees_raw, []) == JSON_OBJECT) {
             // Trustees stored as {uuid:honorific} — extract UUID keys
             list pairs = llJson2List(trustees_raw);
@@ -585,31 +594,59 @@ apply_settings_sync(string msg) {
             TrusteeList = llJson2List(trustees_raw);
         }
     }
-    
-    string blacklist_json = llJsonGetValue(kv_json, [KEY_BLACKLIST]);
-    if (blacklist_json != JSON_INVALID) {
-        if (is_json_arr(blacklist_json)) {
-            Blacklist = llJson2List(blacklist_json);
+
+    string bl_raw = llLinksetDataRead(KEY_BLACKLIST);
+    if (bl_raw != "") {
+        if (is_json_arr(bl_raw)) {
+            Blacklist = llJson2List(bl_raw);
         }
     }
-    
-    tmp = llJsonGetValue(kv_json, [KEY_PUBLIC_ACCESS]);
-    if (tmp != JSON_INVALID) {
+
+    tmp = llLinksetDataRead(KEY_PUBLIC_ACCESS);
+    if (tmp != "") {
         PublicMode = (integer)tmp;
     }
 
-    tmp = llJsonGetValue(kv_json, [KEY_TPE_MODE]);
-    if (tmp != JSON_INVALID) {
+    tmp = llLinksetDataRead(KEY_TPE_MODE);
+    if (tmp != "") {
         TpeMode = (integer)tmp;
     }
-    
+
     enforce_role_exclusivity();
-    persist_acl_cache();
-    
-    SettingsReady = TRUE;
-    
-    broadcast_acl_change("global", NULL_KEY);
-    
+
+    // Detect whether any ACL-relevant state changed
+    integer acl_changed = FALSE;
+    if (MultiOwnerMode != prev_multi) acl_changed = TRUE;
+    if (OwnerKey != prev_owner) acl_changed = TRUE;
+    if (PublicMode != prev_public) acl_changed = TRUE;
+    if (TpeMode != prev_tpe) acl_changed = TRUE;
+    if (llList2Json(JSON_ARRAY, OwnerKeys) != llList2Json(JSON_ARRAY, prev_owners)) {
+        acl_changed = TRUE;
+    }
+    if (llList2Json(JSON_ARRAY, TrusteeList) != llList2Json(JSON_ARRAY, prev_trustees)) {
+        acl_changed = TRUE;
+    }
+    if (llList2Json(JSON_ARRAY, Blacklist) != llList2Json(JSON_ARRAY, prev_blacklist)) {
+        acl_changed = TRUE;
+    }
+
+    if (acl_changed) {
+        persist_acl_cache();
+        broadcast_acl_change("global", NULL_KEY);
+        precompute_known_acl();
+    }
+
+    // On first load, always persist and broadcast even if "unchanged" (defaults)
+    if (!SettingsReady) {
+        if (!acl_changed) {
+            persist_acl_cache();
+            broadcast_acl_change("global", NULL_KEY);
+            precompute_known_acl();
+        }
+        SettingsReady = TRUE;
+    }
+
+    // Drain pending queries
     integer i = 0;
     while (i < llGetListLength(PendingQueries)) {
         key av = llList2Key(PendingQueries, i);
@@ -618,118 +655,6 @@ apply_settings_sync(string msg) {
         i = i + PENDING_STRIDE;
     }
     PendingQueries = [];
-    precompute_known_acl();
-}
-
-apply_settings_delta(string msg) {
-    string op = llJsonGetValue(msg, ["op"]);
-    if (op == JSON_INVALID) return;
-    integer cache_dirty = FALSE;
-    
-    if (op == "set") {
-        string changes = llJsonGetValue(msg, ["changes"]);
-        if (changes == JSON_INVALID) return;
-        
-        string tmp_d = llJsonGetValue(changes, [KEY_PUBLIC_ACCESS]);
-        if (tmp_d != JSON_INVALID) {
-            PublicMode = (integer)tmp_d;
-            broadcast_acl_change("global", NULL_KEY);
-            cache_dirty = TRUE;
-        }
-
-        tmp_d = llJsonGetValue(changes, [KEY_TPE_MODE]);
-        if (tmp_d != JSON_INVALID) {
-            TpeMode = (integer)tmp_d;
-            broadcast_acl_change("global", NULL_KEY);
-            cache_dirty = TRUE;
-        }
-        
-        // Single owner changed (full JSON object broadcast)
-        string owner_obj = llJsonGetValue(changes, [KEY_OWNER]);
-        if (owner_obj != JSON_INVALID) {
-            OwnerKey = NULL_KEY;
-            if (llJsonValueType(owner_obj, []) == JSON_OBJECT) {
-                list pairs = llJson2List(owner_obj);
-                if (llGetListLength(pairs) >= 2) {
-                    OwnerKey = (key)llList2String(pairs, 0);
-                }
-            }
-            enforce_role_exclusivity();
-            broadcast_acl_change("global", NULL_KEY);
-            cache_dirty = TRUE;
-        }
-
-        // Multi-owner changed (full JSON object broadcast)
-        string owners_obj = llJsonGetValue(changes, [KEY_OWNERS]);
-        if (owners_obj != JSON_INVALID) {
-            OwnerKeys = [];
-            if (llJsonValueType(owners_obj, []) == JSON_OBJECT) {
-                list pairs = llJson2List(owners_obj);
-                integer oi = 0;
-                integer olen = llGetListLength(pairs);
-                while (oi < olen) {
-                    OwnerKeys += [llList2String(pairs, oi)];
-                    oi += 2;
-                }
-            }
-            enforce_role_exclusivity();
-            broadcast_acl_change("global", NULL_KEY);
-            cache_dirty = TRUE;
-        }
-
-        // Trustees changed (full JSON object broadcast)
-        string trustees_raw = llJsonGetValue(changes, [KEY_TRUSTEES]);
-        if (trustees_raw != JSON_INVALID) {
-            TrusteeList = [];
-            if (llJsonValueType(trustees_raw, []) == JSON_OBJECT) {
-                list pairs = llJson2List(trustees_raw);
-                integer pi = 0;
-                integer plen = llGetListLength(pairs);
-                while (pi < plen) {
-                    TrusteeList += [llList2String(pairs, pi)];
-                    pi += 2;
-                }
-            }
-            enforce_role_exclusivity();
-            broadcast_acl_change("global", NULL_KEY);
-            cache_dirty = TRUE;
-        }
-    }
-    else if (op == "list_add") {
-        string key_name = llJsonGetValue(msg, ["key"]);
-        if (key_name == JSON_INVALID) return;
-        string elem = llJsonGetValue(msg, ["elem"]);
-        if (elem == JSON_INVALID) return;
-
-        if (key_name == KEY_BLACKLIST) {
-            if (llListFindList(Blacklist, [elem]) == -1) {
-                Blacklist += [elem];
-                broadcast_acl_change("avatar", (key)elem);
-                cache_dirty = TRUE;
-            }
-        }
-    }
-    else if (op == "list_remove") {
-        string key_name = llJsonGetValue(msg, ["key"]);
-        if (key_name == JSON_INVALID) return;
-        string elem = llJsonGetValue(msg, ["elem"]);
-        if (elem == JSON_INVALID) return;
-        
-        if (key_name == KEY_BLACKLIST) {
-            integer idx = llListFindList(Blacklist, [elem]);
-            while (idx != -1) {
-                Blacklist = llDeleteSubList(Blacklist, idx, idx);
-                idx = llListFindList(Blacklist, [elem]);
-            }
-            broadcast_acl_change("avatar", (key)elem);
-            cache_dirty = TRUE;
-        }
-    }
-
-    if (cache_dirty) {
-        persist_acl_cache();
-        precompute_known_acl();
-    }
 }
 
 /* -------------------- MESSAGE HANDLERS -------------------- */
@@ -774,10 +699,8 @@ default
         // Initialize JSON templates for fast response construction
         init_json_templates();
 
-        string request = llList2Json(JSON_OBJECT, [
-            "type", "settings_get"
-        ]);
-        llMessageLinked(LINK_SET, SETTINGS_BUS, request, NULL_KEY);
+        // Read settings directly from linkset data
+        apply_settings_sync();
     }
     
     link_message(integer sender, integer num, string msg, key id) {
@@ -795,11 +718,8 @@ default
             }
         }
         else if (num == SETTINGS_BUS) {
-            if (msg_type == "settings_sync") {
-                apply_settings_sync(msg);
-            }
-            else if (msg_type == "settings_delta") {
-                apply_settings_delta(msg);
+            if (msg_type == "settings_sync" || msg_type == "settings_delta") {
+                apply_settings_sync();
             }
         }
     }

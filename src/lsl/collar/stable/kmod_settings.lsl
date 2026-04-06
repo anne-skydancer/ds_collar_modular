@@ -1,10 +1,14 @@
 /*--------------------
 MODULE: kmod_settings.lsl
 VERSION: 1.10
-REVISION: 0
-PURPOSE: Persistent key-value store with notecard loading and delta updates
+REVISION: 1
+PURPOSE: Persistent key-value store with notecard loading and LSD writes
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- v1.1 rev 1: Simplify broadcasts to lightweight signals. Consumers now
+  read directly from LSD; broadcast_full_sync, broadcast_delta_scalar,
+  broadcast_delta_list_add, broadcast_delta_list_remove all replaced by
+  a single broadcast_settings_changed() signal on SETTINGS_BUS.
 - v1.1 rev 0: Version bump for LSD policy architecture. No functional changes to this module.
 --------------------*/
 
@@ -219,7 +223,7 @@ integer apply_owner_set_guard(string who) {
 
     // Remove owner from trustees object and broadcast the change
     if (kv_obj_remove_field(KEY_TRUSTEES, who)) {
-        broadcast_delta_scalar(KEY_TRUSTEES, kv_get(KEY_TRUSTEES));
+        broadcast_settings_changed();
     }
 
     // Remove owner from blacklist and broadcast the change
@@ -230,7 +234,7 @@ integer apply_owner_set_guard(string who) {
             // Only process if actually present
             blacklist = list_remove_all(blacklist, who);
             if (kv_set_list(KEY_BLACKLIST, blacklist)) {
-                broadcast_delta_list_remove(KEY_BLACKLIST, who);
+                broadcast_settings_changed();
             }
         }
     }
@@ -253,7 +257,7 @@ integer apply_trustee_add_guard(string who) {
             // Only process if actually present
             blacklist = list_remove_all(blacklist, who);
             if (kv_set_list(KEY_BLACKLIST, blacklist)) {
-                broadcast_delta_list_remove(KEY_BLACKLIST, who);
+                broadcast_settings_changed();
             }
         }
     }
@@ -265,17 +269,17 @@ integer apply_trustee_add_guard(string who) {
 integer apply_blacklist_add_guard(string who) {
     // Remove from trustees object and broadcast the change
     if (kv_obj_remove_field(KEY_TRUSTEES, who)) {
-        broadcast_delta_scalar(KEY_TRUSTEES, kv_get(KEY_TRUSTEES));
+        broadcast_settings_changed();
     }
 
     // Remove from single owner object and broadcast
     if (kv_obj_remove_field(KEY_OWNER, who)) {
-        broadcast_delta_scalar(KEY_OWNER, kv_get(KEY_OWNER));
+        broadcast_settings_changed();
     }
 
     // Remove from multi-owner object and broadcast
     if (kv_obj_remove_field(KEY_OWNERS, who)) {
-        broadcast_delta_scalar(KEY_OWNERS, kv_get(KEY_OWNERS));
+        broadcast_settings_changed();
     }
 
     return TRUE;
@@ -329,48 +333,10 @@ string guard_owner_object(string obj) {
 
 /* -------------------- BROADCASTING -------------------- */
 
-broadcast_full_sync() {
-    string msg = llList2Json(JSON_OBJECT, [
-        "type", "settings_sync",
-        "kv", KvJson
-    ]);
-    llMessageLinked(LINK_SET, SETTINGS_BUS, msg, NULL_KEY);
-}
-
-broadcast_delta_scalar(string key_name, string new_value) {
-    string changes = llList2Json(JSON_OBJECT, [
-        key_name, new_value
-    ]);
-    
-    string msg = llList2Json(JSON_OBJECT, [
-        "type", "settings_delta",
-        "op", "set",
-        "changes", changes
-    ]);
-    
-    llMessageLinked(LINK_SET, SETTINGS_BUS, msg, NULL_KEY);
-}
-
-broadcast_delta_list_add(string key_name, string elem) {
-    string msg = llList2Json(JSON_OBJECT, [
-        "type", "settings_delta",
-        "op", "list_add",
-        "key", key_name,
-        "elem", elem
-    ]);
-    
-    llMessageLinked(LINK_SET, SETTINGS_BUS, msg, NULL_KEY);
-}
-
-broadcast_delta_list_remove(string key_name, string elem) {
-    string msg = llList2Json(JSON_OBJECT, [
-        "type", "settings_delta",
-        "op", "list_remove",
-        "key", key_name,
-        "elem", elem
-    ]);
-    
-    llMessageLinked(LINK_SET, SETTINGS_BUS, msg, NULL_KEY);
+broadcast_settings_changed() {
+    llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
+        "type", "settings_sync"
+    ]), NULL_KEY);
 }
 
 /* -------------------- KEY NAMING CONVENTION -------------------- */
@@ -531,7 +497,7 @@ integer start_notecard_reading() {
 /* -------------------- MESSAGE HANDLERS -------------------- */
 
 handle_settings_get() {
-    broadcast_full_sync();
+    broadcast_settings_changed();
 }
 
 handle_set(string msg) {
@@ -564,7 +530,7 @@ handle_set(string msg) {
 
             if (did_change) {
                 llLinksetDataWrite(key_name, kv_get(key_name));
-                broadcast_full_sync();  // Bulk operations get full sync
+                broadcast_settings_changed();  // Bulk operations get full sync
             }
         }
         return;
@@ -605,7 +571,7 @@ handle_set(string msg) {
         if (did_change) {
             // Persist to LSD so value survives script restarts
             llLinksetDataWrite(key_name, value);
-            broadcast_delta_scalar(key_name, value);
+            broadcast_settings_changed();
         }
     }
 }
@@ -635,7 +601,7 @@ handle_list_add(string msg) {
     if (did_change) {
         // Persist full list to LSD so value survives script restarts
         llLinksetDataWrite(key_name, kv_get(key_name));
-        broadcast_delta_list_add(key_name, elem);
+        broadcast_settings_changed();
     }
 }
 
@@ -675,7 +641,7 @@ handle_obj_set(string msg) {
     if (did_change) {
         string updated = kv_get(key_name);
         llLinksetDataWrite(key_name, updated);
-        broadcast_delta_scalar(key_name, updated);
+        broadcast_settings_changed();
     }
 }
 
@@ -693,7 +659,7 @@ handle_obj_remove(string msg) {
     if (did_change) {
         string updated = kv_get(key_name);
         llLinksetDataWrite(key_name, updated);
-        broadcast_delta_scalar(key_name, updated);
+        broadcast_settings_changed();
     }
 }
 
@@ -710,7 +676,7 @@ handle_list_remove(string msg) {
 
     if (did_change) {
         llLinksetDataWrite(key_name, kv_get(key_name));
-        broadcast_delta_list_remove(key_name, elem);
+        broadcast_settings_changed();
     }
 }
 
@@ -720,7 +686,7 @@ handle_settings_restore(string msg) {
     KvJson = llJsonGetValue(msg, ["kv"]);
     
     // After restoring state, broadcast full sync to all other modules
-    broadcast_full_sync();
+    broadcast_settings_changed();
 }
 
 /* -------------------- EVENTS -------------------- */
@@ -736,7 +702,7 @@ default
 
         if (!notecard_found) {
             recover_lsd_settings();
-            broadcast_full_sync();
+            broadcast_settings_changed();
         }
     }
     
@@ -798,7 +764,7 @@ default
             IsLoadingNotecard = FALSE;
             ForceReseed = FALSE;
             recover_lsd_settings();
-            broadcast_full_sync();
+            broadcast_settings_changed();
 
             // Trigger bootstrap after notecard load completes
             string bootstrap_msg = llList2Json(JSON_OBJECT, [

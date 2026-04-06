@@ -1,10 +1,13 @@
 /*--------------------
 PLUGIN: plugin_public.lsl
 VERSION: 1.10
-REVISION: 0
+REVISION: 1
 PURPOSE: Toggle public access mode directly from main menu
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
+- v1.1 rev 1: Migrate settings reads from JSON broadcast payloads to direct
+  llLinksetDataRead. Remove apply_settings_delta — apply_settings_sync now
+  compares previous state and calls register_self() on change.
 - v1.1 rev 0: Self-declares button visibility policy to LSD on registration.
   Replaces hardcoded PLUGIN_MIN_ACL with policy reads via
   get_policy_buttons() and btn_allowed(). Removed PLUGIN_MIN_ACL and
@@ -40,14 +43,6 @@ integer PublicModeEnabled = FALSE;
 list gPolicyButtons = [];
 
 /* -------------------- HELPERS -------------------- */
-
-integer lsd_int(string lsd_key, integer fallback) {
-    string v = llLinksetDataRead(lsd_key);
-    if (v == "") return fallback;
-    return (integer)v;
-}
-
-
 
 
 /* -------------------- LSD POLICY HELPER -------------------- */
@@ -98,52 +93,16 @@ send_pong() {
 
 /* -------------------- SETTINGS CONSUMPTION -------------------- */
 
-apply_settings_sync(string msg) {
-    string kv_json = llJsonGetValue(msg, ["kv"]);
-    if (kv_json == JSON_INVALID) return;
+apply_settings_sync() {
+    integer old_state = PublicModeEnabled;
 
     string lsd_val = llLinksetDataRead(KEY_PUBLIC_MODE);
     if (lsd_val != "") {
-        // LSD is authoritative — restore persisted runtime state
-        integer old_state = PublicModeEnabled;
         PublicModeEnabled = (integer)lsd_val;
-        if (old_state != PublicModeEnabled) {
-            register_self();
-        }
     }
-    else {
-        // First wear: seed from notecard and write to LSD
-        integer old_state = PublicModeEnabled;
-        string tmp = llJsonGetValue(kv_json, [KEY_PUBLIC_MODE]);
-        if (tmp != JSON_INVALID) {
-            PublicModeEnabled = (integer)tmp;
-        }
-        llLinksetDataWrite(KEY_PUBLIC_MODE, (string)PublicModeEnabled);
-        if (old_state != PublicModeEnabled) {
-            register_self();
-        }
-    }
-}
 
-apply_settings_delta(string msg) {
-    string op = llJsonGetValue(msg, ["op"]);
-    if (op == JSON_INVALID) return;
-
-    if (op == "set") {
-        string changes = llJsonGetValue(msg, ["changes"]);
-        if (changes == JSON_INVALID) return;
-
-        if ((llJsonGetValue(changes, [KEY_PUBLIC_MODE]) != JSON_INVALID)) {
-            integer old_state = PublicModeEnabled;
-            string tmp = llJsonGetValue(changes, [KEY_PUBLIC_MODE]);
-            PublicModeEnabled = (integer)tmp;
-            llLinksetDataWrite(KEY_PUBLIC_MODE, tmp);
-
-            // If state changed, update label
-            if (old_state != PublicModeEnabled) {
-                register_self();
-            }
-        }
+    if (old_state != PublicModeEnabled) {
+        register_self();
     }
 }
 
@@ -219,16 +178,9 @@ toggle_public_access(key user, integer acl_level) {
 
 default {
     state_entry() {
-        PublicModeEnabled = lsd_int(KEY_PUBLIC_MODE, FALSE);
         gPolicyButtons = [];
-
+        apply_settings_sync();
         register_self();
-
-        // Request settings
-        string msg = llList2Json(JSON_OBJECT, [
-            "type", "settings_get"
-        ]);
-        llMessageLinked(LINK_SET, SETTINGS_BUS, msg, NULL_KEY);
     }
 
     on_rez(integer start_param) {
@@ -263,13 +215,8 @@ default {
             string msg_type = llJsonGetValue(msg, ["type"]);
             if (msg_type == JSON_INVALID) return;
 
-            if (msg_type == "settings_sync") {
-                apply_settings_sync(msg);
-                return;
-            }
-
-            if (msg_type == "settings_delta") {
-                apply_settings_delta(msg);
+            if (msg_type == "settings_sync" || msg_type == "settings_delta") {
+                apply_settings_sync();
                 return;
             }
 

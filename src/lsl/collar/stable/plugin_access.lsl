@@ -1,10 +1,13 @@
 /*--------------------
 PLUGIN: plugin_access.lsl
 VERSION: 1.10
-REVISION: 0
+REVISION: 1
 PURPOSE: Owner, trustee, and honorific management workflows
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
+- v1.1 rev 1: Migrate settings reads from JSON broadcast to direct LSD reads.
+  Remove apply_settings_delta(); both sync and delta call apply_settings_sync().
+  Remove request_settings_sync(); call apply_settings_sync() from state_entry.
 - v1.1 rev 0: Self-declares button visibility policy to LSD on registration.
   Replaces hardcoded PLUGIN_MIN_ACL with policy reads.
   Button list built from get_policy_buttons() + btn_allowed() combined with
@@ -166,10 +169,7 @@ send_pong() {
 
 /* -------------------- SETTINGS -------------------- */
 
-apply_settings_sync(string msg) {
-    string kv = llJsonGetValue(msg, ["kv"]);
-    if (kv == JSON_INVALID) return;
-
+apply_settings_sync() {
     MultiOwnerMode = FALSE;
     OwnerKey = NULL_KEY;
     OwnerKeys = [];
@@ -179,18 +179,17 @@ apply_settings_sync(string msg) {
     TrusteeKeys = [];
     TrusteesJson = "{}";
 
-    string tmp = llJsonGetValue(kv, [KEY_MULTI_OWNER_MODE]);
-    if (tmp != JSON_INVALID) {
+    string tmp = llLinksetDataRead(KEY_MULTI_OWNER_MODE);
+    if (tmp != "") {
         MultiOwnerMode = (integer)tmp;
     }
 
     string obj;
     if (MultiOwnerMode) {
-        obj = llJsonGetValue(kv, [KEY_OWNERS]);
-        if (obj != JSON_INVALID) {
+        obj = llLinksetDataRead(KEY_OWNERS);
+        if (obj != "") {
             if (llJsonValueType(obj, []) == JSON_OBJECT) {
                 OwnersJson = obj;
-                // Extract UUID keys for list lookups
                 list pairs = llJson2List(obj);
                 integer oi = 0;
                 integer olen = llGetListLength(pairs);
@@ -202,8 +201,8 @@ apply_settings_sync(string msg) {
         }
     }
     else {
-        obj = llJsonGetValue(kv, [KEY_OWNER]);
-        if (obj != JSON_INVALID) {
+        obj = llLinksetDataRead(KEY_OWNER);
+        if (obj != "") {
             if (llJsonValueType(obj, []) == JSON_OBJECT) {
                 OwnerJson = obj;
                 list pairs = llJson2List(obj);
@@ -216,11 +215,10 @@ apply_settings_sync(string msg) {
     }
 
     // Trustees: JSON object {uuid:honorific}
-    obj = llJsonGetValue(kv, [KEY_TRUSTEES]);
-    if (obj != JSON_INVALID) {
+    obj = llLinksetDataRead(KEY_TRUSTEES);
+    if (obj != "") {
         if (llJsonValueType(obj, []) == JSON_OBJECT) {
             TrusteesJson = obj;
-            // Extract UUID keys for list lookups
             list pairs = llJson2List(obj);
             TrusteeKeys = [];
             integer i = 0;
@@ -232,87 +230,7 @@ apply_settings_sync(string msg) {
         }
     }
 
-    string lsd_runaway = llLinksetDataRead(KEY_RUNAWAY_ENABLED);
-    if (lsd_runaway != "") {
-        // LSD is authoritative
-        RunawayEnabled = (integer)lsd_runaway;
-    }
-    else {
-        // First wear: seed from notecard and write to LSD
-        tmp = llJsonGetValue(kv, [KEY_RUNAWAY_ENABLED]);
-        if (tmp != JSON_INVALID) {
-            RunawayEnabled = (integer)tmp;
-        }
-        else {
-            RunawayEnabled = TRUE;
-        }
-        llLinksetDataWrite(KEY_RUNAWAY_ENABLED, (string)RunawayEnabled);
-    }
-}
-
-apply_settings_delta(string msg) {
-    string op = llJsonGetValue(msg, ["op"]);
-    if (op == JSON_INVALID) return;
-
-    if (op == "set") {
-        string changes = llJsonGetValue(msg, ["changes"]);
-        if (changes == JSON_INVALID) return;
-
-        string tmp = llJsonGetValue(changes, [KEY_RUNAWAY_ENABLED]);
-        if (tmp != JSON_INVALID) {
-            RunawayEnabled = (integer)tmp;
-            llLinksetDataWrite(KEY_RUNAWAY_ENABLED, tmp);
-        }
-
-        // Trustees changed (full JSON object broadcast)
-        string obj = llJsonGetValue(changes, [KEY_TRUSTEES]);
-        if (obj != JSON_INVALID) {
-            if (llJsonValueType(obj, []) == JSON_OBJECT) {
-                TrusteesJson = obj;
-                list pairs = llJson2List(obj);
-                TrusteeKeys = [];
-                integer i = 0;
-                integer pairs_len = llGetListLength(pairs);
-                while (i < pairs_len) {
-                    TrusteeKeys += [llList2String(pairs, i)];
-                    i += 2;
-                }
-            }
-        }
-
-        // Single owner changed (full JSON object broadcast)
-        obj = llJsonGetValue(changes, [KEY_OWNER]);
-        if (obj != JSON_INVALID) {
-            OwnerKey = NULL_KEY;
-            OwnerHonorific = "";
-            OwnerJson = "{}";
-            if (llJsonValueType(obj, []) == JSON_OBJECT) {
-                OwnerJson = obj;
-                list pairs = llJson2List(obj);
-                if (llGetListLength(pairs) >= 2) {
-                    OwnerKey = (key)llList2String(pairs, 0);
-                    OwnerHonorific = llList2String(pairs, 1);
-                }
-            }
-        }
-
-        // Multi-owner changed (full JSON object broadcast)
-        obj = llJsonGetValue(changes, [KEY_OWNERS]);
-        if (obj != JSON_INVALID) {
-            OwnerKeys = [];
-            OwnersJson = "{}";
-            if (llJsonValueType(obj, []) == JSON_OBJECT) {
-                OwnersJson = obj;
-                list pairs = llJson2List(obj);
-                integer oi = 0;
-                integer olen = llGetListLength(pairs);
-                while (oi < olen) {
-                    OwnerKeys += [llList2String(pairs, oi)];
-                    oi += 2;
-                }
-            }
-        }
-    }
+    RunawayEnabled = lsd_int(KEY_RUNAWAY_ENABLED, TRUE);
 }
 
 
@@ -851,12 +769,9 @@ cleanup() {
 
 default {
     state_entry() {
-        RunawayEnabled = lsd_int(KEY_RUNAWAY_ENABLED, TRUE);
         cleanup();
         register_self();
-        llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
-            "type", "settings_get"
-        ]), NULL_KEY);
+        apply_settings_sync();
     }
 
     on_rez(integer p) {
@@ -876,8 +791,7 @@ default {
             else if (type == "ping") send_pong();
         }
         else if (num == SETTINGS_BUS) {
-            if (type == "settings_sync") apply_settings_sync(msg);
-            else if (type == "settings_delta") apply_settings_delta(msg);
+            if (type == "settings_sync" || type == "settings_delta") apply_settings_sync();
         }
         else if (num == UI_BUS) {
             if (type == "start" && (llJsonGetValue(msg, ["context"]) != JSON_INVALID)) {

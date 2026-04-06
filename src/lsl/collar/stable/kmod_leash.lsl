@@ -1,10 +1,12 @@
 /*--------------------
 MODULE: kmod_leash.lsl
 VERSION: 1.10
-REVISION: 1
+REVISION: 2
 PURPOSE: Leashing engine providing leash services to plugins
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- v1.1 rev 2: Read settings from LSD instead of kv_json broadcast. Remove
+  applySettingsDelta; both sync and delta call parameterless applySettingsSync.
 - v1.1 rev 1: Replaced hardcoded ALLOWED_ACL_* lists and inAllowedList() with
   LSD policy reads via policy_allows(). Action permissions now read from the
   same policy:core_leash LSD key that plugin_leash declares.
@@ -576,35 +578,15 @@ persistTurnto(integer turnto) {
     persistSetting(KEY_LEASH_TURNTO, (string)turnto);
 }
 
-applySettingsSync(string msg) {
-    string settings_json = llJsonGetValue(msg, ["settings"]);
-    if (settings_json == JSON_INVALID) return;
-    string tmp = llJsonGetValue(settings_json, [KEY_LEASHED]);
-    if (tmp != JSON_INVALID) {
-        Leashed = (integer)tmp;
-    }
-    tmp = llJsonGetValue(settings_json, [KEY_LEASHER]);
-    if (tmp != JSON_INVALID) {
-        Leasher = (key)tmp;
-    }
-    if ((llJsonGetValue(settings_json, [KEY_LEASH_LENGTH]) != JSON_INVALID)) {
-        LeashLength = clampLeashLength((integer)llJsonGetValue(settings_json, [KEY_LEASH_LENGTH]));
-    }
-    tmp = llJsonGetValue(settings_json, [KEY_LEASH_TURNTO]);
-    if (tmp != JSON_INVALID) {
-        TurnToFace = (integer)tmp;
-    }
-}
-
-applySettingsDelta(string msg) {
-    string setting_key = jsonGet(msg, "key", "");
-    string value = jsonGet(msg, "value", "");
-    if (setting_key != "" && value != "") {
-        if (setting_key == KEY_LEASHED) Leashed = (integer)value;
-        else if (setting_key == KEY_LEASHER) Leasher = (key)value;
-        else if (setting_key == KEY_LEASH_LENGTH) LeashLength = clampLeashLength((integer)value);
-        else if (setting_key == KEY_LEASH_TURNTO) TurnToFace = (integer)value;
-    }
+applySettingsSync() {
+    string tmp = llLinksetDataRead(KEY_LEASHED);
+    if (tmp != "") Leashed = (integer)tmp;
+    tmp = llLinksetDataRead(KEY_LEASHER);
+    if (tmp != "") Leasher = (key)tmp;
+    tmp = llLinksetDataRead(KEY_LEASH_LENGTH);
+    if (tmp != "") LeashLength = clampLeashLength((integer)tmp);
+    tmp = llLinksetDataRead(KEY_LEASH_TURNTO);
+    if (tmp != "") TurnToFace = (integer)tmp;
 }
 
 /* -------------------- STATE BROADCAST -------------------- */
@@ -894,9 +876,7 @@ default
         PendingPassTarget = NULL_KEY;
         AuthorizedLmController = NULL_KEY;
         
-        llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
-            "type", "settings_get"
-        ]), NULL_KEY);
+        applySettingsSync();
         llSetTimerEvent(FOLLOW_TICK);
         llRequestPermissions(llGetOwner(), PERMISSION_TAKE_CONTROLS);
 
@@ -1021,8 +1001,9 @@ default
         }
         
         if (num == SETTINGS_BUS) {
-            if (msg_type == "settings_sync") applySettingsSync(msg);
-            else if (msg_type == "settings_delta") applySettingsDelta(msg);
+            if (msg_type == "settings_sync" || msg_type == "settings_delta") {
+                applySettingsSync();
+            }
             return;
         }
     }

@@ -1,10 +1,12 @@
 /*--------------------
 PLUGIN: plugin_blacklist.lsl
 VERSION: 1.10
-REVISION: 0
+REVISION: 1
 PURPOSE: Blacklist management with sensor-based avatar selection
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
+- v1.1 rev 1: Migrate settings reads from JSON broadcast payloads to direct
+  llLinksetDataRead. Remove apply_settings_delta — full re-read on every sync.
 - v1.1 rev 0: Self-declares button visibility policy to LSD on registration.
   Replaces hardcoded PLUGIN_MIN_ACL, ALLOWED_ACL_LEVELS, and in_allowed_levels()
   with policy reads. Button list built from get_policy_buttons() + btn_allowed().
@@ -122,59 +124,8 @@ send_pong() {
 
 /* -------------------- SETTINGS MANAGEMENT -------------------- */
 
-apply_settings_sync(string msg) {
-    string kv_json = llJsonGetValue(msg, ["kv"]);
-    if (kv_json == JSON_INVALID) return;
-    apply_blacklist_payload(kv_json);
-}
-
-apply_settings_delta(string msg) {
-    string op = llJsonGetValue(msg, ["op"]);
-    if (op == JSON_INVALID) return;
-
-    if (op == "set") {
-        string changes = llJsonGetValue(msg, ["changes"]);
-        if (changes == JSON_INVALID) return;
-
-        string new_value = llJsonGetValue(changes, [KEY_BLACKLIST]);
-        if (new_value != JSON_INVALID) {
-            parse_blacklist_value(new_value);
-        }
-    }
-    else if (op == "list_add") {
-        if (llJsonGetValue(msg, ["key"]) == JSON_INVALID) return;
-        if (llJsonGetValue(msg, ["elem"]) == JSON_INVALID) return;
-
-        string setting_key = llJsonGetValue(msg, ["key"]);
-        if (setting_key == KEY_BLACKLIST) {
-            string elem = llJsonGetValue(msg, ["elem"]);
-            if (llListFindList(Blacklist, [elem]) == -1) {
-                Blacklist += [elem];
-            }
-        }
-    }
-    else if (op == "list_remove") {
-        if (llJsonGetValue(msg, ["key"]) == JSON_INVALID) return;
-        if (llJsonGetValue(msg, ["elem"]) == JSON_INVALID) return;
-
-        string setting_key = llJsonGetValue(msg, ["key"]);
-        if (setting_key == KEY_BLACKLIST) {
-            string elem = llJsonGetValue(msg, ["elem"]);
-            integer idx = llListFindList(Blacklist, [elem]);
-            if (idx != -1) {
-                Blacklist = llDeleteSubList(Blacklist, idx, idx);
-            }
-        }
-    }
-}
-
-apply_blacklist_payload(string kv_json) {
-    if (llJsonGetValue(kv_json, [KEY_BLACKLIST]) == JSON_INVALID) {
-        Blacklist = [];
-        return;
-    }
-
-    string raw = llJsonGetValue(kv_json, [KEY_BLACKLIST]);
+apply_settings_sync() {
+    string raw = llLinksetDataRead(KEY_BLACKLIST);
     parse_blacklist_value(raw);
 }
 
@@ -423,12 +374,7 @@ default {
     state_entry() {
         cleanup_session();
         register_self();
-
-        // Request initial settings
-        string msg = llList2Json(JSON_OBJECT, [
-            "type", "settings_get"
-        ]);
-        llMessageLinked(LINK_SET, SETTINGS_BUS, msg, NULL_KEY);
+        apply_settings_sync();
     }
 
     on_rez(integer start_param) {
@@ -462,13 +408,8 @@ default {
 
         /* -------------------- SETTINGS BUS -------------------- */
         if (num == SETTINGS_BUS) {
-            if (msg_type == "settings_sync") {
-                apply_settings_sync(msg);
-                return;
-            }
-
-            if (msg_type == "settings_delta") {
-                apply_settings_delta(msg);
+            if (msg_type == "settings_sync" || msg_type == "settings_delta") {
+                apply_settings_sync();
                 return;
             }
 

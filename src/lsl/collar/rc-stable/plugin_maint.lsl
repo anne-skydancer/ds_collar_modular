@@ -1,10 +1,14 @@
 /*--------------------
 PLUGIN: plugin_maint.lsl
 VERSION: 1.10
-REVISION: 0
+REVISION: 1
 PURPOSE: Maintenance and utility functions for collar management
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
+- v1.1 rev 1: Migrate from JSON broadcast payloads to direct LSD reads.
+  Remove CachedSettings/SettingsReady; do_view_settings() and
+  do_display_access_list() now read individual keys from LSD on demand.
+  Remove apply_settings_sync()/apply_settings_delta() and settings_get request.
 - v1.1 rev 0: Self-declares button visibility policy to LSD on registration.
   Replaces hardcoded ALLOWED_ACL_FULL list with policy reads via
   get_policy_buttons() and btn_allowed(). Removed PLUGIN_MIN_ACL and
@@ -37,9 +41,6 @@ string HUD_ITEM = "D/s Collar control HUD";
 string MANUAL_NOTECARD = "D/s Collar User Manual";
 
 /* -------------------- STATE -------------------- */
-string CachedSettings = "";
-integer SettingsReady = FALSE;
-
 key CurrentUser = NULL_KEY;
 integer CurrentUserAcl = -999;
 list gPolicyButtons = [];
@@ -100,25 +101,6 @@ send_pong() {
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, msg, NULL_KEY);
 }
 
-/* -------------------- SETTINGS MANAGEMENT -------------------- */
-
-apply_settings_sync(string msg) {
-    string kv_json = llJsonGetValue(msg, ["kv"]);
-    if (kv_json == JSON_INVALID) return;
-    CachedSettings = kv_json;
-    SettingsReady = TRUE;
-}
-
-apply_settings_delta() {
-    // Request full sync to update our display cache
-    // (msg is unused because we just request a full sync regardless of what changed)
-    string request = llList2Json(JSON_OBJECT, [
-        "type", "settings_get"
-    ]);
-    llMessageLinked(LINK_SET, SETTINGS_BUS, request, NULL_KEY);
-}
-
-
 /* -------------------- MENU DISPLAY -------------------- */
 
 show_main_menu() {
@@ -176,12 +158,6 @@ string fmt_relay_mode(string raw) {
     return "OFF";
 }
 
-// Count items in a JSON array; returns 0 for missing/invalid
-integer json_arr_count(string raw) {
-    if (raw == JSON_INVALID || raw == "" || !is_json_arr(raw)) return 0;
-    return llGetListLength(llJson2List(raw));
-}
-
 // Append one person line per {uuid:honorific} pair in a JSON object.
 // Returns the formatted block, or fallback_str if the object is empty/invalid.
 string fmt_person_lines(string json_obj, string fallback_str) {
@@ -204,29 +180,29 @@ string fmt_person_lines(string json_obj, string fallback_str) {
 }
 
 do_view_settings() {
-    if (!SettingsReady || CachedSettings == "") {
-        llRegionSayTo(CurrentUser, 0, "Settings not loaded yet. Try again.");
-        return;
-    }
+    integer multi = (integer)llLinksetDataRead("access.multiowner");
 
-    integer multi = (integer)llJsonGetValue(CachedSettings, ["access.multiowner"]);
-
-    string locked = llJsonGetValue(CachedSettings, ["lock.locked"]);
+    string locked = llLinksetDataRead("lock.locked");
     string lock_str;
     if ((integer)locked) lock_str = "LOCKED";
     else                 lock_str = "UNLOCKED";
 
-    integer rcnt = json_arr_count(llJsonGetValue(CachedSettings, ["restrict.list"]));
+    string restr_csv = llLinksetDataRead("restrict.list");
     string restr_str;
-    if (rcnt > 0) restr_str = (string)rcnt + " active";
-    else          restr_str = "none";
+    if (restr_csv != "") {
+        list restr_list = llParseString2List(restr_csv, [","], []);
+        restr_str = (string)llGetListLength(restr_list) + " active";
+    }
+    else {
+        restr_str = "none";
+    }
 
     string output = "\n=== Collar Settings ===\n";
 
     // --- Owner(s) ---
     if (multi) {
         string owner_block = fmt_person_lines(
-            llJsonGetValue(CachedSettings, ["access.owners"]), "");
+            llLinksetDataRead("access.owners"), "");
         if (owner_block == "") {
             output += "Owners: Uncommitted\n";
         }
@@ -235,8 +211,8 @@ do_view_settings() {
         }
     }
     else {
-        string owner_raw = llJsonGetValue(CachedSettings, ["access.owner"]);
-        if (owner_raw != JSON_INVALID && llJsonValueType(owner_raw, []) == JSON_OBJECT) {
+        string owner_raw = llLinksetDataRead("access.owner");
+        if (owner_raw != "" && llJsonValueType(owner_raw, []) == JSON_OBJECT) {
             list pairs = llJson2List(owner_raw);
             if (llGetListLength(pairs) >= 2) {
                 string p_uuid = llList2String(pairs, 0);
@@ -254,7 +230,7 @@ do_view_settings() {
 
     // --- Trustees ---
     string trustee_block = fmt_person_lines(
-        llJsonGetValue(CachedSettings, ["access.trustees"]), "");
+        llLinksetDataRead("access.trustees"), "");
     if (trustee_block == "") {
         output += "Trustees: none\n";
     }
@@ -263,43 +239,34 @@ do_view_settings() {
     }
 
     // --- Behavioural settings ---
-    output += "Access: multi-owner " + fmt_bool(llJsonGetValue(CachedSettings, ["access.multiowner"]));
-    output += " | runaway " + fmt_bool(llJsonGetValue(CachedSettings, ["access.enablerunaway"])) + "\n";
+    output += "Access: multi-owner " + fmt_bool(llLinksetDataRead("access.multiowner"));
+    output += " | runaway " + fmt_bool(llLinksetDataRead("access.enablerunaway")) + "\n";
     output += "Lock: " + lock_str;
-    output += " | public " + fmt_bool(llJsonGetValue(CachedSettings, ["public.mode"]));
-    output += " | TPE " + fmt_bool(llJsonGetValue(CachedSettings, ["tpe.mode"])) + "\n";
-    output += "Relay: " + fmt_relay_mode(llJsonGetValue(CachedSettings, ["relay.mode"]));
-    output += " | hardcore " + fmt_bool(llJsonGetValue(CachedSettings, ["relay.hardcoremode"])) + "\n";
-    output += "Owner TP/IM: " + fmt_bool(llJsonGetValue(CachedSettings, ["rlvex.ownertp"]));
-    output += "/" + fmt_bool(llJsonGetValue(CachedSettings, ["rlvex.ownerim"])) + "\n";
-    output += "Trustee TP/IM: " + fmt_bool(llJsonGetValue(CachedSettings, ["rlvex.trusteetp"]));
-    output += "/" + fmt_bool(llJsonGetValue(CachedSettings, ["rlvex.trusteeim"])) + "\n";
+    output += " | public " + fmt_bool(llLinksetDataRead("public.mode"));
+    output += " | TPE " + fmt_bool(llLinksetDataRead("tpe.mode")) + "\n";
+    output += "Relay: " + fmt_relay_mode(llLinksetDataRead("relay.mode"));
+    output += " | hardcore " + fmt_bool(llLinksetDataRead("relay.hardcoremode")) + "\n";
+    output += "Owner TP/IM: " + fmt_bool(llLinksetDataRead("rlvex.ownertp"));
+    output += "/" + fmt_bool(llLinksetDataRead("rlvex.ownerim")) + "\n";
+    output += "Trustee TP/IM: " + fmt_bool(llLinksetDataRead("rlvex.trusteetp"));
+    output += "/" + fmt_bool(llLinksetDataRead("rlvex.trusteeim")) + "\n";
     output += "Restrictions: " + restr_str;
 
     llRegionSayTo(CurrentUser, 0, output);
 }
 
 do_display_access_list() {
-    if (!SettingsReady || CachedSettings == "") {
-        llRegionSayTo(CurrentUser, 0, "Settings not loaded yet. Try again.");
-        return;
-    }
-
     string output = "=== Access Control List ===\n\n";
 
     // Multi-owner mode check
-    integer multi_mode = 0;
-    string tmp = llJsonGetValue(CachedSettings, ["access.multiowner"]);
-    if (tmp != JSON_INVALID) {
-        multi_mode = (integer)tmp;
-    }
+    integer multi_mode = (integer)llLinksetDataRead("access.multiowner");
 
     // Owner(s) — stored as JSON objects {uuid:honorific}
     if (multi_mode) {
         output += "OWNERS:\n";
-        string owners_raw = llJsonGetValue(CachedSettings, ["access.owners"]);
+        string owners_raw = llLinksetDataRead("access.owners");
 
-        if (owners_raw != JSON_INVALID && llJsonValueType(owners_raw, []) == JSON_OBJECT) {
+        if (owners_raw != "" && llJsonValueType(owners_raw, []) == JSON_OBJECT) {
             list pairs = llJson2List(owners_raw);
             integer plen = llGetListLength(pairs);
             if (plen > 0) {
@@ -322,9 +289,9 @@ do_display_access_list() {
     }
     else {
         output += "OWNER:\n";
-        string owner_raw = llJsonGetValue(CachedSettings, ["access.owner"]);
+        string owner_raw = llLinksetDataRead("access.owner");
 
-        if (owner_raw != JSON_INVALID && llJsonValueType(owner_raw, []) == JSON_OBJECT) {
+        if (owner_raw != "" && llJsonValueType(owner_raw, []) == JSON_OBJECT) {
             list pairs = llJson2List(owner_raw);
             if (llGetListLength(pairs) >= 2) {
                 string owner_uuid = llList2String(pairs, 0);
@@ -343,9 +310,9 @@ do_display_access_list() {
 
     // Trustees (JSON object {uuid:honorific})
     output += "\nTRUSTEES:\n";
-    string trustees_raw = llJsonGetValue(CachedSettings, ["access.trustees"]);
+    string trustees_raw = llLinksetDataRead("access.trustees");
 
-    if (trustees_raw != JSON_INVALID && llJsonValueType(trustees_raw, []) == JSON_OBJECT) {
+    if (trustees_raw != "" && llJsonValueType(trustees_raw, []) == JSON_OBJECT) {
         list pairs = llJson2List(trustees_raw);
         integer plen = llGetListLength(pairs);
         if (plen > 0) {
@@ -368,9 +335,9 @@ do_display_access_list() {
 
     // Blacklist
     output += "\nBLACKLISTED:\n";
-    string blacklist_json = llJsonGetValue(CachedSettings, ["access.blacklist"]);
+    string blacklist_json = llLinksetDataRead("access.blacklist");
 
-    if (blacklist_json != JSON_INVALID && is_json_arr(blacklist_json)) {
+    if (blacklist_json != "" && is_json_arr(blacklist_json)) {
         list blacklist = llJson2List(blacklist_json);
         if (llGetListLength(blacklist) > 0) {
             integer i = 0;
@@ -545,12 +512,6 @@ default {
     state_entry() {
         cleanup_session();
         register_self();
-
-        // Request initial settings
-        string msg = llList2Json(JSON_OBJECT, [
-            "type", "settings_get"
-        ]);
-        llMessageLinked(LINK_SET, SETTINGS_BUS, msg, NULL_KEY);
     }
 
     on_rez(integer start_param) {
@@ -588,23 +549,6 @@ default {
                 }
                 // Either no context (broadcast) or matches our context
                 llResetScript();
-            }
-
-            return;
-        }
-
-        /* -------------------- SETTINGS SYNC/DELTA -------------------- */if (num == SETTINGS_BUS) {
-            string msg_type = llJsonGetValue(msg, ["type"]);
-            if (msg_type == JSON_INVALID) return;
-
-            if (msg_type == "settings_sync") {
-                apply_settings_sync(msg);
-                return;
-            }
-
-            if (msg_type == "settings_delta") {
-                apply_settings_delta();
-                return;
             }
 
             return;

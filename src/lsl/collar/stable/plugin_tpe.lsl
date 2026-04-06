@@ -1,10 +1,14 @@
 /*--------------------
 PLUGIN: plugin_tpe.lsl
 VERSION: 1.10
-REVISION: 0
+REVISION: 1
 PURPOSE: Manage TPE mode with wearer confirmation and owner oversight
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
+- v1.1 rev 1: Migrate from JSON broadcast payloads to direct LSD reads.
+  Remove apply_settings_delta() and request_settings_sync(). apply_settings_sync()
+  is now parameterless and reads all keys from LSD. Both settings_sync and
+  settings_delta call apply_settings_sync() in link_message.
 - v1.1 rev 0: Self-declares button visibility policy to LSD on registration.
   Replaces hardcoded PLUGIN_MIN_ACL with policy reads via
   get_policy_buttons() and btn_allowed(). Removed PLUGIN_MIN_ACL and
@@ -47,12 +51,6 @@ string SessionId = "";
 key WearerKey = NULL_KEY;          // Owner of the collar (for confirmation)
 
 /* -------------------- HELPERS -------------------- */
-
-integer lsd_int(string lsd_key, integer fallback) {
-    string v = llLinksetDataRead(lsd_key);
-    if (v == "") return fallback;
-    return (integer)v;
-}
 
 string gen_session() {
     return (string)llGetKey() + "_" + (string)llGetUnixTime();
@@ -125,13 +123,6 @@ send_pong() {
 }
 
 /* -------------------- SETTINGS MANAGEMENT -------------------- */
-
-request_settings_sync() {
-    string msg = llList2Json(JSON_OBJECT, [
-        "type", "settings_get"
-    ]);
-    llMessageLinked(LINK_SET, SETTINGS_BUS, msg, NULL_KEY);
-}
 
 persist_tpe_mode(integer new_value) {
     if (new_value != 0) new_value = 1;
@@ -280,35 +271,17 @@ handle_tpe_click(key user, integer acl_level) {
 
 /* -------------------- SETTINGS CONSUMPTION -------------------- */
 
-apply_settings_sync(string kv_json) {
+apply_settings_sync() {
+    integer prev = TpeModeEnabled;
     string lsd_val = llLinksetDataRead(KEY_TPE_MODE);
     if (lsd_val != "") {
-        // LSD is authoritative — restore persisted runtime state
         TpeModeEnabled = (integer)lsd_val;
     }
-    else {
-        // First wear: seed from notecard and write to LSD
-        string tmp = llJsonGetValue(kv_json, [KEY_TPE_MODE]);
-        if (tmp != JSON_INVALID) {
-            TpeModeEnabled = (integer)tmp;
-        }
+
+    // If TPE mode changed, persist to LSD (covers delta-driven updates)
+    if (TpeModeEnabled != prev) {
         llLinksetDataWrite(KEY_TPE_MODE, (string)TpeModeEnabled);
-    }
-}
-
-apply_settings_delta(string msg) {
-    string op = llJsonGetValue(msg, ["op"]);
-    if (op == JSON_INVALID) return;
-
-    if (op == "set") {
-        string changes = llJsonGetValue(msg, ["changes"]);
-        if (changes == JSON_INVALID) return;
-
-        string tmp = llJsonGetValue(changes, [KEY_TPE_MODE]);
-        if (tmp != JSON_INVALID) {
-            TpeModeEnabled = (integer)tmp;
-            llLinksetDataWrite(KEY_TPE_MODE, tmp);
-        }
+        update_ui_label();
     }
 }
 
@@ -317,12 +290,10 @@ apply_settings_delta(string msg) {
 default
 {
     state_entry() {
-        // Restore from LSD immediately; first-wear seeding happens via settings_sync
-        TpeModeEnabled = lsd_int(KEY_TPE_MODE, FALSE);
         WearerKey = llGetOwner();
         cleanup_session();
+        apply_settings_sync();
         register_with_kernel();
-        request_settings_sync();
     }
 
     on_rez(integer start_param) {
@@ -364,14 +335,8 @@ default
         else if (num == SETTINGS_BUS) {
             string msg_type = llJsonGetValue(str, ["type"]);
 
-            if (msg_type == "settings_sync") {
-                string kv_json = llJsonGetValue(str, ["kv"]);
-                if (kv_json != JSON_INVALID) {
-                    apply_settings_sync(kv_json);
-                }
-            }
-            else if (msg_type == "settings_delta") {
-                apply_settings_delta(str);
+            if (msg_type == "settings_sync" || msg_type == "settings_delta") {
+                apply_settings_sync();
             }
         }
         else if (num == UI_BUS) {

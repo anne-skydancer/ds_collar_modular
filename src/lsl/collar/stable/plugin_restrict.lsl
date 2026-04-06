@@ -1,10 +1,14 @@
 /*--------------------
 PLUGIN: plugin_restrict.lsl
 VERSION: 1.10
-REVISION: 0
+REVISION: 1
 PURPOSE: Manage RLV restriction toggles grouped by functional category
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
+- v1.1 rev 1: Migrate from JSON broadcast payloads to direct LSD reads.
+  Remove apply_settings_delta() and request_settings_sync(). apply_settings_sync()
+  is now parameterless and reads restrict.list from LSD. Uses previous-state
+  comparison to clear old RLV restrictions and apply new ones on change.
 - v1.1 rev 0: Self-declares button visibility policy to LSD on registration.
   Replaces hardcoded PLUGIN_MIN_ACL / RESTRICT_MIN_ACL checks with policy reads
   via get_policy_buttons() and btn_allowed(). Removed PLUGIN_MIN_ACL,
@@ -71,12 +75,6 @@ float SIT_SCAN_RANGE = 10.0;  // Scan range in meters
 key ScanInitiator = NULL_KEY;  // Track who initiated the scan to prevent race conditions
 
 /* -------------------- HELPER FUNCTIONS -------------------- */
-
-integer lsd_int(string lsd_key, integer fallback) {
-    string v = llLinksetDataRead(lsd_key);
-    if (v == "") return fallback;
-    return (integer)v;
-}
 
 string generate_session_id() {
     return llGetScriptName() + "_" + (string)llGetKey() + "_" + (string)llGetUnixTime();
@@ -155,67 +153,32 @@ persist_restrictions() {
     ]), NULL_KEY);
 }
 
-apply_settings_sync(string msg) {
-    string kv = llJsonGetValue(msg, ["kv"]);
-    if (kv == JSON_INVALID) return;
-
-    // Plugin-owned key: only seed from notecard when LSD is empty (first wear)
-    if (llLinksetDataRead(KEY_RESTRICTIONS) == "") {
-        string csv = llJsonGetValue(kv, [KEY_RESTRICTIONS]);
-        if (csv != JSON_INVALID) {
-            if (csv != "") {
-                Restrictions = llParseString2List(csv, [","], []);
-                integer i = 0;
-                integer count = llGetListLength(Restrictions);
-                while (i < count) {
-                    llOwnerSay(llList2String(Restrictions, i) + "=y");
-                    i = i + 1;
-                }
-            }
-            else {
-                Restrictions = [];
-            }
-            llLinksetDataWrite(KEY_RESTRICTIONS, csv);
-        }
+apply_settings_sync() {
+    string csv = llLinksetDataRead(KEY_RESTRICTIONS);
+    list new_list = [];
+    if (csv != "") {
+        new_list = llParseString2List(csv, [","], []);
     }
-}
 
-apply_settings_delta(string msg) {
-    string op = llJsonGetValue(msg, ["op"]);
-    if (op == JSON_INVALID) return;
+    // Compare with current state; if unchanged, nothing to do
+    if (llDumpList2String(new_list, ",") == llDumpList2String(Restrictions, ",")) return;
 
-    if (op == "set") {
-        string changes = llJsonGetValue(msg, ["changes"]);
-        if (changes == JSON_INVALID) return;
+    // Clear all current restrictions
+    integer i = 0;
+    integer count = llGetListLength(Restrictions);
+    while (i < count) {
+        string restr_cmd = llList2String(Restrictions, i);
+        llOwnerSay("@clear=" + llGetSubString(restr_cmd, 1, -1));
+        i = i + 1;
+    }
 
-        string csv = llJsonGetValue(changes, [KEY_RESTRICTIONS]);
-        if (csv != JSON_INVALID) {
-            // Clear all current restrictions
-            integer i = 0;
-            integer count = llGetListLength(Restrictions);
-            while (i < count) {
-                string restr_cmd = llList2String(Restrictions, i);
-                llOwnerSay("@clear=" + llGetSubString(restr_cmd, 1, -1));
-                i = i + 1;
-            }
-
-            // Load new list
-            if (csv != "") {
-                Restrictions = llParseString2List(csv, [","], []);
-            }
-            else {
-                Restrictions = [];
-            }
-
-            // Apply new restrictions and persist to LSD
-            i = 0;
-            count = llGetListLength(Restrictions);
-            while (i < count) {
-                llOwnerSay(llList2String(Restrictions, i) + "=y");
-                i = i + 1;
-            }
-            llLinksetDataWrite(KEY_RESTRICTIONS, csv);
-        }
+    // Apply new restrictions
+    Restrictions = new_list;
+    i = 0;
+    count = llGetListLength(Restrictions);
+    while (i < count) {
+        llOwnerSay(llList2String(Restrictions, i) + "=y");
+        i = i + 1;
     }
 }
 
@@ -648,25 +611,8 @@ default
 {
     state_entry() {
         cleanup_session();
-
-        // Restore restrictions from LSD (survives relog)
-        string lsd_csv = llLinksetDataRead(KEY_RESTRICTIONS);
-        if (lsd_csv != "") {
-            Restrictions = llParseString2List(lsd_csv, [","], []);
-            integer i = 0;
-            integer count = llGetListLength(Restrictions);
-            while (i < count) {
-                llOwnerSay(llList2String(Restrictions, i) + "=y");
-                i = i + 1;
-            }
-        }
-
+        apply_settings_sync();
         register_self();
-
-        // Request settings for absent-guard seeding on first wear
-        llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
-            "type", "settings_get"
-        ]), NULL_KEY);
     }
 
     on_rez(integer param) {
@@ -687,10 +633,7 @@ default
         if (num == KERNEL_LIFECYCLE) {
             if (type == "register_now") {
                 register_self();
-                // CRITICAL FIX: Re-request settings after kernel reset to reapply RLV restrictions
-                llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
-                    "type", "settings_get"
-                ]), NULL_KEY);
+                apply_settings_sync();
             }
             else if (type == "ping") {
                 send_pong();
@@ -701,11 +644,8 @@ default
         }
         // Settings
         else if (num == SETTINGS_BUS) {
-            if (type == "settings_sync") {
-                apply_settings_sync(msg);
-            }
-            else if (type == "settings_delta") {
-                apply_settings_delta(msg);
+            if (type == "settings_sync" || type == "settings_delta") {
+                apply_settings_sync();
             }
         }
         // UI

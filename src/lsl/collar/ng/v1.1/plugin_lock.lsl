@@ -1,10 +1,15 @@
 /*--------------------
 PLUGIN: plugin_lock.lsl
 VERSION: 1.10
-REVISION: 0
+REVISION: 1
 PURPOSE: Toggle collar lock and RLV detach control labels
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
+- v1.1 rev 1: Migrate settings reads from JSON broadcast to direct LSD reads.
+  Remove apply_settings_delta(); fold side effects into apply_settings_sync()
+  via previous-state comparison. Both settings_sync and settings_delta call
+  parameterless apply_settings_sync(). Remove settings_get request; call
+  apply_settings_sync() directly from state_entry.
 - v1.1 rev 0: Self-declares button visibility policy to LSD on registration.
   Replaces hardcoded PLUGIN_MIN_ACL and ACL checks in toggle_lock()
   with policy reads. Uses btn_allowed("toggle") for access control.
@@ -95,79 +100,28 @@ send_pong() {
 
 /* -------------------- SETTINGS CONSUMPTION -------------------- */
 
-apply_settings_sync(string msg) {
-    string kv_json = llJsonGetValue(msg, ["kv"]);
-    if (kv_json == JSON_INVALID) return;
+apply_settings_sync() {
+    // Read lock state directly from LSD; compare with previous state
+    // and trigger side effects only when the value actually changes.
+    // If LSD key is missing/deleted, llLinksetDataRead returns "" which
+    // casts to 0 (unlocked) — this naturally handles the delete case.
+    integer prev_locked = Locked;
+    Locked = lsd_int(KEY_LOCKED, FALSE);
 
-    string lsd_val = llLinksetDataRead(KEY_LOCKED);
-    if (lsd_val != "") {
-        // LSD is authoritative — restore persisted runtime state
-        Locked = (integer)lsd_val;
+    if (Locked != prev_locked) {
         apply_lock_state();
-    }
-    else {
-        // First wear: seed from notecard and write to LSD
-        Locked = FALSE;  // Secure default
-        string tmp = llJsonGetValue(kv_json, [KEY_LOCKED]);
-        if (tmp != JSON_INVALID) {
-            Locked = (integer)tmp;
+
+        // Update UI label
+        string new_label = PLUGIN_LABEL_UNLOCKED;
+        if (Locked) {
+            new_label = PLUGIN_LABEL_LOCKED;
         }
-        apply_lock_state();
-        llLinksetDataWrite(KEY_LOCKED, (string)Locked);
-    }
-}
-
-apply_settings_delta(string msg) {
-    string op = llJsonGetValue(msg, ["op"]);
-    if (op == JSON_INVALID) return;
-
-    if (op == "set") {
-        string changes = llJsonGetValue(msg, ["changes"]);
-        if (changes == JSON_INVALID) return;
-
-        if ((llJsonGetValue(changes, [KEY_LOCKED]) != JSON_INVALID)) {
-            integer old_locked = Locked;
-            Locked = (integer)llJsonGetValue(changes, [KEY_LOCKED]);
-            llLinksetDataWrite(KEY_LOCKED, (string)Locked);
-
-            if (old_locked != Locked) {
-                apply_lock_state();
-                // Only update label, don't return to menu (no active user in delta context)
-                string new_label = PLUGIN_LABEL_UNLOCKED;
-                if (Locked) {
-                    new_label = PLUGIN_LABEL_LOCKED;
-                }
-                string label_msg = llList2Json(JSON_OBJECT, [
-                    "type", "update_label",
-                    "context", PLUGIN_CONTEXT,
-                    "label", new_label
-                ]);
-                llMessageLinked(LINK_SET, UI_BUS, label_msg, NULL_KEY);
-            }
-        }
-    }
-    else if (op == "delete") {
-        // SECURE DEFAULT: If lock setting is deleted, revert to unlocked
-        string deleted_key = llJsonGetValue(msg, ["key"]);
-        if (deleted_key == JSON_INVALID) return;
-
-        if (deleted_key == KEY_LOCKED) {
-            if (Locked) {
-                // Was locked, now reverting to unlocked
-                Locked = FALSE;
-                llLinksetDataWrite(KEY_LOCKED, "0");
-                apply_lock_state();
-                llOwnerSay("Lock setting deleted - reverting to unlocked state");
-
-                // Update UI label
-                string label_msg = llList2Json(JSON_OBJECT, [
-                    "type", "update_label",
-                    "context", PLUGIN_CONTEXT,
-                    "label", PLUGIN_LABEL_UNLOCKED
-                ]);
-                llMessageLinked(LINK_SET, UI_BUS, label_msg, NULL_KEY);
-            }
-        }
+        string label_msg = llList2Json(JSON_OBJECT, [
+            "type", "update_label",
+            "context", PLUGIN_CONTEXT,
+            "label", new_label
+        ]);
+        llMessageLinked(LINK_SET, UI_BUS, label_msg, NULL_KEY);
     }
 }
 
@@ -300,16 +254,10 @@ toggle_lock(key user, integer acl_level) {
 default {
     state_entry() {
         gPolicyButtons = [];
-        // Restore from LSD immediately (survives relog); first-wear seeding happens via settings_sync
-        string lsd_val = llLinksetDataRead(KEY_LOCKED);
-        if (lsd_val != "") {
-            Locked = (integer)lsd_val;
-            apply_lock_state();
-        }
-        // Request settings to complete registration and handle first-wear seeding
-        llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
-            "type", "settings_get"
-        ]), NULL_KEY);
+        // Restore from LSD immediately (survives relog)
+        Locked = lsd_int(KEY_LOCKED, FALSE);
+        apply_lock_state();
+        register_self();
     }
 
     on_rez(integer start_param) {
@@ -328,10 +276,8 @@ default {
             if (msg_type == JSON_INVALID) return;
 
             if (msg_type == "register_now") {
-                // Re-request settings after kernel reset to restore lock state
-                llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
-                    "type", "settings_get"
-                ]), NULL_KEY);
+                apply_settings_sync();
+                register_self();
                 return;
             }
 
@@ -347,14 +293,8 @@ default {
             string msg_type = llJsonGetValue(msg, ["type"]);
             if (msg_type == JSON_INVALID) return;
 
-            if (msg_type == "settings_sync") {
-                apply_settings_sync(msg);
-                register_self();  // Register after settings applied with correct state
-                return;
-            }
-
-            if (msg_type == "settings_delta") {
-                apply_settings_delta(msg);
+            if (msg_type == "settings_sync" || msg_type == "settings_delta") {
+                apply_settings_sync();
                 return;
             }
 

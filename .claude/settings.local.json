@@ -31,7 +31,28 @@
       "Bash(curl -s -L \"https://wiki.secondlife.com/wiki/SLua_Alpha\")",
       "Bash(curl -s -L \"https://create.secondlife.com/script/learn-slua/\")",
       "WebFetch(domain:luau.org)",
-      "Bash(wc -l \"c:/Users/Anne Skydancer/OneDrive/Documents/GitHub/ds_collar_modular/src/slua/collar/alpha/\"*.lua)"
+      "Bash(wc -l \"c:/Users/Anne Skydancer/OneDrive/Documents/GitHub/ds_collar_modular/src/slua/collar/alpha/\"*.lua)",
+      "Bash(where luau:*)",
+      "Bash(where luau.exe)",
+      "Bash(echo \"exit: $?\")",
+      "Bash(curl -sL https://api.github.com/repos/luau-lang/luau/releases/latest)",
+      "Bash(mkdir -p ~/bin)",
+      "Bash(curl -sL \"https://github.com/luau-lang/luau/releases/download/0.715/luau-windows.zip\" -o /tmp/luau-windows.zip)",
+      "Bash(unzip -o /tmp/luau-windows.zip -d ~/bin/)",
+      "Bash(rm /tmp/luau-windows.zip)",
+      "Read(//c/Users/Anne Skydancer/**)",
+      "Bash(~/bin/luau-compile.exe \"c:/Users/Anne Skydancer/OneDrive/Documents/GitHub/ds_collar_modular/src/slua/collar/alpha/collar_kernel.lua\")",
+      "Bash(ls \"/c/Users/Anne Skydancer/bin/\"luau*)",
+      "Bash(ls \"C:/Users/Anne Skydancer/bin/\"luau*)",
+      "Bash(code --install-extension JohnnyMorganz.luau-lsp)",
+      "Bash(code --install-extension sssooonnnggg.luau-debugger)",
+      "Bash(code --version)",
+      "Bash(find \"c:/Users/Anne Skydancer/OneDrive/Documents/GitHub/ds_collar_modular/src/lsl/collar/dev\" -name \"*.lsl\" -exec basename {} \\\\;)",
+      "Bash(find \"c:/Users/Anne Skydancer/OneDrive/Documents/GitHub/ds_collar_modular/src/lsl/collar/experimental\" -name \"*.lsl\" -exec basename {} \\\\;)",
+      "Bash(find \"c:/Users/Anne Skydancer/OneDrive/Documents/GitHub/ds_collar_modular/src/lsl/collar/ng/v1.1\" -name \"*.lsl\" -exec basename {} \\\\;)",
+      "Bash(lslint src/lsl/collar/stable/plugin_status.lsl)",
+      "Bash(lslint src/lsl/collar/stable/kmod_auth.lsl)",
+      "Bash(lslint src/lsl/collar/stable/kmod_bootstrap.lsl)"
     ]
   }
 }

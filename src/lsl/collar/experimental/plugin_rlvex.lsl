@@ -1,10 +1,14 @@
 /*--------------------
 PLUGIN: plugin_rlvex.lsl
 VERSION: 1.10
-REVISION: 0
+REVISION: 1
 PURPOSE: Manage RLV teleport and IM exceptions for owners and trustees
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
+- v1.1 rev 1: Migrate settings reads from JSON broadcast to direct LSD reads.
+  Remove apply_settings_delta(); both sync and delta call apply_settings_sync().
+  Remove request_settings_sync(); call apply_settings_sync() from state_entry.
+  Previous-state comparison triggers reconcile_all() on any relevant change.
 - v1.1 rev 0: Self-declares button visibility policy to LSD on registration.
   Replaces hardcoded PLUGIN_MIN_ACL with policy reads via get_policy_buttons()
   and btn_allowed(). Removed PLUGIN_MIN_ACL and min_acl from kernel
@@ -156,81 +160,39 @@ send_pong() {
 
 /* -------------------- SETTINGS -------------------- */
 
-apply_settings_sync(string msg) {
-    string kv = llJsonGetValue(msg, ["kv"]);
-    if (kv == JSON_INVALID) return;
+apply_settings_sync() {
+    // Save previous state for change detection
+    key prev_owner = OwnerKey;
+    list prev_owners = OwnerKeys;
+    list prev_trustees = TrusteeKeys;
+    integer prev_ex_otp = ExOwnerTp;
+    integer prev_ex_oim = ExOwnerIm;
+    integer prev_ex_ttp = ExTrusteeTp;
+    integer prev_ex_tim = ExTrusteeIm;
+    integer prev_multi = MultiOwnerMode;
 
+    // Reset state
     OwnerKey = NULL_KEY;
     OwnerKeys = [];
     TrusteeKeys = [];
     MultiOwnerMode = FALSE;
 
-    // Exception settings: restore from LSD if present, else seed from notecard (first wear)
-    integer has_owner_tp = FALSE;
-    if (llLinksetDataRead(KEY_EX_OWNER_TP) != "") {
-        ExOwnerTp = lsd_int(KEY_EX_OWNER_TP, TRUE);
-        has_owner_tp = TRUE;
-    }
-    else if ((llJsonGetValue(kv, [KEY_EX_OWNER_TP]) != JSON_INVALID)) {
-        ExOwnerTp = (integer)llJsonGetValue(kv, [KEY_EX_OWNER_TP]);
-        llLinksetDataWrite(KEY_EX_OWNER_TP, (string)ExOwnerTp);
-        has_owner_tp = TRUE;
-    }
-    else {
-        ExOwnerTp = TRUE;
-    }
+    // Read exception settings from LSD
+    ExOwnerTp = lsd_int(KEY_EX_OWNER_TP, TRUE);
+    ExOwnerIm = lsd_int(KEY_EX_OWNER_IM, TRUE);
+    ExTrusteeTp = lsd_int(KEY_EX_TRUSTEE_TP, FALSE);
+    ExTrusteeIm = lsd_int(KEY_EX_TRUSTEE_IM, FALSE);
 
-    integer has_owner_im = FALSE;
-    if (llLinksetDataRead(KEY_EX_OWNER_IM) != "") {
-        ExOwnerIm = lsd_int(KEY_EX_OWNER_IM, TRUE);
-        has_owner_im = TRUE;
-    }
-    else if ((llJsonGetValue(kv, [KEY_EX_OWNER_IM]) != JSON_INVALID)) {
-        ExOwnerIm = (integer)llJsonGetValue(kv, [KEY_EX_OWNER_IM]);
-        llLinksetDataWrite(KEY_EX_OWNER_IM, (string)ExOwnerIm);
-        has_owner_im = TRUE;
-    }
-    else {
-        ExOwnerIm = TRUE;
-    }
-
-    if (llLinksetDataRead(KEY_EX_TRUSTEE_TP) != "") {
-        ExTrusteeTp = lsd_int(KEY_EX_TRUSTEE_TP, FALSE);
-    }
-    else {
-        string tmp = llJsonGetValue(kv, [KEY_EX_TRUSTEE_TP]);
-        if (tmp != JSON_INVALID) {
-            ExTrusteeTp = (integer)tmp;
-            llLinksetDataWrite(KEY_EX_TRUSTEE_TP, tmp);
-        }
-        else {
-            ExTrusteeTp = FALSE;
-        }
-    }
-
-    if (llLinksetDataRead(KEY_EX_TRUSTEE_IM) != "") {
-        ExTrusteeIm = lsd_int(KEY_EX_TRUSTEE_IM, FALSE);
-    }
-    else {
-        string tmp = llJsonGetValue(kv, [KEY_EX_TRUSTEE_IM]);
-        if (tmp != JSON_INVALID) {
-            ExTrusteeIm = (integer)tmp;
-            llLinksetDataWrite(KEY_EX_TRUSTEE_IM, tmp);
-        }
-        else {
-            ExTrusteeIm = FALSE;
-        }
-    }
-
-    // Load owner/trustee lists
-    tmp = llJsonGetValue(kv, [KEY_MULTI_OWNER_MODE]);
-    if (tmp != JSON_INVALID) {
+    // Read multi-owner mode
+    string tmp = llLinksetDataRead(KEY_MULTI_OWNER_MODE);
+    if (tmp != "") {
         MultiOwnerMode = (integer)tmp;
     }
 
+    // Read owner/trustee lists from LSD
     if (MultiOwnerMode) {
-        string obj = llJsonGetValue(kv, [KEY_OWNERS]);
-        if (obj != JSON_INVALID) {
+        string obj = llLinksetDataRead(KEY_OWNERS);
+        if (obj != "") {
             if (llJsonValueType(obj, []) == JSON_OBJECT) {
                 list pairs = llJson2List(obj);
                 integer oi = 0;
@@ -243,8 +205,8 @@ apply_settings_sync(string msg) {
         }
     }
     else {
-        string obj = llJsonGetValue(kv, [KEY_OWNER]);
-        if (obj != JSON_INVALID) {
+        string obj = llLinksetDataRead(KEY_OWNER);
+        if (obj != "") {
             if (llJsonValueType(obj, []) == JSON_OBJECT) {
                 list pairs = llJson2List(obj);
                 if (llGetListLength(pairs) >= 2) {
@@ -254,8 +216,8 @@ apply_settings_sync(string msg) {
         }
     }
 
-    string trustees_raw = llJsonGetValue(kv, [KEY_TRUSTEES]);
-    if (trustees_raw != JSON_INVALID) {
+    string trustees_raw = llLinksetDataRead(KEY_TRUSTEES);
+    if (trustees_raw != "") {
         if (llJsonValueType(trustees_raw, []) == JSON_OBJECT) {
             list pairs = llJson2List(trustees_raw);
             integer pi = 0;
@@ -265,136 +227,62 @@ apply_settings_sync(string msg) {
                 pi += 2;
             }
         }
-        else if (llGetSubString(trustees_raw, 0, 0) == "[") {
-            TrusteeKeys = llJson2List(trustees_raw);
-        }
     }
 
-    // Auto-initialize settings if owners exist but settings don't
+    // Auto-initialize exception settings if owners exist but LSD keys are absent
     integer owners_exist = (MultiOwnerMode && llGetListLength(OwnerKeys) > 0) || (!MultiOwnerMode && OwnerKey != NULL_KEY);
-
     if (owners_exist) {
-        if (!has_owner_tp) persist_setting(KEY_EX_OWNER_TP, TRUE);
-        if (!has_owner_im) persist_setting(KEY_EX_OWNER_IM, TRUE);
+        if (llLinksetDataRead(KEY_EX_OWNER_TP) == "") persist_setting(KEY_EX_OWNER_TP, TRUE);
+        if (llLinksetDataRead(KEY_EX_OWNER_IM) == "") persist_setting(KEY_EX_OWNER_IM, TRUE);
     }
 
-    // Apply RLV commands after short delay to ensure RLV viewer is ready
-    PendingReconcile = TRUE;
-    llSetTimerEvent(1.0);
-}
+    // Detect changes: clear old exceptions for removed owners/trustees
+    integer need_reconcile = FALSE;
 
-apply_settings_delta(string msg) {
-    string op = llJsonGetValue(msg, ["op"]);
-    if (op == JSON_INVALID) return;
+    if (ExOwnerTp != prev_ex_otp || ExOwnerIm != prev_ex_oim
+        || ExTrusteeTp != prev_ex_ttp || ExTrusteeIm != prev_ex_tim
+        || MultiOwnerMode != prev_multi) {
+        need_reconcile = TRUE;
+    }
 
-    if (op == "set") {
-        string changes = llJsonGetValue(msg, ["changes"]);
-        if (changes == JSON_INVALID) return;
-
-        if ((llJsonGetValue(changes, [KEY_EX_OWNER_TP]) != JSON_INVALID)) {
-            integer val = (integer)llJsonGetValue(changes, [KEY_EX_OWNER_TP]);
-            llLinksetDataWrite(KEY_EX_OWNER_TP, (string)val);
-            if (val != ExOwnerTp) { ExOwnerTp = val; reconcile_all(); }
+    // Single owner changed
+    if (OwnerKey != prev_owner) {
+        if (prev_owner != NULL_KEY) {
+            apply_tp_exception(prev_owner, FALSE);
+            apply_im_exception(prev_owner, FALSE);
         }
-        if ((llJsonGetValue(changes, [KEY_EX_OWNER_IM]) != JSON_INVALID)) {
-            integer val = (integer)llJsonGetValue(changes, [KEY_EX_OWNER_IM]);
-            llLinksetDataWrite(KEY_EX_OWNER_IM, (string)val);
-            if (val != ExOwnerIm) { ExOwnerIm = val; reconcile_all(); }
+        need_reconcile = TRUE;
+    }
+
+    // Multi-owner list changed
+    if (llList2CSV(OwnerKeys) != llList2CSV(prev_owners)) {
+        integer ci = 0;
+        integer old_count = llGetListLength(prev_owners);
+        while (ci < old_count) {
+            key old_k = (key)llList2String(prev_owners, ci);
+            apply_tp_exception(old_k, FALSE);
+            apply_im_exception(old_k, FALSE);
+            ci++;
         }
-        if ((llJsonGetValue(changes, [KEY_EX_TRUSTEE_TP]) != JSON_INVALID)) {
-            integer val = (integer)llJsonGetValue(changes, [KEY_EX_TRUSTEE_TP]);
-            llLinksetDataWrite(KEY_EX_TRUSTEE_TP, (string)val);
-            if (val != ExTrusteeTp) { ExTrusteeTp = val; reconcile_all(); }
+        need_reconcile = TRUE;
+    }
+
+    // Trustee list changed
+    if (llList2CSV(TrusteeKeys) != llList2CSV(prev_trustees)) {
+        integer ci = 0;
+        integer old_count = llGetListLength(prev_trustees);
+        while (ci < old_count) {
+            key old_k = (key)llList2String(prev_trustees, ci);
+            apply_tp_exception(old_k, FALSE);
+            apply_im_exception(old_k, FALSE);
+            ci++;
         }
-        if ((llJsonGetValue(changes, [KEY_EX_TRUSTEE_IM]) != JSON_INVALID)) {
-            integer val = (integer)llJsonGetValue(changes, [KEY_EX_TRUSTEE_IM]);
-            llLinksetDataWrite(KEY_EX_TRUSTEE_IM, (string)val);
-            if (val != ExTrusteeIm) { ExTrusteeIm = val; reconcile_all(); }
-        }
+        need_reconcile = TRUE;
+    }
 
-        // Handle multi_owner_mode changes
-        if ((llJsonGetValue(changes, [KEY_MULTI_OWNER_MODE]) != JSON_INVALID)) {
-            MultiOwnerMode = (integer)llJsonGetValue(changes, [KEY_MULTI_OWNER_MODE]);
-            reconcile_all();
-        }
-
-        // Single owner changed (full JSON object broadcast)
-        if ((llJsonGetValue(changes, [KEY_OWNER]) != JSON_INVALID)) {
-            key old_owner = OwnerKey;
-            OwnerKey = NULL_KEY;
-            string obj = llJsonGetValue(changes, [KEY_OWNER]);
-            if (llJsonValueType(obj, []) == JSON_OBJECT) {
-                list pairs = llJson2List(obj);
-                if (llGetListLength(pairs) >= 2) {
-                    OwnerKey = (key)llList2String(pairs, 0);
-                }
-            }
-
-            // Clear exceptions from old owner if it changed
-            if (old_owner != NULL_KEY && old_owner != OwnerKey) {
-                apply_tp_exception(old_owner, FALSE);
-                apply_im_exception(old_owner, FALSE);
-            }
-
-            reconcile_all();
-        }
-
-        // Multi-owner changed (full JSON object broadcast)
-        if ((llJsonGetValue(changes, [KEY_OWNERS]) != JSON_INVALID)) {
-            // Clear exceptions for old owners
-            integer ci = 0;
-            integer old_count = llGetListLength(OwnerKeys);
-            while (ci < old_count) {
-                key old_k = (key)llList2String(OwnerKeys, ci);
-                apply_tp_exception(old_k, FALSE);
-                apply_im_exception(old_k, FALSE);
-                ci++;
-            }
-
-            // Parse new owners
-            OwnerKeys = [];
-            string obj = llJsonGetValue(changes, [KEY_OWNERS]);
-            if (llJsonValueType(obj, []) == JSON_OBJECT) {
-                list pairs = llJson2List(obj);
-                integer oi = 0;
-                integer olen = llGetListLength(pairs);
-                while (oi < olen) {
-                    OwnerKeys += [llList2String(pairs, oi)];
-                    oi += 2;
-                }
-            }
-
-            reconcile_all();
-        }
-
-        // Trustees changed (full JSON object broadcast)
-        if ((llJsonGetValue(changes, [KEY_TRUSTEES]) != JSON_INVALID)) {
-            // Clear exceptions for old trustees
-            integer ci = 0;
-            integer old_count = llGetListLength(TrusteeKeys);
-            while (ci < old_count) {
-                key old_k = (key)llList2String(TrusteeKeys, ci);
-                apply_tp_exception(old_k, FALSE);
-                apply_im_exception(old_k, FALSE);
-                ci++;
-            }
-
-            // Parse new trustees
-            TrusteeKeys = [];
-            string trustees_raw = llJsonGetValue(changes, [KEY_TRUSTEES]);
-            if (llJsonValueType(trustees_raw, []) == JSON_OBJECT) {
-                list pairs = llJson2List(trustees_raw);
-                integer pi = 0;
-                integer plen = llGetListLength(pairs);
-                while (pi < plen) {
-                    TrusteeKeys += [llList2String(pairs, pi)];
-                    pi += 2;
-                }
-            }
-
-            // Apply exceptions to new trustees
-            reconcile_all();
-        }
+    if (need_reconcile) {
+        PendingReconcile = TRUE;
+        llSetTimerEvent(1.0);
     }
 }
 
@@ -625,9 +513,7 @@ default {
     state_entry() {
         cleanup();
         register_self();
-        llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
-            "type", "settings_get"
-        ]), NULL_KEY);
+        apply_settings_sync();
     }
 
     on_rez(integer p) {
@@ -653,10 +539,7 @@ default {
         if (num == KERNEL_LIFECYCLE) {
             if (type == "register_now") {
                 register_self();
-                // Re-request settings after kernel reset to reapply RLV exceptions
-                llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
-                    "type", "settings_get"
-                ]), NULL_KEY);
+                apply_settings_sync();
             }
             else if (type == "ping") send_pong();
             else if (type == "soft_reset" || type == "soft_reset_all") {
@@ -666,8 +549,7 @@ default {
             }
         }
         else if (num == SETTINGS_BUS) {
-            if (type == "settings_sync") apply_settings_sync(msg);
-            else if (type == "settings_delta") apply_settings_delta(msg);
+            if (type == "settings_sync" || type == "settings_delta") apply_settings_sync();
         }
         else if (num == UI_BUS) {
             if (type == "start" && (llJsonGetValue(msg, ["context"]) != JSON_INVALID)) {

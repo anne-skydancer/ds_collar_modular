@@ -1,10 +1,14 @@
 /*--------------------
 PLUGIN: plugin_status.lsl
 VERSION: 1.10
-REVISION: 0
+REVISION: 1
 PURPOSE: Read-only collar status display for owners and observers
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
+- v1.1 rev 1: Read all settings directly from LSD (authoritative runtime
+  state) instead of kv_json broadcast. Removes settings_get roundtrip;
+  apply_settings_sync is now parameterless. Fixes status dialog showing
+  "Uncommitted" when bootstrap correctly displayed the registered owner.
 - v1.1 rev 0: Self-declares button visibility policy to LSD on registration.
   Replaces hardcoded PLUGIN_MIN_ACL with policy reads via
   get_policy_buttons() and btn_allowed(). Removed PLUGIN_MIN_ACL and
@@ -92,13 +96,6 @@ integer btn_allowed(string label) {
 
 /* -------------------- LIFECYCLE MANAGEMENT -------------------- */
 
-request_settings_sync() {
-    string msg = llList2Json(JSON_OBJECT, [
-        "type", "settings_get"
-    ]);
-    llMessageLinked(LINK_SET, SETTINGS_BUS, msg, NULL_KEY);
-}
-
 register_self() {
     // Write button visibility policy to LSD (view-only, empty button lists for all ACL levels)
     llLinksetDataWrite("policy:" + PLUGIN_CONTEXT, llList2Json(JSON_OBJECT, [
@@ -129,10 +126,7 @@ send_pong() {
 
 /* -------------------- SETTINGS CONSUMPTION -------------------- */
 
-apply_settings_sync(string msg) {
-    string kv_json = llJsonGetValue(msg, ["kv"]);
-    if (kv_json == JSON_INVALID) return;
-
+apply_settings_sync() {
     integer previous_mode = MultiOwnerMode;
     key previous_owner = OwnerKey;
     list previous_owners = OwnerKeys;
@@ -150,15 +144,14 @@ apply_settings_sync(string msg) {
     Locked = FALSE;
     TpeMode = FALSE;
 
-    // Load values
-    string tmp = llJsonGetValue(kv_json, [KEY_MULTI_OWNER_MODE]);
-    if (tmp != JSON_INVALID) {
-        MultiOwnerMode = (integer)tmp;
-    }
+    // Read all settings directly from LSD (authoritative runtime state).
+
+    string tmp = llLinksetDataRead(KEY_MULTI_OWNER_MODE);
+    if (tmp != "") MultiOwnerMode = (integer)tmp;
 
     // Single owner: JSON object {uuid:honorific}
-    string obj = llJsonGetValue(kv_json, [KEY_OWNER]);
-    if (obj != JSON_INVALID) {
+    string obj = llLinksetDataRead(KEY_OWNER);
+    if (obj != "" && obj != "{}") {
         if (llJsonValueType(obj, []) == JSON_OBJECT) {
             list pairs = llJson2List(obj);
             if (llGetListLength(pairs) >= 2) {
@@ -169,8 +162,8 @@ apply_settings_sync(string msg) {
     }
 
     // Multi-owner: JSON object {uuid:honorific, ...}
-    obj = llJsonGetValue(kv_json, [KEY_OWNERS]);
-    if (obj != JSON_INVALID) {
+    obj = llLinksetDataRead(KEY_OWNERS);
+    if (obj != "" && obj != "{}") {
         if (llJsonValueType(obj, []) == JSON_OBJECT) {
             OwnersJson = obj;
             list pairs = llJson2List(obj);
@@ -183,8 +176,9 @@ apply_settings_sync(string msg) {
         }
     }
 
-    string trustees_raw = llJsonGetValue(kv_json, [KEY_TRUSTEES]);
-    if (trustees_raw != JSON_INVALID) {
+    // Trustees
+    string trustees_raw = llLinksetDataRead(KEY_TRUSTEES);
+    if (trustees_raw != "" && trustees_raw != "{}") {
         if (llJsonValueType(trustees_raw, []) == JSON_OBJECT) {
             TrusteesJson = trustees_raw;
             list pairs = llJson2List(trustees_raw);
@@ -201,41 +195,22 @@ apply_settings_sync(string msg) {
         }
     }
 
-    string blacklist_json = llJsonGetValue(kv_json, [KEY_BLACKLIST]);
-    if (blacklist_json != JSON_INVALID) {
-        if (is_json_arr(blacklist_json)) {
-            BlacklistKeys = llJson2List(blacklist_json);
+    // Blacklist
+    string blacklist_raw = llLinksetDataRead(KEY_BLACKLIST);
+    if (blacklist_raw != "") {
+        if (is_json_arr(blacklist_raw)) {
+            BlacklistKeys = llJson2List(blacklist_raw);
         }
     }
 
-    // Read lock/tpe/public directly from LSD (authoritative runtime state).
-    // Fall back to kv_json only on first wear (LSD empty).
-    string lsd_locked = llLinksetDataRead(KEY_LOCKED);
-    if (lsd_locked != "") {
-        Locked = (integer)lsd_locked;
-    }
-    else {
-        tmp = llJsonGetValue(kv_json, [KEY_LOCKED]);
-        if (tmp != JSON_INVALID) Locked = (integer)tmp;
-    }
+    tmp = llLinksetDataRead(KEY_LOCKED);
+    if (tmp != "") Locked = (integer)tmp;
 
-    string lsd_tpe = llLinksetDataRead(KEY_TPE_MODE);
-    if (lsd_tpe != "") {
-        TpeMode = (integer)lsd_tpe;
-    }
-    else {
-        tmp = llJsonGetValue(kv_json, [KEY_TPE_MODE]);
-        if (tmp != JSON_INVALID) TpeMode = (integer)tmp;
-    }
+    tmp = llLinksetDataRead(KEY_TPE_MODE);
+    if (tmp != "") TpeMode = (integer)tmp;
 
-    string lsd_public = llLinksetDataRead(KEY_PUBLIC_ACCESS);
-    if (lsd_public != "") {
-        PublicAccess = (integer)lsd_public;
-    }
-    else {
-        tmp = llJsonGetValue(kv_json, [KEY_PUBLIC_ACCESS]);
-        if (tmp != JSON_INVALID) PublicAccess = (integer)tmp;
-    }
+    tmp = llLinksetDataRead(KEY_PUBLIC_ACCESS);
+    if (tmp != "") PublicAccess = (integer)tmp;
 
     // Check if we need to refresh owner names
     integer needs_refresh = FALSE;
@@ -605,7 +580,7 @@ default {
         TrusteeNameQueries = [];
 
         register_self();
-        request_settings_sync();
+        apply_settings_sync();
     }
 
     on_rez(integer start_param) {
@@ -641,7 +616,7 @@ default {
             if (msg_type == JSON_INVALID) return;
 
             if (msg_type == "settings_sync") {
-                apply_settings_sync(msg);
+                apply_settings_sync();
                 return;
             }
 

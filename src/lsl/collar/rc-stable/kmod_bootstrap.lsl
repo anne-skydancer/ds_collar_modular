@@ -1,10 +1,12 @@
 /*--------------------
 MODULE: kmod_bootstrap.lsl
 VERSION: 1.10
-REVISION: 0
+REVISION: 1
 PURPOSE: Startup coordination, RLV detection, owner name resolution
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- v1.1 rev 1: Migrate settings reads from JSON broadcast payloads to direct
+  llLinksetDataRead. Remove request_settings() helper and settings_get message.
 - v1.1 rev 0: Version bump for LSD policy architecture. Bootstrap no longer
   manages UI policies — each plugin self-declares via llLinksetDataWrite.
 --------------------*/
@@ -194,17 +196,7 @@ stop_rlv_probe() {
 
 /* -------------------- SETTINGS LOADING -------------------- */
 
-request_settings() {
-    string msg = llList2Json(JSON_OBJECT, [
-        "type", "settings_get"
-    ]);
-    llMessageLinked(LINK_SET, SETTINGS_BUS, msg, NULL_KEY);
-}
-
-apply_settings_sync(string msg) {
-    string kv_json = llJsonGetValue(msg, ["kv"]);
-    if (kv_json == JSON_INVALID) return;
-
+apply_settings_sync() {
     // Reset
     MultiOwnerMode = FALSE;
     OwnerKey = NULL_KEY;
@@ -212,15 +204,15 @@ apply_settings_sync(string msg) {
     OwnerHonorific = "";
     OwnersJson = "{}";
 
-    // Load
-    string tmp = llJsonGetValue(kv_json, [KEY_MULTI_OWNER_MODE]);
-    if (tmp != JSON_INVALID) {
+    // Load from LSD
+    string tmp = llLinksetDataRead(KEY_MULTI_OWNER_MODE);
+    if (tmp != "") {
         MultiOwnerMode = (integer)tmp;
     }
 
     // Single owner: JSON object {uuid:honorific}
-    string obj = llJsonGetValue(kv_json, [KEY_OWNER]);
-    if (obj != JSON_INVALID) {
+    string obj = llLinksetDataRead(KEY_OWNER);
+    if (obj != "") {
         if (llJsonValueType(obj, []) == JSON_OBJECT) {
             list pairs = llJson2List(obj);
             if (llGetListLength(pairs) >= 2) {
@@ -231,8 +223,8 @@ apply_settings_sync(string msg) {
     }
 
     // Multi-owner: JSON object {uuid:honorific, ...}
-    obj = llJsonGetValue(kv_json, [KEY_OWNERS]);
-    if (obj != JSON_INVALID) {
+    obj = llLinksetDataRead(KEY_OWNERS);
+    if (obj != "") {
         if (llJsonValueType(obj, []) == JSON_OBJECT) {
             OwnersJson = obj;
             list pairs = llJson2List(obj);
@@ -244,9 +236,9 @@ apply_settings_sync(string msg) {
             }
         }
     }
-    
+
     SettingsReceived = TRUE;
-    
+
     // Start name resolution
     start_name_resolution();
 }
@@ -545,10 +537,10 @@ state starting
             return;
         }
 
-        // Handle Settings Retries
+        // Handle Settings Retries (read directly from LSD)
         if (!SettingsReceived && current_time >= SettingsNextRetry) {
             if (SettingsRetryCount < SETTINGS_MAX_RETRIES) {
-                request_settings();
+                apply_settings_sync();
                 SettingsRetryCount++;
                 SettingsNextRetry = current_time + SETTINGS_RETRY_INTERVAL_SEC;
             }
@@ -623,8 +615,8 @@ state starting
         
         /* -------------------- SETTINGS BUS -------------------- */
         if (num == SETTINGS_BUS) {
-            if (msg_type == "settings_sync") {
-                apply_settings_sync(msg);
+            if (msg_type == "settings_sync" || msg_type == "settings_delta") {
+                apply_settings_sync();
             }
         }
         
