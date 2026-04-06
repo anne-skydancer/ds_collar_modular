@@ -39,12 +39,6 @@ string LSD_ACL_CACHE_PREFIX = "acl_cache_";
 
 /* ACL levels (mirrors auth module) */
 integer ACL_BLACKLIST = -1;
-integer ACL_NOACCESS = 0;
-integer ACL_PUBLIC = 1;
-integer ACL_OWNED = 2;
-integer ACL_TRUSTEE = 3;
-integer ACL_UNOWNED = 4;
-integer ACL_PRIMARY_OWNER = 5;
 
 
 /* -------------------- STATE -------------------- */

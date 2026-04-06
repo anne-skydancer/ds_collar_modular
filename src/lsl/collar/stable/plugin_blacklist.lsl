@@ -1,10 +1,11 @@
 /*--------------------
 PLUGIN: plugin_blacklist.lsl
 VERSION: 1.10
-REVISION: 1
+REVISION: 2
 PURPOSE: Blacklist management with sensor-based avatar selection
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
+- v1.1 rev 2: Migrate dialog buttons to button_data format with context-based routing.
 - v1.1 rev 1: Migrate settings reads from JSON broadcast payloads to direct
   llLinksetDataRead. Remove apply_settings_delta — full re-read on every sync.
 - v1.1 rev 0: Self-declares button visibility policy to LSD on registration.
@@ -61,7 +62,9 @@ list CandidateKeys = [];
 
 /* -------------------- HELPERS -------------------- */
 
-
+string btn(string label, string cmd) {
+    return llList2Json(JSON_OBJECT, ["label", label, "context", cmd]);
+}
 
 string generate_session_id() {
     return "blacklist_" + (string)llGetKey() + "_" + (string)llGetUnixTime();
@@ -186,9 +189,9 @@ show_main_menu() {
     string body = "Blacklist Management\n\n";
     body += "Currently blacklisted: " + (string)count;
 
-    list buttons = [BTN_BACK];
-    if (btn_allowed("+Blacklist")) buttons += [BTN_ADD];
-    if (btn_allowed("-Blacklist")) buttons += [BTN_REMOVE];
+    list button_data = [btn(BTN_BACK, "back")];
+    if (btn_allowed("+Blacklist")) button_data += [btn(BTN_ADD, "add")];
+    if (btn_allowed("-Blacklist")) button_data += [btn(BTN_REMOVE, "remove")];
 
     SessionId = generate_session_id();
     MenuContext = "main";
@@ -199,7 +202,7 @@ show_main_menu() {
         "user", (string)CurrentUser,
         "title", "Blacklist",
         "body", body,
-        "buttons", llList2Json(JSON_ARRAY, buttons),
+        "button_data", llList2Json(JSON_ARRAY, button_data),
         "timeout", 60
     ]);
 
@@ -304,10 +307,11 @@ handle_dialog_response(string msg) {
     string session = llJsonGetValue(msg, ["session_id"]);
     if (session != SessionId) return;
 
-    string button = llJsonGetValue(msg, ["button"]);
+    string cmd = llJsonGetValue(msg, ["context"]);
+    if (cmd == JSON_INVALID) cmd = llJsonGetValue(msg, ["button"]);
 
-    // Handle Back button
-    if (button == BTN_BACK) {
+    // Handle Back button (context-routed or numbered_list Back)
+    if (cmd == "back" || cmd == BTN_BACK) {
         if (MenuContext == "main") {
             return_to_root();
             return;
@@ -318,13 +322,13 @@ handle_dialog_response(string msg) {
 
     // Main menu actions
     if (MenuContext == "main") {
-        if (button == BTN_ADD) {
+        if (cmd == "add") {
             MenuContext = "add_scan";
             CandidateKeys = [];
             llSensor("", NULL_KEY, AGENT, BLACKLIST_RADIUS, PI);
             return;
         }
-        if (button == BTN_REMOVE) {
+        if (cmd == "remove") {
             show_remove_menu();
             return;
         }
@@ -332,7 +336,7 @@ handle_dialog_response(string msg) {
 
     // Remove menu - numbered selection
     if (MenuContext == "remove") {
-        integer idx = (integer)button - 1;
+        integer idx = (integer)cmd - 1;
         if (idx >= 0 && idx < llGetListLength(Blacklist)) {
             Blacklist = llDeleteSubList(Blacklist, idx, idx);
             persist_blacklist();
@@ -344,7 +348,7 @@ handle_dialog_response(string msg) {
 
     // Add pick menu - numbered selection
     if (MenuContext == "add_pick") {
-        integer idx = (integer)button - 1;
+        integer idx = (integer)cmd - 1;
         if (idx >= 0 && idx < llGetListLength(CandidateKeys)) {
             string entry = llList2String(CandidateKeys, idx);
             if (entry != "" && llListFindList(Blacklist, [entry]) == -1) {

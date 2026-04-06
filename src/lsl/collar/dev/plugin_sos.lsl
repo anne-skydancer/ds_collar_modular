@@ -1,10 +1,11 @@
 /*--------------------
 PLUGIN: plugin_sos.lsl
 VERSION: 1.10
-REVISION: 0
+REVISION: 1
 PURPOSE: Emergency wearer-accessible actions when ACL is locked out
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
+- v1.1 rev 1: Migrate dialog buttons to button_data format with context-based routing.
 - v1.1 rev 0: Self-declares button visibility policy to LSD on registration.
   Replaces hardcoded PLUGIN_MIN_ACL with policy reads.
   Button list built from get_policy_buttons() + btn_allowed().
@@ -28,7 +29,10 @@ string SessionId = "";
 
 /* -------------------- HELPERS -------------------- */
 
-
+// Helper: create a button_data entry with label and command context
+string btn(string label, string cmd) {
+    return llList2Json(JSON_OBJECT, ["label", label, "context", cmd]);
+}
 
 string generate_session_id() {
     return PLUGIN_CONTEXT + "_" + (string)llGetUnixTime();
@@ -79,10 +83,10 @@ show_sos_menu() {
 
     // llDialog displays buttons in rows of 3, bottom-left to top-right
     // Build button list from policy
-    list buttons = ["Back"];
-    if (btn_allowed("Unleash")) buttons += ["Unleash"];
-    if (btn_allowed("Clear RLV")) buttons += ["Clear RLV"];
-    if (btn_allowed("Clear Relay")) buttons += ["Clear Relay"];
+    list button_data = [btn("Back", "back")];
+    if (btn_allowed("Unleash")) button_data += [btn("Unleash", "unleash")];
+    if (btn_allowed("Clear RLV")) button_data += [btn("Clear RLV", "clear_rlv")];
+    if (btn_allowed("Clear Relay")) button_data += [btn("Clear Relay", "clear_relay")];
 
     string body = "EMERGENCY ACCESS\n\n";
     body += "Choose an action:\n";
@@ -96,7 +100,7 @@ show_sos_menu() {
         "user", (string)CurrentUser,
         "title", "SOS Emergency",
         "body", body,
-        "buttons", llList2Json(JSON_ARRAY, buttons),
+        "button_data", llList2Json(JSON_ARRAY, button_data),
         "timeout", 60
     ]), NULL_KEY);
 
@@ -134,26 +138,26 @@ action_clear_relay() {
 }
 
 /* -------------------- BUTTON HANDLER -------------------- */
-handle_button_click(string button) {
+handle_button_click(string cmd) {
 
-    if (button == "Back") {
+    if (cmd == "back") {
         return_to_root();
         return;
     }
 
-    if (button == "Unleash") {
+    if (cmd == "unleash") {
         action_unleash();
         show_sos_menu();
         return;
     }
 
-    if (button == "Clear RLV") {
+    if (cmd == "clear_rlv") {
         action_clear_rlv();
         show_sos_menu();
         return;
     }
 
-    if (button == "Clear Relay") {
+    if (cmd == "clear_relay") {
         action_clear_relay();
         show_sos_menu();
         return;
@@ -250,13 +254,14 @@ default {
         /* -------------------- DIALOG RESPONSE -------------------- */
         if (num == DIALOG_BUS) {
             if (msg_type == "dialog_response") {
-                if (llJsonGetValue(msg, ["session_id"]) == JSON_INVALID || llJsonGetValue(msg, ["button"]) == JSON_INVALID) return;
+                if (llJsonGetValue(msg, ["session_id"]) == JSON_INVALID) return;
 
                 string response_session = llJsonGetValue(msg, ["session_id"]);
                 if (response_session != SessionId) return;
 
-                string button = llJsonGetValue(msg, ["button"]);
-                handle_button_click(button);
+                string cmd = llJsonGetValue(msg, ["context"]);
+                if (cmd == JSON_INVALID) cmd = "";
+                handle_button_click(cmd);
                 return;
             }
 

@@ -59,10 +59,6 @@ list get_policy_buttons(string ctx, integer acl) {
     return llCSV2List(csv);
 }
 
-integer btn_allowed(string label) {
-    return (llListFindList(gPolicyButtons, [label]) != -1);
-}
-
 /* -------------------- ANIMATION INVENTORY MANAGEMENT -------------------- */
 
 refresh_animation_list() {

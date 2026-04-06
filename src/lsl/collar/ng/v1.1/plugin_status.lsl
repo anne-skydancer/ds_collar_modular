@@ -90,10 +90,6 @@ list get_policy_buttons(string ctx, integer acl) {
     return llCSV2List(csv);
 }
 
-integer btn_allowed(string label) {
-    return (llListFindList(gPolicyButtons, [label]) != -1);
-}
-
 /* -------------------- LIFECYCLE MANAGEMENT -------------------- */
 
 register_self() {

@@ -1,10 +1,11 @@
 /*--------------------
 PLUGIN: plugin_restrict.lsl
 VERSION: 1.10
-REVISION: 1
+REVISION: 2
 PURPOSE: Manage RLV restriction toggles grouped by functional category
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
+- v1.1 rev 2: Migrate dialog buttons to button_data format with context-based routing.
 - v1.1 rev 1: Migrate from JSON broadcast payloads to direct LSD reads.
   Remove apply_settings_delta() and request_settings_sync(). apply_settings_sync()
   is now parameterless and reads restrict.list from LSD. Uses previous-state
@@ -75,6 +76,10 @@ float SIT_SCAN_RANGE = 10.0;  // Scan range in meters
 key ScanInitiator = NULL_KEY;  // Track who initiated the scan to prevent race conditions
 
 /* -------------------- HELPER FUNCTIONS -------------------- */
+
+string btn(string label, string cmd) {
+    return llList2Json(JSON_OBJECT, ["label", label, "context", cmd]);
+}
 
 string generate_session_id() {
     return llGetScriptName() + "_" + (string)llGetKey() + "_" + (string)llGetUnixTime();
@@ -241,20 +246,6 @@ list get_category_labels(string cat_name) {
     return [];
 }
 
-string label_to_command(string btn_label, list cat_cmds, list cat_labels) {
-    // Remove checkbox prefix
-    string clean_label = btn_label;
-    if (llGetSubString(btn_label, 0, 3) == "[X] " || llGetSubString(btn_label, 0, 3) == "[ ] ") {
-        clean_label = llGetSubString(btn_label, 4, -1);
-    }
-
-    integer label_idx = llListFindList(cat_labels, [clean_label]);
-    if (label_idx != -1) {
-        return llList2String(cat_cmds, label_idx);
-    }
-    return "";
-}
-
 /* -------------------- FORCE SIT/UNSIT -------------------- */
 
 start_sit_scan() {
@@ -305,11 +296,11 @@ display_sit_targets() {
         body += "\nPage " + (string)(SitPage + 1) + "/" + (string)total_pages;
     }
 
-    // Build buttons: Back, <<, >>, then numbered buttons
-    list buttons = ["Back", "<<", ">>"];
+    // Build button_data: Back, <<, >>, then numbered buttons
+    list button_data = [btn("Back", "back"), btn("<<", "prev_page"), btn(">>", "next_page")];
     i = 1;
     while (i <= (end_idx - start_idx)) {
-        buttons += [(string)i];
+        button_data += [btn((string)i, "sit_" + (string)i)];
         i = i + 1;
     }
 
@@ -319,7 +310,7 @@ display_sit_targets() {
         "user", (string)CurrentUser,
         "title", "Force Sit",
         "body", body,
-        "buttons", llList2Json(JSON_ARRAY, buttons),
+        "button_data", llList2Json(JSON_ARRAY, button_data),
         "timeout", 60
     ]), NULL_KEY);
 }
@@ -358,16 +349,16 @@ show_main() {
     gPolicyButtons = get_policy_buttons(PLUGIN_CONTEXT, UserAcl);
 
     string body;
-    list buttons = ["Back"];
+    list button_data = [btn("Back", "back")];
 
     // Build menu from policy
-    if (btn_allowed("Inventory"))  buttons += [CAT_NAME_INVENTORY];
-    if (btn_allowed("Speech"))     buttons += [CAT_NAME_SPEECH];
-    if (btn_allowed("Travel"))     buttons += [CAT_NAME_TRAVEL];
-    if (btn_allowed("Other"))      buttons += [CAT_NAME_OTHER];
-    if (btn_allowed("Clear all"))  buttons += ["Clear all"];
-    if (btn_allowed("Force Sit"))  buttons += ["Force Sit"];
-    if (btn_allowed("Force Unsit")) buttons += ["Force Unsit"];
+    if (btn_allowed("Inventory"))  button_data += [btn(CAT_NAME_INVENTORY, "cat_inventory")];
+    if (btn_allowed("Speech"))     button_data += [btn(CAT_NAME_SPEECH, "cat_speech")];
+    if (btn_allowed("Travel"))     button_data += [btn(CAT_NAME_TRAVEL, "cat_travel")];
+    if (btn_allowed("Other"))      button_data += [btn(CAT_NAME_OTHER, "cat_other")];
+    if (btn_allowed("Clear all"))  button_data += [btn("Clear all", "clear_all")];
+    if (btn_allowed("Force Sit"))  button_data += [btn("Force Sit", "force_sit")];
+    if (btn_allowed("Force Unsit")) button_data += [btn("Force Unsit", "force_unsit")];
 
     // Adjust body text based on available buttons
     if (btn_allowed("Inventory")) {
@@ -383,7 +374,7 @@ show_main() {
         "user", (string)CurrentUser,
         "title", PLUGIN_LABEL,
         "body", body,
-        "buttons", llList2Json(JSON_ARRAY, buttons),
+        "button_data", llList2Json(JSON_ARRAY, button_data),
         "timeout", 60
     ]), NULL_KEY);
 }
@@ -411,7 +402,7 @@ show_category_menu(string cat_name, integer page_num) {
         end_idx = total_items - 1;
     }
 
-    // Build button list with checkbox prefixes
+    // Build button_data list with checkbox prefixes
     list page_buttons = [];
     integer i = start_idx;
     while (i <= end_idx) {
@@ -426,7 +417,7 @@ show_category_menu(string cat_name, integer page_num) {
             label = "[ ] " + label;
         }
 
-        page_buttons += [label];
+        page_buttons += [btn(label, cmd)];
         i = i + 1;
     }
 
@@ -442,7 +433,7 @@ show_category_menu(string cat_name, integer page_num) {
     }
 
     // Add nav buttons in bottom-left corner (positions 0, 1, 2)
-    reversed = ["Back", "<<", ">>"] + reversed;
+    reversed = [btn("Back", "back"), btn("<<", "prev_page"), btn(">>", "next_page")] + reversed;
 
     string body = cat_name + " (" + (string)(page_num + 1) + "/" + (string)(max_page + 1) + ")\n\nActive: " + (string)llGetListLength(Restrictions);
 
@@ -452,7 +443,7 @@ show_category_menu(string cat_name, integer page_num) {
         "user", (string)CurrentUser,
         "title", cat_name,
         "body", body,
-        "buttons", llList2Json(JSON_ARRAY, reversed),
+        "button_data", llList2Json(JSON_ARRAY, reversed),
         "timeout", 60
     ]), NULL_KEY);
 }
@@ -460,7 +451,7 @@ show_category_menu(string cat_name, integer page_num) {
 /* -------------------- DIALOG HANDLERS -------------------- */
 
 handle_dialog_response(string msg) {
-    if (llJsonGetValue(msg, ["session_id"]) == JSON_INVALID || llJsonGetValue(msg, ["button"]) == JSON_INVALID || llJsonGetValue(msg, ["user"]) == JSON_INVALID) return;
+    if (llJsonGetValue(msg, ["session_id"]) == JSON_INVALID || llJsonGetValue(msg, ["context"]) == JSON_INVALID || llJsonGetValue(msg, ["user"]) == JSON_INVALID) return;
 
     string recv_session = llJsonGetValue(msg, ["session_id"]);
     if (recv_session != SessionId) return;
@@ -468,25 +459,46 @@ handle_dialog_response(string msg) {
     key user = (key)llJsonGetValue(msg, ["user"]);
     if (user != CurrentUser) return;
 
-    string button = llJsonGetValue(msg, ["button"]);
+    string ctx = llJsonGetValue(msg, ["context"]);
 
     // Main menu
     if (MenuContext == "main") {
-        if (button == "Back") {
+        if (ctx == "back") {
             return_to_root();
         }
-        else if (button == CAT_NAME_INVENTORY || button == CAT_NAME_SPEECH ||
-                 button == CAT_NAME_TRAVEL || button == CAT_NAME_OTHER) {
-            // Restriction categories require policy approval
-            if (!btn_allowed(button)) {
+        else if (ctx == "cat_inventory") {
+            if (!btn_allowed("Inventory")) {
                 llRegionSayTo(CurrentUser, 0, "Access denied.");
                 show_main();
                 return;
             }
-            show_category_menu(button, 0);
+            show_category_menu(CAT_NAME_INVENTORY, 0);
         }
-        else if (button == "Clear all") {
-            // Clear all requires policy approval
+        else if (ctx == "cat_speech") {
+            if (!btn_allowed("Speech")) {
+                llRegionSayTo(CurrentUser, 0, "Access denied.");
+                show_main();
+                return;
+            }
+            show_category_menu(CAT_NAME_SPEECH, 0);
+        }
+        else if (ctx == "cat_travel") {
+            if (!btn_allowed("Travel")) {
+                llRegionSayTo(CurrentUser, 0, "Access denied.");
+                show_main();
+                return;
+            }
+            show_category_menu(CAT_NAME_TRAVEL, 0);
+        }
+        else if (ctx == "cat_other") {
+            if (!btn_allowed("Other")) {
+                llRegionSayTo(CurrentUser, 0, "Access denied.");
+                show_main();
+                return;
+            }
+            show_category_menu(CAT_NAME_OTHER, 0);
+        }
+        else if (ctx == "clear_all") {
             if (!btn_allowed("Clear all")) {
                 llRegionSayTo(CurrentUser, 0, "Access denied.");
                 show_main();
@@ -496,20 +508,20 @@ handle_dialog_response(string msg) {
             llRegionSayTo(CurrentUser, 0, "All restrictions removed.");
             show_main();
         }
-        else if (button == "Force Sit") {
+        else if (ctx == "force_sit") {
             start_sit_scan();
         }
-        else if (button == "Force Unsit") {
+        else if (ctx == "force_unsit") {
             force_unsit();
             show_main();
         }
     }
     // Sit selection menu
     else if (MenuContext == "sit_select") {
-        if (button == "Back") {
+        if (ctx == "back") {
             show_main();
         }
-        else if (button == "<<") {
+        else if (ctx == "prev_page") {
             integer total_items = llGetListLength(SitCandidates) / 2;
             integer items_per_page = 9;
             integer max_page = (total_items - 1) / items_per_page;
@@ -522,7 +534,7 @@ handle_dialog_response(string msg) {
             }
             display_sit_targets();
         }
-        else if (button == ">>") {
+        else if (ctx == "next_page") {
             integer total_items = llGetListLength(SitCandidates) / 2;
             integer items_per_page = 9;
             integer max_page = (total_items - 1) / items_per_page;
@@ -536,46 +548,46 @@ handle_dialog_response(string msg) {
             display_sit_targets();
         }
         else {
-            // Numbered button selection
-            integer button_num = (integer)button;
-            if (button_num >= 1 && button_num <= 9) {
-                integer items_per_page = 9;
-                integer actual_idx = (SitPage * items_per_page) + (button_num - 1);
-                integer list_idx = actual_idx * 2;  // Stride list: [name, key, ...]
+            // Numbered button selection: context is "sit_N"
+            if (llGetSubString(ctx, 0, 3) == "sit_") {
+                integer button_num = (integer)llGetSubString(ctx, 4, -1);
+                if (button_num >= 1 && button_num <= 9) {
+                    integer items_per_page = 9;
+                    integer actual_idx = (SitPage * items_per_page) + (button_num - 1);
+                    integer list_idx = actual_idx * 2;  // Stride list: [name, key, ...]
 
-                if (list_idx + 1 < llGetListLength(SitCandidates)) {
-                    key target = (key)llList2String(SitCandidates, list_idx + 1);
-                    force_sit_on(target);
-                    show_main();
+                    if (list_idx + 1 < llGetListLength(SitCandidates)) {
+                        key target = (key)llList2String(SitCandidates, list_idx + 1);
+                        force_sit_on(target);
+                        show_main();
+                    }
                 }
             }
         }
     }
     // Category menu
     else if (MenuContext == "category") {
-        if (button == "Back") {
+        if (ctx == "back") {
             show_main();
         }
-        else if (button == "<<") {
+        else if (ctx == "prev_page") {
             list cat_cmds = get_category_list(CurrentCategory);
             integer total_items = llGetListLength(cat_cmds);
             integer max_page = (total_items - 1) / DIALOG_PAGE_SIZE;
 
             if (CurrentPage == 0) {
-                // Wrap to last page
                 show_category_menu(CurrentCategory, max_page);
             }
             else {
                 show_category_menu(CurrentCategory, CurrentPage - 1);
             }
         }
-        else if (button == ">>") {
+        else if (ctx == "next_page") {
             list cat_cmds = get_category_list(CurrentCategory);
             integer total_items = llGetListLength(cat_cmds);
             integer max_page = (total_items - 1) / DIALOG_PAGE_SIZE;
 
             if (CurrentPage >= max_page) {
-                // Wrap to first page
                 show_category_menu(CurrentCategory, 0);
             }
             else {
@@ -583,13 +595,9 @@ handle_dialog_response(string msg) {
             }
         }
         else {
-            // Toggle restriction
-            list cat_cmds = get_category_list(CurrentCategory);
-            list cat_labels = get_category_labels(CurrentCategory);
-
-            string restr_cmd = label_to_command(button, cat_cmds, cat_labels);
-
-            if (restr_cmd != "") {
+            // Context is the RLV command directly (e.g., "@detachall")
+            string restr_cmd = ctx;
+            if (restriction_idx(restr_cmd) != -1 || llGetSubString(restr_cmd, 0, 0) == "@") {
                 toggle_restriction(restr_cmd);
                 show_category_menu(CurrentCategory, CurrentPage);
             }

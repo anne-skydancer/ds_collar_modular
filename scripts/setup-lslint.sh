@@ -2,8 +2,8 @@
 # setup-lslint.sh - Quick installer for lslint in ephemeral sandbox environments
 # Usage: ./setup-lslint.sh
 #
-# This script downloads and installs a pre-compiled lslint binary from GitHub releases.
-# No build dependencies required!
+# Builds lslint from the anne-skydancer fork, which supports newer LSL builtins
+# (e.g., llListSortStrided) that the upstream version doesn't recognize.
 
 set -e  # Exit on error
 
@@ -18,23 +18,21 @@ if command -v lslint &> /dev/null; then
     exit 0
 fi
 
-echo "Installing lslint..."
+echo "Installing lslint from anne-skydancer/lslint..."
 echo ""
 
-# Download pre-compiled binary
-echo "→ Downloading pre-compiled lslint binary..."
+# Build from source
 TEMP_DIR=$(mktemp -d)
 cd "$TEMP_DIR"
 
-wget -q https://github.com/Makopo/lslint/releases/download/nightly_build_20230410045235/lslint_nightly_build_20230410045235_linux64.zip
+echo "→ Cloning lslint repository..."
+git clone https://github.com/anne-skydancer/lslint.git
+cd lslint
 
-echo "✓ Download complete"
+echo "→ Building lslint..."
+make
 
-# Extract binary
-echo "→ Extracting binary..."
-unzip -q lslint_nightly_build_20230410045235_linux64.zip
-
-echo "✓ Extraction complete"
+echo "✓ Build complete"
 
 # Install lslint
 echo "→ Installing lslint to /usr/local/bin..."

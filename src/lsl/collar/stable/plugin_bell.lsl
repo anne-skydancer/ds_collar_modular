@@ -1,10 +1,11 @@
 /*--------------------
 PLUGIN: plugin_bell.lsl
 VERSION: 1.10
-REVISION: 1
+REVISION: 2
 PURPOSE: Bell visibility and jingling control for the collar
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
+- v1.1 rev 2: Migrate dialog buttons to button_data format with context-based routing.
 - v1.1 rev 1: Migrate settings reads from JSON broadcast to direct LSD reads.
   Remove apply_settings_delta(); fold side effects into apply_settings_sync()
   via previous-state comparison. Both settings_sync and settings_delta call
@@ -49,7 +50,9 @@ string MenuContext = "";
 
 /* -------------------- HELPERS -------------------- */
 
-
+string btn(string label, string cmd) {
+    return llList2Json(JSON_OBJECT, ["label", label, "context", cmd]);
+}
 
 string generate_session_id() {
     return PLUGIN_CONTEXT + "_" + (string)llGetUnixTime();
@@ -116,7 +119,7 @@ play_jingle() {
 }
 
 /* -------------------- UNIFIED MENU DISPLAY -------------------- */
-show_menu(string context, string title, string body, list buttons) {
+show_menu(string context, string title, string body, list button_data) {
     SessionId = generate_session_id();
     MenuContext = context;
 
@@ -126,7 +129,7 @@ show_menu(string context, string title, string body, list buttons) {
         "user", (string)CurrentUser,
         "title", title,
         "body", body,
-        "buttons", llList2Json(JSON_ARRAY, buttons),
+        "button_data", llList2Json(JSON_ARRAY, button_data),
         "timeout", 60
     ]), NULL_KEY);
 }
@@ -180,18 +183,18 @@ show_main_menu() {
     // Button order for layout:
     // [Volume +] [Volume -] [.]
     // [Back]     [Show: Y/N] [Sound: On/Off]
-    list buttons = ["Back"];
-    if (btn_allowed("Show")) buttons += [visible_label];
-    if (btn_allowed("Sound")) buttons += [sound_label];
-    if (btn_allowed("Volume +")) buttons += ["Volume +"];
-    if (btn_allowed("Volume -")) buttons += ["Volume -"];
+    list button_data = [btn("Back", "back")];
+    if (btn_allowed("Show")) button_data += [btn(visible_label, "toggle_visible")];
+    if (btn_allowed("Sound")) button_data += [btn(sound_label, "toggle_sound")];
+    if (btn_allowed("Volume +")) button_data += [btn("Volume +", "vol_up")];
+    if (btn_allowed("Volume -")) button_data += [btn("Volume -", "vol_down")];
 
     string body = "Bell Control\n\n";
     body += "Visibility: " + (string)BellVisible + "\n";
     body += "Sound: " + (string)BellSoundEnabled + "\n";
     body += "Volume: " + (string)((integer)(BellVolume * 100)) + "%";
 
-    show_menu("main", "Bell", body, buttons);
+    show_menu("main", "Bell", body, button_data);
 }
 
 /* -------------------- SETTINGS MODIFICATION -------------------- */
@@ -207,61 +210,47 @@ persist_bell_setting(string setting_key, string value) {
 }
 
 /* -------------------- BUTTON HANDLER -------------------- */
-handle_button_click(string button) {
+handle_button_click(string msg) {
+    string cmd = llJsonGetValue(msg, ["context"]);
+    if (cmd == JSON_INVALID) cmd = llJsonGetValue(msg, ["button"]);
 
     if (MenuContext == "main") {
-        if (button == "Back") {
+        if (cmd == "back") {
             return_to_root();
         }
-        else if (button == "Volume +") {
+        else if (cmd == "vol_up") {
             BellVolume = BellVolume + 0.1;
             if (BellVolume > 1.0) BellVolume = 1.0;
             persist_bell_setting(KEY_BELL_VOLUME, (string)BellVolume);
             llRegionSayTo(CurrentUser, 0, "Volume: " + (string)((integer)(BellVolume * 100)) + "%");
             show_main_menu();
         }
-        else if (button == "Volume -") {
+        else if (cmd == "vol_down") {
             BellVolume = BellVolume - 0.1;
             if (BellVolume < 0.0) BellVolume = 0.0;
             persist_bell_setting(KEY_BELL_VOLUME, (string)BellVolume);
             llRegionSayTo(CurrentUser, 0, "Volume: " + (string)((integer)(BellVolume * 100)) + "%");
             show_main_menu();
         }
-        else if (button == "Show: Y" || button == "Show: N") {
-            // Toggle state
+        else if (cmd == "toggle_visible") {
             BellVisible = !BellVisible;
-
-            // Apply immediately
             set_bell_visibility(BellVisible);
-
-            // Persist change
             persist_bell_setting(KEY_BELL_VISIBLE, (string)BellVisible);
-
-            // Notify user
             if (BellVisible) {
                 llRegionSayTo(CurrentUser, 0, "Bell shown.");
             } else {
                 llRegionSayTo(CurrentUser, 0, "Bell hidden.");
             }
-
-            // Stay in menu
             show_main_menu();
         }
-        else if (button == "Sound: On" || button == "Sound: Off") {
-            // Toggle state
+        else if (cmd == "toggle_sound") {
             BellSoundEnabled = !BellSoundEnabled;
-
-            // Persist change
             persist_bell_setting(KEY_BELL_SOUND_ENABLED, (string)BellSoundEnabled);
-
-            // Notify user
             if (BellSoundEnabled) {
                 llRegionSayTo(CurrentUser, 0, "Bell sound enabled.");
             } else {
                 llRegionSayTo(CurrentUser, 0, "Bell sound disabled.");
             }
-
-            // Stay in menu
             show_main_menu();
         }
     }
@@ -404,8 +393,7 @@ default {
                 string response_session = llJsonGetValue(msg, ["session_id"]);
                 if (response_session != SessionId) return;
 
-                string button = llJsonGetValue(msg, ["button"]);
-                handle_button_click(button);
+                handle_button_click(msg);
                 return;
             }
 

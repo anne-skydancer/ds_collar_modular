@@ -1,10 +1,11 @@
 /*--------------------
 PLUGIN: plugin_access.lsl
 VERSION: 1.10
-REVISION: 1
+REVISION: 2
 PURPOSE: Owner, trustee, and honorific management workflows
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
+- v1.1 rev 2: Migrate dialog buttons to button_data format with context-based routing.
 - v1.1 rev 1: Migrate settings reads from JSON broadcast to direct LSD reads.
   Remove apply_settings_delta(); both sync and delta call apply_settings_sync().
   Remove request_settings_sync(); call apply_settings_sync() from state_entry.
@@ -64,6 +65,10 @@ list OWNER_HONORIFICS = ["Master", "Mistress", "Daddy", "Mommy", "King", "Queen"
 list TRUSTEE_HONORIFICS = ["Sir", "Madame", "Milord", "Milady"];
 
 /* -------------------- HELPERS -------------------- */
+
+string btn(string label, string cmd) {
+    return llList2Json(JSON_OBJECT, ["label", label, "context", cmd]);
+}
 
 integer lsd_int(string lsd_key, integer fallback) {
     string v = llLinksetDataRead(lsd_key);
@@ -290,41 +295,41 @@ show_main() {
 
     body += "\nTrustees: " + (string)llGetListLength(TrusteeKeys);
 
-    list buttons = ["Back"];
+    list button_data = [btn("Back", "back")];
 
     // Add Owner: policy allows + wearer + no current owner
     if (btn_allowed("Add Owner") && CurrentUser == llGetOwner() && !has_owner()) {
-        buttons += ["Add Owner"];
+        button_data += [btn("Add Owner", "add_owner")];
     }
 
     // Runaway: policy allows + wearer + has owner + runaway enabled + single-owner mode
     if (btn_allowed("Runaway") && CurrentUser == llGetOwner() && has_owner() && RunawayEnabled && !MultiOwnerMode) {
-        buttons += ["Runaway"];
+        button_data += [btn("Runaway", "runaway")];
     }
 
     // Transfer: policy allows + is_owner + single-owner mode
     if (btn_allowed("Transfer") && is_owner(CurrentUser) && !MultiOwnerMode) {
-        buttons += ["Transfer"];
+        button_data += [btn("Transfer", "transfer")];
     }
 
     // Release: policy allows + is_owner
     if (btn_allowed("Release") && is_owner(CurrentUser)) {
-        buttons += ["Release"];
+        button_data += [btn("Release", "release")];
     }
 
     // Runaway toggle: policy allows + is_owner
     if (is_owner(CurrentUser)) {
         if (RunawayEnabled && btn_allowed("Runaway: On")) {
-            buttons += ["Runaway: On"];
+            button_data += [btn("Runaway: On", "runaway_toggle")];
         }
         else if (!RunawayEnabled && btn_allowed("Runaway: Off")) {
-            buttons += ["Runaway: Off"];
+            button_data += [btn("Runaway: Off", "runaway_toggle")];
         }
     }
 
     // Add/Rem Trustee: policy allows
-    if (btn_allowed("Add Trustee")) buttons += ["Add Trustee"];
-    if (btn_allowed("Rem Trustee")) buttons += ["Rem Trustee"];
+    if (btn_allowed("Add Trustee")) button_data += [btn("Add Trustee", "add_trustee")];
+    if (btn_allowed("Rem Trustee")) button_data += [btn("Rem Trustee", "rem_trustee")];
 
     llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
         "type", "dialog_open",
@@ -332,7 +337,7 @@ show_main() {
         "user", (string)CurrentUser,
         "title", PLUGIN_LABEL,
         "body", body,
-        "buttons", llList2Json(JSON_ARRAY, buttons),
+        "button_data", llList2Json(JSON_ARRAY, button_data),
         "timeout", 60
     ]), NULL_KEY);
 }
@@ -386,9 +391,9 @@ show_honorific(key target, string context) {
     ]), NULL_KEY);
 }
 
-show_confirm(string title, string body, string context) {
+show_confirm(string title, string body, string ctx) {
     SessionId = gen_session();
-    MenuContext = context;
+    MenuContext = ctx;
 
     llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
         "type", "dialog_open",
@@ -396,7 +401,7 @@ show_confirm(string title, string body, string context) {
         "user", (string)CurrentUser,
         "title", title,
         "body", body,
-        "buttons", llList2Json(JSON_ARRAY, ["Yes", "No"]),
+        "button_data", llList2Json(JSON_ARRAY, [btn("Yes", "confirm"), btn("No", "cancel")]),
         "timeout", 60
     ]), NULL_KEY);
 }
@@ -438,8 +443,10 @@ show_remove_trustee() {
 
 /* -------------------- BUTTON HANDLING -------------------- */
 
-handle_button(string btn) {
-    if (btn == "Back") {
+handle_button(string cmd, string label) {
+    // Numbered list contexts use the label as a number index; button_data contexts use cmd
+    // "Back" from numbered_list has empty context, route by label
+    if (cmd == "back" || (cmd == "" && label == "Back")) {
         if (MenuContext == "main") {
             llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
                 "type", "return", "user", (string)CurrentUser
@@ -451,23 +458,23 @@ handle_button(string btn) {
     }
 
     if (MenuContext == "main") {
-        if (btn == "Add Owner") {
+        if (cmd == "add_owner") {
             MenuContext = "set_scan";
             CandidateKeys = [];
             llSensor("", NULL_KEY, AGENT, 10.0, PI);
         }
-        else if (btn == "Transfer") {
+        else if (cmd == "transfer") {
             MenuContext = "transfer_scan";
             CandidateKeys = [];
             llSensor("", NULL_KEY, AGENT, 10.0, PI);
         }
-        else if (btn == "Release") {
+        else if (cmd == "release") {
             show_confirm("Confirm Release", "Release " + get_name(llGetOwner()) + "?", "release_owner");
         }
-        else if (btn == "Runaway") {
+        else if (cmd == "runaway") {
             show_confirm("Confirm Runaway", "Run away from " + get_name(get_primary_owner()) + "?\n\nThis removes ownership without consent.", "runaway");
         }
-        else if (btn == "Runaway: On" || btn == "Runaway: Off") {
+        else if (cmd == "runaway_toggle") {
             if (RunawayEnabled) {
                 // Disabling requires wearer consent - send dialog to WEARER
                 string hon = OwnerHonorific;
@@ -484,7 +491,7 @@ handle_button(string btn) {
                     "user", (string)llGetOwner(),  // Send to WEARER, not CurrentUser
                     "title", "Disable Runaway",
                     "body", msg_body,
-                    "buttons", llList2Json(JSON_ARRAY, ["Yes", "No"]),
+                    "button_data", llList2Json(JSON_ARRAY, [btn("Yes", "confirm"), btn("No", "cancel")]),
                     "timeout", 60
                 ]), NULL_KEY);
             }
@@ -504,18 +511,19 @@ handle_button(string btn) {
             }
             return;
         }
-        else if (btn == "Add Trustee") {
+        else if (cmd == "add_trustee") {
             MenuContext = "trustee_scan";
             CandidateKeys = [];
             llSensor("", NULL_KEY, AGENT, 10.0, PI);
         }
-        else if (btn == "Rem Trustee") {
+        else if (cmd == "rem_trustee") {
             show_remove_trustee();
         }
         return;
     }
 
-    integer idx = (integer)btn - 1;
+    // Numbered list contexts: use label as number index
+    integer idx = (integer)label - 1;
 
     if (MenuContext == "set_select") {
         if (idx >= 0 && idx < llGetListLength(CandidateKeys)) {
@@ -529,13 +537,13 @@ handle_button(string btn) {
                 "user", (string)PendingCandidate,
                 "title", "Accept Ownership",
                 "body", get_name(llGetOwner()) + " wishes to submit to you.\n\nAccept?",
-                "buttons", llList2Json(JSON_ARRAY, ["Yes", "No"]),
+                "button_data", llList2Json(JSON_ARRAY, [btn("Yes", "confirm"), btn("No", "cancel")]),
                 "timeout", 60
             ]), NULL_KEY);
         }
     }
     else if (MenuContext == "set_accept") {
-        if (btn == "Yes") show_honorific(PendingCandidate, "set_hon");
+        if (cmd == "confirm") show_honorific(PendingCandidate, "set_hon");
         else {
             llRegionSayTo(CurrentUser, 0, "Declined.");
             show_main();
@@ -553,13 +561,13 @@ handle_button(string btn) {
                 "user", (string)llGetOwner(),
                 "title", "Confirm",
                 "body", "Submit to " + get_name(PendingCandidate) + " as your " + PendingHonorific + "?",
-                "buttons", llList2Json(JSON_ARRAY, ["Yes", "No"]),
+                "button_data", llList2Json(JSON_ARRAY, [btn("Yes", "confirm"), btn("No", "cancel")]),
                 "timeout", 60
             ]), NULL_KEY);
         }
     }
     else if (MenuContext == "set_confirm") {
-        if (btn == "Yes") {
+        if (cmd == "confirm") {
             persist_owner(PendingCandidate, PendingHonorific);
             llRegionSayTo(PendingCandidate, 0, get_name(llGetOwner()) + " has submitted to you as their " + PendingHonorific + ".");
             llRegionSayTo(llGetOwner(), 0, "You are now property of " + PendingHonorific + " " + get_name(PendingCandidate) + ".");
@@ -582,13 +590,13 @@ handle_button(string btn) {
                 "user", (string)PendingCandidate,
                 "title", "Accept Transfer",
                 "body", "Accept ownership of " + get_name(llGetOwner()) + "?",
-                "buttons", llList2Json(JSON_ARRAY, ["Yes", "No"]),
+                "button_data", llList2Json(JSON_ARRAY, [btn("Yes", "confirm"), btn("No", "cancel")]),
                 "timeout", 60
             ]), NULL_KEY);
         }
     }
     else if (MenuContext == "transfer_accept") {
-        if (btn == "Yes") show_honorific(PendingCandidate, "transfer_hon");
+        if (cmd == "confirm") show_honorific(PendingCandidate, "transfer_hon");
         else {
             llRegionSayTo(CurrentUser, 0, "Declined.");
             show_main();
@@ -606,7 +614,7 @@ handle_button(string btn) {
         }
     }
     else if (MenuContext == "release_owner") {
-        if (btn == "Yes") {
+        if (cmd == "confirm") {
             SessionId = gen_session();
             MenuContext = "release_wearer";
 
@@ -616,14 +624,14 @@ handle_button(string btn) {
                 "user", (string)llGetOwner(),
                 "title", "Confirm Release",
                 "body", "Released by " + get_name(CurrentUser) + ".\n\nConfirm freedom?",
-                "buttons", llList2Json(JSON_ARRAY, ["Yes", "No"]),
+                "button_data", llList2Json(JSON_ARRAY, [btn("Yes", "confirm"), btn("No", "cancel")]),
                 "timeout", 60
             ]), NULL_KEY);
         }
         else show_main();
     }
     else if (MenuContext == "release_wearer") {
-        if (btn == "Yes") {
+        if (cmd == "confirm") {
             clear_owner();
             llRegionSayTo(llGetOwner(), 0, "Released. You are free.");
             cleanup();
@@ -634,7 +642,7 @@ handle_button(string btn) {
         }
     }
     else if (MenuContext == "runaway") {
-        if (btn == "Yes") {
+        if (cmd == "confirm") {
             key old = get_primary_owner();
             string old_hon = OwnerHonorific;
             clear_owner();
@@ -672,7 +680,7 @@ handle_button(string btn) {
         else show_main();
     }
     else if (MenuContext == "runaway_disable_confirm") {
-        if (btn == "Yes") {
+        if (cmd == "confirm") {
             // Wearer consented - disable runaway
             RunawayEnabled = FALSE;
             llLinksetDataWrite(KEY_RUNAWAY_ENABLED, "0");
@@ -713,13 +721,13 @@ handle_button(string btn) {
                 "user", (string)PendingCandidate,
                 "title", "Accept Trustee",
                 "body", get_name(llGetOwner()) + " wants you as trustee.\n\nAccept?",
-                "buttons", llList2Json(JSON_ARRAY, ["Yes", "No"]),
+                "button_data", llList2Json(JSON_ARRAY, [btn("Yes", "confirm"), btn("No", "cancel")]),
                 "timeout", 60
             ]), NULL_KEY);
         }
     }
     else if (MenuContext == "trustee_accept") {
-        if (btn == "Yes") show_honorific(PendingCandidate, "trustee_hon");
+        if (cmd == "confirm") show_honorific(PendingCandidate, "trustee_hon");
         else {
             llRegionSayTo(CurrentUser, 0, "Declined.");
             show_main();
@@ -736,10 +744,10 @@ handle_button(string btn) {
     }
     else if (MenuContext == "remove_trustee") {
         if (idx >= 0 && idx < llGetListLength(TrusteeKeys)) {
-            key trustee = (key)llList2String(TrusteeKeys, idx);
-            remove_trustee(trustee);
+            key trustee_key = (key)llList2String(TrusteeKeys, idx);
+            remove_trustee(trustee_key);
             llRegionSayTo(CurrentUser, 0, "Removed.");
-            llRegionSayTo(trustee, 0, "Removed as trustee.");
+            llRegionSayTo(trustee_key, 0, "Removed as trustee.");
             show_main();
         }
     }
@@ -806,9 +814,13 @@ default {
         }
         else if (num == DIALOG_BUS) {
             if (type == "dialog_response") {
-                if ((llJsonGetValue(msg, ["session_id"]) != JSON_INVALID) && (llJsonGetValue(msg, ["button"]) != JSON_INVALID)) {
+                if (llJsonGetValue(msg, ["session_id"]) != JSON_INVALID) {
                     if (llJsonGetValue(msg, ["session_id"]) == SessionId) {
-                        handle_button(llJsonGetValue(msg, ["button"]));
+                        string resp_ctx = llJsonGetValue(msg, ["context"]);
+                        if (resp_ctx == JSON_INVALID) resp_ctx = "";
+                        string resp_btn = llJsonGetValue(msg, ["button"]);
+                        if (resp_btn == JSON_INVALID) resp_btn = "";
+                        handle_button(resp_ctx, resp_btn);
                     }
                 }
             }

@@ -1,10 +1,11 @@
 /*--------------------
 PLUGIN: plugin_rlvex.lsl
 VERSION: 1.10
-REVISION: 1
+REVISION: 2
 PURPOSE: Manage RLV teleport and IM exceptions for owners and trustees
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
+- v1.1 rev 2: Migrate dialog buttons to button_data format with context-based routing.
 - v1.1 rev 1: Migrate settings reads from JSON broadcast to direct LSD reads.
   Remove apply_settings_delta(); both sync and delta call apply_settings_sync().
   Remove request_settings_sync(); call apply_settings_sync() from state_entry.
@@ -56,6 +57,10 @@ string MenuContext;
 integer PendingReconcile = FALSE;
 
 /* -------------------- HELPERS -------------------- */
+
+string btn(string label, string cmd) {
+    return llList2Json(JSON_OBJECT, ["label", label, "context", cmd]);
+}
 
 integer lsd_int(string lsd_key, integer fallback) {
     string v = llLinksetDataRead(lsd_key);
@@ -306,9 +311,9 @@ show_main() {
 
     string body = "RLV Exceptions\n\nManage which restrictions can be bypassed by owners and trustees.";
 
-    list buttons = ["Back"];
-    if (btn_allowed("Owner"))   buttons += ["Owner"];
-    if (btn_allowed("Trustee")) buttons += ["Trustee"];
+    list button_data = [btn("Back", "back")];
+    if (btn_allowed("Owner"))   button_data += [btn("Owner", "owner")];
+    if (btn_allowed("Trustee")) button_data += [btn("Trustee", "trustee")];
 
     llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
         "type", "dialog_open",
@@ -316,7 +321,7 @@ show_main() {
         "user", (string)CurrentUser,
         "title", PLUGIN_LABEL,
         "body", body,
-        "buttons", llList2Json(JSON_ARRAY, buttons),
+        "button_data", llList2Json(JSON_ARRAY, button_data),
         "timeout", 60
     ]), NULL_KEY);
 }
@@ -331,9 +336,9 @@ show_owner_menu() {
     if (ExOwnerIm) body += "IM: Allowed";
     else body += "IM: Denied";
 
-    list buttons = ["Back"];
-    if (btn_allowed("TP")) buttons += ["TP"];
-    if (btn_allowed("IM")) buttons += ["IM"];
+    list button_data = [btn("Back", "back")];
+    if (btn_allowed("TP")) button_data += [btn("TP", "tp")];
+    if (btn_allowed("IM")) button_data += [btn("IM", "im")];
 
     llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
         "type", "dialog_open",
@@ -341,7 +346,7 @@ show_owner_menu() {
         "user", (string)CurrentUser,
         "title", "Owner Exceptions",
         "body", body,
-        "buttons", llList2Json(JSON_ARRAY, buttons),
+        "button_data", llList2Json(JSON_ARRAY, button_data),
         "timeout", 60
     ]), NULL_KEY);
 }
@@ -356,9 +361,9 @@ show_trustee_menu() {
     if (ExTrusteeIm) body += "IM: Allowed";
     else body += "IM: Denied";
 
-    list buttons = ["Back"];
-    if (btn_allowed("TP")) buttons += ["TP"];
-    if (btn_allowed("IM")) buttons += ["IM"];
+    list button_data = [btn("Back", "back")];
+    if (btn_allowed("TP")) button_data += [btn("TP", "tp")];
+    if (btn_allowed("IM")) button_data += [btn("IM", "im")];
 
     llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
         "type", "dialog_open",
@@ -366,7 +371,7 @@ show_trustee_menu() {
         "user", (string)CurrentUser,
         "title", "Trustee Exceptions",
         "body", body,
-        "buttons", llList2Json(JSON_ARRAY, buttons),
+        "button_data", llList2Json(JSON_ARRAY, button_data),
         "timeout", 60
     ]), NULL_KEY);
 }
@@ -381,7 +386,7 @@ show_toggle(string role, string exception_type, integer current) {
     body += "Allow = Owner/trustee can bypass restrictions\n";
     body += "Deny = Normal restrictions apply";
 
-    list buttons = ["Back", "Allow", "Deny"];
+    list button_data = [btn("Back", "back"), btn("Allow", "allow"), btn("Deny", "deny")];
 
     llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
         "type", "dialog_open",
@@ -389,15 +394,15 @@ show_toggle(string role, string exception_type, integer current) {
         "user", (string)CurrentUser,
         "title", role + " " + exception_type,
         "body", body,
-        "buttons", llList2Json(JSON_ARRAY, buttons),
+        "button_data", llList2Json(JSON_ARRAY, button_data),
         "timeout", 60
     ]), NULL_KEY);
 }
 
 /* -------------------- BUTTON HANDLING -------------------- */
 
-handle_button(string btn) {
-    if (btn == "Back") {
+handle_button(string ctx) {
+    if (ctx == "back") {
         if (MenuContext == "main") {
             llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
                 "type", "return", "user", (string)CurrentUser
@@ -416,25 +421,25 @@ handle_button(string btn) {
     }
 
     if (MenuContext == "main") {
-        if (btn == "Owner") show_owner_menu();
-        else if (btn == "Trustee") show_trustee_menu();
+        if (ctx == "owner") show_owner_menu();
+        else if (ctx == "trustee") show_trustee_menu();
     }
     else if (MenuContext == "owner") {
-        if (btn == "TP") show_toggle("Owner", "TP", ExOwnerTp);
-        else if (btn == "IM") show_toggle("Owner", "IM", ExOwnerIm);
+        if (ctx == "tp") show_toggle("Owner", "TP", ExOwnerTp);
+        else if (ctx == "im") show_toggle("Owner", "IM", ExOwnerIm);
     }
     else if (MenuContext == "trustee") {
-        if (btn == "TP") show_toggle("Trustee", "TP", ExTrusteeTp);
-        else if (btn == "IM") show_toggle("Trustee", "IM", ExTrusteeIm);
+        if (ctx == "tp") show_toggle("Trustee", "TP", ExTrusteeTp);
+        else if (ctx == "im") show_toggle("Trustee", "IM", ExTrusteeIm);
     }
     else if (MenuContext == "Owner_TP") {
-        if (btn == "Allow") {
+        if (ctx == "allow") {
             ExOwnerTp = TRUE;
             persist_setting(KEY_EX_OWNER_TP, TRUE);
             reconcile_all();
             llRegionSayTo(CurrentUser, 0, "Owner TP exception allowed.");
         }
-        else if (btn == "Deny") {
+        else if (ctx == "deny") {
             ExOwnerTp = FALSE;
             persist_setting(KEY_EX_OWNER_TP, FALSE);
             reconcile_all();
@@ -443,13 +448,13 @@ handle_button(string btn) {
         show_owner_menu();
     }
     else if (MenuContext == "Owner_IM") {
-        if (btn == "Allow") {
+        if (ctx == "allow") {
             ExOwnerIm = TRUE;
             persist_setting(KEY_EX_OWNER_IM, TRUE);
             reconcile_all();
             llRegionSayTo(CurrentUser, 0, "Owner IM exception allowed.");
         }
-        else if (btn == "Deny") {
+        else if (ctx == "deny") {
             ExOwnerIm = FALSE;
             persist_setting(KEY_EX_OWNER_IM, FALSE);
             reconcile_all();
@@ -458,13 +463,13 @@ handle_button(string btn) {
         show_owner_menu();
     }
     else if (MenuContext == "Trustee_TP") {
-        if (btn == "Allow") {
+        if (ctx == "allow") {
             ExTrusteeTp = TRUE;
             persist_setting(KEY_EX_TRUSTEE_TP, TRUE);
             reconcile_all();
             llRegionSayTo(CurrentUser, 0, "Trustee TP exception allowed.");
         }
-        else if (btn == "Deny") {
+        else if (ctx == "deny") {
             ExTrusteeTp = FALSE;
             persist_setting(KEY_EX_TRUSTEE_TP, FALSE);
             reconcile_all();
@@ -473,13 +478,13 @@ handle_button(string btn) {
         show_trustee_menu();
     }
     else if (MenuContext == "Trustee_IM") {
-        if (btn == "Allow") {
+        if (ctx == "allow") {
             ExTrusteeIm = TRUE;
             persist_setting(KEY_EX_TRUSTEE_IM, TRUE);
             reconcile_all();
             llRegionSayTo(CurrentUser, 0, "Trustee IM exception allowed.");
         }
-        else if (btn == "Deny") {
+        else if (ctx == "deny") {
             ExTrusteeIm = FALSE;
             persist_setting(KEY_EX_TRUSTEE_IM, FALSE);
             reconcile_all();
@@ -562,9 +567,9 @@ default {
         }
         else if (num == DIALOG_BUS) {
             if (type == "dialog_response") {
-                if ((llJsonGetValue(msg, ["session_id"]) != JSON_INVALID) && (llJsonGetValue(msg, ["button"]) != JSON_INVALID)) {
+                if ((llJsonGetValue(msg, ["session_id"]) != JSON_INVALID) && (llJsonGetValue(msg, ["context"]) != JSON_INVALID)) {
                     if (llJsonGetValue(msg, ["session_id"]) == SessionId) {
-                        handle_button(llJsonGetValue(msg, ["button"]));
+                        handle_button(llJsonGetValue(msg, ["context"]));
                     }
                 }
             }

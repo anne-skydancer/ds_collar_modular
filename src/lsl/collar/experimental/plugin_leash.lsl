@@ -1,10 +1,11 @@
 /*--------------------
 PLUGIN: plugin_leash.lsl
 VERSION: 1.10
-REVISION: 0
+REVISION: 1
 PURPOSE: User interface and configuration for the leashing system
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
+- v1.1 rev 1: Migrate dialog buttons to button_data format with context-based routing.
 - v1.1 rev 0: Self-declares button visibility policy to LSD on registration.
   Replaces hardcoded ALLOWED_ACL_* lists and inAllowedList() with policy reads.
   Button list built from get_policy_buttons() + state-dependent logic.
@@ -76,18 +77,23 @@ integer btn_allowed(string label) {
 }
 
 
+/* -------------------- BUTTON DATA HELPER -------------------- */
+string btn(string label, string cmd) {
+    return llList2Json(JSON_OBJECT, ["label", label, "context", cmd]);
+}
+
 /* -------------------- UNIFIED MENU DISPLAY -------------------- */
-showMenu(string context, string title, string body, list buttons) {
+showMenu(string context, string title, string body, list button_data) {
     SessionId = generate_session_id();
     MenuContext = context;
-    
+
     llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
         "type", "dialog_open",
         "session_id", SessionId,
         "user", (string)CurrentUser,
         "title", title,
         "body", body,
-        "buttons", llList2Json(JSON_ARRAY, buttons),
+        "button_data", llList2Json(JSON_ARRAY, button_data),
         "timeout", 60
     ]), NULL_KEY);
 }
@@ -124,33 +130,33 @@ showMainMenu() {
     // Load policy-allowed buttons for this user's ACL level
     gPolicyButtons = get_policy_buttons(PLUGIN_CONTEXT, UserAcl);
 
-    list buttons = ["Back"];
+    list button_data = [btn("Back", "back")];
 
     // Action buttons — policy defines the superset, state logic narrows
     if (!Leashed) {
-        if (btn_allowed("Clip"))    buttons += ["Clip"];
-        if (btn_allowed("Offer"))   buttons += ["Offer"];
-        if (btn_allowed("Coffle"))  buttons += ["Coffle"];
-        if (btn_allowed("Post"))    buttons += ["Post"];
+        if (btn_allowed("Clip"))    button_data += [btn("Clip", "clip")];
+        if (btn_allowed("Offer"))   button_data += [btn("Offer", "offer")];
+        if (btn_allowed("Coffle"))  button_data += [btn("Coffle", "coffle")];
+        if (btn_allowed("Post"))    button_data += [btn("Post", "post")];
     }
     else {
         // Unclip: policy + must be leasher or ACL 3+
         if (btn_allowed("Unclip") && (CurrentUser == Leasher || UserAcl >= 3)) {
-            buttons += ["Unclip"];
+            button_data += [btn("Unclip", "unclip")];
         }
         // Pass/Yank: policy + must be current leasher
         if (CurrentUser == Leasher) {
-            if (btn_allowed("Pass")) buttons += ["Pass"];
-            if (btn_allowed("Yank")) buttons += ["Yank"];
+            if (btn_allowed("Pass")) button_data += [btn("Pass", "pass")];
+            if (btn_allowed("Yank")) button_data += [btn("Yank", "yank")];
         }
         // Take: policy + not current leasher + ACL 3+
         if (btn_allowed("Take") && CurrentUser != Leasher && UserAcl >= 3) {
-            buttons += ["Take"];
+            button_data += [btn("Take", "clip")];
         }
     }
 
-    if (btn_allowed("Get Holder")) buttons += ["Get Holder"];
-    if (btn_allowed("Settings"))   buttons += ["Settings"];
+    if (btn_allowed("Get Holder")) button_data += [btn("Get Holder", "get_holder")];
+    if (btn_allowed("Settings"))   button_data += [btn("Settings", "settings")];
 
     string body;
     if (Leashed) {
@@ -173,25 +179,27 @@ showMainMenu() {
         body = "Not leashed";
     }
 
-    showMenu("main", "Leash", body, buttons);
+    showMenu("main", "Leash", body, button_data);
 }
 
 showSettingsMenu() {
-    list buttons = ["Back", "Length"];
+    list button_data = [btn("Back", "back"), btn("Length", "length")];
     if (TurnToFace) {
-        buttons += ["Turn: On"];
+        button_data += [btn("Turn: On", "toggle_turn")];
     }
     else {
-        buttons += ["Turn: Off"];
+        button_data += [btn("Turn: Off", "toggle_turn")];
     }
-    
+
     string body = "Leash Settings\nLength: " + (string)LeashLength + "m\nTurn to face: " + (string)TurnToFace;
-    showMenu("settings", "Settings", body, buttons);
+    showMenu("settings", "Settings", body, button_data);
 }
 
 showLengthMenu() {
-    showMenu("length", "Length", "Select leash length\nCurrent: " + (string)LeashLength + "m", 
-              ["<<", ">>", "Back", "1m", "3m", "5m", "10m", "15m", "20m"]);
+    showMenu("length", "Length", "Select leash length\nCurrent: " + (string)LeashLength + "m",
+              [btn("<<", "prev"), btn(">>", "next"), btn("Back", "back"),
+               btn("1m", "1"), btn("3m", "3"), btn("5m", "5"),
+               btn("10m", "10"), btn("15m", "15"), btn("20m", "20")]);
 }
 
 showPassMenu() {
@@ -233,7 +241,13 @@ buildAvatarMenu() {
         i = i + 2;
     }
 
-    list menu_buttons = ["<<", ">>", "Back"] + names;
+    list button_data = [btn("<<", "prev"), btn(">>", "next"), btn("Back", "back")];
+    i = 0;
+    while (i < llGetListLength(names)) {
+        string avatar_name = llList2String(names, i);
+        button_data += [btn(avatar_name, "sel:" + avatar_name)];
+        i++;
+    }
 
     string title = "";
     if (IsOfferMode) {
@@ -243,7 +257,7 @@ buildAvatarMenu() {
         title = "Pass Leash";
     }
 
-    showMenu("pass", title, "Select avatar:", menu_buttons);
+    showMenu("pass", title, "Select avatar:", button_data);
 }
 
 showCoffleMenu() {
@@ -288,10 +302,10 @@ displayObjectMenu() {
     }
 
     // Build numbered buttons (only for items on this page)
-    list menu_buttons = ["<<", ">>", "Back"];
+    list button_data = [btn("<<", "prev"), btn(">>", "next"), btn("Back", "back")];
     i = 1;
     while (i <= (end_index - start_index)) {
-        menu_buttons += [(string)i];
+        button_data += [btn((string)i, "sel:" + (string)i)];
         i++;
     }
 
@@ -308,7 +322,7 @@ displayObjectMenu() {
         title = "Post";
     }
 
-    showMenu(SensorMode, title, body, menu_buttons);
+    showMenu(SensorMode, title, body, button_data);
 }
 
 /* -------------------- OFFER DIALOG (NEW v1.0) -------------------- */
@@ -327,20 +341,20 @@ showOfferDialog(key target, key originator) {
         "user", (string)target,
         "title", "Leash Offer",
         "body", offerer_name + " (" + wearer_name + ") is offering you their leash.",
-        "buttons", llList2Json(JSON_ARRAY, ["Accept", "Decline"]),
+        "button_data", llList2Json(JSON_ARRAY, [btn("Accept", "accept"), btn("Decline", "decline")]),
         "timeout", 60
     ]), NULL_KEY);
     
 }
 
-handleOfferResponse(string button) {
-    if (button == "Accept") {
+handleOfferResponse(string ctx) {
+    if (ctx == "accept") {
         // Send grab action to kernel with target as leasher
         llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
             "type", "leash_action",
             "action", "grab"
         ]), OfferTarget);
-        
+
         llRegionSayTo(OfferOriginator, 0, llKey2Name(OfferTarget) + " accepted your leash offer.");
     }
     else {
@@ -404,93 +418,92 @@ sendSetLength(integer length) {
 }
 
 /* -------------------- BUTTON HANDLERS -------------------- */
-handleButtonClick(string button) {
-    
+handleButtonClick(string ctx) {
+
     if (MenuContext == "main") {
-        if (button == "Clip" || button == "Take") {
-            if (btn_allowed(button)) {
-                sendLeashAction("grab");
-                cleanupSession();
-            }
+        if (ctx == "clip") {
+            sendLeashAction("grab");
+            cleanupSession();
         }
-        else if (button == "Unclip") {
+        else if (ctx == "unclip") {
             sendLeashAction("release");
             cleanupSession();
         }
-        else if (button == "Pass") {
+        else if (ctx == "pass") {
             IsOfferMode = FALSE;
             showPassMenu();
         }
-        else if (button == "Offer") {
+        else if (ctx == "offer") {
             IsOfferMode = TRUE;
             showPassMenu();
         }
-        else if (button == "Coffle") {
+        else if (ctx == "coffle") {
             showCoffleMenu();
         }
-        else if (button == "Post") {
+        else if (ctx == "post") {
             showPostMenu();
         }
-        else if (button == "Yank") {
+        else if (ctx == "yank") {
             sendLeashAction("yank");
             showMainMenu();
         }
-        else if (button == "Get Holder") {
+        else if (ctx == "get_holder") {
             giveHolderObject();
             showMainMenu();
         }
-        else if (button == "Settings") {
+        else if (ctx == "settings") {
             showSettingsMenu();
         }
-        else if (button == "Back") {
+        else if (ctx == "back") {
             returnToRoot();
         }
     }
     else if (MenuContext == "settings") {
-        if (button == "Length") {
+        if (ctx == "length") {
             showLengthMenu();
         }
-        else if (button == "Turn: On" || button == "Turn: Off") {
+        else if (ctx == "toggle_turn") {
             sendLeashAction("toggle_turn");
             scheduleStateQuery("settings");
         }
-        else if (button == "Back") {
+        else if (ctx == "back") {
             showMainMenu();
         }
     }
     else if (MenuContext == "length") {
-        if (button == "Back") {
+        if (ctx == "back") {
             showSettingsMenu();
         }
-        else if (button == "<<") {
+        else if (ctx == "prev") {
             sendSetLength(LeashLength - 1);
             scheduleStateQuery("length");
         }
-        else if (button == ">>") {
+        else if (ctx == "next") {
             sendSetLength(LeashLength + 1);
             scheduleStateQuery("length");
         }
         else {
-            integer length = (integer)button;
-            if (length >= 1 && length <= 20) {
-                sendSetLength(length);
+            integer sel_length = (integer)ctx;
+            if (sel_length >= 1 && sel_length <= 20) {
+                sendSetLength(sel_length);
                 scheduleStateQuery("settings");
             }
         }
     }
     else if (MenuContext == "pass") {
-        if (button == "Back") {
+        if (ctx == "back") {
             showMainMenu();
         }
-        else if (button == "<<" || button == ">>") {
+        else if (ctx == "prev" || ctx == "next") {
             showPassMenu();
         }
-        else {
-            // Find selected avatar in SensorCandidates
+        else if (llSubStringIndex(ctx, "sel:") == 0) {
+            // Extract avatar name from "sel:Name"
+            string avatar_name = llGetSubString(ctx, 4, -1);
             key selected = NULL_KEY;
             integer i = 0;
             while (i < llGetListLength(SensorCandidates)) {
-                if (llList2String(SensorCandidates, i) == button) {
+                if (llList2String(SensorCandidates, i) == avatar_name) {
                     selected = llList2Key(SensorCandidates, i + 1);
                     i = llGetListLength(SensorCandidates);
                 }
@@ -516,19 +529,17 @@ handleButtonClick(string button) {
             }
         }
     }
-    else if (MenuContext == "coffle") {
-        if (button == "Back") {
+    else if (MenuContext == "coffle" || MenuContext == "post") {
+        if (ctx == "back") {
             showMainMenu();
         }
-        else if (button == "<<") {
-            // Previous page
+        else if (ctx == "prev") {
             if (SensorPage > 0) {
                 SensorPage--;
             }
             displayObjectMenu();
         }
-        else if (button == ">>") {
-            // Next page
+        else if (ctx == "next") {
             integer total_items = llGetListLength(SensorCandidates) / 2;
             integer total_pages = (total_items + 8) / 9;
             if (SensorPage < (total_pages - 1)) {
@@ -536,59 +547,15 @@ handleButtonClick(string button) {
             }
             displayObjectMenu();
         }
-        else {
-            // Numbered selection - convert to actual index
-            integer button_num = (integer)button;
+        else if (llSubStringIndex(ctx, "sel:") == 0) {
+            integer button_num = (integer)llGetSubString(ctx, 4, -1);
             if (button_num >= 1 && button_num <= 9) {
                 integer actual_index = (SensorPage * 9) + (button_num - 1);
-                integer list_index = actual_index * 2;  // SensorCandidates is [name, key, name, key, ...]
+                integer list_index = actual_index * 2;
 
                 if (list_index < llGetListLength(SensorCandidates)) {
                     key selected = llList2Key(SensorCandidates, list_index + 1);
-                    sendLeashActionWithTarget("coffle", selected);
-                    cleanupSession();
-                }
-                else {
-                    llRegionSayTo(CurrentUser, 0, "Invalid selection.");
-                    showMainMenu();
-                }
-            }
-            else {
-                llRegionSayTo(CurrentUser, 0, "Invalid selection.");
-                showMainMenu();
-            }
-        }
-    }
-    else if (MenuContext == "post") {
-        if (button == "Back") {
-            showMainMenu();
-        }
-        else if (button == "<<") {
-            // Previous page
-            if (SensorPage > 0) {
-                SensorPage--;
-            }
-            displayObjectMenu();
-        }
-        else if (button == ">>") {
-            // Next page
-            integer total_items = llGetListLength(SensorCandidates) / 2;
-            integer total_pages = (total_items + 8) / 9;
-            if (SensorPage < (total_pages - 1)) {
-                SensorPage++;
-            }
-            displayObjectMenu();
-        }
-        else {
-            // Numbered selection - convert to actual index
-            integer button_num = (integer)button;
-            if (button_num >= 1 && button_num <= 9) {
-                integer actual_index = (SensorPage * 9) + (button_num - 1);
-                integer list_index = actual_index * 2;  // SensorCandidates is [name, key, name, key, ...]
-
-                if (list_index < llGetListLength(SensorCandidates)) {
-                    key selected = llList2Key(SensorCandidates, list_index + 1);
-                    sendLeashActionWithTarget("post", selected);
+                    sendLeashActionWithTarget(MenuContext, selected);
                     cleanupSession();
                 }
                 else {
@@ -761,20 +728,20 @@ default
             if (msg_type == JSON_INVALID) return;
 
             if (msg_type == "dialog_response") {
-                if (llJsonGetValue(msg, ["session_id"]) == JSON_INVALID || llJsonGetValue(msg, ["button"]) == JSON_INVALID) return;
-                
+                if (llJsonGetValue(msg, ["session_id"]) == JSON_INVALID || llJsonGetValue(msg, ["context"]) == JSON_INVALID) return;
+
                 string response_session = llJsonGetValue(msg, ["session_id"]);
-                string button = llJsonGetValue(msg, ["button"]);
-                
+                string ctx = llJsonGetValue(msg, ["context"]);
+
                 // Check if this is an offer dialog response
                 if (response_session == OfferDialogSession) {
-                    handleOfferResponse(button);
+                    handleOfferResponse(ctx);
                     return;
                 }
-                
+
                 // Otherwise handle menu dialog response
                 if (response_session != SessionId) return;
-                handleButtonClick(button);
+                handleButtonClick(ctx);
                 return;
             }
 

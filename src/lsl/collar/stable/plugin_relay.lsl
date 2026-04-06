@@ -597,17 +597,6 @@ return_to_root() {
     cleanup_session();
 }
 
-close_silent() {
-    string msg = llList2Json(JSON_OBJECT, [
-        "type", "close",
-        "context", PLUGIN_CONTEXT,
-        "user", (string)CurrentUser
-    ]);
-    llMessageLinked(LINK_SET, UI_BUS, msg, CurrentUser);
-
-    cleanup_session();
-}
-
 /* -------------------- SESSION MANAGEMENT -------------------- */
 
 cleanup_session() {

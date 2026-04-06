@@ -44,44 +44,22 @@ else
         cd "$LSLINT_DIR"
     fi
     
-    echo "Building lslint..."
-    # Check if we have make
-    if command -v make &> /dev/null; then
-        make
-        cp lslint.exe "$INSTALL_DIR/" || cp lslint "$INSTALL_DIR/"
-        echo "✅ lslint installed to $INSTALL_DIR"
-    else
-        echo "⚠️ 'make' not found. Attempting to download pre-built binary..."
-        
-        # URL for the latest known working nightly build for Windows 64-bit
-        DOWNLOAD_URL="https://github.com/Makopo/lslint/releases/download/nightly_build_20230410045235/lslint_nightly_build_20230410045235_win64.zip"
-        ZIP_FILE="lslint.zip"
-        
-        if command -v curl &> /dev/null; then
-            curl -L -o "$ZIP_FILE" "$DOWNLOAD_URL"
-        elif command -v wget &> /dev/null; then
-            wget -O "$ZIP_FILE" "$DOWNLOAD_URL"
-        else
-            echo "❌ Neither 'curl' nor 'wget' found. Cannot download binary."
-            exit 1
-        fi
-        
-        if command -v unzip &> /dev/null; then
-            unzip -o "$ZIP_FILE"
-            # Find the exe (it might be in a subdir or named differently)
-            FOUND_EXE=$(find . -name "lslint.exe" | head -n 1)
-            if [ -n "$FOUND_EXE" ]; then
-                cp "$FOUND_EXE" "$INSTALL_DIR/lslint.exe"
-                echo "✅ lslint installed to $INSTALL_DIR (from binary)"
-            else
-                echo "❌ lslint.exe not found in downloaded zip."
-                exit 1
-            fi
-        else
-            echo "❌ 'unzip' not found. Cannot extract binary."
-            exit 1
-        fi
+    echo "Building lslint from source (anne-skydancer fork)..."
+    if ! command -v make &> /dev/null; then
+        echo "❌ 'make' not found."
+        echo ""
+        echo "The anne-skydancer/lslint fork supports newer LSL builtins"
+        echo "and must be built from source. Please install build tools:"
+        echo "  - On Git Bash/MSYS2: pacman -S make gcc"
+        echo "  - On Linux: apt install build-essential (or equivalent)"
+        echo ""
+        echo "Pre-built binaries from upstream Makopo/lslint are NOT used"
+        echo "because they don't recognize newer LSL builtins like llListSortStrided."
+        exit 1
     fi
+    make
+    cp lslint.exe "$INSTALL_DIR/" 2>/dev/null || cp lslint "$INSTALL_DIR/"
+    echo "✅ lslint installed to $INSTALL_DIR"
 fi
 
 echo ""

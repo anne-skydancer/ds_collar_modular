@@ -1,10 +1,11 @@
 /*--------------------
 PLUGIN: plugin_tpe.lsl
 VERSION: 1.10
-REVISION: 1
+REVISION: 2
 PURPOSE: Manage TPE mode with wearer confirmation and owner oversight
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
+- v1.1 rev 2: Migrate dialog buttons to button_data format with context-based routing.
 - v1.1 rev 1: Migrate from JSON broadcast payloads to direct LSD reads.
   Remove apply_settings_delta() and request_settings_sync(). apply_settings_sync()
   is now parameterless and reads all keys from LSD. Both settings_sync and
@@ -51,6 +52,11 @@ string SessionId = "";
 key WearerKey = NULL_KEY;          // Owner of the collar (for confirmation)
 
 /* -------------------- HELPERS -------------------- */
+
+// Helper: create a button_data entry with label and command context
+string btn(string label, string cmd) {
+    return llList2Json(JSON_OBJECT, ["label", label, "context", cmd]);
+}
 
 string gen_session() {
     return (string)llGetKey() + "_" + (string)llGetUnixTime();
@@ -155,8 +161,8 @@ update_ui_label() {
 
 /* -------------------- BUTTON HANDLING -------------------- */
 
-handle_button_click(string button) {
-    if (button == "Yes") {
+handle_button_click(string cmd) {
+    if (cmd == "confirm") {
         // Wearer confirmed - enable TPE
         TpeModeEnabled = TRUE;
         persist_tpe_mode(TRUE);
@@ -183,7 +189,7 @@ handle_button_click(string button) {
 
         cleanup_session();
     }
-    else if (button == "No") {
+    else if (cmd == "cancel") {
         // Wearer declined - cancel TPE activation
         llRegionSayTo(WearerKey, 0, "TPE activation cancelled.");
         if (CurrentUser != WearerKey) {
@@ -256,13 +262,18 @@ handle_tpe_click(key user, integer acl_level) {
 
         SessionId = gen_session();
 
+        list button_data = [
+            btn("Yes", "confirm"),
+            btn("No", "cancel")
+        ];
+
         llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
             "type", "dialog_open",
             "session_id", SessionId,
             "user", (string)llGetOwner(),  // Send to WEARER, not CurrentUser
             "title", "TPE Confirmation",
             "body", msg_body,
-            "buttons", llList2Json(JSON_ARRAY, ["Yes", "No"]),
+            "button_data", llList2Json(JSON_ARRAY, button_data),
             "timeout", 60
         ]), NULL_KEY);
 
@@ -363,9 +374,10 @@ default
                 string session_id = llJsonGetValue(str, ["session_id"]);
                 if (session_id != SessionId) return;
 
-                string button = llJsonGetValue(str, ["button"]);
+                string cmd = llJsonGetValue(str, ["context"]);
+                if (cmd == JSON_INVALID) cmd = "";
 
-                handle_button_click(button);
+                handle_button_click(cmd);
             }
             else if (msg_type == "dialog_timeout") {
                 string session_id = llJsonGetValue(str, ["session_id"]);

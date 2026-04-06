@@ -31,12 +31,6 @@ string KEY_PUBLIC_ACCESS    = "public.mode";
 string KEY_TPE_MODE         = "tpe.mode";
 string KEY_LOCKED           = "lock.locked";
 
-// RLV exception keys
-string KEY_EX_OWNER_TP   = "rlvex.ownertp";
-string KEY_EX_OWNER_IM   = "rlvex.ownerim";
-string KEY_EX_TRUSTEE_TP = "rlvex.trusteetp";
-string KEY_EX_TRUSTEE_IM = "rlvex.trusteeim";
-
 // Access plugin keys
 string KEY_RUNAWAY_ENABLED = "access.enablerunaway";
 
@@ -445,21 +439,10 @@ parse_notecard_line(string line) {
     }
 }
 
-// Clear all known settings keys from LSD so removed notecard entries
-// don't persist as stale data.
+// Factory reset: wipe all LSD data. Policies and ACL cache
+// are rebuilt when plugins re-register after the signal.
 clear_lsd_settings() {
-    list keys = [
-        KEY_MULTI_OWNER_MODE, KEY_OWNER, KEY_OWNERS, KEY_TRUSTEES,
-        KEY_BLACKLIST, KEY_PUBLIC_ACCESS, KEY_TPE_MODE, KEY_LOCKED,
-        KEY_EX_OWNER_TP, KEY_EX_OWNER_IM, KEY_EX_TRUSTEE_TP, KEY_EX_TRUSTEE_IM,
-        KEY_RUNAWAY_ENABLED
-    ];
-    integer i = 0;
-    integer len = llGetListLength(keys);
-    while (i < len) {
-        llLinksetDataDelete(llList2String(keys, i));
-        i += 1;
-    }
+    llLinksetDataReset();
 }
 
 integer start_notecard_reading() {

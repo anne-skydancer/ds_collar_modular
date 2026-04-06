@@ -1,10 +1,12 @@
 /*--------------------
 PLUGIN: plugin_maint.lsl
 VERSION: 1.10
-REVISION: 1
+REVISION: 2
 PURPOSE: Maintenance and utility functions for collar management
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
+- v1.1 rev 2: Add Factory Reset (wearer-only, confirmation required).
+  Wipes all LSD data and resets all scripts to defaults.
 - v1.1 rev 1: Migrate from JSON broadcast payloads to direct LSD reads.
   Remove CachedSettings/SettingsReady; do_view_settings() and
   do_display_access_list() now read individual keys from LSD on demand.
@@ -45,6 +47,7 @@ key CurrentUser = NULL_KEY;
 integer CurrentUserAcl = -999;
 list gPolicyButtons = [];
 string SessionId = "";
+string MenuContext = "main";
 
 /* -------------------- HELPERS -------------------- */
 
@@ -77,9 +80,9 @@ register_self() {
     // Write button visibility policy to LSD (default-deny per ACL level)
     llLinksetDataWrite("policy:" + PLUGIN_CONTEXT, llList2Json(JSON_OBJECT, [
         "1", "Get HUD,User Manual",
-        "2", "View Settings,Reload Settings,Access List,Reload Collar,Clear Leash,Get HUD,User Manual",
+        "2", "View Settings,Reload Settings,Access List,Reload Collar,Clear Leash,Get HUD,User Manual,Factory Reset",
         "3", "View Settings,Reload Settings,Access List,Reload Collar,Clear Leash,Get HUD,User Manual",
-        "4", "View Settings,Reload Settings,Access List,Reload Collar,Clear Leash,Get HUD,User Manual",
+        "4", "View Settings,Reload Settings,Access List,Reload Collar,Clear Leash,Get HUD,User Manual,Factory Reset",
         "5", "View Settings,Reload Settings,Access List,Reload Collar,Clear Leash,Get HUD,User Manual"
     ]));
 
@@ -103,23 +106,27 @@ send_pong() {
 
 /* -------------------- MENU DISPLAY -------------------- */
 
+// Helper: create a button_data entry with label and command context
+string btn(string label, string cmd) {
+    return llList2Json(JSON_OBJECT, ["label", label, "context", cmd]);
+}
+
 show_main_menu() {
-    // Load policy-allowed buttons for this user's ACL level
+    MenuContext = "main";
     gPolicyButtons = get_policy_buttons(PLUGIN_CONTEXT, CurrentUserAcl);
 
     string body = "Maintenance:\n\n";
-    list buttons = ["Back"];
+    list button_data = [btn("Back", "back")];
 
-    // Build menu from policy
-    if (btn_allowed("View Settings"))    buttons += ["View Settings"];
-    if (btn_allowed("Reload Settings"))  buttons += ["Reload Settings"];
-    if (btn_allowed("Access List"))      buttons += ["Access List"];
-    if (btn_allowed("Reload Collar"))    buttons += ["Reload Collar"];
-    if (btn_allowed("Clear Leash"))      buttons += ["Clear Leash"];
-    if (btn_allowed("Get HUD"))          buttons += ["Get HUD"];
-    if (btn_allowed("User Manual"))      buttons += ["User Manual"];
+    if (btn_allowed("View Settings"))    button_data += [btn("View Settings", "view_settings")];
+    if (btn_allowed("Reload Settings"))  button_data += [btn("Reload Settings", "reload_settings")];
+    if (btn_allowed("Access List"))      button_data += [btn("Access List", "access_list")];
+    if (btn_allowed("Reload Collar"))    button_data += [btn("Reload Collar", "reload_collar")];
+    if (btn_allowed("Clear Leash"))      button_data += [btn("Clear Leash", "clear_leash")];
+    if (btn_allowed("Get HUD"))          button_data += [btn("Get HUD", "get_hud")];
+    if (btn_allowed("User Manual"))      button_data += [btn("User Manual", "user_manual")];
+    if (btn_allowed("Factory Reset"))    button_data += [btn("Factory Reset", "factory_reset")];
 
-    // Adjust body text based on available buttons
     if (btn_allowed("View Settings")) {
         body += "System utilities and documentation.";
     }
@@ -129,17 +136,15 @@ show_main_menu() {
 
     SessionId = generate_session_id();
 
-    string msg = llList2Json(JSON_OBJECT, [
+    llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
         "type", "dialog_open",
         "session_id", SessionId,
         "user", (string)CurrentUser,
         "title", "Maintenance",
         "body", body,
-        "buttons", llList2Json(JSON_ARRAY, buttons),
+        "button_data", llList2Json(JSON_ARRAY, button_data),
         "timeout", 60
-    ]);
-
-    llMessageLinked(LINK_SET, DIALOG_BUS, msg, NULL_KEY);
+    ]), NULL_KEY);
 }
 
 /* -------------------- ACTIONS -------------------- */
@@ -357,6 +362,42 @@ do_display_access_list() {
     llRegionSayTo(CurrentUser, 0, output);
 }
 
+show_factory_reset_confirm() {
+    MenuContext = "factory_reset";
+    SessionId = generate_session_id();
+
+    list button_data = [
+        btn("No", "cancel"),
+        btn("Yes", "confirm")
+    ];
+
+    llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
+        "type", "dialog_open",
+        "session_id", SessionId,
+        "user", (string)CurrentUser,
+        "title", "Factory Reset",
+        "body", "This will ERASE ALL settings and return the collar to factory defaults.\n\nOwnership, trustees, lock state, and all other configuration will be lost.\n\nAre you sure?",
+        "button_data", llList2Json(JSON_ARRAY, button_data),
+        "timeout", 30
+    ]), NULL_KEY);
+}
+
+do_factory_reset() {
+    llRegionSayTo(CurrentUser, 0, "Factory reset in progress...");
+    cleanup_session();
+
+    // Wipe all LSD data
+    llLinksetDataReset();
+
+    // Reset all scripts in the linkset
+    llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
+        "type", "soft_reset_all",
+        "from", "factory_reset"
+    ]), NULL_KEY);
+
+    llResetScript();
+}
+
 do_reload_settings() {
     string msg = llList2Json(JSON_OBJECT, [
         "type", "settings_get"
@@ -434,6 +475,7 @@ cleanup_session() {
     CurrentUserAcl = -999;
     gPolicyButtons = [];
     SessionId = "";
+    MenuContext = "main";
 }
 
 /* -------------------- DIALOG HANDLERS -------------------- */
@@ -445,55 +487,68 @@ handle_dialog_response(string msg) {
     string session = llJsonGetValue(msg, ["session_id"]);
     if (session != SessionId) return;
 
-    string button = llJsonGetValue(msg, ["button"]);
+    string cmd = llJsonGetValue(msg, ["context"]);
+    if (cmd == JSON_INVALID) cmd = "";
 
     // Navigation
-    if (button == "Back") {
-        return_to_root();
+    if (cmd == "back") {
+        if (MenuContext != "main") {
+            show_main_menu();
+        }
+        else {
+            return_to_root();
+        }
         return;
     }
 
-    // Admin actions (button only shown to qualified ACL)
-    if (button == "View Settings") {
+    // Confirmation dialogs — route by menu context
+    if (MenuContext == "factory_reset") {
+        if (cmd == "confirm") {
+            do_factory_reset();
+            return;
+        }
+        show_main_menu();
+        return;
+    }
+
+    // Main menu commands
+    if (cmd == "view_settings") {
         do_view_settings();
         show_main_menu();
         return;
     }
-
-    if (button == "Access List") {
+    if (cmd == "access_list") {
         do_display_access_list();
         show_main_menu();
         return;
     }
-
-    if (button == "Reload Settings") {
+    if (cmd == "reload_settings") {
         do_reload_settings();
         show_main_menu();
         return;
     }
-
-    if (button == "Clear Leash") {
+    if (cmd == "clear_leash") {
         do_clear_leash();
         show_main_menu();
         return;
     }
-
-    if (button == "Reload Collar") {
+    if (cmd == "reload_collar") {
         do_reload_collar();
         show_main_menu();
         return;
     }
-
-    // Public actions
-    if (button == "Get HUD") {
+    if (cmd == "get_hud") {
         do_give_hud();
         show_main_menu();
         return;
     }
-
-    if (button == "User Manual") {
+    if (cmd == "user_manual") {
         do_give_manual();
         show_main_menu();
+        return;
+    }
+    if (cmd == "factory_reset") {
+        show_factory_reset_confirm();
         return;
     }
 }

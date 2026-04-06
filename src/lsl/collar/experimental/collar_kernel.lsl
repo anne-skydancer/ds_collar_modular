@@ -169,14 +169,6 @@ integer registry_find(string context) {
     return -1;
 }
 
-integer registry_find_by_script(string script_name) {
-    integer idx = llListFindList(PluginScripts, [script_name]);
-    if (idx != -1) {
-        return idx * REG_STRIDE;
-    }
-    return -1;
-}
-
 // Add or update plugin in registry
 // Returns TRUE if new plugin added OR script UUID changed (recompiled/updated)
 // Returns FALSE only if re-registering with identical UUID
