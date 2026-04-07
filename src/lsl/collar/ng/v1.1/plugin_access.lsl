@@ -1,10 +1,16 @@
 /*--------------------
 PLUGIN: plugin_access.lsl
 VERSION: 1.10
-REVISION: 2
+REVISION: 3
 PURPOSE: Owner, trustee, and honorific management workflows
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
+- v1.1 rev 3: Two-mode access model. Single-owner mode reads/writes scalar
+  access.owner / access.ownername / access.ownerhonorific. Multi-owner mode
+  is read-only from notecard CSVs (access.owneruuids/names/honorifics) and
+  the menu hides all owner-editing buttons. New API messages: set_owner,
+  clear_owner, add_trustee, remove_trustee, runaway. Runaway now triggers
+  factory reset via kmod_settings instead of clearing settings individually.
 - v1.1 rev 2: Migrate dialog buttons to button_data format with context-based routing.
 - v1.1 rev 1: Migrate settings reads from JSON broadcast to direct LSD reads.
   Remove apply_settings_delta(); both sync and delta call apply_settings_sync().
@@ -30,21 +36,28 @@ string PLUGIN_LABEL = "Access";
 integer MAX_NUMBERED_LIST_ITEMS = 11;  // 12 dialog buttons - 1 Back button
 
 /* -------------------- SETTINGS KEYS -------------------- */
-string KEY_MULTI_OWNER_MODE = "access.multiowner";
-string KEY_OWNER = "access.owner";
-string KEY_OWNERS = "access.owners";
-string KEY_TRUSTEES = "access.trustees";
-string KEY_RUNAWAY_ENABLED = "access.enablerunaway";
+string KEY_MULTI_OWNER_MODE   = "access.multiowner";
+string KEY_OWNER              = "access.owner";              // single-owner uuid
+string KEY_OWNER_NAME         = "access.ownername";          // single-owner display name
+string KEY_OWNER_HONORIFIC    = "access.ownerhonorific";
+string KEY_OWNER_UUIDS        = "access.owneruuids";         // multi-owner CSV (notecard)
+string KEY_OWNER_NAMES        = "access.ownernames";
+string KEY_OWNER_HONORIFICS   = "access.ownerhonorifics";
+string KEY_TRUSTEE_UUIDS      = "access.trusteeuuids";
+string KEY_TRUSTEE_NAMES      = "access.trusteenames";
+string KEY_TRUSTEE_HONORIFICS = "access.trusteehonorifics";
+string KEY_RUNAWAY_ENABLED    = "access.enablerunaway";
 
 /* -------------------- STATE -------------------- */
 integer MultiOwnerMode;
 key OwnerKey;
-list OwnerKeys;
+list OwnerKeys;            // multi-owner list (read-only from notecard)
 string OwnerHonorific;
-string OwnerJson = "{}";
-string OwnersJson = "{}";
+list OwnerHonorifics;      // parallel to OwnerKeys (multi-owner)
+list OwnerNames;           // parallel to OwnerKeys (multi-owner)
 list TrusteeKeys;
-string TrusteesJson = "{}";
+list TrusteeHonorifics;
+list TrusteeNames;
 integer RunawayEnabled = TRUE;
 
 key CurrentUser;
@@ -179,93 +192,77 @@ apply_settings_sync() {
     OwnerKey = NULL_KEY;
     OwnerKeys = [];
     OwnerHonorific = "";
-    OwnerJson = "{}";
-    OwnersJson = "{}";
+    OwnerHonorifics = [];
+    OwnerNames = [];
     TrusteeKeys = [];
-    TrusteesJson = "{}";
+    TrusteeHonorifics = [];
+    TrusteeNames = [];
 
     string tmp = llLinksetDataRead(KEY_MULTI_OWNER_MODE);
-    if (tmp != "") {
-        MultiOwnerMode = (integer)tmp;
-    }
+    if (tmp != "") MultiOwnerMode = (integer)tmp;
 
-    string obj;
     if (MultiOwnerMode) {
-        obj = llLinksetDataRead(KEY_OWNERS);
-        if (obj != "") {
-            if (llJsonValueType(obj, []) == JSON_OBJECT) {
-                OwnersJson = obj;
-                list pairs = llJson2List(obj);
-                integer oi = 0;
-                integer olen = llGetListLength(pairs);
-                while (oi < olen) {
-                    OwnerKeys += [llList2String(pairs, oi)];
-                    oi += 2;
-                }
+        // Multi-owner: parallel CSVs (read-only, notecard managed)
+        OwnerKeys       = llCSV2List(llLinksetDataRead(KEY_OWNER_UUIDS));
+        OwnerNames      = llCSV2List(llLinksetDataRead(KEY_OWNER_NAMES));
+        OwnerHonorifics = llCSV2List(llLinksetDataRead(KEY_OWNER_HONORIFICS));
+        if (llGetListLength(OwnerKeys) > 0) {
+            OwnerKey = (key)llList2String(OwnerKeys, 0);
+            if (llGetListLength(OwnerHonorifics) > 0) {
+                OwnerHonorific = llList2String(OwnerHonorifics, 0);
             }
         }
     }
     else {
-        obj = llLinksetDataRead(KEY_OWNER);
-        if (obj != "") {
-            if (llJsonValueType(obj, []) == JSON_OBJECT) {
-                OwnerJson = obj;
-                list pairs = llJson2List(obj);
-                if (llGetListLength(pairs) >= 2) {
-                    OwnerKey = (key)llList2String(pairs, 0);
-                    OwnerHonorific = llList2String(pairs, 1);
-                }
-            }
+        // Single-owner: scalar trio
+        string raw = llLinksetDataRead(KEY_OWNER);
+        if (raw != "") {
+            OwnerKey = (key)raw;
+            OwnerHonorific = llLinksetDataRead(KEY_OWNER_HONORIFIC);
         }
     }
 
-    // Trustees: JSON object {uuid:honorific}
-    obj = llLinksetDataRead(KEY_TRUSTEES);
-    if (obj != "") {
-        if (llJsonValueType(obj, []) == JSON_OBJECT) {
-            TrusteesJson = obj;
-            list pairs = llJson2List(obj);
-            TrusteeKeys = [];
-            integer i = 0;
-            integer pairs_len = llGetListLength(pairs);
-            while (i < pairs_len) {
-                TrusteeKeys += [llList2String(pairs, i)];
-                i += 2;
-            }
-        }
-    }
+    // Trustees (always parallel CSVs)
+    TrusteeKeys       = llCSV2List(llLinksetDataRead(KEY_TRUSTEE_UUIDS));
+    TrusteeNames      = llCSV2List(llLinksetDataRead(KEY_TRUSTEE_NAMES));
+    TrusteeHonorifics = llCSV2List(llLinksetDataRead(KEY_TRUSTEE_HONORIFICS));
 
     RunawayEnabled = lsd_int(KEY_RUNAWAY_ENABLED, TRUE);
 }
 
 
 persist_owner(key owner, string hon) {
-    string obj = llList2Json(JSON_OBJECT, [(string)owner, hon]);
     llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
-        "type", "set", "key", KEY_OWNER, "value", obj
+        "type", "set_owner",
+        "uuid", (string)owner,
+        "honorific", hon
     ]), NULL_KEY);
 }
 
 add_trustee(key trustee, string hon) {
     llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
-        "type", "obj_set",
-        "key", KEY_TRUSTEES,
-        "field", (string)trustee,
-        "value", hon
+        "type", "add_trustee",
+        "uuid", (string)trustee,
+        "honorific", hon
     ]), NULL_KEY);
 }
 
 remove_trustee(key trustee) {
     llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
-        "type", "obj_remove",
-        "key", KEY_TRUSTEES,
-        "field", (string)trustee
+        "type", "remove_trustee",
+        "uuid", (string)trustee
     ]), NULL_KEY);
 }
 
 clear_owner() {
     llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
-        "type", "set", "key", KEY_OWNER, "value", "{}"
+        "type", "clear_owner"
+    ]), NULL_KEY);
+}
+
+trigger_runaway() {
+    llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
+        "type", "runaway"
     ]), NULL_KEY);
 }
 
@@ -282,10 +279,13 @@ show_main() {
 
     if (has_owner()) {
         if (MultiOwnerMode) {
-            body += "Multi-owner: " + (string)llGetListLength(OwnerKeys) + "\n";
+            body += "Multi-owner mode (notecard managed)\n";
+            body += "Owners: " + (string)llGetListLength(OwnerKeys) + "\n";
         }
         else {
-            body += "Owner: " + get_name(OwnerKey);
+            string display_name = llLinksetDataRead(KEY_OWNER_NAME);
+            if (display_name == "") display_name = get_name(OwnerKey);
+            body += "Owner: " + display_name;
             if (OwnerHonorific != "") body += " (" + OwnerHonorific + ")";
         }
     }
@@ -297,37 +297,41 @@ show_main() {
 
     list button_data = [btn("Back", "back")];
 
-    // Add Owner: policy allows + wearer + no current owner
-    if (btn_allowed("Add Owner") && CurrentUser == llGetOwner() && !has_owner()) {
-        button_data += [btn("Add Owner", "add_owner")];
-    }
-
-    // Runaway: policy allows + wearer + has owner + runaway enabled + single-owner mode
-    if (btn_allowed("Runaway") && CurrentUser == llGetOwner() && has_owner() && RunawayEnabled && !MultiOwnerMode) {
-        button_data += [btn("Runaway", "runaway")];
-    }
-
-    // Transfer: policy allows + is_owner + single-owner mode
-    if (btn_allowed("Transfer") && is_owner(CurrentUser) && !MultiOwnerMode) {
-        button_data += [btn("Transfer", "transfer")];
-    }
-
-    // Release: policy allows + is_owner
-    if (btn_allowed("Release") && is_owner(CurrentUser)) {
-        button_data += [btn("Release", "release")];
-    }
-
-    // Runaway toggle: policy allows + is_owner
-    if (is_owner(CurrentUser)) {
-        if (RunawayEnabled && btn_allowed("Runaway: On")) {
-            button_data += [btn("Runaway: On", "runaway_toggle")];
+    // In multi-owner mode, all owner editing is disabled (notecard managed).
+    // Trustee management remains available.
+    if (!MultiOwnerMode) {
+        // Add Owner: policy allows + wearer + no current owner
+        if (btn_allowed("Add Owner") && CurrentUser == llGetOwner() && !has_owner()) {
+            button_data += [btn("Add Owner", "add_owner")];
         }
-        else if (!RunawayEnabled && btn_allowed("Runaway: Off")) {
-            button_data += [btn("Runaway: Off", "runaway_toggle")];
+
+        // Runaway: policy allows + wearer + has owner + runaway enabled
+        if (btn_allowed("Runaway") && CurrentUser == llGetOwner() && has_owner() && RunawayEnabled) {
+            button_data += [btn("Runaway", "runaway")];
+        }
+
+        // Transfer: policy allows + is_owner
+        if (btn_allowed("Transfer") && is_owner(CurrentUser)) {
+            button_data += [btn("Transfer", "transfer")];
+        }
+
+        // Release: policy allows + is_owner
+        if (btn_allowed("Release") && is_owner(CurrentUser)) {
+            button_data += [btn("Release", "release")];
+        }
+
+        // Runaway toggle: policy allows + is_owner
+        if (is_owner(CurrentUser)) {
+            if (RunawayEnabled && btn_allowed("Runaway: On")) {
+                button_data += [btn("Runaway: On", "runaway_toggle")];
+            }
+            else if (!RunawayEnabled && btn_allowed("Runaway: Off")) {
+                button_data += [btn("Runaway: Off", "runaway_toggle")];
+            }
         }
     }
 
-    // Add/Rem Trustee: policy allows
+    // Trustee management: available in both modes
     if (btn_allowed("Add Trustee")) button_data += [btn("Add Trustee", "add_trustee")];
     if (btn_allowed("Rem Trustee")) button_data += [btn("Rem Trustee", "rem_trustee")];
 
@@ -416,13 +420,13 @@ show_remove_trustee() {
     list names = [];
     integer i = 0;
     while (i < llGetListLength(TrusteeKeys) && i < MAX_NUMBERED_LIST_ITEMS) {
-        string trustee_uuid = llList2String(TrusteeKeys, i);
-        string name = get_name((key)trustee_uuid);
-        string hon = llJsonGetValue(TrusteesJson, [trustee_uuid]);
-        if (hon != JSON_INVALID && hon != "") {
-            name += " (" + hon + ")";
-        }
-        names += [name];
+        string display_name = "";
+        if (i < llGetListLength(TrusteeNames)) display_name = llList2String(TrusteeNames, i);
+        if (display_name == "") display_name = get_name((key)llList2String(TrusteeKeys, i));
+        string hon = "";
+        if (i < llGetListLength(TrusteeHonorifics)) hon = llList2String(TrusteeHonorifics, i);
+        if (hon != "") display_name += " (" + hon + ")";
+        names += [display_name];
         i++;
     }
 
@@ -645,20 +649,8 @@ handle_button(string cmd, string label) {
         if (cmd == "confirm") {
             key old = get_primary_owner();
             string old_hon = OwnerHonorific;
-            clear_owner();
 
-            // Clear ownership-scoped settings: trustees, lock, TPE
-            llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
-                "type", "set", "key", KEY_TRUSTEES, "value", "{}"
-            ]), NULL_KEY);
-            llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
-                "type", "set", "key", "lock.locked", "value", "0"
-            ]), NULL_KEY);
-            llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
-                "type", "set", "key", "tpe.mode", "value", "0"
-            ]), NULL_KEY);
-
-            // Notify wearer with honorific and owner name
+            // Notify wearer and former owner before triggering reset
             if (old != NULL_KEY) {
                 string notify_msg = "You have run away from ";
                 if (old_hon != "") notify_msg += old_hon + " ";
@@ -670,11 +662,8 @@ handle_button(string cmd, string label) {
                 llRegionSayTo(llGetOwner(), 0, "You have run away.");
             }
 
-            // Trigger soft_reset to reinitialize all plugins
-            llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
-                "type", "soft_reset"
-            ]), NULL_KEY);
-
+            // Runaway = factory reset. kmod_settings wipes LSD and resets all scripts.
+            trigger_runaway();
             cleanup();
         }
         else show_main();

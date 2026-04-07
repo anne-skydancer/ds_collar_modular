@@ -1,10 +1,14 @@
 /*--------------------
 MODULE: kmod_bootstrap.lsl
 VERSION: 1.10
-REVISION: 1
-PURPOSE: Startup coordination, RLV detection, owner name resolution
+REVISION: 2
+PURPOSE: Startup coordination, RLV detection, status announcement
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- v1.1 rev 2: Two-mode access model. Read primary owner from access.owner
+  scalar (single mode) or access.owneruuids CSV (multi mode). Remove all
+  display-name resolution code — kmod_settings now resolves names async
+  and stores them in access.ownername / access.ownernames.
 - v1.1 rev 1: Migrate settings reads from JSON broadcast payloads to direct
   llLinksetDataRead. Remove request_settings() helper and settings_get message.
 - v1.1 rev 0: Version bump for LSD policy architecture. Bootstrap no longer
@@ -28,13 +32,16 @@ integer UseRelayChan;
 integer RELAY_CHAN = -1812221819;
 integer ProbeRelayBothSigns;  // Also try positive relay channel
 
-/* -------------------- DISPLAY NAME REQUEST RATE LIMITING -------------------- */
-float NAME_REQUEST_INTERVAL_SEC = 2.5;  // Space requests 2.5s apart to avoid throttling
-
 /* -------------------- SETTINGS KEYS -------------------- */
-string KEY_MULTI_OWNER_MODE = "access.multiowner";
-string KEY_OWNER = "access.owner";
-string KEY_OWNERS = "access.owners";
+string KEY_MULTI_OWNER_MODE  = "access.multiowner";
+string KEY_OWNER             = "access.owner";              // single-owner uuid
+string KEY_OWNER_NAME        = "access.ownername";          // single-owner resolved name
+string KEY_OWNER_HONORIFIC   = "access.ownerhonorific";
+string KEY_OWNER_UUIDS       = "access.owneruuids";         // multi-owner csv
+string KEY_OWNER_NAMES       = "access.ownernames";
+string KEY_OWNER_HONORIFICS  = "access.ownerhonorifics";
+
+string NAME_LOADING = "(loading...)";
 
 /* -------------------- BOOTSTRAP CONFIG -------------------- */
 integer BOOTSTRAP_TIMEOUT_SEC = 90;
@@ -64,22 +71,11 @@ integer RlvReady = FALSE;
 integer SettingsReceived = FALSE;
 integer SettingsRetryCount = 0;
 integer SettingsNextRetry = 0;
-integer MultiOwnerMode = FALSE;
-key OwnerKey = NULL_KEY;
-list OwnerKeys = [];
-string OwnerHonorific = "";
-string OwnersJson = "{}";
 
-// Name resolution
-list OwnerNameQueries = [];
-integer NAME_QUERY_STRIDE = 2;
-list OwnerDisplayNames = [];
-integer NameResolutionDeadline = 0;
-integer NAME_RESOLUTION_TIMEOUT_SEC = 30;
-
-// Name request queue (rate-limited)
-list PendingNameRequests = [];  // List of owner keys waiting for display name requests
-integer NextNameRequestTime = 0;  // Timestamp when next request can be sent
+// Name resolution wait: kmod_settings resolves names async; we wait briefly
+// after settings_received before announcing so the owner name is populated.
+integer NamesReadyDeadline = 0;
+integer NAMES_READY_TIMEOUT_SEC = 10;
 
 /* -------------------- HELPERS -------------------- */
 
@@ -196,178 +192,30 @@ stop_rlv_probe() {
 
 /* -------------------- SETTINGS LOADING -------------------- */
 
+// Mark settings as received and start the names-ready countdown.
+// Actual reading happens at announcement time directly from LSD.
 apply_settings_sync() {
-    // Reset
-    MultiOwnerMode = FALSE;
-    OwnerKey = NULL_KEY;
-    OwnerKeys = [];
-    OwnerHonorific = "";
-    OwnersJson = "{}";
-
-    // Load from LSD
-    string tmp = llLinksetDataRead(KEY_MULTI_OWNER_MODE);
-    if (tmp != "") {
-        MultiOwnerMode = (integer)tmp;
-    }
-
-    // Single owner: JSON object {uuid:honorific}
-    string obj = llLinksetDataRead(KEY_OWNER);
-    if (obj != "") {
-        if (llJsonValueType(obj, []) == JSON_OBJECT) {
-            list pairs = llJson2List(obj);
-            if (llGetListLength(pairs) >= 2) {
-                OwnerKey = (key)llList2String(pairs, 0);
-                OwnerHonorific = llList2String(pairs, 1);
-            }
-        }
-    }
-
-    // Multi-owner: JSON object {uuid:honorific, ...}
-    obj = llLinksetDataRead(KEY_OWNERS);
-    if (obj != "") {
-        if (llJsonValueType(obj, []) == JSON_OBJECT) {
-            OwnersJson = obj;
-            list pairs = llJson2List(obj);
-            integer pi = 0;
-            integer plen = llGetListLength(pairs);
-            while (pi < plen) {
-                OwnerKeys += [llList2String(pairs, pi)];
-                pi += 2;
-            }
-        }
-    }
-
     SettingsReceived = TRUE;
-
-    // Start name resolution
-    start_name_resolution();
+    NamesReadyDeadline = now() + NAMES_READY_TIMEOUT_SEC;
 }
 
-/* -------------------- NAME RESOLUTION -------------------- */
+// Returns TRUE if all owner names in LSD are resolved (no NAME_LOADING placeholders)
+integer names_ready() {
+    integer multi_mode = (integer)llLinksetDataRead(KEY_MULTI_OWNER_MODE);
 
-// Process next queued display name request (rate-limited)
-process_next_name_request() {
-    integer current_time = llGetUnixTime();
-    if (current_time == 0) return;  // Overflow protection
-
-    // Check if we have any pending requests
-    if (llGetListLength(PendingNameRequests) == 0) return;
-
-    // Check if we're allowed to make a request yet
-    if (NextNameRequestTime > 0 && current_time < NextNameRequestTime) return;
-
-    // Get next owner key from queue
-    key owner = llList2Key(PendingNameRequests, 0);
-    PendingNameRequests = llDeleteSubList(PendingNameRequests, 0, 0);
-
-    // Make the request
-    if (owner != NULL_KEY) {
-        key query_id = llRequestDisplayName(owner);
-        OwnerNameQueries += [query_id, owner];
-
-        // Find the index for this owner
-        integer owner_idx = -1;
-        if (MultiOwnerMode) {
-            owner_idx = llListFindList(OwnerKeys, [(string)owner]);
+    if (multi_mode) {
+        list names = llCSV2List(llLinksetDataRead(KEY_OWNER_NAMES));
+        integer i;
+        integer len = llGetListLength(names);
+        for (i = 0; i < len; i++) {
+            if (llList2String(names, i) == NAME_LOADING) return FALSE;
         }
-        else {
-            if (owner == OwnerKey) owner_idx = 0;
-        }
-
-        // Initialize display name placeholder
-        if (owner_idx != -1) {
-            if (owner_idx >= llGetListLength(OwnerDisplayNames)) {
-                OwnerDisplayNames += ["(loading...)"];
-            }
-        }
-
-
-        // Schedule next request (cast needed: NAME_REQUEST_INTERVAL_SEC is float)
-        integer next_time = current_time + (integer)NAME_REQUEST_INTERVAL_SEC;
-        if (next_time > current_time) {  // Overflow protection
-            NextNameRequestTime = next_time;
-        }
-        else {
-            NextNameRequestTime = current_time;
-        }
-    }
-}
-
-start_name_resolution() {
-    OwnerNameQueries = [];
-    OwnerDisplayNames = [];
-    PendingNameRequests = [];
-    NextNameRequestTime = 0;
-
-    integer current_time = llGetUnixTime();
-    if (current_time > 0) {
-        integer deadline = current_time + NAME_RESOLUTION_TIMEOUT_SEC;
-        if (deadline > current_time) {
-            NameResolutionDeadline = deadline;
-        }
-        else {
-            NameResolutionDeadline = current_time;
-        }
+        return TRUE;
     }
 
-    if (MultiOwnerMode) {
-        // Multi-owner: queue all owner keys for rate-limited requests
-        integer i = 0;
-        while (i < llGetListLength(OwnerKeys)) {
-            string owner_str = llList2String(OwnerKeys, i);
-            key owner = (key)owner_str;
-            if (owner != NULL_KEY) {
-                PendingNameRequests += [owner];
-                OwnerDisplayNames += ["(loading...)"];
-            }
-            i += 1;
-        }
-    }
-    else {
-        // Single owner: queue one request
-        if (OwnerKey != NULL_KEY) {
-            PendingNameRequests += [OwnerKey];
-            OwnerDisplayNames += ["(loading...)"];
-        }
-    }
-
-    // If no owners, we're done
-    if (llGetListLength(PendingNameRequests) == 0) {
-        check_bootstrap_complete();
-    }
-    else {
-        // Start processing the queue
-        process_next_name_request();
-    }
-}
-
-handle_dataserver_name(key query_id, string name) {
-    // Find this query
-    integer idx = llListFindList(OwnerNameQueries, [query_id]);
-    if (idx != -1) {
-        key owner = llList2Key(OwnerNameQueries, idx + 1);
-        
-        // Update display name
-        integer owner_idx = -1;
-        if (MultiOwnerMode) {
-            owner_idx = llListFindList(OwnerKeys, [(string)owner]);
-        }
-        else {
-            if (owner == OwnerKey) owner_idx = 0;
-        }
-        
-        if (owner_idx != -1 && owner_idx < llGetListLength(OwnerDisplayNames)) {
-            OwnerDisplayNames = llListReplaceList(OwnerDisplayNames, [name], owner_idx, owner_idx);
-        }
-        
-        // Remove this query
-        OwnerNameQueries = llDeleteSubList(OwnerNameQueries, idx, idx + NAME_QUERY_STRIDE - 1);
-        
-        // Check if all names resolved
-        if (llGetListLength(OwnerNameQueries) == 0) {
-            check_bootstrap_complete();
-        }
-    }
+    // Single owner: only check if there IS an owner
+    if (llLinksetDataRead(KEY_OWNER) == "") return TRUE;
+    return (llLinksetDataRead(KEY_OWNER_NAME) != NAME_LOADING);
 }
 
 /* -------------------- BOOTSTRAP INITIATION -------------------- */
@@ -376,20 +224,17 @@ start_bootstrap() {
     BootstrapComplete = FALSE;
     SettingsReceived = FALSE;
     SettingsRetryCount = 0;
-    NameResolutionDeadline = 0;
-    PendingNameRequests = [];
-    NextNameRequestTime = 0;
-    
+    NamesReadyDeadline = 0;
+
     BootstrapDeadline = now() + BOOTSTRAP_TIMEOUT_SEC;
-    
+
     sendIM("D/s Collar starting up. Please wait...");
-    
+
     start_rlv_probe();
-    
-    // OPTIMIZATION: Delay initial settings request to allow notecard loading
-    // This prevents "double bootstrap" where we get defaults then reset on notecard_loaded
+
+    // OPTIMIZATION: Delay initial settings check to allow notecard loading
     SettingsNextRetry = now() + SETTINGS_INITIAL_DELAY_SEC;
-    
+
     llSetTimerEvent(1.0);
 }
 
@@ -398,14 +243,8 @@ start_bootstrap() {
 check_bootstrap_complete() {
     if (BootstrapComplete) return;
 
-    // Check all conditions
-    // CRITICAL: Must check BOTH OwnerNameQueries (sent requests) AND PendingNameRequests (queued requests)
-    if (RlvReady && SettingsReceived &&
-        llGetListLength(OwnerNameQueries) == 0 &&
-        llGetListLength(PendingNameRequests) == 0) {
+    if (RlvReady && SettingsReceived && names_ready()) {
         BootstrapComplete = TRUE;
-
-        // Announce final status
         announce_status();
     }
 }
@@ -419,42 +258,35 @@ announce_status() {
         sendIM("RLV: Not detected");
     }
 
-    // Mode notification
     if (!SettingsReceived) {
         sendIM("WARNING: Settings timed out. Using defaults.");
     }
 
-    if (MultiOwnerMode) {
-        integer owner_count = llGetListLength(OwnerKeys);
+    integer multi_mode = (integer)llLinksetDataRead(KEY_MULTI_OWNER_MODE);
+
+    if (multi_mode) {
+        list uuids = llCSV2List(llLinksetDataRead(KEY_OWNER_UUIDS));
+        list names = llCSV2List(llLinksetDataRead(KEY_OWNER_NAMES));
+        list hons  = llCSV2List(llLinksetDataRead(KEY_OWNER_HONORIFICS));
+        integer owner_count = llGetListLength(uuids);
+
         sendIM("Mode: Multi-Owner (" + (string)owner_count + ")");
-    }
-    else {
-        sendIM("Mode: Single-Owner");
-    }
-    
-    // Ownership status
-    if (MultiOwnerMode) {
-        integer owner_count = llGetListLength(OwnerKeys);
+
         if (owner_count > 0) {
             list owner_parts = [];
             integer i = 0;
             while (i < owner_count) {
-                string owner_uuid = llList2String(OwnerKeys, i);
-                string hon = llJsonGetValue(OwnersJson, [owner_uuid]);
-                if (hon == JSON_INVALID) hon = "";
-                
-                string display_name = "";
-                if (i < llGetListLength(OwnerDisplayNames)) {
-                    display_name = llList2String(OwnerDisplayNames, i);
-                }
-                
-                if (hon != "") {
-                    owner_parts += [hon + " " + display_name];
+                string nm = "";
+                if (i < llGetListLength(names)) nm = llList2String(names, i);
+                string hn = "";
+                if (i < llGetListLength(hons)) hn = llList2String(hons, i);
+
+                if (hn != "") {
+                    owner_parts += [hn + " " + nm];
                 }
                 else {
-                    owner_parts += [display_name];
+                    owner_parts += [nm];
                 }
-                
                 i += 1;
             }
             sendIM("Owned by " + llDumpList2String(owner_parts, ", "));
@@ -464,19 +296,22 @@ announce_status() {
         }
     }
     else {
-        if (OwnerKey != NULL_KEY) {
+        sendIM("Mode: Single-Owner");
+
+        string owner_uuid = llLinksetDataRead(KEY_OWNER);
+        if (owner_uuid != "") {
+            string nm = llLinksetDataRead(KEY_OWNER_NAME);
+            string hn = llLinksetDataRead(KEY_OWNER_HONORIFIC);
             string owner_line = "Owned by ";
-            if (OwnerHonorific != "") {
-                owner_line += OwnerHonorific + " ";
-            }
-            owner_line += llList2String(OwnerDisplayNames, 0);
+            if (hn != "") owner_line += hn + " ";
+            owner_line += nm;
             sendIM(owner_line);
         }
         else {
             sendIM("Uncommitted");
         }
     }
-    
+
     sendIM("Collar startup complete.");
 }
 
@@ -518,19 +353,10 @@ state starting
         // GLOBAL TIMEOUT CHECK
         if (!BootstrapComplete && BootstrapDeadline > 0 && current_time >= BootstrapDeadline) {
             sendIM("WARNING: Bootstrap timed out. Forcing completion.");
-            
-            // Force completion of pending tasks
+
             if (!RlvReady) stop_rlv_probe();
-            if (!SettingsReceived) {
-                SettingsReceived = TRUE; // Assume defaults
-                // Start name resolution with defaults (likely just wearer if unowned)
-                start_name_resolution(); 
-            }
-            
-            // Clear pending name queries
-            OwnerNameQueries = [];
-            PendingNameRequests = [];
-            
+            if (!SettingsReceived) SettingsReceived = TRUE;
+
             BootstrapComplete = TRUE;
             announce_status();
             state running;
@@ -548,65 +374,47 @@ state starting
 
         // Handle RLV probe retries
         if (RlvProbing && !RlvReady) {
-            // Check if we should send another query
             if (RlvNextRetry > 0 && current_time >= RlvNextRetry) {
                 if (RlvRetryCount < RLV_MAX_RETRIES) {
                     sendRlvQueries();
                     RlvRetryCount += 1;
                     integer next_retry_time = current_time + RLV_RETRY_INTERVAL_SEC;
-                    if (next_retry_time < current_time) next_retry_time = current_time; // Overflow protection
+                    if (next_retry_time < current_time) next_retry_time = current_time;
                     RlvNextRetry = next_retry_time;
                 }
             }
 
-            // Check for timeout
             if (RlvProbeDeadline > 0 && current_time >= RlvProbeDeadline) {
                 stop_rlv_probe();
                 check_bootstrap_complete();
             }
         }
 
-        // Process queued display name requests (rate-limited)
-        if (llGetListLength(PendingNameRequests) > 0) {
-            process_next_name_request();
-        }
-
-        // Check name resolution timeout
-        if ((llGetListLength(OwnerNameQueries) > 0 || llGetListLength(PendingNameRequests) > 0) &&
-            NameResolutionDeadline > 0 && current_time >= NameResolutionDeadline) {
-            OwnerNameQueries = []; // Clear pending queries
-            PendingNameRequests = []; // Clear pending requests
-            check_bootstrap_complete();
+        // Names ready check (kmod_settings resolves them async)
+        if (SettingsReceived && RlvReady && !BootstrapComplete) {
+            if (names_ready() ||
+                (NamesReadyDeadline > 0 && current_time >= NamesReadyDeadline)) {
+                check_bootstrap_complete();
+            }
         }
 
         // Stop timer if bootstrap complete
-        if (BootstrapComplete && !RlvProbing &&
-            llGetListLength(OwnerNameQueries) == 0 &&
-            llGetListLength(PendingNameRequests) == 0) {
+        if (BootstrapComplete && !RlvProbing) {
             state running;
         }
     }
-    
+
     listen(integer channel, string name, key id, string message) {
-        // Check if this is one of our probe channels
         if (llListFindList(RlvChannels, [channel]) == -1) return;
-        
-        // Accept replies from wearer OR NULL_KEY (some viewers use NULL_KEY for RLV)
+
         key wearer = llGetOwner();
         if (id != wearer && id != NULL_KEY) return;
-        
-        // Any reply means RLV is active
+
         RlvActive = TRUE;
         RlvVersion = llStringTrim(message, STRING_TRIM);
-        
-        // Stop probing immediately
+
         stop_rlv_probe();
         check_bootstrap_complete();
-    }
-    
-    dataserver(key query_id, string data) {
-        // Handle display name responses
-        handle_dataserver_name(query_id, data);
     }
     
     link_message(integer sender, integer num, string msg, key id) {

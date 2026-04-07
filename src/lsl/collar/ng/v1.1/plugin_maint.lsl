@@ -1,10 +1,13 @@
 /*--------------------
 PLUGIN: plugin_maint.lsl
 VERSION: 1.10
-REVISION: 2
+REVISION: 3
 PURPOSE: Maintenance and utility functions for collar management
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
+- v1.1 rev 3: Two-mode access model. View Settings and Access List read
+  primary owner from access.owner scalar (single mode) or access.owneruuids
+  CSV (multi mode). Names come pre-resolved from kmod_settings.
 - v1.1 rev 2: Add Factory Reset (wearer-only, confirmation required).
   Wipes all LSD data and resets all scripts to defaults.
 - v1.1 rev 1: Migrate from JSON broadcast payloads to direct LSD reads.
@@ -50,12 +53,6 @@ string SessionId = "";
 string MenuContext = "main";
 
 /* -------------------- HELPERS -------------------- */
-
-
-
-integer is_json_arr(string s) {
-    return (llGetSubString(s, 0, 0) == "[");
-}
 
 string generate_session_id() {
     return "maint_" + (string)llGetKey() + "_" + (string)llGetUnixTime();
@@ -163,23 +160,26 @@ string fmt_relay_mode(string raw) {
     return "OFF";
 }
 
-// Append one person line per {uuid:honorific} pair in a JSON object.
-// Returns the formatted block, or fallback_str if the object is empty/invalid.
-string fmt_person_lines(string json_obj, string fallback_str) {
-    if (json_obj == JSON_INVALID || llJsonValueType(json_obj, []) != JSON_OBJECT) {
-        return fallback_str;
-    }
-    list pairs = llJson2List(json_obj);
-    integer plen = llGetListLength(pairs);
-    if (plen < 2) return fallback_str;
+// Format parallel CSV lists (uuids, names, honorifics) into one block.
+// Returns the formatted block, or fallback_str if uuids is empty.
+string fmt_csv_person_lines(string uuids_csv, string names_csv, string hons_csv, string fallback_str) {
+    list uuids = llCSV2List(uuids_csv);
+    list names = llCSV2List(names_csv);
+    list hons  = llCSV2List(hons_csv);
+    integer count = llGetListLength(uuids);
+    if (count == 0) return fallback_str;
 
     string block = "";
     integer i = 0;
-    while (i < plen) {
-        string p_uuid = llList2String(pairs, i);
-        string p_name = llList2String(pairs, i + 1);
-        block += "  " + p_name + " (" + p_uuid + ")\n";
-        i += 2;
+    while (i < count) {
+        string p_uuid = llList2String(uuids, i);
+        string p_name = "";
+        if (i < llGetListLength(names)) p_name = llList2String(names, i);
+        string p_hon = "";
+        if (i < llGetListLength(hons)) p_hon = llList2String(hons, i);
+        if (p_hon != "") block += "  " + p_hon + " " + p_name + " (" + p_uuid + ")\n";
+        else             block += "  " + p_name + " (" + p_uuid + ")\n";
+        i += 1;
     }
     return block;
 }
@@ -206,8 +206,11 @@ do_view_settings() {
 
     // --- Owner(s) ---
     if (multi) {
-        string owner_block = fmt_person_lines(
-            llLinksetDataRead("access.owners"), "");
+        string owner_block = fmt_csv_person_lines(
+            llLinksetDataRead("access.owneruuids"),
+            llLinksetDataRead("access.ownernames"),
+            llLinksetDataRead("access.ownerhonorifics"),
+            "");
         if (owner_block == "") {
             output += "Owners: Uncommitted\n";
         }
@@ -216,17 +219,12 @@ do_view_settings() {
         }
     }
     else {
-        string owner_raw = llLinksetDataRead("access.owner");
-        if (owner_raw != "" && llJsonValueType(owner_raw, []) == JSON_OBJECT) {
-            list pairs = llJson2List(owner_raw);
-            if (llGetListLength(pairs) >= 2) {
-                string p_uuid = llList2String(pairs, 0);
-                string p_name = llList2String(pairs, 1);
-                output += "Owner: " + p_name + " (" + p_uuid + ")\n";
-            }
-            else {
-                output += "Owner: Uncommitted\n";
-            }
+        string owner_uuid = llLinksetDataRead("access.owner");
+        if (owner_uuid != "") {
+            string p_name = llLinksetDataRead("access.ownername");
+            string p_hon  = llLinksetDataRead("access.ownerhonorific");
+            if (p_hon != "") output += "Owner: " + p_hon + " " + p_name + " (" + owner_uuid + ")\n";
+            else             output += "Owner: " + p_name + " (" + owner_uuid + ")\n";
         }
         else {
             output += "Owner: Uncommitted\n";
@@ -234,8 +232,11 @@ do_view_settings() {
     }
 
     // --- Trustees ---
-    string trustee_block = fmt_person_lines(
-        llLinksetDataRead("access.trustees"), "");
+    string trustee_block = fmt_csv_person_lines(
+        llLinksetDataRead("access.trusteeuuids"),
+        llLinksetDataRead("access.trusteenames"),
+        llLinksetDataRead("access.trusteehonorifics"),
+        "");
     if (trustee_block == "") {
         output += "Trustees: none\n";
     }
@@ -263,29 +264,25 @@ do_view_settings() {
 do_display_access_list() {
     string output = "=== Access Control List ===\n\n";
 
-    // Multi-owner mode check
     integer multi_mode = (integer)llLinksetDataRead("access.multiowner");
 
-    // Owner(s) — stored as JSON objects {uuid:honorific}
+    // Owner(s)
     if (multi_mode) {
         output += "OWNERS:\n";
-        string owners_raw = llLinksetDataRead("access.owners");
-
-        if (owners_raw != "" && llJsonValueType(owners_raw, []) == JSON_OBJECT) {
-            list pairs = llJson2List(owners_raw);
-            integer plen = llGetListLength(pairs);
-            if (plen > 0) {
-                integer i = 0;
-                while (i < plen) {
-                    string owner_uuid = llList2String(pairs, i);
-                    string honor = llList2String(pairs, i + 1);
-                    if (honor == "") honor = "Owner";
-                    output += "  " + honor + " - " + owner_uuid + "\n";
-                    i += 2;
+        list uuids = llCSV2List(llLinksetDataRead("access.owneruuids"));
+        list names = llCSV2List(llLinksetDataRead("access.ownernames"));
+        list hons  = llCSV2List(llLinksetDataRead("access.ownerhonorifics"));
+        integer count = llGetListLength(uuids);
+        if (count > 0) {
+            integer i;
+            for (i = 0; i < count; i++) {
+                string nm = "";
+                if (i < llGetListLength(names)) nm = llList2String(names, i);
+                string hn = "Owner";
+                if (i < llGetListLength(hons) && llList2String(hons, i) != "") {
+                    hn = llList2String(hons, i);
                 }
-            }
-            else {
-                output += "  (none)\n";
+                output += "  " + hn + " " + nm + " - " + llList2String(uuids, i) + "\n";
             }
         }
         else {
@@ -294,65 +291,47 @@ do_display_access_list() {
     }
     else {
         output += "OWNER:\n";
-        string owner_raw = llLinksetDataRead("access.owner");
-
-        if (owner_raw != "" && llJsonValueType(owner_raw, []) == JSON_OBJECT) {
-            list pairs = llJson2List(owner_raw);
-            if (llGetListLength(pairs) >= 2) {
-                string owner_uuid = llList2String(pairs, 0);
-                string honor = llList2String(pairs, 1);
-                if (honor == "") honor = "Owner";
-                output += "  " + honor + " - " + owner_uuid + "\n";
-            }
-            else {
-                output += "  (none)\n";
-            }
+        string owner_uuid = llLinksetDataRead("access.owner");
+        if (owner_uuid != "") {
+            string nm  = llLinksetDataRead("access.ownername");
+            string hn  = llLinksetDataRead("access.ownerhonorific");
+            if (hn == "") hn = "Owner";
+            output += "  " + hn + " " + nm + " - " + owner_uuid + "\n";
         }
         else {
             output += "  (none)\n";
         }
     }
 
-    // Trustees (JSON object {uuid:honorific})
+    // Trustees
     output += "\nTRUSTEES:\n";
-    string trustees_raw = llLinksetDataRead("access.trustees");
-
-    if (trustees_raw != "" && llJsonValueType(trustees_raw, []) == JSON_OBJECT) {
-        list pairs = llJson2List(trustees_raw);
-        integer plen = llGetListLength(pairs);
-        if (plen > 0) {
-            integer i = 0;
-            while (i < plen) {
-                string trustee_key = llList2String(pairs, i);
-                string honor = llList2String(pairs, i + 1);
-                if (honor == "") honor = "Trustee";
-                output += "  " + honor + " - " + trustee_key + "\n";
-                i += 2;
+    list t_uuids = llCSV2List(llLinksetDataRead("access.trusteeuuids"));
+    list t_names = llCSV2List(llLinksetDataRead("access.trusteenames"));
+    list t_hons  = llCSV2List(llLinksetDataRead("access.trusteehonorifics"));
+    integer t_count = llGetListLength(t_uuids);
+    if (t_count > 0) {
+        integer i;
+        for (i = 0; i < t_count; i++) {
+            string nm = "";
+            if (i < llGetListLength(t_names)) nm = llList2String(t_names, i);
+            string hn = "Trustee";
+            if (i < llGetListLength(t_hons) && llList2String(t_hons, i) != "") {
+                hn = llList2String(t_hons, i);
             }
-        }
-        else {
-            output += "  (none)\n";
+            output += "  " + hn + " " + nm + " - " + llList2String(t_uuids, i) + "\n";
         }
     }
     else {
         output += "  (none)\n";
     }
 
-    // Blacklist
+    // Blacklist (CSV of UUIDs)
     output += "\nBLACKLISTED:\n";
-    string blacklist_json = llLinksetDataRead("access.blacklist");
-
-    if (blacklist_json != "" && is_json_arr(blacklist_json)) {
-        list blacklist = llJson2List(blacklist_json);
-        if (llGetListLength(blacklist) > 0) {
-            integer i = 0;
-            while (i < llGetListLength(blacklist)) {
-                output += "  " + llList2String(blacklist, i) + "\n";
-                i += 1;
-            }
-        }
-        else {
-            output += "  (none)\n";
+    list blacklist = llCSV2List(llLinksetDataRead("blacklist.blklistuuid"));
+    if (llGetListLength(blacklist) > 0) {
+        integer i;
+        for (i = 0; i < llGetListLength(blacklist); i++) {
+            output += "  " + llList2String(blacklist, i) + "\n";
         }
     }
     else {

@@ -1,10 +1,25 @@
 /*--------------------
 MODULE: kmod_settings.lsl
 VERSION: 1.10
-REVISION: 2
+REVISION: 4
 PURPOSE: Notecard parser, validation guards, and LSD settings store
-ARCHITECTURE: Consolidated message bus lanes, LSD-backed storage
+ARCHITECTURE: Two-mode access model. Single-owner mode uses scalar keys
+              (access.owner, access.ownername, access.ownerhonorific) and
+              is set via the menu UI. Multi-owner mode uses parallel CSVs
+              (access.owneruuids/names/honorifics) and is set ONLY via the
+              settings notecard. Mode is selected by access.multiowner.
+              Trustees and blacklist always use CSVs. Display names are
+              resolved asynchronously via llRequestDisplayName.
 CHANGES:
+- v1.1 rev 4: Serialize llRequestDisplayName calls to avoid dataserver
+  throttle. At most one query is in flight; further requests queue in
+  NamePending and drain one-at-a-time from the dataserver handler.
+  Pending/in-flight state cleared on notecard reload.
+- v1.1 rev 3: Replace JSON object owner/trustee storage with explicit
+  two-mode flat scheme (scalars for single-owner, parallel CSVs for
+  multi-owner). Async display name resolution. access.isowned = 0
+  triggers factory reset. New API messages: set_owner, clear_owner,
+  add_trustee, remove_trustee, blacklist_add, blacklist_remove, runaway.
 - v1.1 rev 2: Remove KvJson. All kv_* operations now read/write LSD
   directly. Remove recover_lsd_settings (LSD is authoritative). Remove
   ForceReseed (notecard parsing always writes to LSD). Simplify
@@ -22,23 +37,44 @@ integer KERNEL_LIFECYCLE = 500;
 integer SETTINGS_BUS = 800;
 
 /* -------------------- SETTINGS KEYS -------------------- */
+// Sentinel and mode
+string KEY_ISOWNED          = "access.isowned";
 string KEY_MULTI_OWNER_MODE = "access.multiowner";
+
+// Single-owner mode (scalars)
 string KEY_OWNER            = "access.owner";
-string KEY_OWNERS           = "access.owners";
-string KEY_TRUSTEES         = "access.trustees";
-string KEY_BLACKLIST        = "access.blacklist";
-string KEY_PUBLIC_ACCESS    = "public.mode";
-string KEY_TPE_MODE         = "tpe.mode";
-string KEY_LOCKED           = "lock.locked";
+string KEY_OWNER_NAME       = "access.ownername";
+string KEY_OWNER_HONORIFIC  = "access.ownerhonorific";
 
-// Access plugin keys
-string KEY_RUNAWAY_ENABLED = "access.enablerunaway";
+// Multi-owner mode (parallel CSVs, notecard only)
+string KEY_OWNER_UUIDS        = "access.owneruuids";
+string KEY_OWNER_NAMES        = "access.ownernames";
+string KEY_OWNER_HONORIFICS   = "access.ownerhonorifics";
 
+// Trustees (parallel CSVs)
+string KEY_TRUSTEE_UUIDS      = "access.trusteeuuids";
+string KEY_TRUSTEE_NAMES      = "access.trusteenames";
+string KEY_TRUSTEE_HONORIFICS = "access.trusteehonorifics";
+
+// Blacklist (CSV of UUIDs only)
+string KEY_BLACKLIST          = "blacklist.blklistuuid";
+
+// Other access flags
+string KEY_RUNAWAY_ENABLED    = "access.enablerunaway";
+
+// Behaviour scalars
+string KEY_PUBLIC_ACCESS = "public.mode";
+string KEY_TPE_MODE      = "tpe.mode";
+string KEY_LOCKED        = "lock.locked";
+
+// Placeholder used while a display name is being resolved
+string NAME_LOADING = "(loading...)";
 
 /* -------------------- NOTECARD CONFIG -------------------- */
 string NOTECARD_NAME = "settings";
 string COMMENT_PREFIX = "#";
 string SEPARATOR = "=";
+
 /* -------------------- STATE -------------------- */
 key LastOwner = NULL_KEY;
 
@@ -49,8 +85,18 @@ key NotecardKey = NULL_KEY;
 
 integer MaxListLen = 64;
 
-/* -------------------- HELPERS -------------------- */
+// In-flight display-name query (serial drain — at most one outstanding to
+// avoid llRequestDisplayName throttle). Role values: "owner_scalar",
+// "owner_csv", "trustee_csv".
+key    NameQueryId   = NULL_KEY;
+string NameQueryUuid = "";
+string NameQueryRole = "";
 
+// Pending name resolutions waiting for the in-flight query to complete.
+// Stride-2: [uuid, role, uuid, role, ...]
+list NamePending = [];
+
+/* -------------------- HELPERS -------------------- */
 
 string get_msg_type(string msg) {
     string t = llJsonGetValue(msg, ["type"]);
@@ -64,259 +110,27 @@ string normalize_bool(string s) {
     return (string)v;
 }
 
-list list_remove_all(list source_list, string s) {
-    integer idx = llListFindList(source_list, [s]);
-    while (idx != -1) {
-        source_list = llDeleteSubList(source_list, idx, idx);
-        idx = llListFindList(source_list, [s]);
-    }
-    return source_list;
+list csv_read(string key_name) {
+    string raw = llLinksetDataRead(key_name);
+    if (raw == "") return [];
+    return llCSV2List(raw);
 }
 
-list list_unique(list source_list) {
-    if (llGetListLength(source_list) < 2) return source_list;
-    source_list = llListSort(source_list, 1, TRUE);
-    integer i = 0;
-    while (i < llGetListLength(source_list) - 1) {
-        if (llList2String(source_list, i) == llList2String(source_list, i + 1)) {
-            source_list = llDeleteSubList(source_list, i, i);
-        } else {
-            i += 1;
-        }
+csv_write(string key_name, list values) {
+    if (llGetListLength(values) == 0) {
+        llLinksetDataDelete(key_name);
     }
-    return source_list;
+    else {
+        llLinksetDataWrite(key_name, llList2CSV(values));
+    }
 }
 
-/* -------------------- LSD OPERATIONS -------------------- */
-
-string kv_get(string key_name) {
-    return llLinksetDataRead(key_name);
+list list_remove_at(list source_list, integer idx) {
+    return llDeleteSubList(source_list, idx, idx);
 }
 
-integer kv_set_scalar(string key_name, string value) {
-    if (llLinksetDataRead(key_name) == value) return FALSE;
-    llLinksetDataWrite(key_name, value);
-    return TRUE;
-}
-
-integer kv_set_list(string key_name, list values) {
-    string new_arr = llList2Json(JSON_ARRAY, values);
-    if (llLinksetDataRead(key_name) == new_arr) return FALSE;
-    llLinksetDataWrite(key_name, new_arr);
-    return TRUE;
-}
-
-integer kv_list_add_unique(string key_name, string elem) {
-    string arr = llLinksetDataRead(key_name);
-    list current_list = [];
-    if (llJsonValueType(arr, []) == JSON_ARRAY) {
-        current_list = llJson2List(arr);
-    }
-
-    if (llListFindList(current_list, [elem]) != -1) return FALSE;
-    if (llGetListLength(current_list) >= MaxListLen) return FALSE;
-
-    current_list += [elem];
-    return kv_set_list(key_name, current_list);
-}
-
-/* ---- JSON OBJECT LSD OPERATIONS ---- */
-
-integer kv_obj_set_field(string key_name, string field, string value) {
-    string obj = llLinksetDataRead(key_name);
-    if (obj == "" || llJsonValueType(obj, []) != JSON_OBJECT) {
-        obj = "{}";
-    }
-    string new_obj = llJsonSetValue(obj, [field], value);
-    return kv_set_scalar(key_name, new_obj);
-}
-
-integer kv_obj_remove_field(string key_name, string field) {
-    string obj = llLinksetDataRead(key_name);
-    if (obj == "" || llJsonValueType(obj, []) != JSON_OBJECT) return FALSE;
-    if (llJsonGetValue(obj, [field]) == JSON_INVALID) return FALSE;
-    string new_obj = llJsonSetValue(obj, [field], JSON_DELETE);
-    return kv_set_scalar(key_name, new_obj);
-}
-
-integer kv_list_remove_all(string key_name, string elem) {
-    string arr = llLinksetDataRead(key_name);
-    if (llJsonValueType(arr, []) != JSON_ARRAY) return FALSE;
-
-    list current_list = llJson2List(arr);
-    list new_list = list_remove_all(current_list, elem);
-
-    if (llGetListLength(new_list) == llGetListLength(current_list)) return FALSE;
-
-    return kv_set_list(key_name, new_list);
-}
-
-/* -------------------- VALIDATION HELPERS -------------------- */
-
-// Check if external owner exists
-integer has_external_owner() {
-    key wearer = llGetOwner();
-
-    string obj_key = KEY_OWNER;
-    if (kv_get(KEY_MULTI_OWNER_MODE) == "1") {
-        obj_key = KEY_OWNERS;
-    }
-
-    string obj = kv_get(obj_key);
-    if (llJsonValueType(obj, []) == JSON_OBJECT) {
-        list pairs = llJson2List(obj);
-        integer i = 0;
-        integer pairs_len = llGetListLength(pairs);
-        while (i < pairs_len) {
-            key owner = (key)llList2String(pairs, i);
-            if (owner != wearer && owner != NULL_KEY) {
-                return TRUE;
-            }
-            i += 2;
-        }
-    }
-
-    return FALSE;
-}
-
-// Check if someone is an owner (any mode)
-integer is_owner(string who) {
-    // Check single owner object
-    string owner_obj = kv_get(KEY_OWNER);
-    if (llJsonValueType(owner_obj, []) == JSON_OBJECT) {
-        if (llJsonGetValue(owner_obj, [who]) != JSON_INVALID) return TRUE;
-    }
-
-    // Check multi-owner object
-    string owners_obj = kv_get(KEY_OWNERS);
-    if (llJsonValueType(owners_obj, []) == JSON_OBJECT) {
-        if (llJsonGetValue(owners_obj, [who]) != JSON_INVALID) return TRUE;
-    }
-
-    return FALSE;
-}
-
-/* -------------------- ROLE EXCLUSIVITY GUARDS -------------------- */
-
-// Returns FALSE if owner add should be rejected
-// BROADCAST FIX: Emits deltas for all guard-side mutations to keep ACL consumers in sync
-integer apply_owner_set_guard(string who) {
-    key wearer = llGetOwner();
-
-    // CRITICAL: Prevent self-ownership
-    if ((key)who == wearer) {
-        llOwnerSay("ERROR: Cannot add wearer as owner (role separation required)");
-        return FALSE;
-    }
-
-    // Remove owner from trustees object and broadcast the change
-    if (kv_obj_remove_field(KEY_TRUSTEES, who)) {
-        broadcast_settings_changed();
-    }
-
-    // Remove owner from blacklist and broadcast the change
-    string blacklist_arr = kv_get(KEY_BLACKLIST);
-    if (llJsonValueType(blacklist_arr, []) == JSON_ARRAY) {
-        list blacklist = llJson2List(blacklist_arr);
-        if (llListFindList(blacklist, [who]) != -1) {
-            // Only process if actually present
-            blacklist = list_remove_all(blacklist, who);
-            if (kv_set_list(KEY_BLACKLIST, blacklist)) {
-                broadcast_settings_changed();
-            }
-        }
-    }
-
-    return TRUE;
-}
-
-// BROADCAST FIX: Emits deltas for blacklist removals to keep ACL consumers in sync
-integer apply_trustee_add_guard(string who) {
-    // Can't add owner as trustee (check both modes)
-    if (is_owner(who)) {
-        return FALSE;
-    }
-
-    // Remove from blacklist and broadcast the change
-    string blacklist_arr = kv_get(KEY_BLACKLIST);
-    if (llJsonValueType(blacklist_arr, []) == JSON_ARRAY) {
-        list blacklist = llJson2List(blacklist_arr);
-        if (llListFindList(blacklist, [who]) != -1) {
-            // Only process if actually present
-            blacklist = list_remove_all(blacklist, who);
-            if (kv_set_list(KEY_BLACKLIST, blacklist)) {
-                broadcast_settings_changed();
-            }
-        }
-    }
-
-    return TRUE;
-}
-
-// BROADCAST FIX: Emits deltas for all guard-side mutations to keep ACL consumers in sync
-integer apply_blacklist_add_guard(string who) {
-    // Remove from trustees object and broadcast the change
-    if (kv_obj_remove_field(KEY_TRUSTEES, who)) {
-        broadcast_settings_changed();
-    }
-
-    // Remove from single owner object and broadcast
-    if (kv_obj_remove_field(KEY_OWNER, who)) {
-        broadcast_settings_changed();
-    }
-
-    // Remove from multi-owner object and broadcast
-    if (kv_obj_remove_field(KEY_OWNERS, who)) {
-        broadcast_settings_changed();
-    }
-
-    return TRUE;
-}
-
-// Guard a trustees JSON object: remove any owner or wearer UUIDs
-string guard_trustees_object(string obj) {
-    key wearer = llGetOwner();
-    // Remove wearer
-    if (llJsonGetValue(obj, [(string)wearer]) != JSON_INVALID) {
-        obj = llJsonSetValue(obj, [(string)wearer], JSON_DELETE);
-    }
-    // Remove owners from single-owner and multi-owner objects
-    list owner_sources = [kv_get(KEY_OWNER), kv_get(KEY_OWNERS)];
-    integer si = 0;
-    while (si < 2) {
-        string src = llList2String(owner_sources, si);
-        if (llJsonValueType(src, []) == JSON_OBJECT) {
-            list pairs = llJson2List(src);
-            integer i = 0;
-            integer pairs_len = llGetListLength(pairs);
-            while (i < pairs_len) {
-                string ok = llList2String(pairs, i);
-                if (llJsonGetValue(obj, [ok]) != JSON_INVALID) {
-                    obj = llJsonSetValue(obj, [ok], JSON_DELETE);
-                }
-                i += 2;
-            }
-        }
-        si += 1;
-    }
-    return obj;
-}
-
-// Guard an owner JSON object: validate each UUID (no self-ownership)
-string guard_owner_object(string obj) {
-    list pairs = llJson2List(obj);
-    string result = "{}";
-    integer i = 0;
-    integer pairs_len = llGetListLength(pairs);
-    while (i < pairs_len) {
-        string uuid = llList2String(pairs, i);
-        string hon = llList2String(pairs, i + 1);
-        if (apply_owner_set_guard(uuid)) {
-            result = llJsonSetValue(result, [uuid], hon);
-        }
-        i += 2;
-    }
-    return result;
+integer is_multi_owner_mode() {
+    return (integer)llLinksetDataRead(KEY_MULTI_OWNER_MODE);
 }
 
 /* -------------------- BROADCASTING -------------------- */
@@ -327,30 +141,255 @@ broadcast_settings_changed() {
     ]), NULL_KEY);
 }
 
-/* -------------------- KEY NAMING CONVENTION -------------------- */
-// No whitelist is enforced. LSL link_message is sandboxed to the same linkset,
-// so any script that can write to SETTINGS_BUS is already trusted by the owner.
-//
-// Convention (not enforced in code):
-//   Access keys — access.<setting>  (owner, trustees, blacklist, multi_owner_mode, runaway_enabled)
-//   Plugin keys — <plugin>.<setting>
-//                 e.g. bell.volume, restrict.list, lock.locked, relay.mode
-//
-// is_notecard_only_key() and all business-logic guards (role exclusivity, TPE
-// validation, MaxListLen) remain active — those are correctness constraints, not
-// access control.
+/* -------------------- LSD CLEAR & FACTORY RESET -------------------- */
 
-// Keys stored as JSON objects (not arrays or scalars)
-integer is_json_object_key(string k) {
-    if (k == KEY_OWNER) return TRUE;
-    if (k == KEY_OWNERS) return TRUE;
-    if (k == KEY_TRUSTEES) return TRUE;
+clear_owner_keys() {
+    // Clear both single and multi-owner key sets, plus the sentinel.
+    llLinksetDataDelete(KEY_ISOWNED);
+    llLinksetDataDelete(KEY_OWNER);
+    llLinksetDataDelete(KEY_OWNER_NAME);
+    llLinksetDataDelete(KEY_OWNER_HONORIFIC);
+    llLinksetDataDelete(KEY_OWNER_UUIDS);
+    llLinksetDataDelete(KEY_OWNER_NAMES);
+    llLinksetDataDelete(KEY_OWNER_HONORIFICS);
+}
+
+clear_trustee_keys() {
+    llLinksetDataDelete(KEY_TRUSTEE_UUIDS);
+    llLinksetDataDelete(KEY_TRUSTEE_NAMES);
+    llLinksetDataDelete(KEY_TRUSTEE_HONORIFICS);
+}
+
+factory_reset() {
+    llRegionSayTo(llGetOwner(), 0, "Collar factory reset triggered.");
+    llLinksetDataReset();
+
+    // Reset all scripts in the linkset
+    llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
+        "type", "soft_reset_all",
+        "from", "factory_reset"
+    ]), NULL_KEY);
+
+    llResetScript();
+}
+
+/* -------------------- VALIDATION HELPERS -------------------- */
+
+// Returns TRUE if any external owner exists (not the wearer, not NULL_KEY)
+integer has_external_owner() {
+    key wearer = llGetOwner();
+
+    if (is_multi_owner_mode()) {
+        list uuids = csv_read(KEY_OWNER_UUIDS);
+        integer i;
+        integer len = llGetListLength(uuids);
+        for (i = 0; i < len; i++) {
+            key owner = (key)llList2String(uuids, i);
+            if (owner != wearer && owner != NULL_KEY) return TRUE;
+        }
+        return FALSE;
+    }
+
+    key primary = (key)llLinksetDataRead(KEY_OWNER);
+    if (primary != NULL_KEY && primary != wearer) return TRUE;
     return FALSE;
 }
 
+integer is_owner(string who) {
+    if (is_multi_owner_mode()) {
+        return (llListFindList(csv_read(KEY_OWNER_UUIDS), [who]) != -1);
+    }
+    return (llLinksetDataRead(KEY_OWNER) == who);
+}
+
+integer is_trustee(string who) {
+    return (llListFindList(csv_read(KEY_TRUSTEE_UUIDS), [who]) != -1);
+}
+
+/* -------------------- ASYNC NAME RESOLUTION -------------------- */
+
+// Fire the next pending name request, if any. Called after a response
+// arrives (success, empty, or unmatched) to keep the queue draining.
+drain_next_name() {
+    if (NameQueryId != NULL_KEY) return;
+    if (llGetListLength(NamePending) < 2) return;
+
+    string uuid_str = llList2String(NamePending, 0);
+    string role     = llList2String(NamePending, 1);
+    NamePending = llDeleteSubList(NamePending, 0, 1);
+
+    NameQueryUuid = uuid_str;
+    NameQueryRole = role;
+    NameQueryId   = llRequestDisplayName((key)uuid_str);
+}
+
+request_name(string uuid_str, string role) {
+    if (uuid_str == "" || (key)uuid_str == NULL_KEY) return;
+    NamePending += [uuid_str, role];
+    drain_next_name();
+}
+
+handle_name_response(key query_id, string name) {
+    if (query_id != NameQueryId) return;
+
+    string uuid_str = NameQueryUuid;
+    string role     = NameQueryRole;
+
+    NameQueryId   = NULL_KEY;
+    NameQueryUuid = "";
+    NameQueryRole = "";
+
+    if (name == "") {
+        drain_next_name();
+        return;
+    }
+
+    if (role == "owner_scalar") {
+        // Confirm the uuid still matches before writing
+        if (llLinksetDataRead(KEY_OWNER) == uuid_str) {
+            llLinksetDataWrite(KEY_OWNER_NAME, name);
+            broadcast_settings_changed();
+        }
+    }
+    else if (role == "owner_csv") {
+        list uuids = csv_read(KEY_OWNER_UUIDS);
+        integer slot = llListFindList(uuids, [uuid_str]);
+        if (slot != -1) {
+            list names = csv_read(KEY_OWNER_NAMES);
+            while (llGetListLength(names) <= slot) names += [NAME_LOADING];
+            names = llListReplaceList(names, [name], slot, slot);
+            csv_write(KEY_OWNER_NAMES, names);
+            broadcast_settings_changed();
+        }
+    }
+    else if (role == "trustee_csv") {
+        list uuids = csv_read(KEY_TRUSTEE_UUIDS);
+        integer slot = llListFindList(uuids, [uuid_str]);
+        if (slot != -1) {
+            list names = csv_read(KEY_TRUSTEE_NAMES);
+            while (llGetListLength(names) <= slot) names += [NAME_LOADING];
+            names = llListReplaceList(names, [name], slot, slot);
+            csv_write(KEY_TRUSTEE_NAMES, names);
+            broadcast_settings_changed();
+        }
+    }
+
+    drain_next_name();
+}
+
+/* -------------------- INTERNAL MUTATORS -------------------- */
+
+// Single-owner: write the scalar trio. Also sets isowned and clears any
+// stale multi-owner CSV data.
+integer set_single_owner(string uuid_str, string honorific) {
+    if (uuid_str == "" || (key)uuid_str == NULL_KEY) return FALSE;
+    if ((key)uuid_str == llGetOwner()) {
+        llOwnerSay("ERROR: Cannot add wearer as owner (role separation required)");
+        return FALSE;
+    }
+
+    // Role exclusivity: drop from trustees and blacklist
+    remove_trustee_internal(uuid_str);
+    remove_blacklist_internal(uuid_str);
+
+    // Clear multi-owner CSVs (we are in single-owner mode now)
+    llLinksetDataDelete(KEY_OWNER_UUIDS);
+    llLinksetDataDelete(KEY_OWNER_NAMES);
+    llLinksetDataDelete(KEY_OWNER_HONORIFICS);
+    llLinksetDataDelete(KEY_MULTI_OWNER_MODE);
+
+    llLinksetDataWrite(KEY_OWNER, uuid_str);
+    llLinksetDataWrite(KEY_OWNER_NAME, NAME_LOADING);
+    llLinksetDataWrite(KEY_OWNER_HONORIFIC, honorific);
+    llLinksetDataWrite(KEY_ISOWNED, "1");
+
+    request_name(uuid_str, "owner_scalar");
+    return TRUE;
+}
+
+clear_single_owner() {
+    llLinksetDataDelete(KEY_OWNER);
+    llLinksetDataDelete(KEY_OWNER_NAME);
+    llLinksetDataDelete(KEY_OWNER_HONORIFIC);
+    llLinksetDataDelete(KEY_ISOWNED);
+}
+
+integer add_trustee_internal(string uuid_str, string honorific) {
+    if (uuid_str == "" || (key)uuid_str == NULL_KEY) return FALSE;
+    if ((key)uuid_str == llGetOwner()) return FALSE;
+    if (is_owner(uuid_str)) return FALSE;
+
+    list uuids = csv_read(KEY_TRUSTEE_UUIDS);
+    if (llListFindList(uuids, [uuid_str]) != -1) return FALSE;
+    if (llGetListLength(uuids) >= MaxListLen) return FALSE;
+
+    remove_blacklist_internal(uuid_str);
+
+    list names = csv_read(KEY_TRUSTEE_NAMES);
+    list hons  = csv_read(KEY_TRUSTEE_HONORIFICS);
+
+    uuids += [uuid_str];
+    names += [NAME_LOADING];
+    hons  += [honorific];
+
+    csv_write(KEY_TRUSTEE_UUIDS,      uuids);
+    csv_write(KEY_TRUSTEE_NAMES,      names);
+    csv_write(KEY_TRUSTEE_HONORIFICS, hons);
+
+    request_name(uuid_str, "trustee_csv");
+    return TRUE;
+}
+
+integer remove_trustee_internal(string uuid_str) {
+    list uuids = csv_read(KEY_TRUSTEE_UUIDS);
+    integer idx = llListFindList(uuids, [uuid_str]);
+    if (idx == -1) return FALSE;
+
+    list names = csv_read(KEY_TRUSTEE_NAMES);
+    list hons  = csv_read(KEY_TRUSTEE_HONORIFICS);
+
+    uuids = list_remove_at(uuids, idx);
+    if (idx < llGetListLength(names)) names = list_remove_at(names, idx);
+    if (idx < llGetListLength(hons))  hons  = list_remove_at(hons,  idx);
+
+    csv_write(KEY_TRUSTEE_UUIDS,      uuids);
+    csv_write(KEY_TRUSTEE_NAMES,      names);
+    csv_write(KEY_TRUSTEE_HONORIFICS, hons);
+    return TRUE;
+}
+
+integer add_blacklist_internal(string uuid_str) {
+    if (uuid_str == "" || (key)uuid_str == NULL_KEY) return FALSE;
+    if ((key)uuid_str == llGetOwner()) return FALSE;
+    if (is_owner(uuid_str)) return FALSE;
+    if (is_trustee(uuid_str)) return FALSE;
+
+    list bl = csv_read(KEY_BLACKLIST);
+    if (llListFindList(bl, [uuid_str]) != -1) return FALSE;
+    if (llGetListLength(bl) >= MaxListLen) return FALSE;
+
+    bl += [uuid_str];
+    csv_write(KEY_BLACKLIST, bl);
+    return TRUE;
+}
+
+integer remove_blacklist_internal(string uuid_str) {
+    list bl = csv_read(KEY_BLACKLIST);
+    integer idx = llListFindList(bl, [uuid_str]);
+    if (idx == -1) return FALSE;
+    bl = list_remove_at(bl, idx);
+    csv_write(KEY_BLACKLIST, bl);
+    return TRUE;
+}
+
+/* -------------------- NOTECARD-ONLY KEYS -------------------- */
+
+// Keys that may only be set via notecard, not the runtime API
 integer is_notecard_only_key(string k) {
     if (k == KEY_MULTI_OWNER_MODE) return TRUE;
-    if (k == KEY_OWNERS) return TRUE;
+    if (k == KEY_OWNER_UUIDS)      return TRUE;
+    if (k == KEY_OWNER_NAMES)      return TRUE;
+    if (k == KEY_OWNER_HONORIFICS) return TRUE;
     return FALSE;
 }
 
@@ -358,97 +397,175 @@ integer is_notecard_only_key(string k) {
 
 parse_notecard_line(string line) {
     line = llStringTrim(line, STRING_TRIM);
-    
     if (line == "") return;
     if (llGetSubString(line, 0, 0) == COMMENT_PREFIX) return;
-    
+
     integer sep_pos = llSubStringIndex(line, SEPARATOR);
-    if (sep_pos == -1) {
+    if (sep_pos == -1) return;
+
+    string key_name = llStringTrim(llGetSubString(line, 0, sep_pos - 1), STRING_TRIM);
+    string value    = llStringTrim(llGetSubString(line, sep_pos + 1, -1), STRING_TRIM);
+
+    // Multi-owner mode flag
+    if (key_name == KEY_MULTI_OWNER_MODE) {
+        llLinksetDataWrite(KEY_MULTI_OWNER_MODE, normalize_bool(value));
         return;
     }
-    
-    string key_name = llStringTrim(llGetSubString(line, 0, sep_pos - 1), STRING_TRIM);
-    string value = llStringTrim(llGetSubString(line, sep_pos + 1, -1), STRING_TRIM);
 
-    // Check for JSON object (owner, owners, trustees)
-    if (is_json_object_key(key_name) && llGetSubString(value, 0, 0) == "{") {
-        if (llJsonValueType(value, []) == JSON_OBJECT) {
-            // Guard trustees: remove owners from trustee object
-            if (key_name == KEY_TRUSTEES) {
-                value = guard_trustees_object(value);
+    // Single-owner scalar (notecard can also use single-owner mode)
+    if (key_name == KEY_OWNER) {
+        key u = (key)value;
+        if (u == NULL_KEY || u == llGetOwner()) return;
+        llLinksetDataWrite(KEY_OWNER, value);
+        if (llLinksetDataRead(KEY_OWNER_NAME) == "") {
+            llLinksetDataWrite(KEY_OWNER_NAME, NAME_LOADING);
+        }
+        llLinksetDataWrite(KEY_ISOWNED, "1");
+        request_name(value, "owner_scalar");
+        return;
+    }
+
+    if (key_name == KEY_OWNER_HONORIFIC) {
+        llLinksetDataWrite(KEY_OWNER_HONORIFIC, value);
+        return;
+    }
+
+    // Multi-owner CSVs (notecard only)
+    if (key_name == KEY_OWNER_UUIDS) {
+        list uuids = llCSV2List(value);
+        if (llGetListLength(uuids) > MaxListLen) {
+            uuids = llList2List(uuids, 0, MaxListLen - 1);
+        }
+        list valid = [];
+        integer i;
+        integer len = llGetListLength(uuids);
+        for (i = 0; i < len; i++) {
+            key u = (key)llList2String(uuids, i);
+            if (u != NULL_KEY && u != llGetOwner()) {
+                valid += [(string)u];
+                request_name((string)u, "owner_csv");
             }
-            // Guard owner objects: validate UUIDs (no self-ownership)
-            if (key_name == KEY_OWNER || key_name == KEY_OWNERS) {
-                value = guard_owner_object(value);
-            }
-            kv_set_scalar(key_name, value);
+        }
+        csv_write(KEY_OWNER_UUIDS, valid);
+        // Initialize names CSV with placeholders
+        list placeholders = [];
+        integer pi = 0;
+        integer plen = llGetListLength(valid);
+        while (pi < plen) {
+            placeholders += [NAME_LOADING];
+            pi += 1;
+        }
+        csv_write(KEY_OWNER_NAMES, placeholders);
+        if (llGetListLength(valid) > 0) {
+            llLinksetDataWrite(KEY_ISOWNED, "1");
         }
         return;
     }
-    // Check if it's a list (starts with [)
-    else if (llGetSubString(value, 0, 0) == "[") {
-        // Reject array syntax for keys that must be JSON objects
-        if (is_json_object_key(key_name)) {
-            llOwnerSay("WARNING: " + key_name + " requires JSON object format, not array");
+
+    if (key_name == KEY_OWNER_HONORIFICS) {
+        list hons = llCSV2List(value);
+        csv_write(KEY_OWNER_HONORIFICS, hons);
+        return;
+    }
+
+    // Trustees CSVs
+    if (key_name == KEY_TRUSTEE_UUIDS) {
+        list uuids = llCSV2List(value);
+        if (llGetListLength(uuids) > MaxListLen) {
+            uuids = llList2List(uuids, 0, MaxListLen - 1);
+        }
+        list valid = [];
+        integer i;
+        integer len = llGetListLength(uuids);
+        for (i = 0; i < len; i++) {
+            key u = (key)llList2String(uuids, i);
+            if (u != NULL_KEY && u != llGetOwner() && !is_owner((string)u)) {
+                valid += [(string)u];
+                request_name((string)u, "trustee_csv");
+            }
+        }
+        csv_write(KEY_TRUSTEE_UUIDS, valid);
+        list placeholders = [];
+        integer pi = 0;
+        integer plen = llGetListLength(valid);
+        while (pi < plen) {
+            placeholders += [NAME_LOADING];
+            pi += 1;
+        }
+        csv_write(KEY_TRUSTEE_NAMES, placeholders);
+        return;
+    }
+
+    if (key_name == KEY_TRUSTEE_HONORIFICS) {
+        list hons = llCSV2List(value);
+        csv_write(KEY_TRUSTEE_HONORIFICS, hons);
+        return;
+    }
+
+    // Blacklist CSV
+    if (key_name == KEY_BLACKLIST) {
+        list bl = llCSV2List(value);
+        if (llGetListLength(bl) > MaxListLen) {
+            bl = llList2List(bl, 0, MaxListLen - 1);
+        }
+        list valid = [];
+        integer i;
+        integer len = llGetListLength(bl);
+        for (i = 0; i < len; i++) {
+            key u = (key)llList2String(bl, i);
+            if (u != NULL_KEY && u != llGetOwner() && !is_owner((string)u) && !is_trustee((string)u)) {
+                valid += [(string)u];
+            }
+        }
+        csv_write(KEY_BLACKLIST, valid);
+        return;
+    }
+
+    // Boolean scalars
+    if (key_name == KEY_PUBLIC_ACCESS
+        || key_name == KEY_LOCKED
+        || key_name == KEY_RUNAWAY_ENABLED
+        || key_name == KEY_ISOWNED) {
+        llLinksetDataWrite(key_name, normalize_bool(value));
+        return;
+    }
+
+    // TPE — requires external owner
+    if (key_name == KEY_TPE_MODE) {
+        value = normalize_bool(value);
+        if ((integer)value == 1 && !has_external_owner()) {
+            llOwnerSay("ERROR: Cannot enable TPE via notecard - requires external owner");
+            llOwnerSay("HINT: Set owner BEFORE tpe.mode in notecard");
             return;
         }
-        // Parse as CSV list
-        string list_contents = llGetSubString(value, 1, -2);  // Strip [ ]
-        list parsed_list = llCSV2List(list_contents);
-        parsed_list = list_unique(parsed_list);
-
-        // Enforce MaxListLen for notecard
-        if (llGetListLength(parsed_list) > MaxListLen) {
-            parsed_list = llList2List(parsed_list, 0, MaxListLen - 1);
-            llOwnerSay("WARNING: " + key_name + " list truncated to " + (string)MaxListLen + " entries");
-        }
-
-        // Apply blacklist guards for notecard
-        if (key_name == KEY_BLACKLIST) {
-            integer i = 0;
-            integer bl_len = llGetListLength(parsed_list);
-            while (i < bl_len) {
-                apply_blacklist_add_guard(llList2String(parsed_list, i));
-                i += 1;
-            }
-        }
-
-        kv_set_list(key_name, parsed_list);
+        llLinksetDataWrite(KEY_TPE_MODE, value);
+        return;
     }
-    else {
-        // Scalar value
-        if (key_name == KEY_MULTI_OWNER_MODE) value = normalize_bool(value);
-        if (key_name == KEY_PUBLIC_ACCESS) value = normalize_bool(value);
-        if (key_name == KEY_LOCKED) value = normalize_bool(value);
-        if (key_name == KEY_RUNAWAY_ENABLED) value = normalize_bool(value);
 
-        // Validate TPE mode in notecard (same as runtime API)
-        if (key_name == KEY_TPE_MODE) {
-            value = normalize_bool(value);
-
-            if ((integer)value == 1) {
-                if (!has_external_owner()) {
-                    llOwnerSay("ERROR: Cannot enable TPE via notecard - requires external owner");
-                    llOwnerSay("HINT: Set owner or owners BEFORE tpe_mode in notecard");
-                    return;  // Don't set TPE
-                }
-            }
-        }
-
-        kv_set_scalar(key_name, value);
+    // Generic plugin scalars (any other dotted key) — write through
+    if (llSubStringIndex(key_name, ".") != -1) {
+        llLinksetDataWrite(key_name, value);
     }
-}
-
-// Factory reset: wipe all LSD data. Policies and ACL cache
-// are rebuilt when plugins re-register after the signal.
-clear_lsd_settings() {
-    llLinksetDataReset();
 }
 
 integer start_notecard_reading() {
     if (llGetInventoryType(NOTECARD_NAME) != INVENTORY_NOTECARD) {
         return FALSE;
     }
+    // Notecard is canonical for ownership data — clear it before reading
+    // so removed entries don't persist as stale data.
+    clear_owner_keys();
+    clear_trustee_keys();
+    llLinksetDataDelete(KEY_BLACKLIST);
+
+    // Drop any pending/in-flight name queries from a previous load. The
+    // in-flight query can't be cancelled, but nulling the tracking makes
+    // its response unmatched and harmlessly ignored.
+    NamePending   = [];
+    NameQueryId   = NULL_KEY;
+    NameQueryUuid = "";
+    NameQueryRole = "";
+
     IsLoadingNotecard = TRUE;
     NotecardLine = 0;
     NotecardQuery = llGetNotecardLine(NOTECARD_NAME, NotecardLine);
@@ -461,190 +578,118 @@ handle_settings_get() {
     broadcast_settings_changed();
 }
 
+// Generic scalar set for non-access keys (and a few access scalars).
+// Owner/trustee/blacklist data must use the dedicated handlers below.
 handle_set(string msg) {
     string key_name = llJsonGetValue(msg, ["key"]);
     if (key_name == JSON_INVALID) return;
+    if (is_notecard_only_key(key_name)) return;
 
-    if (is_notecard_only_key(key_name)) {
-        return;
-    }
-    
-    integer did_change = FALSE;
-    
-    // Bulk list set
-    string values_arr = llJsonGetValue(msg, ["values"]);
-    if (values_arr != JSON_INVALID) {
-        if (llJsonValueType(values_arr, []) == JSON_ARRAY) {
-            list new_list = llJson2List(values_arr);
-            new_list = list_unique(new_list);
-
-            if (key_name == KEY_BLACKLIST) {
-                integer i = 0;
-                integer nbl_len = llGetListLength(new_list);
-                while (i < nbl_len) {
-                    apply_blacklist_add_guard(llList2String(new_list, i));
-                    i += 1;
-                }
-            }
-
-            did_change = kv_set_list(key_name, new_list);
-
-            if (did_change) {
-                broadcast_settings_changed();
-            }
-        }
-        return;
-    }
-
-    // Scalar set
     string value = llJsonGetValue(msg, ["value"]);
-    if (value != JSON_INVALID) {
+    if (value == JSON_INVALID) return;
 
-        if (key_name == KEY_PUBLIC_ACCESS) value = normalize_bool(value);
-        if (key_name == KEY_LOCKED) value = normalize_bool(value);
-        if (key_name == KEY_RUNAWAY_ENABLED) value = normalize_bool(value);
-
-        // Validate TPE mode
-        if (key_name == KEY_TPE_MODE) {
-            value = normalize_bool(value);
-
-            if ((integer)value == 1) {
-                if (!has_external_owner()) {
-                    llOwnerSay("ERROR: Cannot enable TPE - requires external owner");
-                    return;  // Don't set TPE
-                }
-            }
-        }
-
-        // Guard owner objects on scalar set
-        if ((key_name == KEY_OWNER || key_name == KEY_OWNERS) && llJsonValueType(value, []) == JSON_OBJECT) {
-            value = guard_owner_object(value);
-        }
-
-        // Guard trustees object on scalar set
-        if (key_name == KEY_TRUSTEES && llJsonValueType(value, []) == JSON_OBJECT) {
-            value = guard_trustees_object(value);
-        }
-
-        did_change = kv_set_scalar(key_name, value);
-
-        if (did_change) {
-            broadcast_settings_changed();
-        }
-    }
-}
-
-handle_list_add(string msg) {
-    if (llJsonGetValue(msg, ["key"]) == JSON_INVALID) return;
-    if (llJsonGetValue(msg, ["elem"]) == JSON_INVALID) return;
-    
-    string key_name = llJsonGetValue(msg, ["key"]);
-    string elem = llJsonGetValue(msg, ["elem"]);
-    
-
-    if (is_notecard_only_key(key_name)) {
+    // Refuse direct writes to managed access lists
+    if (key_name == KEY_OWNER
+        || key_name == KEY_OWNER_NAME
+        || key_name == KEY_OWNER_HONORIFIC
+        || key_name == KEY_TRUSTEE_UUIDS
+        || key_name == KEY_TRUSTEE_NAMES
+        || key_name == KEY_TRUSTEE_HONORIFICS
+        || key_name == KEY_BLACKLIST) {
         return;
     }
-    
-    integer did_change = FALSE;
-    
-    if (key_name == KEY_BLACKLIST) {
-        apply_blacklist_add_guard(elem);
-        did_change = kv_list_add_unique(key_name, elem);
-    }
-    else {
-        did_change = kv_list_add_unique(key_name, elem);
-    }
-    
-    if (did_change) {
-        broadcast_settings_changed();
-    }
-}
 
-handle_obj_set(string msg) {
-    if (llJsonGetValue(msg, ["key"]) == JSON_INVALID) return;
-    if (llJsonGetValue(msg, ["field"]) == JSON_INVALID) return;
-    if (llJsonGetValue(msg, ["value"]) == JSON_INVALID) return;
-
-    string key_name = llJsonGetValue(msg, ["key"]);
-    string field = llJsonGetValue(msg, ["field"]);
-    string value = llJsonGetValue(msg, ["value"]);
-
-
-    if (!is_json_object_key(key_name)) return;
-
-    // Guard: trustee can't be an owner
-    if (key_name == KEY_TRUSTEES) {
-        if (!apply_trustee_add_guard(field)) return;
+    // Boolean normalization
+    if (key_name == KEY_PUBLIC_ACCESS
+        || key_name == KEY_LOCKED
+        || key_name == KEY_RUNAWAY_ENABLED
+        || key_name == KEY_ISOWNED) {
+        value = normalize_bool(value);
     }
 
-    // Guard: owner can't be wearer, removes from trustees/blacklist
-    if (key_name == KEY_OWNER || key_name == KEY_OWNERS) {
-        if (!apply_owner_set_guard(field)) return;
-    }
-
-    // Enforce MaxListLen on JSON object fields
-    string current_obj = kv_get(key_name);
-    if (current_obj != "" && llJsonValueType(current_obj, []) == JSON_OBJECT) {
-        // Only count if field is new (not updating existing)
-        if (llJsonGetValue(current_obj, [field]) == JSON_INVALID) {
-            integer field_count = llGetListLength(llJson2List(current_obj)) / 2;
-            if (field_count >= MaxListLen) return;
+    // TPE validation
+    if (key_name == KEY_TPE_MODE) {
+        value = normalize_bool(value);
+        if ((integer)value == 1 && !has_external_owner()) {
+            llOwnerSay("ERROR: Cannot enable TPE - requires external owner");
+            return;
         }
     }
 
-    integer did_change = kv_obj_set_field(key_name, field, value);
-    if (did_change) {
-        broadcast_settings_changed();
-    }
-}
-
-handle_obj_remove(string msg) {
-    if (llJsonGetValue(msg, ["key"]) == JSON_INVALID) return;
-    if (llJsonGetValue(msg, ["field"]) == JSON_INVALID) return;
-
-    string key_name = llJsonGetValue(msg, ["key"]);
-    string field = llJsonGetValue(msg, ["field"]);
-
-
-    if (!is_json_object_key(key_name)) return;
-
-    integer did_change = kv_obj_remove_field(key_name, field);
-    if (did_change) {
-        broadcast_settings_changed();
-    }
-}
-
-handle_list_remove(string msg) {
-    if (llJsonGetValue(msg, ["key"]) == JSON_INVALID) return;
-    if (llJsonGetValue(msg, ["elem"]) == JSON_INVALID) return;
-    
-    string key_name = llJsonGetValue(msg, ["key"]);
-    string elem = llJsonGetValue(msg, ["elem"]);
-    
-
-    
-    integer did_change = kv_list_remove_all(key_name, elem);
-
-    if (did_change) {
-        broadcast_settings_changed();
-    }
-}
-
-handle_settings_restore(string msg) {
-    string kv = llJsonGetValue(msg, ["kv"]);
-    if (kv == JSON_INVALID) return;
-
-    // Write each key-value pair from the restore payload to LSD
-    list pairs = llJson2List(kv);
-    integer i = 0;
-    integer len = llGetListLength(pairs);
-    while (i < len) {
-        llLinksetDataWrite(llList2String(pairs, i), llList2String(pairs, i + 1));
-        i += 2;
+    // isowned = 0 → factory reset trigger
+    if (key_name == KEY_ISOWNED && value == "0") {
+        factory_reset();
+        return;
     }
 
+    if (llLinksetDataRead(key_name) == value) return;
+    llLinksetDataWrite(key_name, value);
     broadcast_settings_changed();
+}
+
+handle_set_owner(string msg) {
+    if (is_multi_owner_mode()) {
+        llOwnerSay("ERROR: Cannot set owner via menu in multi-owner mode (notecard managed)");
+        return;
+    }
+
+    string uuid_str  = llJsonGetValue(msg, ["uuid"]);
+    string honorific = llJsonGetValue(msg, ["honorific"]);
+    if (uuid_str == JSON_INVALID || honorific == JSON_INVALID) return;
+
+    if (set_single_owner(uuid_str, honorific)) {
+        broadcast_settings_changed();
+    }
+}
+
+handle_clear_owner() {
+    if (is_multi_owner_mode()) {
+        llOwnerSay("ERROR: Cannot clear owner via menu in multi-owner mode (notecard managed)");
+        return;
+    }
+    clear_single_owner();
+    broadcast_settings_changed();
+}
+
+handle_add_trustee(string msg) {
+    string uuid_str  = llJsonGetValue(msg, ["uuid"]);
+    string honorific = llJsonGetValue(msg, ["honorific"]);
+    if (uuid_str == JSON_INVALID || honorific == JSON_INVALID) return;
+
+    if (add_trustee_internal(uuid_str, honorific)) {
+        broadcast_settings_changed();
+    }
+}
+
+handle_remove_trustee(string msg) {
+    string uuid_str = llJsonGetValue(msg, ["uuid"]);
+    if (uuid_str == JSON_INVALID) return;
+
+    if (remove_trustee_internal(uuid_str)) {
+        broadcast_settings_changed();
+    }
+}
+
+handle_blacklist_add(string msg) {
+    string uuid_str = llJsonGetValue(msg, ["uuid"]);
+    if (uuid_str == JSON_INVALID) return;
+
+    if (add_blacklist_internal(uuid_str)) {
+        broadcast_settings_changed();
+    }
+}
+
+handle_blacklist_remove(string msg) {
+    string uuid_str = llJsonGetValue(msg, ["uuid"]);
+    if (uuid_str == JSON_INVALID) return;
+
+    if (remove_blacklist_internal(uuid_str)) {
+        broadcast_settings_changed();
+    }
+}
+
+handle_runaway() {
+    factory_reset();
 }
 
 /* -------------------- EVENTS -------------------- */
@@ -662,7 +707,7 @@ default
             broadcast_settings_changed();
         }
     }
-    
+
     on_rez(integer start_param) {
         key current_owner = llGetOwner();
         if (current_owner != LastOwner) {
@@ -670,17 +715,17 @@ default
             llResetScript();
         }
     }
-    
+
     attach(key id) {
         if (id == NULL_KEY) return;
-        
+
         key current_owner = llGetOwner();
         if (current_owner != LastOwner) {
             LastOwner = current_owner;
             llResetScript();
         }
     }
-    
+
     changed(integer change) {
         if (change & CHANGED_OWNER) {
             key current_owner = llGetOwner();
@@ -689,72 +734,59 @@ default
                 llResetScript();
             }
         }
-        
+
         if (change & CHANGED_INVENTORY) {
-            // Only act if the settings notecard specifically changed
             key current_notecard_key = llGetInventoryKey(NOTECARD_NAME);
             if (current_notecard_key != NotecardKey) {
-                // Notecard was deleted -> clear LSD and reset to defaults
                 if (current_notecard_key == NULL_KEY) {
-                    clear_lsd_settings();
-                    broadcast_settings_changed();
-                    llResetScript();
+                    // Notecard removed → factory reset
+                    factory_reset();
                 }
                 else {
-                    // Notecard edited or re-added -> reload
                     NotecardKey = current_notecard_key;
                     start_notecard_reading();
                 }
             }
         }
     }
-    
-    dataserver(key query_id, string data) {
-        if (query_id != NotecardQuery) return;
-        
-        if (data != EOF) {
-            parse_notecard_line(data);
-            
-            NotecardLine += 1;
-            NotecardQuery = llGetNotecardLine(NOTECARD_NAME, NotecardLine);
-        }
-        else {
-            IsLoadingNotecard = FALSE;
-            broadcast_settings_changed();
 
-            // Trigger bootstrap after notecard load completes
-            string bootstrap_msg = llList2Json(JSON_OBJECT, [
-                "type", "notecard_loaded"
-            ]);
-            llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, bootstrap_msg, NULL_KEY);
+    dataserver(key query_id, string data) {
+        // Notecard line read
+        if (query_id == NotecardQuery) {
+            if (data != EOF) {
+                parse_notecard_line(data);
+                NotecardLine += 1;
+                NotecardQuery = llGetNotecardLine(NOTECARD_NAME, NotecardLine);
+            }
+            else {
+                IsLoadingNotecard = FALSE;
+                broadcast_settings_changed();
+
+                // Trigger bootstrap completion
+                llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
+                    "type", "notecard_loaded"
+                ]), NULL_KEY);
+            }
+            return;
         }
+
+        // Display name response
+        handle_name_response(query_id, data);
     }
-    
+
     link_message(integer sender, integer num, string msg, key id) {
         if (num != SETTINGS_BUS) return;
         string msg_type = get_msg_type(msg);
         if (msg_type == "") return;
-        
-        if (msg_type == "settings_get") {
-            handle_settings_get();
-        }
-        else if (msg_type == "set") {
-            handle_set(msg);
-        }
-        else if (msg_type == "list_add") {
-            handle_list_add(msg);
-        }
-        else if (msg_type == "list_remove") {
-            handle_list_remove(msg);
-        }
-        else if (msg_type == "obj_set") {
-            handle_obj_set(msg);
-        }
-        else if (msg_type == "obj_remove") {
-            handle_obj_remove(msg);
-        }
-        else if (msg_type == "settings_restore") {
-            handle_settings_restore(msg);
-        }
+
+        if      (msg_type == "settings_get")     handle_settings_get();
+        else if (msg_type == "set")              handle_set(msg);
+        else if (msg_type == "set_owner")        handle_set_owner(msg);
+        else if (msg_type == "clear_owner")      handle_clear_owner();
+        else if (msg_type == "add_trustee")      handle_add_trustee(msg);
+        else if (msg_type == "remove_trustee")   handle_remove_trustee(msg);
+        else if (msg_type == "blacklist_add")    handle_blacklist_add(msg);
+        else if (msg_type == "blacklist_remove") handle_blacklist_remove(msg);
+        else if (msg_type == "runaway")          handle_runaway();
     }
 }

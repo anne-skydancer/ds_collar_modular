@@ -1,10 +1,12 @@
 /*--------------------
 PLUGIN: plugin_blacklist.lsl
 VERSION: 1.10
-REVISION: 2
+REVISION: 3
 PURPOSE: Blacklist management with sensor-based avatar selection
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
+- v1.1 rev 3: Migrate to flat CSV blacklist storage. Use new blacklist_add /
+  blacklist_remove API messages instead of generic list set/persist.
 - v1.1 rev 2: Migrate dialog buttons to button_data format with context-based routing.
 - v1.1 rev 1: Migrate settings reads from JSON broadcast payloads to direct
   llLinksetDataRead. Remove apply_settings_delta — full re-read on every sync.
@@ -38,7 +40,7 @@ integer MAX_NUMBERED_LIST_ITEMS = 11;  // 12 dialog buttons - 1 Back button
 */
 
 /* -------------------- SETTINGS KEYS -------------------- */
-string KEY_BLACKLIST = "access.blacklist";
+string KEY_BLACKLIST = "blacklist.blklistuuid";
 
 /* -------------------- UI CONSTANTS -------------------- */
 string BTN_BACK = "Back";
@@ -129,54 +131,22 @@ send_pong() {
 
 apply_settings_sync() {
     string raw = llLinksetDataRead(KEY_BLACKLIST);
-    parse_blacklist_value(raw);
+    if (raw == "") Blacklist = [];
+    else           Blacklist = llCSV2List(raw);
 }
 
-parse_blacklist_value(string raw) {
-    if (raw == JSON_INVALID || raw == "[]" || raw == "" || raw == " ") {
-        Blacklist = [];
-        return;
-    }
-
-    // Try JSON array format first
-    if (llGetSubString(raw, 0, 0) == "[") {
-        list parsed = llJson2List(raw);
-        list updated = [];
-        integer i = 0;
-        integer count = llGetListLength(parsed);
-        while (i < count) {
-            string val = llList2String(parsed, i);
-            if (val != "" && llListFindList(updated, [val]) == -1) {
-                updated += [val];
-            }
-            i += 1;
-        }
-        Blacklist = updated;
-        return;
-    }
-
-    // Fall back to legacy CSV format
-    list csv = llParseStringKeepNulls(raw, [","], []);
-    list updated = [];
-    integer j = 0;
-    integer csv_len = llGetListLength(csv);
-    while (j < csv_len) {
-        string entry = llStringTrim(llList2String(csv, j), STRING_TRIM);
-        if (entry != "" && llListFindList(updated, [entry]) == -1) {
-            updated += [entry];
-        }
-        j += 1;
-    }
-    Blacklist = updated;
+send_blacklist_add(string uuid_str) {
+    llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
+        "type", "blacklist_add",
+        "uuid", uuid_str
+    ]), NULL_KEY);
 }
 
-persist_blacklist() {
-    string msg = llList2Json(JSON_OBJECT, [
-        "type", "set",
-        "key", KEY_BLACKLIST,
-        "values", llList2Json(JSON_ARRAY, Blacklist)
-    ]);
-    llMessageLinked(LINK_SET, SETTINGS_BUS, msg, NULL_KEY);
+send_blacklist_remove(string uuid_str) {
+    llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
+        "type", "blacklist_remove",
+        "uuid", uuid_str
+    ]), NULL_KEY);
 }
 
 /* -------------------- MENU DISPLAY -------------------- */
@@ -338,8 +308,7 @@ handle_dialog_response(string msg) {
     if (MenuContext == "remove") {
         integer idx = (integer)cmd - 1;
         if (idx >= 0 && idx < llGetListLength(Blacklist)) {
-            Blacklist = llDeleteSubList(Blacklist, idx, idx);
-            persist_blacklist();
+            send_blacklist_remove(llList2String(Blacklist, idx));
             llRegionSayTo(CurrentUser, 0, "Removed from blacklist.");
         }
         show_main_menu();
@@ -351,9 +320,8 @@ handle_dialog_response(string msg) {
         integer idx = (integer)cmd - 1;
         if (idx >= 0 && idx < llGetListLength(CandidateKeys)) {
             string entry = llList2String(CandidateKeys, idx);
-            if (entry != "" && llListFindList(Blacklist, [entry]) == -1) {
-                Blacklist += [entry];
-                persist_blacklist();
+            if (entry != "") {
+                send_blacklist_add(entry);
                 llRegionSayTo(CurrentUser, 0, "Added to blacklist.");
             }
         }

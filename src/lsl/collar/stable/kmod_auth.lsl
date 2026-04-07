@@ -1,10 +1,14 @@
 /*--------------------
 MODULE: kmod_auth.lsl
 VERSION: 1.10
-REVISION: 2
+REVISION: 3
 PURPOSE: Authoritative ACL engine - OPTIMIZED
 ARCHITECTURE: Dispatch table pattern with linkset data cache and JSON templates
 CHANGES:
+- v1.1 rev 3: Migrate to two-mode access model. Single-owner mode reads
+  scalar access.owner; multi-owner mode reads parallel CSV access.owneruuids.
+  Trustees and blacklist now read from CSV keys (access.trusteeuuids,
+  blacklist.blklistuuid).
 - v1.1 rev 2: Read settings from LSD instead of kv_json broadcast. Remove
   apply_settings_delta; side effects triggered by state comparison.
 - v1.1 rev 1: Removed dead policy_* fields from JSON templates. Removed
@@ -31,10 +35,10 @@ integer ACL_PRIMARY_OWNER = 5;
 
 /* -------------------- SETTINGS KEYS -------------------- */
 string KEY_MULTI_OWNER_MODE = "access.multiowner";
-string KEY_OWNER            = "access.owner";
-string KEY_OWNERS           = "access.owners";
-string KEY_TRUSTEES         = "access.trustees";
-string KEY_BLACKLIST        = "access.blacklist";
+string KEY_OWNER            = "access.owner";          // single-owner scalar
+string KEY_OWNER_UUIDS      = "access.owneruuids";     // multi-owner CSV
+string KEY_TRUSTEE_UUIDS    = "access.trusteeuuids";
+string KEY_BLACKLIST        = "blacklist.blklistuuid";
 string KEY_PUBLIC_ACCESS    = "public.mode";
 string KEY_TPE_MODE         = "tpe.mode";
 
@@ -84,10 +88,6 @@ integer MAX_PENDING_QUERIES = 50;
 /* Plugin ACL registry removed in v1.1 rev 1 — superseded by LSD policies */
 
 /* -------------------- HELPER FUNCTIONS -------------------- */
-
-integer is_json_arr(string s) {
-    return (llGetSubString(s, 0, 0) == "[");
-}
 
 integer list_has_key(list search_list, key k) {
     return (llListFindList(search_list, [(string)k]) != -1);
@@ -553,53 +553,31 @@ apply_settings_sync() {
         MultiOwnerMode = (integer)tmp;
     }
 
-    // Single owner: JSON object {uuid:honorific} — extract UUID
-    string owner_obj = llLinksetDataRead(KEY_OWNER);
-    if (owner_obj != "") {
-        if (llJsonValueType(owner_obj, []) == JSON_OBJECT) {
-            list pairs = llJson2List(owner_obj);
-            if (llGetListLength(pairs) >= 2) {
-                OwnerKey = (key)llList2String(pairs, 0);
+    // Read owners according to mode
+    if (MultiOwnerMode) {
+        string raw = llLinksetDataRead(KEY_OWNER_UUIDS);
+        if (raw != "") {
+            OwnerKeys = llCSV2List(raw);
+            if (llGetListLength(OwnerKeys) > 0) {
+                OwnerKey = (key)llList2String(OwnerKeys, 0);
             }
         }
     }
-
-    // Multi-owner: JSON object {uuid:honorific, ...} — extract UUID list
-    string owners_obj = llLinksetDataRead(KEY_OWNERS);
-    if (owners_obj != "") {
-        if (llJsonValueType(owners_obj, []) == JSON_OBJECT) {
-            list pairs = llJson2List(owners_obj);
-            integer pi = 0;
-            integer plen = llGetListLength(pairs);
-            while (pi < plen) {
-                OwnerKeys += [llList2String(pairs, pi)];
-                pi += 2;
-            }
+    else {
+        string raw = llLinksetDataRead(KEY_OWNER);
+        if (raw != "") {
+            OwnerKey = (key)raw;
         }
     }
 
-    string trustees_raw = llLinksetDataRead(KEY_TRUSTEES);
+    string trustees_raw = llLinksetDataRead(KEY_TRUSTEE_UUIDS);
     if (trustees_raw != "") {
-        if (llJsonValueType(trustees_raw, []) == JSON_OBJECT) {
-            // Trustees stored as {uuid:honorific} — extract UUID keys
-            list pairs = llJson2List(trustees_raw);
-            integer pi = 0;
-            integer plen = llGetListLength(pairs);
-            while (pi < plen) {
-                TrusteeList += [llList2String(pairs, pi)];
-                pi += 2;
-            }
-        }
-        else if (is_json_arr(trustees_raw)) {
-            TrusteeList = llJson2List(trustees_raw);
-        }
+        TrusteeList = llCSV2List(trustees_raw);
     }
 
     string bl_raw = llLinksetDataRead(KEY_BLACKLIST);
     if (bl_raw != "") {
-        if (is_json_arr(bl_raw)) {
-            Blacklist = llJson2List(bl_raw);
-        }
+        Blacklist = llCSV2List(bl_raw);
     }
 
     tmp = llLinksetDataRead(KEY_PUBLIC_ACCESS);

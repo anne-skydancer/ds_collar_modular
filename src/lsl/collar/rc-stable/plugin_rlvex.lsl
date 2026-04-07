@@ -1,10 +1,13 @@
 /*--------------------
 PLUGIN: plugin_rlvex.lsl
 VERSION: 1.10
-REVISION: 2
+REVISION: 3
 PURPOSE: Manage RLV teleport and IM exceptions for owners and trustees
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
+- v1.1 rev 3: Two-mode access model. Read primary owner from access.owner
+  scalar (single mode) or access.owneruuids CSV (multi mode). Trustees
+  read from access.trusteeuuids CSV.
 - v1.1 rev 2: Migrate dialog buttons to button_data format with context-based routing.
 - v1.1 rev 1: Migrate settings reads from JSON broadcast to direct LSD reads.
   Remove apply_settings_delta(); both sync and delta call apply_settings_sync().
@@ -28,13 +31,13 @@ string PLUGIN_CONTEXT = "core_rlv_exceptions";
 string PLUGIN_LABEL = "Exceptions";
 
 /* -------------------- SETTINGS KEYS -------------------- */
-string KEY_EX_OWNER_TP   = "rlvex.ownertp";
-string KEY_EX_OWNER_IM   = "rlvex.ownerim";
-string KEY_EX_TRUSTEE_TP = "rlvex.trusteetp";
-string KEY_EX_TRUSTEE_IM = "rlvex.trusteeim";
-string KEY_OWNER          = "access.owner";
-string KEY_OWNERS         = "access.owners";
-string KEY_TRUSTEES       = "access.trustees";
+string KEY_EX_OWNER_TP    = "rlvex.ownertp";
+string KEY_EX_OWNER_IM    = "rlvex.ownerim";
+string KEY_EX_TRUSTEE_TP  = "rlvex.trusteetp";
+string KEY_EX_TRUSTEE_IM  = "rlvex.trusteeim";
+string KEY_OWNER          = "access.owner";          // single-owner uuid
+string KEY_OWNER_UUIDS    = "access.owneruuids";     // multi-owner CSV
+string KEY_TRUSTEE_UUIDS  = "access.trusteeuuids";
 string KEY_MULTI_OWNER_MODE = "access.multiowner";
 
 /* -------------------- STATE -------------------- */
@@ -196,42 +199,17 @@ apply_settings_sync() {
 
     // Read owner/trustee lists from LSD
     if (MultiOwnerMode) {
-        string obj = llLinksetDataRead(KEY_OWNERS);
-        if (obj != "") {
-            if (llJsonValueType(obj, []) == JSON_OBJECT) {
-                list pairs = llJson2List(obj);
-                integer oi = 0;
-                integer olen = llGetListLength(pairs);
-                while (oi < olen) {
-                    OwnerKeys += [llList2String(pairs, oi)];
-                    oi += 2;
-                }
-            }
-        }
+        string raw = llLinksetDataRead(KEY_OWNER_UUIDS);
+        if (raw != "") OwnerKeys = llCSV2List(raw);
     }
     else {
-        string obj = llLinksetDataRead(KEY_OWNER);
-        if (obj != "") {
-            if (llJsonValueType(obj, []) == JSON_OBJECT) {
-                list pairs = llJson2List(obj);
-                if (llGetListLength(pairs) >= 2) {
-                    OwnerKey = (key)llList2String(pairs, 0);
-                }
-            }
-        }
+        string raw = llLinksetDataRead(KEY_OWNER);
+        if (raw != "") OwnerKey = (key)raw;
     }
 
-    string trustees_raw = llLinksetDataRead(KEY_TRUSTEES);
+    string trustees_raw = llLinksetDataRead(KEY_TRUSTEE_UUIDS);
     if (trustees_raw != "") {
-        if (llJsonValueType(trustees_raw, []) == JSON_OBJECT) {
-            list pairs = llJson2List(trustees_raw);
-            integer pi = 0;
-            integer plen = llGetListLength(pairs);
-            while (pi < plen) {
-                TrusteeKeys += [llList2String(pairs, pi)];
-                pi += 2;
-            }
-        }
+        TrusteeKeys = llCSV2List(trustees_raw);
     }
 
     // Auto-initialize exception settings if owners exist but LSD keys are absent
