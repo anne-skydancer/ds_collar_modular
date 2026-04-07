@@ -1,7 +1,7 @@
 /*--------------------
 MODULE: kmod_settings.lsl
 VERSION: 1.10
-REVISION: 5
+REVISION: 3
 PURPOSE: Notecard parser, validation guards, and LSD settings store
 ARCHITECTURE: Two-mode access model. Single-owner mode uses scalar keys
               (access.owner, access.ownername, access.ownerhonorific) and
@@ -11,20 +11,6 @@ ARCHITECTURE: Two-mode access model. Single-owner mode uses scalar keys
               Trustees and blacklist always use CSVs. Display names are
               resolved asynchronously via llRequestDisplayName.
 CHANGES:
-- v1.1 rev 5: Hotfix for rev 4 — bootstrap was timing out because the
-  rev 4 KEY_OWNER branch declared `key u` twice in nested scopes within
-  the same outer block (once inside the JSON if-block, once in the
-  bare-UUID fall-through). LSL Mono rejects this redeclaration even
-  though lslint accepts it, so the script never reached state_entry and
-  the notecard never finished loading. All locals in the new JSON
-  branches now use unique prefixed names (o_*, mo_*, tr_*) to avoid any
-  cross-block scope collisions.
-- v1.1 rev 4: Notecard parser now accepts the documented JSON object form
-  for owners and trustees: access.owner = {uuid: honorific} (single mode),
-  access.owners = {uuid: hon, ...} (multi mode), and access.trustees =
-  {uuid: hon, ...}. Previously only bare-UUID/CSV legacy forms were parsed,
-  so the documented notecard format silently produced empty owner/trustee
-  state. Bare-UUID forms still work for back-compat.
 - v1.1 rev 3: Replace JSON object owner/trustee storage with explicit
   two-mode flat scheme (scalars for single-owner, parallel CSVs for
   multi-owner). Async display name resolution. access.isowned = 0
@@ -402,94 +388,16 @@ parse_notecard_line(string line) {
         return;
     }
 
-    // Single-owner: documented notecard form is {uuid: honorific}.
-    // Bare-UUID legacy form is still accepted for back-compat.
+    // Single-owner scalar (notecard can also use single-owner mode)
     if (key_name == KEY_OWNER) {
-        if (llJsonValueType(value, []) == JSON_OBJECT) {
-            list o_pairs = llJson2List(value);
-            if (llGetListLength(o_pairs) < 2) return;
-            string o_uuid = llList2String(o_pairs, 0);
-            string o_hon  = llList2String(o_pairs, 1);
-            if ((key)o_uuid == NULL_KEY || (key)o_uuid == llGetOwner()) return;
-            llLinksetDataWrite(KEY_OWNER, o_uuid);
-            llLinksetDataWrite(KEY_OWNER_NAME, NAME_LOADING);
-            llLinksetDataWrite(KEY_OWNER_HONORIFIC, o_hon);
-            llLinksetDataWrite(KEY_ISOWNED, "1");
-            request_name(o_uuid, "owner_scalar");
-            return;
-        }
-        if ((key)value == NULL_KEY || (key)value == llGetOwner()) return;
+        key u = (key)value;
+        if (u == NULL_KEY || u == llGetOwner()) return;
         llLinksetDataWrite(KEY_OWNER, value);
         if (llLinksetDataRead(KEY_OWNER_NAME) == "") {
             llLinksetDataWrite(KEY_OWNER_NAME, NAME_LOADING);
         }
         llLinksetDataWrite(KEY_ISOWNED, "1");
         request_name(value, "owner_scalar");
-        return;
-    }
-
-    // Multi-owner (documented notecard form): access.owners = {uuid: hon, ...}
-    if (key_name == "access.owners") {
-        if (llJsonValueType(value, []) != JSON_OBJECT) return;
-        list mo_pairs = llJson2List(value);
-        integer mo_plen = llGetListLength(mo_pairs);
-        list mo_uuids = [];
-        list mo_hons  = [];
-        list mo_names = [];
-        integer mo_pi = 0;
-        while (mo_pi < mo_plen) {
-            string mo_uuid = llList2String(mo_pairs, mo_pi);
-            string mo_hon  = llList2String(mo_pairs, mo_pi + 1);
-            if ((key)mo_uuid != NULL_KEY && (key)mo_uuid != llGetOwner()) {
-                mo_uuids += [mo_uuid];
-                mo_hons  += [mo_hon];
-                mo_names += [NAME_LOADING];
-                request_name(mo_uuid, "owner_csv");
-            }
-            mo_pi += 2;
-        }
-        if (llGetListLength(mo_uuids) > MaxListLen) {
-            mo_uuids = llList2List(mo_uuids, 0, MaxListLen - 1);
-            mo_hons  = llList2List(mo_hons,  0, MaxListLen - 1);
-            mo_names = llList2List(mo_names, 0, MaxListLen - 1);
-        }
-        csv_write(KEY_OWNER_UUIDS,      mo_uuids);
-        csv_write(KEY_OWNER_NAMES,      mo_names);
-        csv_write(KEY_OWNER_HONORIFICS, mo_hons);
-        if (llGetListLength(mo_uuids) > 0) {
-            llLinksetDataWrite(KEY_ISOWNED, "1");
-        }
-        return;
-    }
-
-    // Trustees (documented notecard form): access.trustees = {uuid: hon, ...}
-    if (key_name == "access.trustees") {
-        if (llJsonValueType(value, []) != JSON_OBJECT) return;
-        list tr_pairs = llJson2List(value);
-        integer tr_plen = llGetListLength(tr_pairs);
-        list tr_uuids = [];
-        list tr_hons  = [];
-        list tr_names = [];
-        integer tr_pi = 0;
-        while (tr_pi < tr_plen) {
-            string tr_uuid = llList2String(tr_pairs, tr_pi);
-            string tr_hon  = llList2String(tr_pairs, tr_pi + 1);
-            if ((key)tr_uuid != NULL_KEY && (key)tr_uuid != llGetOwner() && !is_owner(tr_uuid)) {
-                tr_uuids += [tr_uuid];
-                tr_hons  += [tr_hon];
-                tr_names += [NAME_LOADING];
-                request_name(tr_uuid, "trustee_csv");
-            }
-            tr_pi += 2;
-        }
-        if (llGetListLength(tr_uuids) > MaxListLen) {
-            tr_uuids = llList2List(tr_uuids, 0, MaxListLen - 1);
-            tr_hons  = llList2List(tr_hons,  0, MaxListLen - 1);
-            tr_names = llList2List(tr_names, 0, MaxListLen - 1);
-        }
-        csv_write(KEY_TRUSTEE_UUIDS,      tr_uuids);
-        csv_write(KEY_TRUSTEE_NAMES,      tr_names);
-        csv_write(KEY_TRUSTEE_HONORIFICS, tr_hons);
         return;
     }
 

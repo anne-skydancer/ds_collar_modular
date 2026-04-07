@@ -368,12 +368,19 @@ key = value
 Plugins interact with settings via channel 800:
 
 - **Set**: `{"type": "set", "key": "bell.volume", "value": "0.5"}`
-- **Get**: `{"type": "get", "key": "bell.volume"}`
-- **Delta broadcast**: When a value changes, kmod_settings broadcasts `{"type": "delta", "key": "...", "value": "..."}` to all scripts
+- **Get**: not used — plugins read directly from LSD via `llLinksetDataRead`
+- **Sync broadcast**: When a value changes, kmod_settings broadcasts a
+  lightweight `{"type": "settings_sync"}` signal so consumers can re-read
+  from LSD
 
 ### Storage
 
-Settings are held in a single JSON object (`KvJson`) in script globals. Dotted keys are also written to linkset data for cross-module access.
+Every setting is stored in linkset data (LSD) as its own key. Single-owner
+ownership uses scalar keys (`access.owner`, `access.ownername`,
+`access.ownerhonorific`); multi-owner ownership uses parallel CSVs
+(`access.owneruuids`, `access.ownernames`, `access.ownerhonorifics`).
+Trustees use parallel CSVs as well. There is no in-memory JSON cache
+layer — LSD is the single source of truth.
 
 ---
 
@@ -460,17 +467,19 @@ The relay listens on the standard RLV relay channel (`-1812221819`) and translat
 
 ## Persistence Model
 
-Three tiers, from most durable to least:
+Two tiers, from most durable to least:
 
 | Tier | Mechanism | Survives Relog | Survives Script Reset | Survives Owner Change |
 |------|-----------|:-:|:-:|:-:|
 | **Notecard** | `settings` notecard | Yes | Yes | Yes |
-| **Linkset Data** | `llLinksetDataWrite` | Yes | Yes | No |
-| **Script Globals** | `KvJson` in kmod_settings | Yes | No | No |
+| **Linkset Data** | `llLinksetDataWrite` (one key per setting) | Yes | Yes | No (cleared on owner change) |
 
-- **ACL data** (owners, trustees, blacklist, public, TPE) is persisted to linkset data by `kmod_auth`
-- **Runtime settings** persist in script globals across detach/reattach for the same owner
-- **The notecard** seeds initial values on first load or after owner change
+- **All settings** (owners, trustees, blacklist, public, TPE, bell, RLV
+  exceptions, plugin scalars, etc.) are persisted to linkset data by
+  `kmod_settings`. There is no in-memory cache — LSD is the source of
+  truth and consumers read it directly.
+- **The notecard** seeds initial values on first load and after owner
+  change. Removing the notecard triggers a factory reset.
 
 ---
 

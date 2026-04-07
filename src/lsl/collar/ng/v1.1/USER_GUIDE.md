@@ -637,23 +637,27 @@ The collar supports pre-configuration via a notecard named **"settings"** in the
 
 **Settings Notecard Format:**
 
-All settings keys use **dotted `namespace.setting` format**. Owner and trustee keys use **JSON objects** with `{uuid: honorific}` pairs.
+All settings keys use **dotted `namespace.setting` format**. Owner and
+trustee data is stored as flat scalars (single-owner mode) or parallel
+CSVs (multi-owner mode). The parser does **not** accept JSON object
+syntax for ownership keys.
 
 ```
 # D/s Collar Settings
 # Lines starting with # are comments
 # Format: key = value
-# IMPORTANT: JSON objects require quotes around keys and values
 
 # Ownership (Single Owner)
 access.multiowner = 0
-access.owner = {"a1b2c3d4-e5f6-7890-abcd-ef1234567890": "Master"}
+access.owner = a1b2c3d4-e5f6-7890-abcd-ef1234567890
+access.ownerhonorific = Master
 
-# Trustees (JSON object — NOT an array)
-access.trustees = {"12345678-90ab-cdef-1234-567890abcdef": "Mistress", "abcdef01-2345-6789-abcd-ef0123456789": "Daddy"}
+# Trustees (parallel CSVs in the same order)
+access.trusteeuuids = 12345678-90ab-cdef-1234-567890abcdef,abcdef01-2345-6789-abcd-ef0123456789
+access.trusteehonorifics = Mistress,Daddy
 
-# Blacklist (CSV in brackets)
-access.blacklist = [fedcba98-7654-3210-fedc-ba9876543210]
+# Blacklist (plain CSV of UUIDs)
+blacklist.blklistuuid = fedcba98-7654-3210-fedc-ba9876543210
 
 # Access Control
 public.mode = 0
@@ -667,7 +671,9 @@ bell.volume = 0.3
 bell.sound = 16fcf579-82cb-b110-c1a4-5fa5e1385406
 ```
 
-**Note:** RLV settings (relay mode, restrictions, exceptions) and leash settings (length, turn-to-face) cannot be pre-configured via notecard. These must be set through the collar menus after startup.
+**Note:** RLV settings (relay mode, restrictions, exceptions) and leash
+settings (length, turn-to-face) cannot be pre-configured via notecard.
+These must be set through the collar menus after startup.
 
 ### Available Settings Keys
 
@@ -675,14 +681,19 @@ bell.sound = 16fcf579-82cb-b110-c1a4-5fa5e1385406
 
 | Key | Type | Description | Example |
 |-----|------|-------------|---------|
-| `access.multiowner` | 0/1 | Enable multi-owner (notecard only) | `0` = off, `1` = on |
-| `access.owner` | JSON object | Single owner `{uuid: honorific}` | `{"a1b2c3d4-...": "Master"}` |
-| `access.owners` | JSON object | Multiple owners (multi-owner mode, notecard only for bulk set) | `{"uuid1": "Sir", "uuid2": "Ma'am"}` |
-| `access.trustees` | JSON object | Trusted users `{uuid: honorific}` | `{"uuid1": "Sir", "uuid2": "Lady"}` |
-| `access.blacklist` | CSV in brackets | Blacklisted UUIDs | `[fedcba98-..., 00000000-...]` |
+| `access.multiowner` | 0/1 | Enable multi-owner mode (notecard only) | `0` = off, `1` = on |
+| `access.owner` | bare UUID | Single owner UUID | `a1b2c3d4-e5f6-7890-abcd-ef1234567890` |
+| `access.ownerhonorific` | string | Honorific for the single owner | `Master` |
+| `access.owneruuids` | CSV of UUIDs | Multi-owner UUID list (notecard only) | `uuid1,uuid2` |
+| `access.ownerhonorifics` | CSV of strings | Honorifics, parallel to `access.owneruuids` | `Sir,Ma'am` |
+| `access.trusteeuuids` | CSV of UUIDs | Trusted user UUIDs | `uuid1,uuid2` |
+| `access.trusteehonorifics` | CSV of strings | Honorifics, parallel to `access.trusteeuuids` | `Sir,Lady` |
+| `blacklist.blklistuuid` | CSV of UUIDs | Blacklisted users | `fedcba98-...,00000000-...` |
 | `access.enablerunaway` | 0/1 | Enable runaway feature for wearer | `0` = off, `1` = on |
 
-**Note:** Honorifics are embedded in the JSON objects alongside UUIDs. There are no separate honorific keys.
+**Note:** UUIDs and honorifics are kept in **separate parallel CSVs** in
+multi-owner mode — the first uuid pairs with the first honorific, and so
+on. Display names are resolved automatically by the collar.
 
 **Collar State:**
 

@@ -16,19 +16,26 @@
 
 ## Overview
 
-The DS Collar Modular system uses a persistent **settings card** for configuration management. Despite the name "settings card," this is actually a sophisticated **JSON-based key-value store** that:
+The DS Collar Modular system uses a persistent **settings store** for
+configuration management. As of v1.1 rev 3, the store is a **flat key-value
+scheme backed by Linkset Data (LSD)** — there is no JSON object payload
+layer. Each setting is either a scalar value or a parallel CSV. The store:
 
 - **Initializes** from a notecard named `"settings"` in the collar inventory
-- **Caches** all settings in memory (RAM) for fast access
-- **Broadcasts** changes in real-time to all plugins
+- **Persists** all values in linkset data (`llLinksetDataWrite`) so they
+  survive script resets and detach/reattach
+- **Broadcasts** lightweight `settings_sync` signals when values change so
+  plugins can re-read directly from LSD
 - **Validates** all modifications through security guards
 
 ### What is the "Settings Card"?
 
-The settings card is **NOT** a traditional Second Life notecard that you read and write directly. Instead, it's a **runtime data store** managed by the `kmod_settings.lsl` module that:
+The settings card is **NOT** a traditional Second Life notecard that you
+read and write directly. Instead, it's a **runtime data store** managed by
+the `kmod_settings.lsl` module that:
 
 1. Reads initial configuration from a notecard at startup
-2. Maintains settings as a JSON object in memory
+2. Stores each setting as its own LSD key (scalar or CSV)
 3. Provides a message-based API for plugins to read/modify settings
 4. Enforces security policies (role separation, TPE validation, etc.)
 
@@ -39,20 +46,27 @@ All settings keys use **dotted `namespace.setting` format**. This is a hard conv
 - Core access keys: `access.*`, `public.*`, `tpe.*`, `lock.*`, `rlvex.*`
 - Plugin keys: `bell.*`, `restrict.*`, etc.
 
-### Persistence Model (Three Tiers)
+### Persistence Model
 
-The collar uses a **three-tier persistence model**, not simple RAM-only storage:
+The collar uses **Linkset Data (LSD) as the single source of truth** for
+all settings:
 
 | Tier | Storage | Survives Relog | Survives Script Reset | Survives Owner Change |
 |------|---------|:-:|:-:|:-:|
-| **Linkset Data (LSD)** | `llLinksetDataWrite` in `kmod_auth.lsl` | Yes | Yes | No (script resets) |
-| **Script Globals** | `KvJson` in `kmod_settings.lsl` | Yes (same owner) | No | No |
+| **Linkset Data (LSD)** | `llLinksetDataWrite` (one key per setting) | Yes | Yes | No (cleared on owner change) |
 | **Notecard** | `settings` notecard in collar inventory | Yes | Yes | Yes |
 
 **Key Insights:**
-- **ACL data persists across relogs.** The auth module writes owners, trustees, blacklist, public mode, and TPE mode to linkset data via `persist_acl_cache()`. This survives script resets, detach/reattach, and relogs.
-- **All runtime settings persist across detach/reattach** for the same owner. The settings script only resets on ownership change, so `KvJson` (including values set via UI) survives reattach cycles.
-- **The notecard is a seed**, not the sole source of truth. It provides initial values on first load or after owner change. Notecard edits overlay onto existing settings without wiping runtime changes to other keys.
+- **All settings persist across relogs and script resets.** Owners,
+  trustees, blacklist, public mode, TPE mode, bell config, RLV exceptions,
+  and every other key are written to LSD by `kmod_settings.lsl` and read
+  back directly by consumers.
+- **The notecard is a seed**, not the sole source of truth. It provides
+  initial values on first load. Removing the notecard triggers a factory
+  reset; editing it re-parses every key and clears the owner/trustee/
+  blacklist data first so removed entries don't persist as stale state.
+- **On owner change**, all scripts reset and LSD is cleared, then the
+  notecard is re-read.
 
 ---
 
@@ -76,10 +90,12 @@ The collar uses a **three-tier persistence model**, not simple RAM-only storage:
 
 # Owner Settings (Single Owner Mode)
 access.multiowner = 0
-access.owner = {"12345678-1234-1234-1234-123456789abc": "Master"}
+access.owner = 12345678-1234-1234-1234-123456789abc
+access.ownerhonorific = Master
 
-# Trustees (optional — JSON object, NOT array)
-access.trustees = {"uuid-of-trusted-person-1": "Sir", "uuid-of-trusted-person-2": "Lady"}
+# Trustees (optional — parallel CSVs)
+access.trusteeuuids = aaaaaaaa-1111-2222-3333-444444444444,bbbbbbbb-5555-6666-7777-888888888888
+access.trusteehonorifics = Sir,Lady
 
 # Access Control
 public.mode = 0
@@ -107,13 +123,21 @@ To get someone's UUID in Second Life:
 
 ### Ownership & Access Control
 
+Single-owner mode uses **scalars**; multi-owner mode uses **parallel CSVs**
+(uuids and honorifics in the same order). Display names are resolved
+asynchronously by `kmod_settings` and stored in companion `*names` keys —
+you only supply UUIDs and honorifics in the notecard.
+
 | Key | Type | Default | Description | Notes |
 |-----|------|---------|-------------|-------|
-| `access.multiowner` | boolean (0/1) | `0` | Enable multiple owners | **Notecard-only** — Cannot be changed via UI |
-| `access.owner` | JSON object | `{}` | Single owner `{uuid: honorific}` | Used when `access.multiowner = 0` |
-| `access.owners` | JSON object | `{}` | Multiple owners `{uuid: hon, ...}` | Used when `access.multiowner = 1`; **Notecard-only** for bulk set |
-| `access.trustees` | JSON object | `{}` | Trusted users `{uuid: hon, ...}` | Trustees have elevated permissions (ACL level 3) |
-| `access.blacklist` | CSV in brackets | `[]` | List of blocked UUIDs | Blacklisted users have no access (ACL level -1) |
+| `access.multiowner` | boolean (0/1) | `0` | Enable multi-owner mode | **Notecard-only** — Cannot be changed via UI |
+| `access.owner` | bare UUID | (unset) | Single owner UUID | Single-owner mode only |
+| `access.ownerhonorific` | string | (unset) | Honorific for the single owner | Single-owner mode only |
+| `access.owneruuids` | CSV of UUIDs | (unset) | Multi-owner UUID list | **Notecard-only**; multi-owner mode only |
+| `access.ownerhonorifics` | CSV of strings | (unset) | Honorifics, parallel to `access.owneruuids` | Multi-owner mode only |
+| `access.trusteeuuids` | CSV of UUIDs | (unset) | Trusted users (ACL level 3) | **Notecard-only** |
+| `access.trusteehonorifics` | CSV of strings | (unset) | Honorifics, parallel to `access.trusteeuuids` | |
+| `blacklist.blklistuuid` | CSV of UUIDs | (unset) | Blocked users (ACL level -1) | |
 
 ### Access Modes
 
@@ -166,15 +190,28 @@ key = value
 key = value  # This is NOT supported (no inline comments)
 ```
 
-**JSON Objects:** Owner/trustee keys use `{uuid: honorific}` format
+**Single-owner scalars:** Bare UUID and honorific on separate lines
 ```
-access.owner = {"12345678-1234-1234-1234-123456789abc": "Master"}
-access.trustees = {"uuid1": "Sir", "uuid2": "Lady"}
+access.owner = 12345678-1234-1234-1234-123456789abc
+access.ownerhonorific = Master
 ```
 
-**Bracketed lists (CSV):** Blacklist uses comma-separated values in brackets
+**Multi-owner parallel CSVs:** UUIDs and honorifics in the same order
 ```
-access.blacklist = [uuid1, uuid2, uuid3]
+access.multiowner = 1
+access.owneruuids = uuid1,uuid2
+access.ownerhonorifics = Master,Mistress
+```
+
+**Trustees (parallel CSVs):**
+```
+access.trusteeuuids = uuid1,uuid2
+access.trusteehonorifics = Sir,Lady
+```
+
+**Blacklist (CSV of UUIDs):**
+```
+blacklist.blklistuuid = uuid1,uuid2,uuid3
 ```
 
 **Booleans:** Automatically normalized to `0` or `1` using integer cast
@@ -186,34 +223,46 @@ tpe.mode = 0         # Disabled
 
 ### Syntax Rules (CRITICAL)
 
-*   **JSON Objects:** `access.owner`, `access.owners`, and `access.trustees` use `{uuid: honorific}` format. Quotes around keys/values are required for valid JSON.
-    *   ✅ `access.owner = {"12345678-1234-1234-1234-123456789abc": "Master"}`
-    *   ❌ `access.owner = 12345678-1234-1234-1234-123456789abc` (bare UUID not accepted for this key)
-*   **JSON Arrays:** `access.blacklist` uses bracket notation.
-    *   ✅ `access.blacklist = [uuid1, uuid2]`
-*   **Case Sensitivity:** Keys are case-sensitive (e.g., `access.owner`, not `Access.Owner`).
-*   **Whitespace:** Spaces around `=` are optional but recommended for readability.
+*   **No JSON object syntax.** Owner and trustee data are stored as flat
+    scalars (single mode) or parallel CSVs (multi mode). The parser will
+    not accept `{uuid: honorific}` JSON object syntax.
+    *   ✅ `access.owner = 12345678-1234-1234-1234-123456789abc`
+    *   ✅ `access.ownerhonorific = Master`
+    *   ❌ `access.owner = {"12345678-...": "Master"}` (rejected)
+*   **Parallel CSVs must stay in order.** `access.owneruuids` and
+    `access.ownerhonorifics` are positional — the first uuid pairs with
+    the first honorific, and so on. Same for trustee CSVs.
+*   **Case Sensitivity:** Keys are case-sensitive (e.g., `access.owner`,
+    not `Access.Owner`).
+*   **Whitespace:** Spaces around `=` are optional but recommended for
+    readability.
 
 ### Configuration Patterns
 
 #### Pattern A: Single Owner (Default)
 ```
 access.multiowner = 0
-access.owner = {"12345678-1234-1234-1234-123456789abc": "Master"}
+access.owner = 12345678-1234-1234-1234-123456789abc
+access.ownerhonorific = Master
 ```
 
 #### Pattern B: Multiple Owners
 ```
 access.multiowner = 1
-access.owners = {"uuid1": "Master", "uuid2": "Mistress", "uuid3": "Owner"}
+access.owneruuids = uuid1,uuid2,uuid3
+access.ownerhonorifics = Master,Mistress,Owner
 ```
-**Note:** With multi-owner mode, all owners have equal administrative access (ACL level 5).
+**Note:** With multi-owner mode, all owners have equal administrative
+access (ACL level 5). Multi-owner data is **notecard-only** — there is no
+runtime API to add or remove owners in multi-owner mode.
 
 #### Pattern C: Owner + Trustees
 ```
 access.multiowner = 0
-access.owner = {"12345678-1234-1234-1234-123456789abc": "Master"}
-access.trustees = {"uuid-friend-1": "Sir", "uuid-friend-2": "Lady"}
+access.owner = 12345678-1234-1234-1234-123456789abc
+access.ownerhonorific = Master
+access.trusteeuuids = uuid-friend-1,uuid-friend-2
+access.trusteehonorifics = Sir,Lady
 ```
 
 #### Pattern D: Public Access (No Owner)
@@ -226,7 +275,8 @@ public.mode = 1
 #### Pattern E: TPE Mode (Total Power Exchange)
 ```
 access.multiowner = 0
-access.owner = {"12345678-1234-1234-1234-123456789abc": "Master"}
+access.owner = 12345678-1234-1234-1234-123456789abc
+access.ownerhonorific = Master
 tpe.mode = 1
 ```
 **Important:** TPE mode removes all control from the wearer. The wearer cannot:
@@ -237,7 +287,12 @@ tpe.mode = 1
 
 **Security Requirement:** Cannot enable TPE mode without an external owner set.
 
-**CRITICAL NOTECARD ORDERING:** When configuring TPE mode in the notecard, you MUST set `access.owner` (or `access.owners`) BEFORE `tpe.mode`. The collar validates the external owner requirement line-by-line during notecard parsing. If `tpe.mode = 1` appears before the owner is set, the collar will reject it and display an error.
+**CRITICAL NOTECARD ORDERING:** When configuring TPE mode in the notecard,
+you MUST set the owner (`access.owner` in single mode, or
+`access.owneruuids` in multi mode) BEFORE `tpe.mode`. The collar validates
+the external owner requirement line-by-line during notecard parsing. If
+`tpe.mode = 1` appears before the owner is set, the collar will reject it
+and display an error.
 
 ---
 
@@ -260,25 +315,33 @@ tpe.mode = 1
 **Symptom:** Owner is denied access to certain features
 
 **Solutions:**
-1. Verify `access.owner` is set correctly in single-owner mode (JSON object: `{"uuid": "honorific"}`)
-2. In multi-owner mode, ensure UUID is in the `access.owners` object
-3. Check owner is not in `access.blacklist`
+1. Verify `access.owner` is set correctly in single-owner mode (bare UUID,
+   with `access.ownerhonorific` on a separate line)
+2. In multi-owner mode, ensure the UUID is in the `access.owneruuids` CSV
+3. Check owner is not in `blacklist.blklistuuid`
 4. Confirm the menu's ACL requirement (some features require ACL level 5)
 
 ### Changes Don't Persist
 
 **Symptom:** Settings reset unexpectedly
 
-**Explanation:** The collar uses a three-tier persistence model:
-- **ACL data (owners, trustees, blacklist, public mode, TPE)** is written to **linkset data** by the auth module and persists across relogs, script resets, and detach/reattach.
-- **All runtime settings** (including values set via UI) persist in script globals (`KvJson`) across detach/reattach for the **same owner**. They are only lost on script reset or ownership change.
-- **The notecard** provides initial seed values on first load or after owner change.
+**Explanation:** The collar stores every setting in linkset data (LSD).
+LSD survives relogs, script resets, and detach/reattach for the same
+owner. The notecard provides initial seed values on first load or after
+owner change.
 
-**If settings reset after a relog:** This should not normally happen for ACL data. Check that collar scripts haven't been manually reset.
+**If settings reset after a relog:** This should not normally happen.
+Check that collar scripts haven't been manually reset and that the
+notecard hasn't been removed (removing the notecard triggers a factory
+reset).
 
-**If settings reset after ownership change:** This is expected — all scripts reset on owner change. Update the `settings` notecard for values that must survive ownership transfers.
+**If settings reset after ownership change:** This is expected — all
+scripts reset on owner change and LSD is cleared. Update the `settings`
+notecard for values that must survive ownership transfers.
 
-**Best Practice:** For most use cases, runtime changes (via UI or API) are sufficient — they persist automatically. Only edit the notecard when you need values to survive an ownership change or full script reset.
+**Best Practice:** For most use cases, runtime changes (via UI or API)
+are sufficient — they persist automatically in LSD. Only edit the
+notecard when you need values to survive an ownership change.
 
 ### Can't Enable TPE Mode
 
@@ -298,21 +361,24 @@ HINT: Set owner or owners BEFORE tpe_mode in notecard
 **Explanation:** TPE mode requires an external owner (not the wearer) for safety.
 
 **Solutions:**
-1. Ensure `access.owner` is set to someone else's UUID (JSON object format)
+1. Ensure `access.owner` (single mode) or `access.owneruuids` (multi mode)
+   contains a UUID that is not the wearer's
 2. Verify the owner UUID is not the wearer's UUID
 3. In multi-owner mode, ensure at least one owner is not the wearer
-4. **For notecard configuration:** Ensure `access.owner` or `access.owners` appears BEFORE `tpe.mode` in the notecard (order matters!)
+4. **For notecard configuration:** Ensure the owner key appears BEFORE
+   `tpe.mode` in the notecard (order matters!)
 
 **Correct Notecard Order:**
 ```
-access.owner = {"12345678-1234-1234-1234-123456789abc": "Master"}
+access.owner = 12345678-1234-1234-1234-123456789abc
+access.ownerhonorific = Master
 tpe.mode = 1  # Owner is set, TPE can be enabled
 ```
 
 **Incorrect Notecard Order:**
 ```
 tpe.mode = 1  # ERROR! No owner set yet
-access.owner = {"12345678-1234-1234-1234-123456789abc": "Master"}
+access.owner = 12345678-1234-1234-1234-123456789abc
 ```
 
 ### List Operations Don't Work
@@ -320,10 +386,10 @@ access.owner = {"12345678-1234-1234-1234-123456789abc": "Master"}
 **Symptom:** Can't add/remove trustees or blacklist entries
 
 **Solutions:**
-1. Ensure list exists in notecard as `key = []` or `key = [item1,item2]`
-2. Check list hasn't reached maximum size (64 items)
-3. Verify target element exists before removing
-4. Confirm proper bracketed CSV format: `[uuid1,uuid2]` not `uuid1,uuid2` (no quotes needed)
+1. Ensure CSV keys exist in the notecard (e.g., `access.trusteeuuids = uuid1,uuid2`)
+2. Check the list hasn't reached the maximum size (64 entries)
+3. Verify the target element exists before removing
+4. Use plain CSV format with no brackets and no quotes: `uuid1,uuid2`
 
 ### Notecard Changes Not Detected
 
@@ -339,7 +405,10 @@ access.owner = {"12345678-1234-1234-1234-123456789abc": "Master"}
 
 **Symptom:** A key in your notecard isn't being applied
 
-**Explanation:** The experimental branch enforces **no key whitelist** — `kmod_settings.lsl` accepts any key. Unknown keys in the notecard are silently written to `KvJson` (plain keys) or LSD (dotted `plugin.setting` keys). If a key has no effect, the issue is almost always a typo, wrong format, or the consuming plugin not reading it.
+**Explanation:** `kmod_settings.lsl` enforces **no key whitelist** — any
+dotted `namespace.setting` key is silently written through to LSD as a
+scalar. If a key has no effect, the issue is almost always a typo, wrong
+format, or the consuming plugin not reading it.
 
 **Solutions:**
 1. Check spelling of key name (case-sensitive)
@@ -359,24 +428,29 @@ access.owner = {"12345678-1234-1234-1234-123456789abc": "Master"}
 # OWNERSHIP SETTINGS
 # ------------------
 # Single owner mode (default)
-# access.owner and access.trustees use JSON object format: {uuid: honorific}
-# Omit access.owner or use {} for unowned; replace with real UUID to set owner
+# access.owner is a bare UUID; access.ownerhonorific is the title
+# Omit both for an unowned collar
 access.multiowner = 0
-# access.owner = {"your-owner-uuid-here": "Master"}
+# access.owner = your-owner-uuid-here
+# access.ownerhonorific = Master
 
 # Multi-owner mode (uncomment to use)
+# Parallel CSVs: first uuid pairs with first honorific, etc.
 # access.multiowner = 1
-# access.owners = {"uuid1": "Master", "uuid2": "Mistress", "uuid3": "Owner"}
+# access.owneruuids = uuid1,uuid2,uuid3
+# access.ownerhonorifics = Master,Mistress,Owner
 
 # TRUSTEES
 # --------
 # Trusted users with elevated permissions (ACL level 3)
-access.trustees = {}
+# Parallel CSVs in the same order
+# access.trusteeuuids = uuid1,uuid2
+# access.trusteehonorifics = Sir,Lady
 
 # BLACKLIST
 # ---------
 # Users explicitly denied access (ACL level -1)
-access.blacklist = []
+# blacklist.blklistuuid = uuid1,uuid2
 
 # ACCESS CONTROL
 # --------------
@@ -431,6 +505,7 @@ bell.sound = 16fcf579-82cb-b110-c1a4-5fa5e1385406
 | 1.2 | 2026-04-01 | Fact-check corrections: Fixed persistence model to document three-tier storage (LSD, script globals, notecard); corrected bell defaults (visible=0, sound=0, volume=0.3); fixed boolean normalization (only numeric values work, not `true`/`false`); corrected silent handling of unknown/invalid keys; fixed source code path |
 | 1.3 | 2026-04-02 | Updated version to 1.1 for ng branch; fixed source code path to v1.1 location |
 | 1.4 | 2026-04-04 | Updated all key names to dotted namespace.setting format used in experimental branch; added RLV exceptions and access plugin tables to reference; removed false whitelist claim |
+| 1.5 | 2026-04-07 | Removed JSON object syntax for owners/trustees (no longer supported by parser); replaced with flat scalars (single mode) and parallel CSVs (multi mode); replaced `access.blacklist = [...]` bracket form with `blacklist.blklistuuid` CSV; rewrote persistence model to reflect LSD-as-source-of-truth (KvJson removed in rev 2) |
 
 ---
 

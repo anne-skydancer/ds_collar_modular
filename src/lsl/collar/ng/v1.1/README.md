@@ -137,7 +137,8 @@ You can pre-configure the collar by placing a notecard named `settings` in its i
 ### Minimal Example
 
 ```
-access.owner = {"12345678-1234-1234-1234-123456789abc": "Master"}
+access.owner = 12345678-1234-1234-1234-123456789abc
+access.ownerhonorific = Master
 lock.locked = 0
 ```
 
@@ -145,10 +146,14 @@ lock.locked = 0
 
 | Key | Values | What It Controls |
 |-----|--------|-----------------|
-| `access.multiowner` | `0` or `1` | Allow multiple owners (notecard only) |
-| `access.owner` | `{"uuid": "Honorific"}` | Set the primary owner |
-| `access.trustees` | `{"uuid": "Title", ...}` | Set trusted users |
-| `access.blacklist` | `[uuid1, uuid2]` | Block specific users |
+| `access.multiowner` | `0` or `1` | Enable multi-owner mode (notecard only) |
+| `access.owner` | bare UUID | Single-owner UUID |
+| `access.ownerhonorific` | string | Single-owner honorific (e.g. `Master`) |
+| `access.owneruuids` | CSV of UUIDs | Multi-owner UUIDs (notecard only) |
+| `access.ownerhonorifics` | CSV of strings | Multi-owner honorifics (parallel to `access.owneruuids`) |
+| `access.trusteeuuids` | CSV of UUIDs | Trustee UUIDs |
+| `access.trusteehonorifics` | CSV of strings | Trustee honorifics (parallel to `access.trusteeuuids`) |
+| `blacklist.blklistuuid` | CSV of UUIDs | Block specific users |
 | `public.mode` | `0` or `1` | Allow public access |
 | `tpe.mode` | `0` or `1` | Total Power Exchange |
 | `lock.locked` | `0` or `1` | Lock the collar |
