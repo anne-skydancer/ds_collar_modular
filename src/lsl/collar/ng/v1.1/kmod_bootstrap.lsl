@@ -1,10 +1,13 @@
 /*--------------------
 MODULE: kmod_bootstrap.lsl
 VERSION: 1.10
-REVISION: 2
+REVISION: 3
 PURPOSE: Startup coordination, RLV detection, status announcement
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- v1.1 rev 3: Fix phantom owner count in startup announcement and stale
+  names_ready check. llCSV2List("") returns [""] (a single empty entry),
+  not []. Routed CSV reads through a csv_read() helper.
 - v1.1 rev 2: Two-mode access model. Read primary owner from access.owner
   scalar (single mode) or access.owneruuids CSV (multi mode). Remove all
   display-name resolution code — kmod_settings now resolves names async
@@ -100,6 +103,14 @@ sendIM(string msg) {
 
 integer isAttached() {
     return ((integer)llGetAttached() != 0);
+}
+
+// llCSV2List("") returns [""] (length 1), not []. This wrapper returns a
+// truly empty list when the LSD key is unset/empty.
+list csv_read(string lsd_key) {
+    string raw = llLinksetDataRead(lsd_key);
+    if (raw == "") return [];
+    return llCSV2List(raw);
 }
 
 // Owner change detection (prevents unnecessary resets on teleport)
@@ -204,7 +215,7 @@ integer names_ready() {
     integer multi_mode = (integer)llLinksetDataRead(KEY_MULTI_OWNER_MODE);
 
     if (multi_mode) {
-        list names = llCSV2List(llLinksetDataRead(KEY_OWNER_NAMES));
+        list names = csv_read(KEY_OWNER_NAMES);
         integer i;
         integer len = llGetListLength(names);
         for (i = 0; i < len; i++) {
@@ -265,9 +276,9 @@ announce_status() {
     integer multi_mode = (integer)llLinksetDataRead(KEY_MULTI_OWNER_MODE);
 
     if (multi_mode) {
-        list uuids = llCSV2List(llLinksetDataRead(KEY_OWNER_UUIDS));
-        list names = llCSV2List(llLinksetDataRead(KEY_OWNER_NAMES));
-        list hons  = llCSV2List(llLinksetDataRead(KEY_OWNER_HONORIFICS));
+        list uuids = csv_read(KEY_OWNER_UUIDS);
+        list names = csv_read(KEY_OWNER_NAMES);
+        list hons  = csv_read(KEY_OWNER_HONORIFICS);
         integer owner_count = llGetListLength(uuids);
 
         sendIM("Mode: Multi-Owner (" + (string)owner_count + ")");

@@ -1,10 +1,17 @@
 /*--------------------
 PLUGIN: plugin_access.lsl
 VERSION: 1.10
-REVISION: 3
+REVISION: 5
 PURPOSE: Owner, trustee, and honorific management workflows
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
+- v1.1 rev 5: Honor soft_reset / soft_reset_all from KERNEL_LIFECYCLE so
+  factory reset wipes cached owner/trustee state, not just LSD.
+- v1.1 rev 4: Fix phantom-trustee count. llCSV2List("") returns [""] (a
+  single empty entry), not []. When the trustee/owner CSV keys were unset
+  in LSD, the access plugin reported one trustee/owner that didn't exist.
+  Added a csv_read() helper that returns [] for empty raw values and
+  routed all CSV reads through it.
 - v1.1 rev 3: Two-mode access model. Single-owner mode reads/writes scalar
   access.owner / access.ownername / access.ownerhonorific. Multi-owner mode
   is read-only from notecard CSVs (access.owneruuids/names/honorifics) and
@@ -87,6 +94,15 @@ integer lsd_int(string lsd_key, integer fallback) {
     string v = llLinksetDataRead(lsd_key);
     if (v == "") return fallback;
     return (integer)v;
+}
+
+// llCSV2List("") returns [""] (length 1), not []. This wrapper returns a
+// truly empty list when the LSD key is unset/empty so length-based UIs
+// don't show phantom entries.
+list csv_read(string lsd_key) {
+    string raw = llLinksetDataRead(lsd_key);
+    if (raw == "") return [];
+    return llCSV2List(raw);
 }
 
 string gen_session() {
@@ -203,9 +219,9 @@ apply_settings_sync() {
 
     if (MultiOwnerMode) {
         // Multi-owner: parallel CSVs (read-only, notecard managed)
-        OwnerKeys       = llCSV2List(llLinksetDataRead(KEY_OWNER_UUIDS));
-        OwnerNames      = llCSV2List(llLinksetDataRead(KEY_OWNER_NAMES));
-        OwnerHonorifics = llCSV2List(llLinksetDataRead(KEY_OWNER_HONORIFICS));
+        OwnerKeys       = csv_read(KEY_OWNER_UUIDS);
+        OwnerNames      = csv_read(KEY_OWNER_NAMES);
+        OwnerHonorifics = csv_read(KEY_OWNER_HONORIFICS);
         if (llGetListLength(OwnerKeys) > 0) {
             OwnerKey = (key)llList2String(OwnerKeys, 0);
             if (llGetListLength(OwnerHonorifics) > 0) {
@@ -223,9 +239,9 @@ apply_settings_sync() {
     }
 
     // Trustees (always parallel CSVs)
-    TrusteeKeys       = llCSV2List(llLinksetDataRead(KEY_TRUSTEE_UUIDS));
-    TrusteeNames      = llCSV2List(llLinksetDataRead(KEY_TRUSTEE_NAMES));
-    TrusteeHonorifics = llCSV2List(llLinksetDataRead(KEY_TRUSTEE_HONORIFICS));
+    TrusteeKeys       = csv_read(KEY_TRUSTEE_UUIDS);
+    TrusteeNames      = csv_read(KEY_TRUSTEE_NAMES);
+    TrusteeHonorifics = csv_read(KEY_TRUSTEE_HONORIFICS);
 
     RunawayEnabled = lsd_int(KEY_RUNAWAY_ENABLED, TRUE);
 }
@@ -786,6 +802,13 @@ default {
         if (num == KERNEL_LIFECYCLE) {
             if (type == "register_now") register_self();
             else if (type == "ping") send_pong();
+            else if (type == "soft_reset" || type == "soft_reset_all") {
+                string target_context = llJsonGetValue(msg, ["context"]);
+                if (target_context != JSON_INVALID) {
+                    if (target_context != "" && target_context != PLUGIN_CONTEXT) return;
+                }
+                llResetScript();
+            }
         }
         else if (num == SETTINGS_BUS) {
             if (type == "settings_sync" || type == "settings_delta") apply_settings_sync();

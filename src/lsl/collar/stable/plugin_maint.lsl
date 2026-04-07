@@ -1,10 +1,13 @@
 /*--------------------
 PLUGIN: plugin_maint.lsl
 VERSION: 1.10
-REVISION: 3
+REVISION: 4
 PURPOSE: Maintenance and utility functions for collar management
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
+- v1.1 rev 4: Fix phantom owner/trustee/blacklist count in View Settings
+  and Access List. llCSV2List("") returns [""] (a single empty entry),
+  not []. Routed all CSV reads through a csv_read() helper.
 - v1.1 rev 3: Two-mode access model. View Settings and Access List read
   primary owner from access.owner scalar (single mode) or access.owneruuids
   CSV (multi mode). Names come pre-resolved from kmod_settings.
@@ -56,6 +59,14 @@ string MenuContext = "main";
 
 string generate_session_id() {
     return "maint_" + (string)llGetKey() + "_" + (string)llGetUnixTime();
+}
+
+// llCSV2List("") returns [""] (length 1), not []. This wrapper returns a
+// truly empty list when the LSD key is unset/empty.
+list csv_read(string lsd_key) {
+    string raw = llLinksetDataRead(lsd_key);
+    if (raw == "") return [];
+    return llCSV2List(raw);
 }
 
 /* -------------------- LSD POLICY HELPER -------------------- */
@@ -163,6 +174,8 @@ string fmt_relay_mode(string raw) {
 // Format parallel CSV lists (uuids, names, honorifics) into one block.
 // Returns the formatted block, or fallback_str if uuids is empty.
 string fmt_csv_person_lines(string uuids_csv, string names_csv, string hons_csv, string fallback_str) {
+    // Guard: llCSV2List("") returns [""] (length 1), not [].
+    if (uuids_csv == "") return fallback_str;
     list uuids = llCSV2List(uuids_csv);
     list names = llCSV2List(names_csv);
     list hons  = llCSV2List(hons_csv);
@@ -269,9 +282,9 @@ do_display_access_list() {
     // Owner(s)
     if (multi_mode) {
         output += "OWNERS:\n";
-        list uuids = llCSV2List(llLinksetDataRead("access.owneruuids"));
-        list names = llCSV2List(llLinksetDataRead("access.ownernames"));
-        list hons  = llCSV2List(llLinksetDataRead("access.ownerhonorifics"));
+        list uuids = csv_read("access.owneruuids");
+        list names = csv_read("access.ownernames");
+        list hons  = csv_read("access.ownerhonorifics");
         integer count = llGetListLength(uuids);
         if (count > 0) {
             integer i;
@@ -305,9 +318,9 @@ do_display_access_list() {
 
     // Trustees
     output += "\nTRUSTEES:\n";
-    list t_uuids = llCSV2List(llLinksetDataRead("access.trusteeuuids"));
-    list t_names = llCSV2List(llLinksetDataRead("access.trusteenames"));
-    list t_hons  = llCSV2List(llLinksetDataRead("access.trusteehonorifics"));
+    list t_uuids = csv_read("access.trusteeuuids");
+    list t_names = csv_read("access.trusteenames");
+    list t_hons  = csv_read("access.trusteehonorifics");
     integer t_count = llGetListLength(t_uuids);
     if (t_count > 0) {
         integer i;
@@ -327,7 +340,7 @@ do_display_access_list() {
 
     // Blacklist (CSV of UUIDs)
     output += "\nBLACKLISTED:\n";
-    list blacklist = llCSV2List(llLinksetDataRead("blacklist.blklistuuid"));
+    list blacklist = csv_read("blacklist.blklistuuid");
     if (llGetListLength(blacklist) > 0) {
         integer i;
         for (i = 0; i < llGetListLength(blacklist); i++) {

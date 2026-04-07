@@ -1,10 +1,12 @@
 /*--------------------
 PLUGIN: plugin_bell.lsl
 VERSION: 1.10
-REVISION: 2
+REVISION: 3
 PURPOSE: Bell visibility and jingling control for the collar
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
+- v1.1 rev 3: Honor soft_reset / soft_reset_all from KERNEL_LIFECYCLE so
+  factory reset clears cached bell state.
 - v1.1 rev 2: Migrate dialog buttons to button_data format with context-based routing.
 - v1.1 rev 1: Migrate settings reads from JSON broadcast to direct LSD reads.
   Remove apply_settings_delta(); fold side effects into apply_settings_sync()
@@ -350,6 +352,14 @@ default {
             if (msg_type == "ping") {
                 send_pong();
                 return;
+            }
+
+            if (msg_type == "soft_reset" || msg_type == "soft_reset_all") {
+                string target_context = llJsonGetValue(msg, ["context"]);
+                if (target_context != JSON_INVALID) {
+                    if (target_context != "" && target_context != PLUGIN_CONTEXT) return;
+                }
+                llResetScript();
             }
 
             return;

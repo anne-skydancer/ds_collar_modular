@@ -1,10 +1,13 @@
 /*--------------------
 PLUGIN: plugin_status.lsl
 VERSION: 1.10
-REVISION: 2
+REVISION: 3
 PURPOSE: Read-only collar status display for owners and observers
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
+- v1.1 rev 3: Fix phantom owner/trustee count. llCSV2List("") returns
+  [""] (a single empty entry), not []. Routed all CSV reads through a
+  csv_read() helper that returns [] for empty raw values.
 - v1.1 rev 2: Two-mode access model. Read primary owner from access.owner
   scalar (single mode) or access.owneruuids CSV (multi mode). Display
   names come pre-resolved from kmod_settings via access.ownername /
@@ -58,6 +61,14 @@ string generate_session_id() {
     return PLUGIN_CONTEXT + "_" + (string)llGetUnixTime();
 }
 
+// llCSV2List("") returns [""] (length 1), not []. This wrapper returns a
+// truly empty list when the LSD key is unset/empty.
+list csv_read(string lsd_key) {
+    string raw = llLinksetDataRead(lsd_key);
+    if (raw == "") return [];
+    return llCSV2List(raw);
+}
+
 /* -------------------- LSD POLICY HELPER -------------------- */
 list get_policy_buttons(string ctx, integer acl) {
     string policy = llLinksetDataRead("policy:" + ctx);
@@ -108,9 +119,9 @@ string build_status_report() {
 
     // Owner information
     if (multi_mode) {
-        list uuids = llCSV2List(llLinksetDataRead(KEY_OWNER_UUIDS));
-        list names = llCSV2List(llLinksetDataRead(KEY_OWNER_NAMES));
-        list hons  = llCSV2List(llLinksetDataRead(KEY_OWNER_HONORIFICS));
+        list uuids = csv_read(KEY_OWNER_UUIDS);
+        list names = csv_read(KEY_OWNER_NAMES);
+        list hons  = csv_read(KEY_OWNER_HONORIFICS);
         integer owner_count = llGetListLength(uuids);
 
         if (owner_count > 0) {
@@ -143,9 +154,9 @@ string build_status_report() {
     }
 
     // Trustee information
-    list trustee_uuids = llCSV2List(llLinksetDataRead(KEY_TRUSTEE_UUIDS));
-    list trustee_names = llCSV2List(llLinksetDataRead(KEY_TRUSTEE_NAMES));
-    list trustee_hons  = llCSV2List(llLinksetDataRead(KEY_TRUSTEE_HONORIFICS));
+    list trustee_uuids = csv_read(KEY_TRUSTEE_UUIDS);
+    list trustee_names = csv_read(KEY_TRUSTEE_NAMES);
+    list trustee_hons  = csv_read(KEY_TRUSTEE_HONORIFICS);
     integer trustee_count = llGetListLength(trustee_uuids);
 
     if (trustee_count > 0) {
