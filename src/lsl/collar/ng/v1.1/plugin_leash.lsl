@@ -1,10 +1,15 @@
 /*--------------------
 PLUGIN: plugin_leash.lsl
 VERSION: 1.10
-REVISION: 2
+REVISION: 3
 PURPOSE: User interface and configuration for the leashing system
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
+- v1.1 rev 3: Coffle now scans for nearby AVATARS instead of scripted
+  objects. Was scanning SCRIPTED objects, which surfaced random in-world
+  scripted props instead of avatars wearing collars. Switched the
+  llSensor type to AGENT and updated the empty-result message to say
+  "avatars". Post still uses object detection.
 - v1.1 rev 2: Honor soft_reset / soft_reset_all from KERNEL_LIFECYCLE so
   factory reset clears cached leash state.
 - v1.1 rev 1: Migrate dialog buttons to button_data format with context-based routing.
@@ -267,8 +272,10 @@ showCoffleMenu() {
     MenuContext = "coffle";
     SensorPage = 0;
     SensorCandidates = [];  // Clear previous results
-    // Scan for objects (potential collars) within range
-    llSensor("", NULL_KEY, SCRIPTED, 96.0, PI);
+    // Scan for nearby avatars (potential coffle partners wearing a collar).
+    // AGENT type detects worn attachments — the avatar shows up if anything
+    // they wear is in range, which is the right semantic for collar chaining.
+    llSensor("", NULL_KEY, AGENT, 96.0, PI);
 }
 
 showPostMenu() {
@@ -798,7 +805,7 @@ default
 
         if (llGetListLength(SensorCandidates) == 0) {
             if (SensorMode == "coffle") {
-                llRegionSayTo(CurrentUser, 0, "No nearby objects found for coffle.");
+                llRegionSayTo(CurrentUser, 0, "No nearby avatars found for coffle.");
             }
             else if (SensorMode == "post") {
                 llRegionSayTo(CurrentUser, 0, "No nearby objects found to post to.");
@@ -819,7 +826,7 @@ default
         if (SensorMode != "coffle" && SensorMode != "post") return;
 
         if (SensorMode == "coffle") {
-            llRegionSayTo(CurrentUser, 0, "No nearby objects found for coffle.");
+            llRegionSayTo(CurrentUser, 0, "No nearby avatars found for coffle.");
         }
         else if (SensorMode == "post") {
             llRegionSayTo(CurrentUser, 0, "No nearby objects found to post to.");

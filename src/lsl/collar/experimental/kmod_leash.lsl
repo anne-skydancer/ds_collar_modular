@@ -1,10 +1,19 @@
 /*--------------------
 MODULE: kmod_leash.lsl
 VERSION: 1.10
-REVISION: 2
+REVISION: 3
 PURPOSE: Leashing engine providing leash services to plugins
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- v1.1 rev 3: Reject DS-protocol holder responses from objects that are
+  not worn by the leasher. beginHolderHandshake() broadcasts via
+  llRegionSay on LEASH_CHAN_DS so any in-world DS-compatible holder
+  could reply with its own UUID, hijacking the leash and pulling
+  particles to a random world prim instead of the avatar that just
+  accepted an offer. handleHolderResponseDs() now requires the
+  responding object to be an attachment owned by the leasher; otherwise
+  the response is dropped and the handshake falls through to OC and
+  finally to direct-to-avatar attachment.
 - v1.1 rev 2: Read settings from LSD instead of kv_json broadcast. Remove
   applySettingsDelta; both sync and delta call parameterless applySettingsSync.
 - v1.1 rev 1: Replaced hardcoded ALLOWED_ACL_* lists and inAllowedList() with
@@ -429,9 +438,23 @@ handleHolderResponseDs(string msg) {
     if (llJsonGetValue(msg, ["ok"]) != "1") return;
     integer session = (integer)llJsonGetValue(msg, ["session"]);
     if (session != HolderSession) return;
-    
-    HolderTarget = (key)llJsonGetValue(msg, ["holder"]);
-    
+
+    key candidate_holder = (key)llJsonGetValue(msg, ["holder"]);
+    if (candidate_holder == NULL_KEY) return;
+
+    // Reject in-world holders. The DS request is broadcast via llRegionSay,
+    // so any DS-compatible holder script in the region will reply — including
+    // rezzed-in-world props. Only accept holders that are currently worn as
+    // an attachment by the leasher; otherwise the leash visually anchors to
+    // a random prim instead of the avatar.
+    list odetails = llGetObjectDetails(candidate_holder, [OBJECT_ATTACHED_POINT, OBJECT_OWNER]);
+    if (llGetListLength(odetails) < 2) return;
+    integer attached_point = llList2Integer(odetails, 0);
+    key holder_owner       = llList2Key(odetails, 1);
+    if (attached_point == 0) return;          // not worn → reject
+    if (holder_owner != Leasher) return;      // worn by someone else → reject
+
+    HolderTarget = candidate_holder;
 
     HolderState = HOLDER_STATE_COMPLETE;
     closeAllHolderListens();
