@@ -1,7 +1,7 @@
 /*--------------------
 MODULE: kmod_settings.lsl
 VERSION: 1.10
-REVISION: 3
+REVISION: 4
 PURPOSE: Notecard parser, validation guards, and LSD settings store
 ARCHITECTURE: Two-mode access model. Single-owner mode uses scalar keys
               (access.owner, access.ownername, access.ownerhonorific) and
@@ -11,6 +11,12 @@ ARCHITECTURE: Two-mode access model. Single-owner mode uses scalar keys
               Trustees and blacklist always use CSVs. Display names are
               resolved asynchronously via llRequestDisplayName.
 CHANGES:
+- v1.1 rev 4: Notecard parser now accepts the documented JSON object form
+  for owners and trustees: access.owner = {uuid: honorific} (single mode),
+  access.owners = {uuid: hon, ...} (multi mode), and access.trustees =
+  {uuid: hon, ...}. Previously only bare-UUID/CSV legacy forms were parsed,
+  so the documented notecard format silently produced empty owner/trustee
+  state. Bare-UUID forms still work for back-compat.
 - v1.1 rev 3: Replace JSON object owner/trustee storage with explicit
   two-mode flat scheme (scalars for single-owner, parallel CSVs for
   multi-owner). Async display name resolution. access.isowned = 0
@@ -388,8 +394,23 @@ parse_notecard_line(string line) {
         return;
     }
 
-    // Single-owner scalar (notecard can also use single-owner mode)
+    // Single-owner: documented notecard form is {uuid: honorific}.
+    // Bare-UUID legacy form is still accepted for back-compat.
     if (key_name == KEY_OWNER) {
+        if (llJsonValueType(value, []) == JSON_OBJECT) {
+            list pairs = llJson2List(value);
+            if (llGetListLength(pairs) < 2) return;
+            string uuid_str = llList2String(pairs, 0);
+            string hon      = llList2String(pairs, 1);
+            key u = (key)uuid_str;
+            if (u == NULL_KEY || u == llGetOwner()) return;
+            llLinksetDataWrite(KEY_OWNER, uuid_str);
+            llLinksetDataWrite(KEY_OWNER_NAME, NAME_LOADING);
+            llLinksetDataWrite(KEY_OWNER_HONORIFIC, hon);
+            llLinksetDataWrite(KEY_ISOWNED, "1");
+            request_name(uuid_str, "owner_scalar");
+            return;
+        }
         key u = (key)value;
         if (u == NULL_KEY || u == llGetOwner()) return;
         llLinksetDataWrite(KEY_OWNER, value);
@@ -398,6 +419,73 @@ parse_notecard_line(string line) {
         }
         llLinksetDataWrite(KEY_ISOWNED, "1");
         request_name(value, "owner_scalar");
+        return;
+    }
+
+    // Multi-owner (documented notecard form): access.owners = {uuid: hon, ...}
+    if (key_name == "access.owners") {
+        if (llJsonValueType(value, []) != JSON_OBJECT) return;
+        list pairs = llJson2List(value);
+        integer plen = llGetListLength(pairs);
+        list uuids = [];
+        list hons  = [];
+        list names = [];
+        integer pi = 0;
+        while (pi < plen) {
+            string uuid_str = llList2String(pairs, pi);
+            string hon      = llList2String(pairs, pi + 1);
+            key u = (key)uuid_str;
+            if (u != NULL_KEY && u != llGetOwner()) {
+                uuids += [uuid_str];
+                hons  += [hon];
+                names += [NAME_LOADING];
+                request_name(uuid_str, "owner_csv");
+            }
+            pi += 2;
+        }
+        if (llGetListLength(uuids) > MaxListLen) {
+            uuids = llList2List(uuids, 0, MaxListLen - 1);
+            hons  = llList2List(hons,  0, MaxListLen - 1);
+            names = llList2List(names, 0, MaxListLen - 1);
+        }
+        csv_write(KEY_OWNER_UUIDS,      uuids);
+        csv_write(KEY_OWNER_NAMES,      names);
+        csv_write(KEY_OWNER_HONORIFICS, hons);
+        if (llGetListLength(uuids) > 0) {
+            llLinksetDataWrite(KEY_ISOWNED, "1");
+        }
+        return;
+    }
+
+    // Trustees (documented notecard form): access.trustees = {uuid: hon, ...}
+    if (key_name == "access.trustees") {
+        if (llJsonValueType(value, []) != JSON_OBJECT) return;
+        list pairs = llJson2List(value);
+        integer plen = llGetListLength(pairs);
+        list uuids = [];
+        list hons  = [];
+        list names = [];
+        integer pi = 0;
+        while (pi < plen) {
+            string uuid_str = llList2String(pairs, pi);
+            string hon      = llList2String(pairs, pi + 1);
+            key u = (key)uuid_str;
+            if (u != NULL_KEY && u != llGetOwner() && !is_owner(uuid_str)) {
+                uuids += [uuid_str];
+                hons  += [hon];
+                names += [NAME_LOADING];
+                request_name(uuid_str, "trustee_csv");
+            }
+            pi += 2;
+        }
+        if (llGetListLength(uuids) > MaxListLen) {
+            uuids = llList2List(uuids, 0, MaxListLen - 1);
+            hons  = llList2List(hons,  0, MaxListLen - 1);
+            names = llList2List(names, 0, MaxListLen - 1);
+        }
+        csv_write(KEY_TRUSTEE_UUIDS,      uuids);
+        csv_write(KEY_TRUSTEE_NAMES,      names);
+        csv_write(KEY_TRUSTEE_HONORIFICS, hons);
         return;
     }
 

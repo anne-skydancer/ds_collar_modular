@@ -11,10 +11,12 @@ ARCHITECTURE: Two-mode access model. Single-owner mode uses scalar keys
               Trustees and blacklist always use CSVs. Display names are
               resolved asynchronously via llRequestDisplayName.
 CHANGES:
-- v1.1 rev 4: Serialize llRequestDisplayName calls to avoid dataserver
-  throttle. At most one query is in flight; further requests queue in
-  NamePending and drain one-at-a-time from the dataserver handler.
-  Pending/in-flight state cleared on notecard reload.
+- v1.1 rev 4: Notecard parser now accepts the documented JSON object form
+  for owners and trustees: access.owner = {uuid: honorific} (single mode),
+  access.owners = {uuid: hon, ...} (multi mode), and access.trustees =
+  {uuid: hon, ...}. Previously only bare-UUID/CSV legacy forms were parsed,
+  so the documented notecard format silently produced empty owner/trustee
+  state. Bare-UUID forms still work for back-compat.
 - v1.1 rev 3: Replace JSON object owner/trustee storage with explicit
   two-mode flat scheme (scalars for single-owner, parallel CSVs for
   multi-owner). Async display name resolution. access.isowned = 0
@@ -85,16 +87,11 @@ key NotecardKey = NULL_KEY;
 
 integer MaxListLen = 64;
 
-// In-flight display-name query (serial drain — at most one outstanding to
-// avoid llRequestDisplayName throttle). Role values: "owner_scalar",
-// "owner_csv", "trustee_csv".
-key    NameQueryId   = NULL_KEY;
-string NameQueryUuid = "";
-string NameQueryRole = "";
-
-// Pending name resolutions waiting for the in-flight query to complete.
-// Stride-2: [uuid, role, uuid, role, ...]
-list NamePending = [];
+// Pending display-name queries: parallel lists.
+// Role values: "owner_scalar", "owner_csv", "trustee_csv"
+list NameQueryIds   = [];
+list NameQueryUuids = [];
+list NameQueryRoles = [];
 
 /* -------------------- HELPERS -------------------- */
 
@@ -208,41 +205,26 @@ integer is_trustee(string who) {
 
 /* -------------------- ASYNC NAME RESOLUTION -------------------- */
 
-// Fire the next pending name request, if any. Called after a response
-// arrives (success, empty, or unmatched) to keep the queue draining.
-drain_next_name() {
-    if (NameQueryId != NULL_KEY) return;
-    if (llGetListLength(NamePending) < 2) return;
-
-    string uuid_str = llList2String(NamePending, 0);
-    string role     = llList2String(NamePending, 1);
-    NamePending = llDeleteSubList(NamePending, 0, 1);
-
-    NameQueryUuid = uuid_str;
-    NameQueryRole = role;
-    NameQueryId   = llRequestDisplayName((key)uuid_str);
-}
-
 request_name(string uuid_str, string role) {
     if (uuid_str == "" || (key)uuid_str == NULL_KEY) return;
-    NamePending += [uuid_str, role];
-    drain_next_name();
+    key qid = llRequestDisplayName((key)uuid_str);
+    NameQueryIds   += [qid];
+    NameQueryUuids += [uuid_str];
+    NameQueryRoles += [role];
 }
 
 handle_name_response(key query_id, string name) {
-    if (query_id != NameQueryId) return;
+    integer idx = llListFindList(NameQueryIds, [query_id]);
+    if (idx == -1) return;
 
-    string uuid_str = NameQueryUuid;
-    string role     = NameQueryRole;
+    string uuid_str = llList2String(NameQueryUuids, idx);
+    string role     = llList2String(NameQueryRoles, idx);
 
-    NameQueryId   = NULL_KEY;
-    NameQueryUuid = "";
-    NameQueryRole = "";
+    NameQueryIds   = list_remove_at(NameQueryIds, idx);
+    NameQueryUuids = list_remove_at(NameQueryUuids, idx);
+    NameQueryRoles = list_remove_at(NameQueryRoles, idx);
 
-    if (name == "") {
-        drain_next_name();
-        return;
-    }
+    if (name == "") return;
 
     if (role == "owner_scalar") {
         // Confirm the uuid still matches before writing
@@ -250,31 +232,31 @@ handle_name_response(key query_id, string name) {
             llLinksetDataWrite(KEY_OWNER_NAME, name);
             broadcast_settings_changed();
         }
-    }
-    else if (role == "owner_csv") {
-        list uuids = csv_read(KEY_OWNER_UUIDS);
-        integer slot = llListFindList(uuids, [uuid_str]);
-        if (slot != -1) {
-            list names = csv_read(KEY_OWNER_NAMES);
-            while (llGetListLength(names) <= slot) names += [NAME_LOADING];
-            names = llListReplaceList(names, [name], slot, slot);
-            csv_write(KEY_OWNER_NAMES, names);
-            broadcast_settings_changed();
-        }
-    }
-    else if (role == "trustee_csv") {
-        list uuids = csv_read(KEY_TRUSTEE_UUIDS);
-        integer slot = llListFindList(uuids, [uuid_str]);
-        if (slot != -1) {
-            list names = csv_read(KEY_TRUSTEE_NAMES);
-            while (llGetListLength(names) <= slot) names += [NAME_LOADING];
-            names = llListReplaceList(names, [name], slot, slot);
-            csv_write(KEY_TRUSTEE_NAMES, names);
-            broadcast_settings_changed();
-        }
+        return;
     }
 
-    drain_next_name();
+    if (role == "owner_csv") {
+        list uuids = csv_read(KEY_OWNER_UUIDS);
+        integer slot = llListFindList(uuids, [uuid_str]);
+        if (slot == -1) return;
+        list names = csv_read(KEY_OWNER_NAMES);
+        while (llGetListLength(names) <= slot) names += [NAME_LOADING];
+        names = llListReplaceList(names, [name], slot, slot);
+        csv_write(KEY_OWNER_NAMES, names);
+        broadcast_settings_changed();
+        return;
+    }
+
+    if (role == "trustee_csv") {
+        list uuids = csv_read(KEY_TRUSTEE_UUIDS);
+        integer slot = llListFindList(uuids, [uuid_str]);
+        if (slot == -1) return;
+        list names = csv_read(KEY_TRUSTEE_NAMES);
+        while (llGetListLength(names) <= slot) names += [NAME_LOADING];
+        names = llListReplaceList(names, [name], slot, slot);
+        csv_write(KEY_TRUSTEE_NAMES, names);
+        broadcast_settings_changed();
+    }
 }
 
 /* -------------------- INTERNAL MUTATORS -------------------- */
@@ -412,8 +394,23 @@ parse_notecard_line(string line) {
         return;
     }
 
-    // Single-owner scalar (notecard can also use single-owner mode)
+    // Single-owner: documented notecard form is {uuid: honorific}.
+    // Bare-UUID legacy form is still accepted for back-compat.
     if (key_name == KEY_OWNER) {
+        if (llJsonValueType(value, []) == JSON_OBJECT) {
+            list pairs = llJson2List(value);
+            if (llGetListLength(pairs) < 2) return;
+            string uuid_str = llList2String(pairs, 0);
+            string hon      = llList2String(pairs, 1);
+            key u = (key)uuid_str;
+            if (u == NULL_KEY || u == llGetOwner()) return;
+            llLinksetDataWrite(KEY_OWNER, uuid_str);
+            llLinksetDataWrite(KEY_OWNER_NAME, NAME_LOADING);
+            llLinksetDataWrite(KEY_OWNER_HONORIFIC, hon);
+            llLinksetDataWrite(KEY_ISOWNED, "1");
+            request_name(uuid_str, "owner_scalar");
+            return;
+        }
         key u = (key)value;
         if (u == NULL_KEY || u == llGetOwner()) return;
         llLinksetDataWrite(KEY_OWNER, value);
@@ -422,6 +419,73 @@ parse_notecard_line(string line) {
         }
         llLinksetDataWrite(KEY_ISOWNED, "1");
         request_name(value, "owner_scalar");
+        return;
+    }
+
+    // Multi-owner (documented notecard form): access.owners = {uuid: hon, ...}
+    if (key_name == "access.owners") {
+        if (llJsonValueType(value, []) != JSON_OBJECT) return;
+        list pairs = llJson2List(value);
+        integer plen = llGetListLength(pairs);
+        list uuids = [];
+        list hons  = [];
+        list names = [];
+        integer pi = 0;
+        while (pi < plen) {
+            string uuid_str = llList2String(pairs, pi);
+            string hon      = llList2String(pairs, pi + 1);
+            key u = (key)uuid_str;
+            if (u != NULL_KEY && u != llGetOwner()) {
+                uuids += [uuid_str];
+                hons  += [hon];
+                names += [NAME_LOADING];
+                request_name(uuid_str, "owner_csv");
+            }
+            pi += 2;
+        }
+        if (llGetListLength(uuids) > MaxListLen) {
+            uuids = llList2List(uuids, 0, MaxListLen - 1);
+            hons  = llList2List(hons,  0, MaxListLen - 1);
+            names = llList2List(names, 0, MaxListLen - 1);
+        }
+        csv_write(KEY_OWNER_UUIDS,      uuids);
+        csv_write(KEY_OWNER_NAMES,      names);
+        csv_write(KEY_OWNER_HONORIFICS, hons);
+        if (llGetListLength(uuids) > 0) {
+            llLinksetDataWrite(KEY_ISOWNED, "1");
+        }
+        return;
+    }
+
+    // Trustees (documented notecard form): access.trustees = {uuid: hon, ...}
+    if (key_name == "access.trustees") {
+        if (llJsonValueType(value, []) != JSON_OBJECT) return;
+        list pairs = llJson2List(value);
+        integer plen = llGetListLength(pairs);
+        list uuids = [];
+        list hons  = [];
+        list names = [];
+        integer pi = 0;
+        while (pi < plen) {
+            string uuid_str = llList2String(pairs, pi);
+            string hon      = llList2String(pairs, pi + 1);
+            key u = (key)uuid_str;
+            if (u != NULL_KEY && u != llGetOwner() && !is_owner(uuid_str)) {
+                uuids += [uuid_str];
+                hons  += [hon];
+                names += [NAME_LOADING];
+                request_name(uuid_str, "trustee_csv");
+            }
+            pi += 2;
+        }
+        if (llGetListLength(uuids) > MaxListLen) {
+            uuids = llList2List(uuids, 0, MaxListLen - 1);
+            hons  = llList2List(hons,  0, MaxListLen - 1);
+            names = llList2List(names, 0, MaxListLen - 1);
+        }
+        csv_write(KEY_TRUSTEE_UUIDS,      uuids);
+        csv_write(KEY_TRUSTEE_NAMES,      names);
+        csv_write(KEY_TRUSTEE_HONORIFICS, hons);
         return;
     }
 
@@ -557,14 +621,6 @@ integer start_notecard_reading() {
     clear_owner_keys();
     clear_trustee_keys();
     llLinksetDataDelete(KEY_BLACKLIST);
-
-    // Drop any pending/in-flight name queries from a previous load. The
-    // in-flight query can't be cancelled, but nulling the tracking makes
-    // its response unmatched and harmlessly ignored.
-    NamePending   = [];
-    NameQueryId   = NULL_KEY;
-    NameQueryUuid = "";
-    NameQueryRole = "";
 
     IsLoadingNotecard = TRUE;
     NotecardLine = 0;
