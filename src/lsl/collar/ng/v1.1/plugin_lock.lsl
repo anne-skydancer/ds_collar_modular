@@ -1,10 +1,12 @@
 /*--------------------
 PLUGIN: plugin_lock.lsl
 VERSION: 1.10
-REVISION: 1
+REVISION: 2
 PURPOSE: Toggle collar lock and RLV detach control labels
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
+- v1.1 rev 2: Honor soft_reset / soft_reset_all from KERNEL_LIFECYCLE so
+  factory reset clears cached lock state.
 - v1.1 rev 1: Migrate settings reads from JSON broadcast to direct LSD reads.
   Remove apply_settings_delta(); fold side effects into apply_settings_sync()
   via previous-state comparison. Both settings_sync and settings_delta call
@@ -284,6 +286,14 @@ default {
             if (msg_type == "ping") {
                 send_pong();
                 return;
+            }
+
+            if (msg_type == "soft_reset" || msg_type == "soft_reset_all") {
+                string target_context = llJsonGetValue(msg, ["context"]);
+                if (target_context != JSON_INVALID) {
+                    if (target_context != "" && target_context != PLUGIN_CONTEXT) return;
+                }
+                llResetScript();
             }
 
             return;

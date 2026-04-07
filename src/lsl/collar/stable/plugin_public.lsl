@@ -1,10 +1,14 @@
 /*--------------------
 PLUGIN: plugin_public.lsl
 VERSION: 1.10
-REVISION: 1
+REVISION: 2
 PURPOSE: Toggle public access mode directly from main menu
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
+- v1.1 rev 2: Honor soft_reset / soft_reset_all from KERNEL_LIFECYCLE.
+  Without this, factory reset wiped LSD but left PublicModeEnabled cached
+  in the script globals, so the menu kept showing "Public: Y" and the
+  registered label never updated until the next manual toggle.
 - v1.1 rev 1: Migrate settings reads from JSON broadcast payloads to direct
   llLinksetDataRead. Remove apply_settings_delta — apply_settings_sync now
   compares previous state and calls register_self() on change.
@@ -206,6 +210,16 @@ default {
             if (msg_type == "ping") {
                 send_pong();
                 return;
+            }
+
+            if (msg_type == "soft_reset" || msg_type == "soft_reset_all") {
+                string target_context = llJsonGetValue(msg, ["context"]);
+                if (target_context != JSON_INVALID) {
+                    if (target_context != "" && target_context != PLUGIN_CONTEXT) {
+                        return;
+                    }
+                }
+                llResetScript();
             }
 
             return;

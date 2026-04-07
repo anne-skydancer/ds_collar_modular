@@ -1,10 +1,12 @@
 /*--------------------
 PLUGIN: plugin_leash.lsl
 VERSION: 1.10
-REVISION: 1
+REVISION: 2
 PURPOSE: User interface and configuration for the leashing system
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
+- v1.1 rev 2: Honor soft_reset / soft_reset_all from KERNEL_LIFECYCLE so
+  factory reset clears cached leash state.
 - v1.1 rev 1: Migrate dialog buttons to button_data format with context-based routing.
 - v1.1 rev 0: Self-declares button visibility policy to LSD on registration.
   Replaces hardcoded ALLOWED_ACL_* lists and inAllowedList() with policy reads.
@@ -653,6 +655,13 @@ default
             if (msg_type == "ping") {
                 send_pong();
                 return;
+            }
+            if (msg_type == "soft_reset" || msg_type == "soft_reset_all") {
+                string target_context = llJsonGetValue(msg, ["context"]);
+                if (target_context != JSON_INVALID) {
+                    if (target_context != "" && target_context != PLUGIN_CONTEXT) return;
+                }
+                llResetScript();
             }
             return;
         }

@@ -1,10 +1,12 @@
 /*--------------------
 PLUGIN: plugin_access.lsl
 VERSION: 1.10
-REVISION: 4
+REVISION: 5
 PURPOSE: Owner, trustee, and honorific management workflows
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
+- v1.1 rev 5: Honor soft_reset / soft_reset_all from KERNEL_LIFECYCLE so
+  factory reset wipes cached owner/trustee state, not just LSD.
 - v1.1 rev 4: Fix phantom-trustee count. llCSV2List("") returns [""] (a
   single empty entry), not []. When the trustee/owner CSV keys were unset
   in LSD, the access plugin reported one trustee/owner that didn't exist.
@@ -800,6 +802,13 @@ default {
         if (num == KERNEL_LIFECYCLE) {
             if (type == "register_now") register_self();
             else if (type == "ping") send_pong();
+            else if (type == "soft_reset" || type == "soft_reset_all") {
+                string target_context = llJsonGetValue(msg, ["context"]);
+                if (target_context != JSON_INVALID) {
+                    if (target_context != "" && target_context != PLUGIN_CONTEXT) return;
+                }
+                llResetScript();
+            }
         }
         else if (num == SETTINGS_BUS) {
             if (type == "settings_sync" || type == "settings_delta") apply_settings_sync();

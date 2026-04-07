@@ -1,10 +1,12 @@
 /*--------------------
 PLUGIN: plugin_animate.lsl
 VERSION: 1.10
-REVISION: 0
+REVISION: 1
 PURPOSE: Paginated animation menu driven by inventory contents
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
+- v1.1 rev 1: Honor soft_reset / soft_reset_all from KERNEL_LIFECYCLE so
+  factory reset clears cached state.
 - v1.1 rev 0: Self-declares button visibility policy to LSD on registration.
   Replaces hardcoded PLUGIN_MIN_ACL with policy reads.
   Button list built from get_policy_buttons() + btn_allowed().
@@ -415,6 +417,14 @@ default {
             if (msg_type == "ping") {
                 send_pong();
                 return;
+            }
+
+            if (msg_type == "soft_reset" || msg_type == "soft_reset_all") {
+                string target_context = llJsonGetValue(msg, ["context"]);
+                if (target_context != JSON_INVALID) {
+                    if (target_context != "" && target_context != PLUGIN_CONTEXT) return;
+                }
+                llResetScript();
             }
 
             return;

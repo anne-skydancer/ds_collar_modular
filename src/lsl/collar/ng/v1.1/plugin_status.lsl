@@ -1,10 +1,12 @@
 /*--------------------
 PLUGIN: plugin_status.lsl
 VERSION: 1.10
-REVISION: 3
+REVISION: 4
 PURPOSE: Read-only collar status display for owners and observers
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
+- v1.1 rev 4: Honor soft_reset / soft_reset_all from KERNEL_LIFECYCLE so
+  factory reset clears cached session state.
 - v1.1 rev 3: Fix phantom owner/trustee count. llCSV2List("") returns
   [""] (a single empty entry), not []. Routed all CSV reads through a
   csv_read() helper that returns [] for empty raw values.
@@ -280,6 +282,14 @@ default {
             if (msg_type == "ping") {
                 send_pong();
                 return;
+            }
+
+            if (msg_type == "soft_reset" || msg_type == "soft_reset_all") {
+                string target_context = llJsonGetValue(msg, ["context"]);
+                if (target_context != JSON_INVALID) {
+                    if (target_context != "" && target_context != PLUGIN_CONTEXT) return;
+                }
+                llResetScript();
             }
 
             return;
