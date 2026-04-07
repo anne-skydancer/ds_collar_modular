@@ -1,10 +1,15 @@
 /*--------------------
 MODULE: kmod_dialogs.lsl
 VERSION: 1.10
-REVISION: 0
+REVISION: 1
 PURPOSE: Centralized dialog management for shared listener handling
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- v1.1 rev 1: Fix button_data routing — JSON button objects with context+label
+  are now routable even without a "state" field. Previously only objects
+  carrying all three (context+label+state) were treated as routable, so plugin
+  action buttons emitted by btn(label, cmd) lost their context and clicks came
+  back with context="".
 - v1.1 rev 0: Version bump for LSD policy architecture. No functional changes to this module.
 --------------------*/
 
@@ -193,27 +198,31 @@ handle_dialog_open(string msg) {
             string button_text = "";
             string button_context = "";
 
-            // Plugin buttons: JSON objects with context+label+state (routable to plugins)
+            // Routable buttons: JSON objects with context+label (state optional, used for toggle resolution)
             if (llJsonValueType(item, []) == JSON_OBJECT &&
-                (llJsonGetValue(item, ["context"]) != JSON_INVALID) && (llJsonGetValue(item, ["label"]) != JSON_INVALID) && (llJsonGetValue(item, ["state"]) != JSON_INVALID)) {
+                (llJsonGetValue(item, ["context"]) != JSON_INVALID) && (llJsonGetValue(item, ["label"]) != JSON_INVALID)) {
 
                 string context = llJsonGetValue(item, ["context"]);
                 string label = llJsonGetValue(item, ["label"]);
-                integer button_state = (integer)llJsonGetValue(item, ["state"]);
 
-                // Check if there's a button config for this context (for toggle buttons)
+                // Check if there's a button config for this context (toggle buttons need state)
                 integer config_idx = find_button_config_idx(context);
 
                 if (config_idx != -1) {
-                    // Toggle button: use registered config to resolve label
+                    // Toggle button: resolve label via registered config + state (defaults to 0)
+                    integer button_state = 0;
+                    string state_str = llJsonGetValue(item, ["state"]);
+                    if (state_str != JSON_INVALID) {
+                        button_state = (integer)state_str;
+                    }
                     button_text = get_button_label(context, button_state);
                 }
                 else {
-                    // Regular plugin: use label field directly
+                    // Action/plugin button: use label field directly
                     button_text = label;
                 }
 
-                button_context = context;  // Plugin buttons route to context
+                button_context = context;  // Routable buttons carry context
             }
             else {
                 // Navigation buttons or other non-routable buttons
