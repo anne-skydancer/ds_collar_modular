@@ -1,5 +1,0 @@
-{
-  "hooks": {
-    "session_start": "./setup-lslint.sh"
-  }
-}
