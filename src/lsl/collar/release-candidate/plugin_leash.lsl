@@ -394,7 +394,7 @@ giveHolderObject() {
         return;
     }
 
-    string holder_name = "D/s Collar leash holder";
+    string holder_name = "Leash holder";
     if (llGetInventoryType(holder_name) != INVENTORY_OBJECT) {
         llRegionSayTo(CurrentUser, 0, "Error: Holder object not found in collar inventory.");
         return;

@@ -1,10 +1,18 @@
 /*--------------------
 MODULE: kmod_leash.lsl
 VERSION: 1.10
-REVISION: 3
+REVISION: 4
 PURPOSE: Leashing engine providing leash services to plugins
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- v1.1 rev 4: Fixed yank anchoring and stiff walking. yankToLeasher now
+  pairs llMoveToTarget with llTarget so an at_target event releases the
+  physics hold the moment the wearer arrives, instead of leaving them
+  glued to the leasher's exact position forever. followTick now stops
+  the move target unconditionally when in range (not just on
+  out-of-range -> in-range transitions), pulls to 0.85 * length with a
+  gentler tau (1.0), and runs at 1.0s instead of 2.0s for responsiveness.
+  Offsim/auto-reclip throttle rebalanced to keep its prior ~4s cadence.
 - v1.1 rev 3: Reject DS-protocol holder responses from objects that are
   not worn by the leasher. beginHolderHandshake() broadcasts via
   llRegionSay on LEASH_CHAN_DS so any in-world DS-compatible holder
@@ -114,8 +122,12 @@ key AuthorizedLmController = NULL_KEY;
 integer LastYankTime = 0;
 float YANK_COOLDOWN = 5.0;  // 5 seconds between yanks
 
+// Yank arrival detection (rev 4): llTarget handle so at_target can release
+// the physics hold the moment the wearer reaches the leasher.
+integer YankTargetHandle = 0;
+
 // Timers
-float FOLLOW_TICK = 2.0;
+float FOLLOW_TICK = 1.0;
 
 /* -------------------- HELPERS -------------------- */
 
@@ -751,10 +763,18 @@ yankToLeasher() {
     }
 
     vector leasher_pos = llList2Vector(details, 0);
-    
+
     if (ControlsOk) {
-        // Use physics move (tau 0.1 for fast yank) instead of RLV
-        llMoveToTarget(leasher_pos, 0.1);
+        // Physics yank: pull hard, but register an llTarget so at_target
+        // releases llMoveToTarget the moment the wearer arrives. Without
+        // this, the move target persists indefinitely and anchors the
+        // wearer to the leasher's exact position.
+        if (YankTargetHandle != 0) {
+            llTargetRemove(YankTargetHandle);
+            YankTargetHandle = 0;
+        }
+        llMoveToTarget(leasher_pos, 0.3);
+        YankTargetHandle = llTarget(leasher_pos, 1.5);
         llOwnerSay("Yanked to " + llKey2Name(Leasher));
         llRegionSayTo(Leasher, 0, llKey2Name(llGetOwner()) + " yanked to you.");
     } else {
@@ -802,6 +822,10 @@ stopFollow() {
     FollowActive = FALSE;
     llOwnerSay("@follow=clear");
     llStopMoveToTarget();
+    if (YankTargetHandle != 0) {
+        llTargetRemove(YankTargetHandle);
+        YankTargetHandle = 0;
+    }
     LastTargetPos = ZERO_VECTOR;
     LastDistance = -1.0;
     LastTurnAngle = -999.0;
@@ -869,18 +893,28 @@ followTick() {
     float distance = llVecDist(wearer_pos, target_pos);
 
     if (ControlsOk && distance > (float)LeashLength) {
-        vector pull_pos = target_pos + llVecNorm(wearer_pos - target_pos) * (float)LeashLength * 0.98;
+        // Pull to 0.85 * length (not 0.98) so there is slack on arrival
+        // and the wearer is not pinned at the leash limit. Gentler tau
+        // (1.0) keeps walking in the leashed direction feasible.
+        vector pull_pos = target_pos + llVecNorm(wearer_pos - target_pos) * (float)LeashLength * 0.85;
         if (llVecMag(pull_pos - LastTargetPos) > 0.2) {
-            llMoveToTarget(pull_pos, 0.5);
+            llMoveToTarget(pull_pos, 1.0);
             LastTargetPos = pull_pos;
         }
         if (TurnToFace && follow_target != NULL_KEY) {
             turnToTarget(target_pos);
         }
     }
-    else if (LastDistance >= 0.0 && LastDistance > (float)LeashLength) {
-        llStopMoveToTarget();
-        LastTargetPos = ZERO_VECTOR;
+    else {
+        // In range: always release the move target. The previous
+        // implementation only stopped on out-of-range -> in-range
+        // transitions, leaving the wearer pinned by leftover physics
+        // (and, after a yank, anchored permanently). Skip the call when
+        // a yank is still in flight so we do not cancel its arrival pull.
+        if (LastTargetPos != ZERO_VECTOR && YankTargetHandle == 0) {
+            llStopMoveToTarget();
+            LastTargetPos = ZERO_VECTOR;
+        }
     }
 
     LastDistance = distance;
@@ -1036,14 +1070,25 @@ default
         advanceHolderStateMachine();
         
         TickCount++;
-        // Check for offsim/auto-release (Throttled to every ~4 seconds at 2.0s tick)
-        if (TickCount % 2 == 0) {
+        // Check for offsim/auto-release (~4s cadence at 1.0s FOLLOW_TICK)
+        if (TickCount % 4 == 0) {
             if (Leashed) checkLeasherPresence();
             if (!Leashed && ReclipScheduled != 0) checkAutoReclip();
         }
-        
+
         // Follow tick
         if (FollowActive && Leashed) followTick();
+    }
+
+    at_target(integer tnum, vector target_pos, vector my_pos) {
+        // Yank arrival: release the physics hold so the wearer is not
+        // anchored to the leasher's exact position after a yank.
+        if (tnum == YankTargetHandle) {
+            llTargetRemove(YankTargetHandle);
+            YankTargetHandle = 0;
+            llStopMoveToTarget();
+            LastTargetPos = ZERO_VECTOR;
+        }
     }
     
     listen(integer channel, string name, key id, string msg) {
