@@ -1,10 +1,12 @@
 /*--------------------
 MODULE: kmod_leash.lsl
 VERSION: 1.10
-REVISION: 4
+REVISION: 5
 PURPOSE: Leashing engine providing leash services to plugins
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- v1.1 rev 5: Namespaced internal message type strings for clarity
+  (e.g. "leash_action" → "plugin.leash.action", "set" → "settings.set").
 - v1.1 rev 4: Fixed yank anchoring and stiff walking. yankToLeasher now
   pairs llMoveToTarget with llTarget so an at_target event releases the
   physics hold the moment the wearer arrives, instead of leaving them
@@ -58,10 +60,10 @@ integer MODE_COFFLE = 1;  // Collar-to-collar leashpoint connection
 integer MODE_POST = 2;    // Posted to a static object
 
 // Settings keys
-string KEY_LEASHED = "leashed";
-string KEY_LEASHER = "leasher_key";
-string KEY_LEASH_LENGTH = "leash_length";
-string KEY_LEASH_TURNTO = "leash_turnto";
+string KEY_LEASHED = "leash.leashedavatar";
+string KEY_LEASHER = "leash.leasherkey";
+string KEY_LEASH_LENGTH = "leash.length";
+string KEY_LEASH_TURNTO = "leash.turnto";
 
 // Leash state
 integer Leashed = FALSE;
@@ -141,7 +143,7 @@ integer now() {
 }
 // Check if a button label is allowed at the given ACL level via LSD policy
 integer policy_allows(string btn_label, integer acl_level) {
-    string policy = llLinksetDataRead("policy:" + PLUGIN_CONTEXT);
+    string policy = llLinksetDataRead("acl.policycontext:" + PLUGIN_CONTEXT);
     if (policy == "") return FALSE;
     string csv = llJsonGetValue(policy, [(string)acl_level]);
     if (csv == JSON_INVALID) return FALSE;
@@ -159,12 +161,12 @@ setLockmeisterState(integer enabled, key controller) {
     string msg;
     if (enabled) {
         msg = llList2Json(JSON_OBJECT, [
-            "type", "lm_enable",
+            "type", "particles.lmenable",
             "controller", (string)controller
         ]);
     } else {
         msg = llList2Json(JSON_OBJECT, [
-            "type", "lm_disable"
+            "type", "particles.lmdisable"
         ]);
     }
     llMessageLinked(LINK_SET, UI_BUS, msg, NULL_KEY);
@@ -175,14 +177,14 @@ setParticlesState(integer active, key target) {
     string msg;
     if (active) {
         msg = llList2Json(JSON_OBJECT, [
-            "type", "particles_start",
+            "type", "particles.start",
             "source", PLUGIN_CONTEXT,
             "target", (string)target,
             "style", "chain"
         ]);
     } else {
         msg = llList2Json(JSON_OBJECT, [
-            "type", "particles_stop",
+            "type", "particles.stop",
             "source", PLUGIN_CONTEXT
         ]);
     }
@@ -191,7 +193,7 @@ setParticlesState(integer active, key target) {
 
 updateParticlesTarget(key target) {
     llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
-        "type", "particles_update",
+        "type", "particles.update",
         "target", (string)target
     ]), NULL_KEY);
 }
@@ -199,7 +201,7 @@ updateParticlesTarget(key target) {
 /* -------------------- OFFER PROTOCOL -------------------- */
 sendOfferPending(key target, key originator) {
     llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
-        "type", "offer_pending",
+        "type", "plugin.leash.offerpending",
         "target", (string)target,
         "originator", (string)originator
     ]), NULL_KEY);
@@ -291,7 +293,7 @@ requestAclForAction(key user, string action, key pass_target) {
     PendingPassTarget = pass_target;
     
     llMessageLinked(LINK_SET, AUTH_BUS, llList2Json(JSON_OBJECT, [
-        "type", "acl_query",
+        "type", "auth.aclquery",
         "avatar", (string)user
     ]), user);
     
@@ -413,7 +415,7 @@ requestAclForPassTarget(key target) {
     AclPending = TRUE;
     
     llMessageLinked(LINK_SET, AUTH_BUS, llList2Json(JSON_OBJECT, [
-        "type", "acl_query",
+        "type", "auth.aclquery",
         "avatar", (string)target
     ]), target);
     
@@ -433,7 +435,7 @@ beginHolderHandshake(key user) {
     
     // Send DS native JSON format on DS channel
     string msg = llList2Json(JSON_OBJECT, [
-        "type", "leash_req",
+        "type", "plugin.leash.request",
         "wearer", (string)llGetOwner(),
         "collar", (string)llGetKey(),
         "controller", (string)user,
@@ -594,7 +596,7 @@ checkAutoReclip() {
 /* -------------------- SETTINGS PERSISTENCE -------------------- */
 persistSetting(string setting_key, string value) {
     llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
-        "type", "set",
+        "type", "settings.set",
         "key", setting_key,
         "value", value
     ]), NULL_KEY);
@@ -627,7 +629,7 @@ applySettingsSync() {
 /* -------------------- STATE BROADCAST -------------------- */
 broadcastState() {
     string msg = llList2Json(JSON_OBJECT, [
-        "type", "leash_state",
+        "type", "plugin.leash.state",
         "leashed", (string)Leashed,
         "leasher", (string)Leasher,
         "length", (string)LeashLength,
@@ -962,7 +964,7 @@ default
         if (num == UI_BUS) {
             
             // Commands from config plugin - NOW WITH ACL VERIFICATION
-            if (msg_type == "leash_action") {
+            if (msg_type == "plugin.leash.action") {
                 string action = jsonGet(msg, "action", "");
                 if (action == "") return;
                 key user = id;
@@ -1004,7 +1006,7 @@ default
             }
 
             // Emergency release from SOS plugin
-            if (msg_type == "emergency_leash_release") {
+            if (msg_type == "sos.leashrelease") {
                 // Verify sender is owner/wearer to prevent abuse
                 if (id == llGetOwner()) {
                     releaseLeashInternal(id);
@@ -1013,7 +1015,7 @@ default
             }
             
             // Lockmeister notifications from particles - VERIFY AUTHORIZATION
-            if (msg_type == "lm_grabbed") {
+            if (msg_type == "particles.lmgrabbed") {
                 key controller = (key)jsonGet(msg, "controller", (string)NULL_KEY);
                 if (controller == NULL_KEY) return;
                 
@@ -1034,7 +1036,7 @@ default
                 return;
             }
             
-            if (msg_type == "lm_released") {
+            if (msg_type == "particles.lmreleased") {
                 if (Leashed) {
                     key old_leasher = Leasher;
                     Leashed = FALSE;
@@ -1051,14 +1053,14 @@ default
         }
         
         if (num == AUTH_BUS) {
-            if (msg_type == "acl_result") {
+            if (msg_type == "auth.aclresult") {
                 handleAclResult(msg);
             }
             return;
         }
         
         if (num == SETTINGS_BUS) {
-            if (msg_type == "settings_sync" || msg_type == "settings_delta") {
+            if (msg_type == "settings.sync" || msg_type == "settings.delta") {
                 applySettingsSync();
             }
             return;

@@ -1,10 +1,11 @@
 /*--------------------
 MODULE: kmod_dialogs.lsl
 VERSION: 1.10
-REVISION: 1
+REVISION: 2
 PURPOSE: Centralized dialog management for shared listener handling
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- v1.1 rev 2: Namespace internal message type strings (ui.dialog.*, kernel.*)
 - v1.1 rev 1: Fix button_data routing — JSON button objects with context+label
   are now routable even without a "state" field. Previously only objects
   carrying all three (context+label+state) were treated as routable, so plugin
@@ -109,7 +110,7 @@ prune_expired_sessions() {
             key user = llList2Key(SessionUsers, i);
             
             string timeout_msg = llList2Json(JSON_OBJECT, [
-                "type", "dialog_timeout",
+                "type", "ui.dialog.timeout",
                 "session_id", session_id,
                 "user", (string)user
             ]);
@@ -479,7 +480,7 @@ default
 
                 // Send response message with context
                 string response = llList2Json(JSON_OBJECT, [
-                    "type", "dialog_response",
+                    "type", "ui.dialog.response",
                     "session_id", session_id,
                     "user", (string)id,
                     "button", message,
@@ -501,7 +502,7 @@ default
 
         /* -------------------- KERNEL LIFECYCLE -------------------- */
         if (num == KERNEL_LIFECYCLE) {
-            if (msg_type == "soft_reset" || msg_type == "soft_reset_all") {
+            if (msg_type == "kernel.reset" || msg_type == "kernel.resetall") {
                 llResetScript();
             }
             return;
@@ -510,13 +511,13 @@ default
         /* -------------------- DIALOG BUS -------------------- */
         if (num != DIALOG_BUS) return;
 
-        if (msg_type == "dialog_open") {
+        if (msg_type == "ui.dialog.open") {
             handle_dialog_open(msg);
         }
-        else if (msg_type == "dialog_close") {
+        else if (msg_type == "ui.dialog.close") {
             handle_dialog_close(msg);
         }
-        else if (msg_type == "register_button_config") {
+        else if (msg_type == "ui.dialog.registerbuttonconfig") {
             if ((llJsonGetValue(msg, ["context"]) != JSON_INVALID) && (llJsonGetValue(msg, ["button_a"]) != JSON_INVALID) && (llJsonGetValue(msg, ["button_b"]) != JSON_INVALID)) {
                 string context = llJsonGetValue(msg, ["context"]);
                 string button_a = llJsonGetValue(msg, ["button_a"]);

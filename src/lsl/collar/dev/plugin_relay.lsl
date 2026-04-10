@@ -1,10 +1,11 @@
 /*--------------------
 PLUGIN: plugin_relay.lsl
 VERSION: 1.10
-REVISION: 1
+REVISION: 2
 PURPOSE: Provide ORG-compliant RLV relay with hardcore mode and safeword hooks
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
+- v1.1 rev 2: Namespace internal message type strings (kernel.*, ui.*, settings.*, sos.*).
 - v1.1 rev 1: Migrate settings reads from JSON broadcast to direct LSD reads.
   Remove apply_settings_delta(); fold side effects into apply_settings_sync()
   via previous-state comparison. Both settings_sync and settings_delta call
@@ -108,7 +109,7 @@ string truncate_name(string name, integer max_len) {
 
 /* -------------------- LSD POLICY HELPER -------------------- */
 list get_policy_buttons(string ctx, integer acl) {
-    string policy = llLinksetDataRead("policy:" + ctx);
+    string policy = llLinksetDataRead("acl.policycontext:" + ctx);
     if (policy == "") return [];
     string csv = llJsonGetValue(policy, [(string)acl]);
     if (csv == JSON_INVALID) return [];
@@ -123,7 +124,7 @@ integer btn_allowed(string label) {
 
 register_self() {
     // Write button visibility policy to LSD (default-deny per ACL level)
-    llLinksetDataWrite("policy:" + PLUGIN_CONTEXT, llList2Json(JSON_OBJECT, [
+    llLinksetDataWrite("acl.policycontext:" + PLUGIN_CONTEXT, llList2Json(JSON_OBJECT, [
         "2", "Mode,Bound by...,Safeword",
         "3", "Mode,Bound by...,Unbind,HC OFF,HC ON",
         "4", "Mode,Bound by...,Safeword",
@@ -132,7 +133,7 @@ register_self() {
 
     // Register with kernel
     string msg = llList2Json(JSON_OBJECT, [
-        "type", "register",
+        "type", "kernel.register",
         "context", PLUGIN_CONTEXT,
         "label", PLUGIN_LABEL,
         "script", llGetScriptName()
@@ -142,7 +143,7 @@ register_self() {
 
 send_pong() {
     string msg = llList2Json(JSON_OBJECT, [
-        "type", "pong",
+        "type", "kernel.pong",
         "context", PLUGIN_CONTEXT
     ]);
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, msg, NULL_KEY);
@@ -343,7 +344,7 @@ apply_settings_sync() {
 persist_mode(integer new_mode) {
     llLinksetDataWrite(KEY_RELAY_MODE, (string)new_mode);
     string msg = llList2Json(JSON_OBJECT, [
-        "type", "set",
+        "type", "settings.set",
         "key", KEY_RELAY_MODE,
         "value", (string)new_mode
     ]);
@@ -353,7 +354,7 @@ persist_mode(integer new_mode) {
 persist_hardcore(integer new_hardcore) {
     llLinksetDataWrite(KEY_RELAY_HARDCORE, (string)new_hardcore);
     string msg = llList2Json(JSON_OBJECT, [
-        "type", "set",
+        "type", "settings.set",
         "key", KEY_RELAY_HARDCORE,
         "value", (string)new_hardcore
     ]);
@@ -404,7 +405,7 @@ show_main_menu() {
     string buttons_json = llList2Json(JSON_ARRAY, buttons);
 
     string msg = llList2Json(JSON_OBJECT, [
-        "type", "dialog_open",
+        "type", "ui.dialog.open",
         "session_id", SessionId,
         "user", (string)CurrentUser,
         "title", PLUGIN_LABEL + " Menu",
@@ -453,7 +454,7 @@ show_mode_menu() {
     string buttons_json = llList2Json(JSON_ARRAY, buttons);
 
     string msg = llList2Json(JSON_OBJECT, [
-        "type", "dialog_open",
+        "type", "ui.dialog.open",
         "session_id", SessionId,
         "user", (string)CurrentUser,
         "title", "Relay Mode",
@@ -489,7 +490,7 @@ show_object_list() {
     string buttons_json = llList2Json(JSON_ARRAY, buttons);
 
     string msg = llList2Json(JSON_OBJECT, [
-        "type", "dialog_open",
+        "type", "ui.dialog.open",
         "session_id", SessionId,
         "user", (string)CurrentUser,
         "title", "Active Relays",
@@ -588,7 +589,7 @@ handle_button_click(string button) {
 
 return_to_root() {
     string msg = llList2Json(JSON_OBJECT, [
-        "type", "return",
+        "type", "ui.menu.return",
         "context", PLUGIN_CONTEXT,
         "user", (string)CurrentUser
     ]);
@@ -602,7 +603,7 @@ return_to_root() {
 cleanup_session() {
     if (SessionId != "") {
         llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
-            "type", "dialog_close",
+            "type", "ui.dialog.close",
             "session_id", SessionId
         ]), NULL_KEY);
     }
@@ -845,44 +846,44 @@ default
 
         /* -------------------- LIFECYCLE -------------------- */
         if (num == KERNEL_LIFECYCLE) {
-            if (msg_type == "register_now") {
+            if (msg_type == "kernel.registernow") {
                 register_self();
             }
-            else if (msg_type == "ping") {
+            else if (msg_type == "kernel.ping") {
                 send_pong();
             }
-            else if (msg_type == "soft_reset" || msg_type == "soft_reset_all") {
+            else if (msg_type == "kernel.reset" || msg_type == "kernel.resetall") {
                 llResetScript();
             }
         }
 
         /* -------------------- SETTINGS -------------------- */
         else if (num == SETTINGS_BUS) {
-            if (msg_type == "settings_sync" || msg_type == "settings_delta") {
+            if (msg_type == "settings.sync" || msg_type == "settings.delta") {
                 apply_settings_sync();
             }
         }
 
         /* -------------------- UI -------------------- */
         else if (num == UI_BUS) {
-            if (msg_type == "start") {
+            if (msg_type == "ui.menu.start") {
                 handle_start(msg);
             }
         }
 
         /* -------------------- DIALOG -------------------- */
         else if (num == DIALOG_BUS) {
-            if (msg_type == "dialog_response") {
+            if (msg_type == "ui.dialog.response") {
                 handle_dialog_response(msg);
             }
-            else if (msg_type == "dialog_timeout") {
+            else if (msg_type == "ui.dialog.timeout") {
                 handle_dialog_timeout(msg);
             }
         }
 
         /* -------------------- SOS -------------------- */
         else if (num == SOS_MSG_NUM) {
-            if (msg_type == "sos_release") {
+            if (msg_type == "sos.release") {
                 safeword_clear_all();
                 llOwnerSay("[SOS] All RLV restrictions cleared.");
             }

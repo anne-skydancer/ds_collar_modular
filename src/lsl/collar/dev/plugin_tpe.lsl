@@ -1,10 +1,12 @@
 /*--------------------
 PLUGIN: plugin_tpe.lsl
 VERSION: 1.10
-REVISION: 2
+REVISION: 3
 PURPOSE: Manage TPE mode with wearer confirmation and owner oversight
-ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
+ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility,
+  namespaced internal message protocol
 CHANGES:
+- v1.1 rev 3: Namespaced internal message types (kernel.register, ui.dialog.open, etc.).
 - v1.1 rev 2: Migrate dialog buttons to button_data format with context-based routing.
 - v1.1 rev 1: Migrate from JSON broadcast payloads to direct LSD reads.
   Remove apply_settings_delta() and request_settings_sync(). apply_settings_sync()
@@ -65,7 +67,7 @@ string gen_session() {
 cleanup_session() {
     if (SessionId != "") {
         llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
-            "type", "dialog_close",
+            "type", "ui.dialog.close",
             "session_id", SessionId
         ]), NULL_KEY);
     }
@@ -77,7 +79,7 @@ cleanup_session() {
 
 close_ui_for_user(key user) {
     string msg = llList2Json(JSON_OBJECT, [
-        "type", "close",
+        "type", "ui.menu.close",
         "context", PLUGIN_CONTEXT,
         "user", (string)user
     ]);
@@ -86,7 +88,7 @@ close_ui_for_user(key user) {
 
 /* -------------------- LSD POLICY HELPER -------------------- */
 list get_policy_buttons(string ctx, integer acl) {
-    string policy = llLinksetDataRead("policy:" + ctx);
+    string policy = llLinksetDataRead("acl.policycontext:" + ctx);
     if (policy == "") return [];
     string csv = llJsonGetValue(policy, [(string)acl]);
     if (csv == JSON_INVALID) return [];
@@ -101,7 +103,7 @@ integer btn_allowed(string label) {
 
 register_with_kernel() {
     // Write button visibility policy to LSD (only primary owner ACL 5 gets toggle)
-    llLinksetDataWrite("policy:" + PLUGIN_CONTEXT, llList2Json(JSON_OBJECT, [
+    llLinksetDataWrite("acl.policycontext:" + PLUGIN_CONTEXT, llList2Json(JSON_OBJECT, [
         "5", "toggle"
     ]));
 
@@ -112,7 +114,7 @@ register_with_kernel() {
     }
 
     string msg = llList2Json(JSON_OBJECT, [
-        "type", "register",
+        "type", "kernel.register",
         "context", PLUGIN_CONTEXT,
         "label", initial_label,
         "script", llGetScriptName()
@@ -122,7 +124,7 @@ register_with_kernel() {
 
 send_pong() {
     string msg = llList2Json(JSON_OBJECT, [
-        "type", "pong",
+        "type", "kernel.pong",
         "context", PLUGIN_CONTEXT
     ]);
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, msg, NULL_KEY);
@@ -137,7 +139,7 @@ persist_tpe_mode(integer new_value) {
     llLinksetDataWrite(KEY_TPE_MODE, (string)new_value);
 
     llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
-        "type", "set",
+        "type", "settings.set",
         "key", KEY_TPE_MODE,
         "value", (string)new_value
     ]), NULL_KEY);
@@ -152,7 +154,7 @@ update_ui_label() {
     }
 
     string msg = llList2Json(JSON_OBJECT, [
-        "type", "update_label",
+        "type", "ui.label.update",
         "context", PLUGIN_CONTEXT,
         "label", new_label
     ]);
@@ -181,7 +183,7 @@ handle_button_click(string cmd) {
         // Return owner to root menu to see updated button (if different from wearer)
         if (CurrentUser != WearerKey) {
             string msg = llList2Json(JSON_OBJECT, [
-                "type", "return",
+                "type", "ui.menu.return",
                 "user", (string)CurrentUser
             ]);
             llMessageLinked(LINK_SET, UI_BUS, msg, NULL_KEY);
@@ -202,7 +204,7 @@ handle_button_click(string cmd) {
         // Return owner to root menu (if different from wearer)
         if (CurrentUser != WearerKey) {
             string msg = llList2Json(JSON_OBJECT, [
-                "type", "return",
+                "type", "ui.menu.return",
                 "user", (string)CurrentUser
             ]);
             llMessageLinked(LINK_SET, UI_BUS, msg, NULL_KEY);
@@ -244,7 +246,7 @@ handle_tpe_click(key user, integer acl_level) {
 
         // Return owner to root menu (so they see the updated button)
         string msg = llList2Json(JSON_OBJECT, [
-            "type", "return",
+            "type", "ui.menu.return",
             "user", (string)user
         ]);
         llMessageLinked(LINK_SET, UI_BUS, msg, NULL_KEY);
@@ -268,7 +270,7 @@ handle_tpe_click(key user, integer acl_level) {
         ];
 
         llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
-            "type", "dialog_open",
+            "type", "ui.dialog.open",
             "session_id", SessionId,
             "user", (string)llGetOwner(),  // Send to WEARER, not CurrentUser
             "title", "TPE Confirmation",
@@ -325,13 +327,13 @@ default
         if (num == KERNEL_LIFECYCLE) {
             string msg_type = llJsonGetValue(str, ["type"]);
 
-            if (msg_type == "register_now") {
+            if (msg_type == "kernel.registernow") {
                 register_with_kernel();
             }
-            else if (msg_type == "ping") {
+            else if (msg_type == "kernel.ping") {
                 send_pong();
             }
-            else if (msg_type == "soft_reset" || msg_type == "soft_reset_all") {
+            else if (msg_type == "kernel.reset" || msg_type == "kernel.resetall") {
                 // Check if this is a targeted reset
                 string target_context = llJsonGetValue(str, ["context"]);
                 if (target_context != JSON_INVALID) {
@@ -346,14 +348,14 @@ default
         else if (num == SETTINGS_BUS) {
             string msg_type = llJsonGetValue(str, ["type"]);
 
-            if (msg_type == "settings_sync" || msg_type == "settings_delta") {
+            if (msg_type == "settings.sync" || msg_type == "settings.delta") {
                 apply_settings_sync();
             }
         }
         else if (num == UI_BUS) {
             string msg_type = llJsonGetValue(str, ["type"]);
 
-            if (msg_type == "start") {
+            if (msg_type == "ui.menu.start") {
                 string context = llJsonGetValue(str, ["context"]);
                 if (context != PLUGIN_CONTEXT) return;
 
@@ -370,7 +372,7 @@ default
         else if (num == DIALOG_BUS) {
             string msg_type = llJsonGetValue(str, ["type"]);
 
-            if (msg_type == "dialog_response") {
+            if (msg_type == "ui.dialog.response") {
                 string session_id = llJsonGetValue(str, ["session_id"]);
                 if (session_id != SessionId) return;
 
@@ -379,7 +381,7 @@ default
 
                 handle_button_click(cmd);
             }
-            else if (msg_type == "dialog_timeout") {
+            else if (msg_type == "ui.dialog.timeout") {
                 string session_id = llJsonGetValue(str, ["session_id"]);
                 if (session_id != SessionId) return;
                 llRegionSayTo(WearerKey, 0, "TPE confirmation timed out.");
@@ -393,7 +395,7 @@ default
                 // Return owner to root menu (if different from wearer)
                 if (CurrentUser != WearerKey) {
                     string msg = llList2Json(JSON_OBJECT, [
-                        "type", "return",
+                        "type", "ui.menu.return",
                         "user", (string)CurrentUser
                     ]);
                     llMessageLinked(LINK_SET, UI_BUS, msg, NULL_KEY);

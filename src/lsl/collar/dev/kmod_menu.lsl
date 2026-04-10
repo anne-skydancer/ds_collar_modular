@@ -1,10 +1,11 @@
 /*--------------------
 MODULE: kmod_menu.lsl
 VERSION: 1.10
-REVISION: 0
+REVISION: 1
 PURPOSE: Menu rendering and visual presentation service
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- v1.1 rev 1: Namespace internal message type strings (dialog_open→ui.dialog.open, render_menu→ui.menu.render, show_message→ui.message.show).
 - v1.1 rev 0: Version bump for LSD policy architecture. No functional changes to this module.
 --------------------*/
 
@@ -127,7 +128,7 @@ render_menu(string msg) {
     string final_button_data_json = llList2Json(JSON_ARRAY, final_button_data);
 
     string dialog_msg = llList2Json(JSON_OBJECT, [
-        "type", "dialog_open",
+        "type", "ui.dialog.open",
         "session_id", session_id,
         "user", (string)user,
         "title", title,
@@ -162,10 +163,10 @@ default
         if (msg_type == "") return;
 
         if (num == UI_BUS) {
-            if (msg_type == "render_menu") {
+            if (msg_type == "ui.menu.render") {
                 render_menu(msg);
             }
-            else if (msg_type == "show_message") {
+            else if (msg_type == "ui.message.show") {
                 show_message(msg);
             }
         }

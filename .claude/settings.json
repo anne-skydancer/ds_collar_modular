@@ -1,6 +1,6 @@
 {
   "hooks": {
-    "session_start": [
+    "SessionStart": [
       {
         "type": "command",
         "command": "./setup-lslint.sh"

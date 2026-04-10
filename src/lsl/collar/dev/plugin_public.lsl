@@ -1,10 +1,12 @@
 /*--------------------
 PLUGIN: plugin_public.lsl
 VERSION: 1.10
-REVISION: 2
+REVISION: 3
 PURPOSE: Toggle public access mode directly from main menu
-ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
+ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility,
+  namespaced internal message protocol
 CHANGES:
+- v1.1 rev 3: Namespaced internal message types (kernel.register, settings.set, etc.).
 - v1.1 rev 2: Honor soft_reset / soft_reset_all from KERNEL_LIFECYCLE.
   Without this, factory reset wiped LSD but left PublicModeEnabled cached
   in the script globals, so the menu kept showing "Public: Y" and the
@@ -51,7 +53,7 @@ list gPolicyButtons = [];
 
 /* -------------------- LSD POLICY HELPER -------------------- */
 list get_policy_buttons(string ctx, integer acl) {
-    string policy = llLinksetDataRead("policy:" + ctx);
+    string policy = llLinksetDataRead("acl.policycontext:" + ctx);
     if (policy == "") return [];
     string csv = llJsonGetValue(policy, [(string)acl]);
     if (csv == JSON_INVALID) return [];
@@ -71,7 +73,7 @@ register_self() {
     }
 
     // Write button visibility policy to LSD (default-deny per ACL level)
-    llLinksetDataWrite("policy:" + PLUGIN_CONTEXT, llList2Json(JSON_OBJECT, [
+    llLinksetDataWrite("acl.policycontext:" + PLUGIN_CONTEXT, llList2Json(JSON_OBJECT, [
         "3", "toggle",
         "4", "toggle",
         "5", "toggle"
@@ -79,7 +81,7 @@ register_self() {
 
     // Register with kernel
     string msg = llList2Json(JSON_OBJECT, [
-        "type", "register",
+        "type", "kernel.register",
         "context", PLUGIN_CONTEXT,
         "label", label,
         "script", llGetScriptName()
@@ -89,7 +91,7 @@ register_self() {
 
 send_pong() {
     string msg = llList2Json(JSON_OBJECT, [
-        "type", "pong",
+        "type", "kernel.pong",
         "context", PLUGIN_CONTEXT
     ]);
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, msg, NULL_KEY);
@@ -118,7 +120,7 @@ persist_public_mode(integer new_value) {
     llLinksetDataWrite(KEY_PUBLIC_MODE, (string)new_value);
 
     string msg = llList2Json(JSON_OBJECT, [
-        "type", "set",
+        "type", "settings.set",
         "key", KEY_PUBLIC_MODE,
         "value", (string)new_value
     ]);
@@ -134,7 +136,7 @@ update_ui_label_and_return(key user) {
     }
 
     string msg = llList2Json(JSON_OBJECT, [
-        "type", "update_label",
+        "type", "ui.label.update",
         "context", PLUGIN_CONTEXT,
         "label", new_label
     ]);
@@ -142,7 +144,7 @@ update_ui_label_and_return(key user) {
 
     // Return user to root menu
     msg = llList2Json(JSON_OBJECT, [
-        "type", "return",
+        "type", "ui.menu.return",
         "user", (string)user
     ]);
     llMessageLinked(LINK_SET, UI_BUS, msg, NULL_KEY);
@@ -202,17 +204,17 @@ default {
             string msg_type = llJsonGetValue(msg, ["type"]);
             if (msg_type == JSON_INVALID) return;
 
-            if (msg_type == "register_now") {
+            if (msg_type == "kernel.registernow") {
                 register_self();
                 return;
             }
 
-            if (msg_type == "ping") {
+            if (msg_type == "kernel.ping") {
                 send_pong();
                 return;
             }
 
-            if (msg_type == "soft_reset" || msg_type == "soft_reset_all") {
+            if (msg_type == "kernel.reset" || msg_type == "kernel.resetall") {
                 string target_context = llJsonGetValue(msg, ["context"]);
                 if (target_context != JSON_INVALID) {
                     if (target_context != "" && target_context != PLUGIN_CONTEXT) {
@@ -229,7 +231,7 @@ default {
             string msg_type = llJsonGetValue(msg, ["type"]);
             if (msg_type == JSON_INVALID) return;
 
-            if (msg_type == "settings_sync" || msg_type == "settings_delta") {
+            if (msg_type == "settings.sync" || msg_type == "settings.delta") {
                 apply_settings_sync();
                 return;
             }
@@ -241,7 +243,7 @@ default {
             string msg_type = llJsonGetValue(msg, ["type"]);
             if (msg_type == JSON_INVALID) return;
 
-            if (msg_type == "start") {
+            if (msg_type == "ui.menu.start") {
                 if (llJsonGetValue(msg, ["context"]) == JSON_INVALID) return;
                 if (llJsonGetValue(msg, ["context"]) != PLUGIN_CONTEXT) return;
 

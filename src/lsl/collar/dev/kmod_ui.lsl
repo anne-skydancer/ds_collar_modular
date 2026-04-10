@@ -1,10 +1,12 @@
 /*--------------------
 MODULE: kmod_ui.lsl
 VERSION: 1.10
-REVISION: 0
+REVISION: 1
 PURPOSE: Session management, LSD policy filtering, and plugin list orchestration
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- v1.1 rev 1: Namespaced internal message type strings (e.g. "start" -> "ui.menu.start",
+  "acl_query" -> "auth.aclquery", "plugin_list" -> "kernel.pluginlist").
 - v1.1 rev 0: Replaced min_acl filtering with LSD policy reads. Root menu
   visibility now determined by llLinksetDataRead("policy:<context>"). Removed
   PluginMinACLs parallel list and plugin_acl_list_request/response flow.
@@ -32,10 +34,11 @@ integer MAX_SESSIONS = 5;
 integer SESSION_MAX_AGE = 60;  // Seconds before ACL refresh required
 
 // Per-user ACL cache prefix written by kmod_auth.lsl.
-// Reading "LSD_ACL_CACHE_PREFIX + avatar_uuid" skips the AUTH_BUS round-trip on touch.
+// Reading "acl.<avatar_uuid>.cache" skips the AUTH_BUS round-trip on touch.
 // Value format: "<level>|<unix_timestamp>" — must match kmod_auth.lsl's store_cached_acl().
-// CROSS-MODULE CONTRACT: this constant must match LSD_ACL_CACHE_PREFIX in kmod_auth.lsl.
-string LSD_ACL_CACHE_PREFIX = "acl_cache_";
+// CROSS-MODULE CONTRACT: this format must match LSD_ACL_CACHE_PREFIX/SUFFIX in kmod_auth.lsl.
+string LSD_ACL_CACHE_PREFIX = "acl.";
+string LSD_ACL_CACHE_SUFFIX = ".cache";
 
 /* ACL levels (mirrors auth module) */
 integer ACL_BLACKLIST = -1;
@@ -132,12 +135,12 @@ set_plugin_state(string context, integer button_state) {
 /* -------------------- ACL CACHE MANAGEMENT -------------------- */
 
 // Reads the pre-computed ACL result written by kmod_auth into LSD.
-// kmod_auth populates acl_cache_<uuid> for all named actors on every settings
+// kmod_auth populates acl.<uuid>.cache for all named actors on every settings
 // load/change via precompute_known_acl(). This path costs one LSD read and
 // zero link_messages. Falls through to AUTH_BUS only on a true cold miss
 // (unknown user whose entry was never written or has been cleared).
 integer try_cached_session(key user_key, string context_filter) {
-    string raw = llLinksetDataRead(LSD_ACL_CACHE_PREFIX + (string)user_key);
+    string raw = llLinksetDataRead(LSD_ACL_CACHE_PREFIX + (string)user_key + LSD_ACL_CACHE_SUFFIX);
     if (raw == "") return FALSE;
     integer sep = llSubStringIndex(raw, "|");
     if (sep == -1) return FALSE;
@@ -175,7 +178,7 @@ cleanup_session(key user) {
     // BUGFIX: Close dialog before cleaning up session
     string session_id = llList2String(SessionIDs, idx);
     string close_msg = llList2Json(JSON_OBJECT, [
-        "type", "dialog_close",
+        "type", "ui.dialog.close",
         "session_id", session_id
     ]);
     llMessageLinked(LINK_SET, DIALOG_BUS, close_msg, NULL_KEY);
@@ -232,7 +235,7 @@ create_session(key user, integer acl, integer is_blacklisted, string context_fil
         integer is_sos_plugin = (llSubStringIndex(context, SOS_PREFIX) == 0);
 
         // Check LSD policy for this plugin at the user's ACL level
-        string policy = llLinksetDataRead("policy:" + context);
+        string policy = llLinksetDataRead("acl.policycontext:" + context);
         if (policy != "") {
             string csv = llJsonGetValue(policy, [(string)acl]);
             if (csv != JSON_INVALID) {
@@ -327,7 +330,7 @@ apply_plugin_list(string plugins_json) {
 
 send_message(key user, string message_text) {
     string msg = llList2Json(JSON_OBJECT, [
-        "type", "show_message",
+        "type", "ui.message.show",
         "user", (string)user,
         "message", message_text
     ]);
@@ -414,7 +417,7 @@ send_render_menu(key user, string menu_type) {
     integer has_nav = 1;
 
     string msg = llList2Json(JSON_OBJECT, [
-        "type", "render_menu",
+        "type", "ui.menu.render",
         "user", (string)user,
         "session_id", session_id,
         "menu_type", menu_type,
@@ -477,7 +480,7 @@ handle_button_click(key user, string button, string context) {
             integer user_acl = llList2Integer(SessionACLs, session_idx);
 
             // LSD policy filter — verify user still has access
-            string policy = llLinksetDataRead("policy:" + context);
+            string policy = llLinksetDataRead("acl.policycontext:" + context);
             if (policy == "") {
                 send_message(user, "Access denied.");
                 return;
@@ -489,7 +492,7 @@ handle_button_click(key user, string button, string context) {
             }
 
             string msg = llList2Json(JSON_OBJECT, [
-                "type", "start",
+                "type", "ui.menu.start",
                 "context", context,
                 "user", (string)user,
                 "acl", user_acl
@@ -531,7 +534,7 @@ handle_plugin_list(string msg) {
         while (i < len) {
             string session_id = llList2String(SessionIDs, i);
             string close_msg = llList2Json(JSON_OBJECT, [
-                "type", "dialog_close",
+                "type", "ui.dialog.close",
                 "session_id", session_id
             ]);
             llMessageLinked(LINK_SET, DIALOG_BUS, close_msg, NULL_KEY);
@@ -605,7 +608,7 @@ start_root_session(key user_key) {
     PendingAclContexts += [ROOT_CONTEXT];
 
     string acl_query = llList2Json(JSON_OBJECT, [
-        "type", "acl_query",
+        "type", "auth.aclquery",
         "avatar", (string)user_key
     ]);
     llMessageLinked(LINK_SET, AUTH_BUS, acl_query, NULL_KEY);
@@ -623,7 +626,7 @@ start_sos_session(key user_key) {
     PendingAclContexts += [SOS_CONTEXT];
 
     string acl_query = llList2Json(JSON_OBJECT, [
-        "type", "acl_query",
+        "type", "auth.aclquery",
         "avatar", (string)user_key
     ]);
     llMessageLinked(LINK_SET, AUTH_BUS, acl_query, NULL_KEY);
@@ -746,7 +749,7 @@ default
         
         // Request plugin list (kernel defers response during active registration)
         string request = llList2Json(JSON_OBJECT, [
-            "type", "plugin_list_request"
+            "type", "kernel.pluginlistrequest"
         ]);
         llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, request, NULL_KEY);
     }
@@ -821,8 +824,8 @@ default
 
         /* -------------------- KERNEL LIFECYCLE -------------------- */
         if (num == KERNEL_LIFECYCLE) {
-            if (msg_type == "plugin_list") handle_plugin_list(msg);
-            else if (msg_type == "soft_reset" || msg_type == "soft_reset_all") {
+            if (msg_type == "kernel.pluginlist") handle_plugin_list(msg);
+            else if (msg_type == "kernel.reset" || msg_type == "kernel.resetall") {
                 llResetScript();
             }
             return;
@@ -830,8 +833,8 @@ default
 
         /* -------------------- AUTH BUS -------------------- */
         if (num == AUTH_BUS) {
-            if (msg_type == "acl_result") handle_acl_result(msg);
-            else if (msg_type == "acl_update") {
+            if (msg_type == "auth.aclresult") handle_acl_result(msg);
+            else if (msg_type == "auth.aclupdate") {
                 // ACL roles changed (ownership, trustees, public, TPE, etc.)
                 // Invalidate all active sessions so they re-create with fresh ACL
                 // on next touch. This prevents stale ACL from granting wrong buttons.
@@ -847,17 +850,17 @@ default
 
         /* -------------------- UI BUS -------------------- */
         if (num == UI_BUS) {
-            if (msg_type == "start") handle_start(msg, id);
-            else if (msg_type == "return") handle_return(msg);
-            else if (msg_type == "update_label") handle_update_label(msg);
-            else if (msg_type == "update_state") handle_update_state(msg);
+            if (msg_type == "ui.menu.start") handle_start(msg, id);
+            else if (msg_type == "ui.menu.return") handle_return(msg);
+            else if (msg_type == "ui.label.update") handle_update_label(msg);
+            else if (msg_type == "ui.state.update") handle_update_state(msg);
             return;
         }
 
         /* -------------------- DIALOG BUS -------------------- */
         if (num == DIALOG_BUS) {
-            if (msg_type == "dialog_response") handle_dialog_response(msg);
-            else if (msg_type == "dialog_timeout") handle_dialog_timeout(msg);
+            if (msg_type == "ui.dialog.response") handle_dialog_response(msg);
+            else if (msg_type == "ui.dialog.timeout") handle_dialog_timeout(msg);
             return;
         }
     }

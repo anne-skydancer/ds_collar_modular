@@ -1,7 +1,7 @@
 /*--------------------
 MODULE: kmod_settings.lsl
 VERSION: 1.10
-REVISION: 3
+REVISION: 4
 PURPOSE: Notecard parser, validation guards, and LSD settings store
 ARCHITECTURE: Two-mode access model. Single-owner mode uses scalar keys
               (access.owner, access.ownername, access.ownerhonorific) and
@@ -11,6 +11,8 @@ ARCHITECTURE: Two-mode access model. Single-owner mode uses scalar keys
               Trustees and blacklist always use CSVs. Display names are
               resolved asynchronously via llRequestDisplayName.
 CHANGES:
+- v1.1 rev 4: Namespace internal message type strings (e.g. "set" →
+  "settings.set", "settings_sync" → "settings.sync") for ABI clarity.
 - v1.1 rev 3: Replace JSON object owner/trustee storage with explicit
   two-mode flat scheme (scalars for single-owner, parallel CSVs for
   multi-owner). Async display name resolution. access.isowned = 0
@@ -128,7 +130,7 @@ integer is_multi_owner_mode() {
 
 broadcast_settings_changed() {
     llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
-        "type", "settings_sync"
+        "type", "settings.sync"
     ]), NULL_KEY);
 }
 
@@ -157,7 +159,7 @@ factory_reset() {
 
     // Reset all scripts in the linkset
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
-        "type", "soft_reset_all",
+        "type", "kernel.resetall",
         "from", "factory_reset"
     ]), NULL_KEY);
 
@@ -732,7 +734,7 @@ default
 
                 // Trigger bootstrap completion
                 llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
-                    "type", "notecard_loaded"
+                    "type", "settings.notecardloaded"
                 ]), NULL_KEY);
             }
             return;
@@ -747,14 +749,14 @@ default
         string msg_type = get_msg_type(msg);
         if (msg_type == "") return;
 
-        if      (msg_type == "settings_get")     handle_settings_get();
-        else if (msg_type == "set")              handle_set(msg);
-        else if (msg_type == "set_owner")        handle_set_owner(msg);
-        else if (msg_type == "clear_owner")      handle_clear_owner();
-        else if (msg_type == "add_trustee")      handle_add_trustee(msg);
-        else if (msg_type == "remove_trustee")   handle_remove_trustee(msg);
-        else if (msg_type == "blacklist_add")    handle_blacklist_add(msg);
-        else if (msg_type == "blacklist_remove") handle_blacklist_remove(msg);
-        else if (msg_type == "runaway")          handle_runaway();
+        if      (msg_type == "settings.get")            handle_settings_get();
+        else if (msg_type == "settings.set")            handle_set(msg);
+        else if (msg_type == "settings.setowner")       handle_set_owner(msg);
+        else if (msg_type == "settings.clearowner")     handle_clear_owner();
+        else if (msg_type == "settings.addtrustee")     handle_add_trustee(msg);
+        else if (msg_type == "settings.removetrustee")  handle_remove_trustee(msg);
+        else if (msg_type == "settings.blacklistadd")   handle_blacklist_add(msg);
+        else if (msg_type == "settings.blacklistremove") handle_blacklist_remove(msg);
+        else if (msg_type == "settings.runaway")        handle_runaway();
     }
 }

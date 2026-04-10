@@ -1,10 +1,12 @@
 /*--------------------
 PLUGIN: plugin_blacklist.lsl
 VERSION: 1.10
-REVISION: 4
+REVISION: 5
 PURPOSE: Blacklist management with sensor-based avatar selection
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
+- v1.1 rev 5: Namespace internal message type strings (kernel.*, settings.*,
+  ui.*) for consistency with consolidated ABI naming conventions.
 - v1.1 rev 4: Honor soft_reset / soft_reset_all from KERNEL_LIFECYCLE so
   factory reset clears cached blacklist state.
 - v1.1 rev 3: Migrate to flat CSV blacklist storage. Use new blacklist_add /
@@ -76,7 +78,7 @@ string generate_session_id() {
 
 /* -------------------- LSD POLICY HELPER -------------------- */
 list get_policy_buttons(string ctx, integer acl) {
-    string policy = llLinksetDataRead("policy:" + ctx);
+    string policy = llLinksetDataRead("acl.policycontext:" + ctx);
     if (policy == "") return [];
     string csv = llJsonGetValue(policy, [(string)acl]);
     if (csv == JSON_INVALID) return [];
@@ -105,7 +107,7 @@ list blacklist_names() {
 
 register_self() {
     // Write button visibility policy to LSD (Owned+ can manage blacklist)
-    llLinksetDataWrite("policy:" + PLUGIN_CONTEXT, llList2Json(JSON_OBJECT, [
+    llLinksetDataWrite("acl.policycontext:" + PLUGIN_CONTEXT, llList2Json(JSON_OBJECT, [
         "2", "+Blacklist,-Blacklist",
         "3", "+Blacklist,-Blacklist",
         "4", "+Blacklist,-Blacklist",
@@ -114,7 +116,7 @@ register_self() {
 
     // Register with kernel
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
-        "type", "register",
+        "type", "kernel.register",
         "context", PLUGIN_CONTEXT,
         "label", PLUGIN_LABEL,
         "script", llGetScriptName()
@@ -123,7 +125,7 @@ register_self() {
 
 send_pong() {
     string msg = llList2Json(JSON_OBJECT, [
-        "type", "pong",
+        "type", "kernel.pong",
         "context", PLUGIN_CONTEXT
     ]);
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, msg, NULL_KEY);
@@ -139,14 +141,14 @@ apply_settings_sync() {
 
 send_blacklist_add(string uuid_str) {
     llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
-        "type", "blacklist_add",
+        "type", "settings.blacklistadd",
         "uuid", uuid_str
     ]), NULL_KEY);
 }
 
 send_blacklist_remove(string uuid_str) {
     llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
-        "type", "blacklist_remove",
+        "type", "settings.blacklistremove",
         "uuid", uuid_str
     ]), NULL_KEY);
 }
@@ -169,7 +171,7 @@ show_main_menu() {
     MenuContext = "main";
 
     string msg = llList2Json(JSON_OBJECT, [
-        "type", "dialog_open",
+        "type", "ui.dialog.open",
         "session_id", SessionId,
         "user", (string)CurrentUser,
         "title", "Blacklist",
@@ -194,7 +196,7 @@ show_remove_menu() {
     MenuContext = "remove";
 
     string msg = llList2Json(JSON_OBJECT, [
-        "type", "dialog_open",
+        "type", "ui.dialog.open",
         "dialog_type", "numbered_list",
         "session_id", SessionId,
         "user", (string)CurrentUser,
@@ -229,7 +231,7 @@ show_add_candidates() {
     MenuContext = "add_pick";
 
     string msg = llList2Json(JSON_OBJECT, [
-        "type", "dialog_open",
+        "type", "ui.dialog.open",
         "dialog_type", "numbered_list",
         "session_id", SessionId,
         "user", (string)CurrentUser,
@@ -246,7 +248,7 @@ show_add_candidates() {
 
 return_to_root() {
     string msg = llList2Json(JSON_OBJECT, [
-        "type", "return",
+        "type", "ui.menu.return",
         "user", (string)CurrentUser
     ]);
     llMessageLinked(LINK_SET, UI_BUS, msg, NULL_KEY);
@@ -258,7 +260,7 @@ return_to_root() {
 cleanup_session() {
     if (SessionId != "") {
         llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
-            "type", "dialog_close",
+            "type", "ui.dialog.close",
             "session_id", SessionId
         ]), NULL_KEY);
     }
@@ -367,17 +369,17 @@ default {
 
         /* -------------------- KERNEL LIFECYCLE -------------------- */
         if (num == KERNEL_LIFECYCLE) {
-            if (msg_type == "register_now") {
+            if (msg_type == "kernel.registernow") {
                 register_self();
                 return;
             }
 
-            if (msg_type == "ping") {
+            if (msg_type == "kernel.ping") {
                 send_pong();
                 return;
             }
 
-            if (msg_type == "soft_reset" || msg_type == "soft_reset_all") {
+            if (msg_type == "kernel.reset" || msg_type == "kernel.resetall") {
                 string target_context = llJsonGetValue(msg, ["context"]);
                 if (target_context != JSON_INVALID) {
                     if (target_context != "" && target_context != PLUGIN_CONTEXT) return;
@@ -390,7 +392,7 @@ default {
 
         /* -------------------- SETTINGS BUS -------------------- */
         if (num == SETTINGS_BUS) {
-            if (msg_type == "settings_sync" || msg_type == "settings_delta") {
+            if (msg_type == "settings.sync" || msg_type == "settings.delta") {
                 apply_settings_sync();
                 return;
             }
@@ -400,7 +402,7 @@ default {
 
         /* -------------------- UI START -------------------- */
         if (num == UI_BUS) {
-            if (msg_type == "start") {
+            if (msg_type == "ui.menu.start") {
                 if (llJsonGetValue(msg, ["context"]) == JSON_INVALID) return;
                 if (llJsonGetValue(msg, ["context"]) != PLUGIN_CONTEXT) return;
 
@@ -416,12 +418,12 @@ default {
 
         /* -------------------- DIALOG RESPONSES -------------------- */
         if (num == DIALOG_BUS) {
-            if (msg_type == "dialog_response") {
+            if (msg_type == "ui.dialog.response") {
                 handle_dialog_response(msg);
                 return;
             }
 
-            if (msg_type == "dialog_timeout") {
+            if (msg_type == "ui.dialog.timeout") {
                 handle_dialog_timeout(msg);
                 return;
             }

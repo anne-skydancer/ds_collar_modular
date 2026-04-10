@@ -1,10 +1,11 @@
 /*--------------------
 PLUGIN: plugin_restrict.lsl
 VERSION: 1.10
-REVISION: 2
+REVISION: 3
 PURPOSE: Manage RLV restriction toggles grouped by functional category
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
+- v1.1 rev 3: Namespace internal message type strings (kernel.*, ui.*, settings.*).
 - v1.1 rev 2: Migrate dialog buttons to button_data format with context-based routing.
 - v1.1 rev 1: Migrate from JSON broadcast payloads to direct LSD reads.
   Remove apply_settings_delta() and request_settings_sync(). apply_settings_sync()
@@ -87,7 +88,7 @@ string generate_session_id() {
 
 /* -------------------- LSD POLICY HELPER -------------------- */
 list get_policy_buttons(string ctx, integer acl) {
-    string policy = llLinksetDataRead("policy:" + ctx);
+    string policy = llLinksetDataRead("acl.policycontext:" + ctx);
     if (policy == "") return [];
     string csv = llJsonGetValue(policy, [(string)acl]);
     if (csv == JSON_INVALID) return [];
@@ -102,7 +103,7 @@ integer btn_allowed(string label) {
 
 register_self() {
     // Write button visibility policy to LSD (default-deny per ACL level)
-    llLinksetDataWrite("policy:" + PLUGIN_CONTEXT, llList2Json(JSON_OBJECT, [
+    llLinksetDataWrite("acl.policycontext:" + PLUGIN_CONTEXT, llList2Json(JSON_OBJECT, [
         "1", "Force Sit,Force Unsit",
         "2", "Force Sit,Force Unsit",
         "3", "Inventory,Speech,Travel,Other,Clear all,Force Sit,Force Unsit",
@@ -112,7 +113,7 @@ register_self() {
 
     // Register with kernel
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
-        "type", "register",
+        "type", "kernel.register",
         "context", PLUGIN_CONTEXT,
         "label", PLUGIN_LABEL,
         "script", llGetScriptName()
@@ -121,7 +122,7 @@ register_self() {
 
 send_pong() {
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
-        "type", "pong",
+        "type", "kernel.pong",
         "context", PLUGIN_CONTEXT
     ]), NULL_KEY);
 }
@@ -129,7 +130,7 @@ send_pong() {
 cleanup_session() {
     if (SessionId != "") {
         llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
-            "type", "dialog_close",
+            "type", "ui.dialog.close",
             "session_id", SessionId
         ]), NULL_KEY);
     }
@@ -152,7 +153,7 @@ persist_restrictions() {
     llLinksetDataWrite(KEY_RESTRICTIONS, csv);
 
     llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
-        "type", "set",
+        "type", "settings.set",
         "key", KEY_RESTRICTIONS,
         "value", csv
     ]), NULL_KEY);
@@ -305,7 +306,7 @@ display_sit_targets() {
     }
 
     llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
-        "type", "dialog_open",
+        "type", "ui.dialog.open",
         "session_id", SessionId,
         "user", (string)CurrentUser,
         "title", "Force Sit",
@@ -331,7 +332,7 @@ force_unsit() {
 
 return_to_root() {
     llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
-        "type", "return",
+        "type", "ui.menu.return",
         "context", PLUGIN_CONTEXT,
         "user", (string)CurrentUser
     ]), NULL_KEY);
@@ -369,7 +370,7 @@ show_main() {
     }
 
     llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
-        "type", "dialog_open",
+        "type", "ui.dialog.open",
         "session_id", SessionId,
         "user", (string)CurrentUser,
         "title", PLUGIN_LABEL,
@@ -438,7 +439,7 @@ show_category_menu(string cat_name, integer page_num) {
     string body = cat_name + " (" + (string)(page_num + 1) + "/" + (string)(max_page + 1) + ")\n\nActive: " + (string)llGetListLength(Restrictions);
 
     llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
-        "type", "dialog_open",
+        "type", "ui.dialog.open",
         "session_id", SessionId,
         "user", (string)CurrentUser,
         "title", cat_name,
@@ -639,26 +640,26 @@ default
 
         // Kernel lifecycle
         if (num == KERNEL_LIFECYCLE) {
-            if (type == "register_now") {
+            if (type == "kernel.registernow") {
                 register_self();
                 apply_settings_sync();
             }
-            else if (type == "ping") {
+            else if (type == "kernel.ping") {
                 send_pong();
             }
-            else if (type == "soft_reset") {
+            else if (type == "kernel.reset") {
                 llResetScript();
             }
         }
         // Settings
         else if (num == SETTINGS_BUS) {
-            if (type == "settings_sync" || type == "settings_delta") {
+            if (type == "settings.sync" || type == "settings.delta") {
                 apply_settings_sync();
             }
         }
         // UI
         else if (num == UI_BUS) {
-            if (type == "start") {
+            if (type == "ui.menu.start") {
                 string context = llJsonGetValue(msg, ["context"]);
                 if (context == JSON_INVALID) return;
 
@@ -671,10 +672,10 @@ default
         }
         // Dialogs
         else if (num == DIALOG_BUS) {
-            if (type == "dialog_response") {
+            if (type == "ui.dialog.response") {
                 handle_dialog_response(msg);
             }
-            else if (type == "dialog_timeout") {
+            else if (type == "ui.dialog.timeout") {
                 handle_dialog_timeout(msg);
             }
         }

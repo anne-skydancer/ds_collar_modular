@@ -1,10 +1,11 @@
 /*--------------------
 SCRIPT: control_hud.lsl
 VERSION: 1.10
-REVISION: 0
+REVISION: 1
 PURPOSE: Auto-detect nearby collars and connect automatically
-ARCHITECTURE: RLV relay-style broadcast and listen workflow
+ARCHITECTURE: RLV relay-style broadcast and listen workflow, namespaced internal message protocol
 CHANGES:
+- v1.1 rev 1: Namespaced internal message types (remote.collarscan, auth.aclqueryexternal, etc.).
 - v1.1 rev 0: Version bump for LSD policy architecture. No functional changes to this module.
 --------------------*/
 
@@ -105,7 +106,7 @@ broadcast_collar_scan(string context) {
 
     // Broadcast to find all nearby collars
     string json_msg = llList2Json(JSON_OBJECT, [
-        "type", "collar_scan",
+        "type", "remote.collarscan",
         "hud_wearer", (string)HudWearer
     ]);
 
@@ -185,7 +186,7 @@ show_collar_selection_dialog() {
 
 request_acl_from_collar(key avatar_key) {
     string json_msg = llList2Json(JSON_OBJECT, [
-        "type", "acl_query_external",
+        "type", "auth.aclqueryexternal",
         "avatar", (string)HudWearer,
         "hud", (string)llGetKey(),
         "target_avatar", (string)avatar_key
@@ -323,7 +324,7 @@ default {
         if (channel == COLLAR_ACL_REPLY_CHAN && ScanningForCollars) {
             string msg_type = llJsonGetValue(message, ["type"]);
             if (msg_type == JSON_INVALID) return;
-            if (msg_type != "collar_scan_response") return;
+            if (msg_type != "remote.collarscanresponse") return;
             
             string collar_owner_str = llJsonGetValue(message, ["collar_owner"]);
             if (collar_owner_str == JSON_INVALID) return;
@@ -374,7 +375,7 @@ default {
         if (channel == COLLAR_ACL_REPLY_CHAN && AclPending) {
             string msg_type = llJsonGetValue(message, ["type"]);
             if (msg_type == JSON_INVALID) return;
-            if (msg_type != "acl_result_external") return;
+            if (msg_type != "auth.aclresultexternal") return;
             
             string response_avatar_str = llJsonGetValue(message, ["avatar"]);
             if (response_avatar_str == JSON_INVALID) return;
@@ -423,7 +424,7 @@ default {
 
             // Send menu request to collar
             string json_msg = llList2Json(JSON_OBJECT, [
-                "type", "menu_request_external",
+                "type", "remote.menurequest",
                 "avatar", (string)HudWearer,
                 "context", RequestedContext
             ]);

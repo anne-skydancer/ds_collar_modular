@@ -1,10 +1,12 @@
 /*--------------------
 PLUGIN: plugin_bell.lsl
 VERSION: 1.10
-REVISION: 3
+REVISION: 4
 PURPOSE: Bell visibility and jingling control for the collar
-ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
+ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility,
+  namespaced internal message protocol
 CHANGES:
+- v1.1 rev 4: Namespaced internal message types (kernel.register, ui.dialog.open, etc.).
 - v1.1 rev 3: Honor soft_reset / soft_reset_all from KERNEL_LIFECYCLE so
   factory reset clears cached bell state.
 - v1.1 rev 2: Migrate dialog buttons to button_data format with context-based routing.
@@ -75,7 +77,7 @@ float lsd_float(string lsd_key, float fallback) {
 
 /* -------------------- LSD POLICY HELPER -------------------- */
 list get_policy_buttons(string ctx, integer acl) {
-    string policy = llLinksetDataRead("policy:" + ctx);
+    string policy = llLinksetDataRead("acl.policycontext:" + ctx);
     if (policy == "") return [];
     string csv = llJsonGetValue(policy, [(string)acl]);
     if (csv == JSON_INVALID) return [];
@@ -126,7 +128,7 @@ show_menu(string context, string title, string body, list button_data) {
     MenuContext = context;
 
     llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
-        "type", "dialog_open",
+        "type", "ui.dialog.open",
         "session_id", SessionId,
         "user", (string)CurrentUser,
         "title", title,
@@ -139,7 +141,7 @@ show_menu(string context, string title, string body, list button_data) {
 /* -------------------- PLUGIN REGISTRATION -------------------- */
 register_self() {
     // Write button visibility policy to LSD (all ACL levels see same buttons)
-    llLinksetDataWrite("policy:" + PLUGIN_CONTEXT, llList2Json(JSON_OBJECT, [
+    llLinksetDataWrite("acl.policycontext:" + PLUGIN_CONTEXT, llList2Json(JSON_OBJECT, [
         "1", "Show,Sound,Volume +,Volume -",
         "2", "Show,Sound,Volume +,Volume -",
         "3", "Show,Sound,Volume +,Volume -",
@@ -149,7 +151,7 @@ register_self() {
 
     // Register with kernel
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
-        "type", "register",
+        "type", "kernel.register",
         "context", PLUGIN_CONTEXT,
         "label", PLUGIN_LABEL,
         "script", llGetScriptName()
@@ -158,7 +160,7 @@ register_self() {
 
 send_pong() {
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
-        "type", "pong",
+        "type", "kernel.pong",
         "context", PLUGIN_CONTEXT
     ]), NULL_KEY);
 }
@@ -205,7 +207,7 @@ persist_bell_setting(string setting_key, string value) {
     llLinksetDataWrite(setting_key, value);
 
     llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
-        "type", "set",
+        "type", "settings.set",
         "key", setting_key,
         "value", value
     ]), NULL_KEY);
@@ -261,7 +263,7 @@ handle_button_click(string msg) {
 /* -------------------- NAVIGATION -------------------- */
 return_to_root() {
     llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
-        "type", "return",
+        "type", "ui.menu.return",
         "user", (string)CurrentUser
     ]), NULL_KEY);
     cleanup_session();
@@ -270,7 +272,7 @@ return_to_root() {
 cleanup_session() {
     if (SessionId != "") {
         llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
-            "type", "dialog_close",
+            "type", "ui.dialog.close",
             "session_id", SessionId
         ]), NULL_KEY);
     }
@@ -344,17 +346,17 @@ default {
             string msg_type = llJsonGetValue(msg, ["type"]);
             if (msg_type == JSON_INVALID) return;
 
-            if (msg_type == "register_now") {
+            if (msg_type == "kernel.registernow") {
                 register_self();
                 return;
             }
 
-            if (msg_type == "ping") {
+            if (msg_type == "kernel.ping") {
                 send_pong();
                 return;
             }
 
-            if (msg_type == "soft_reset" || msg_type == "soft_reset_all") {
+            if (msg_type == "kernel.reset" || msg_type == "kernel.resetall") {
                 string target_context = llJsonGetValue(msg, ["context"]);
                 if (target_context != JSON_INVALID) {
                     if (target_context != "" && target_context != PLUGIN_CONTEXT) return;
@@ -369,7 +371,7 @@ default {
             string msg_type = llJsonGetValue(msg, ["type"]);
             if (msg_type == JSON_INVALID) return;
 
-            if (msg_type == "settings_sync" || msg_type == "settings_delta") {
+            if (msg_type == "settings.sync" || msg_type == "settings.delta") {
                 apply_settings_sync();
                 return;
             }
@@ -381,7 +383,7 @@ default {
             string msg_type = llJsonGetValue(msg, ["type"]);
             if (msg_type == JSON_INVALID) return;
 
-            if (msg_type == "start") {
+            if (msg_type == "ui.menu.start") {
                 if (llJsonGetValue(msg, ["context"]) == JSON_INVALID) return;
                 if (llJsonGetValue(msg, ["context"]) != PLUGIN_CONTEXT) return;
 
@@ -398,7 +400,7 @@ default {
             string msg_type = llJsonGetValue(msg, ["type"]);
             if (msg_type == JSON_INVALID) return;
 
-            if (msg_type == "dialog_response") {
+            if (msg_type == "ui.dialog.response") {
                 if (llJsonGetValue(msg, ["session_id"]) == JSON_INVALID || llJsonGetValue(msg, ["button"]) == JSON_INVALID) return;
                 string response_session = llJsonGetValue(msg, ["session_id"]);
                 if (response_session != SessionId) return;
@@ -407,7 +409,7 @@ default {
                 return;
             }
 
-            if (msg_type == "dialog_timeout") {
+            if (msg_type == "ui.dialog.timeout") {
                 string timeout_session = llJsonGetValue(msg, ["session_id"]);
                 if (timeout_session == JSON_INVALID) return;
                 if (timeout_session != SessionId) return;

@@ -1,10 +1,12 @@
 /*--------------------
 MODULE: kmod_bootstrap.lsl
 VERSION: 1.10
-REVISION: 3
+REVISION: 4
 PURPOSE: Startup coordination, RLV detection, status announcement
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- v1.1 rev 4: Namespace internal message type strings (settings.sync,
+  settings.delta, settings.notecardloaded, kernel.reset, kernel.resetall).
 - v1.1 rev 3: Fix phantom owner count in startup announcement and stale
   names_ready check. llCSV2List("") returns [""] (a single empty entry),
   not []. Routed CSV reads through a csv_read() helper.
@@ -434,23 +436,23 @@ state starting
         
         /* -------------------- SETTINGS BUS -------------------- */
         if (num == SETTINGS_BUS) {
-            if (msg_type == "settings_sync" || msg_type == "settings_delta") {
+            if (msg_type == "settings.sync" || msg_type == "settings.delta") {
                 apply_settings_sync();
             }
         }
-        
+
         /* -------------------- KERNEL LIFECYCLE -------------------- */
         else if (num == KERNEL_LIFECYCLE) {
-            if (msg_type == "notecard_loaded") {
+            if (msg_type == "settings.notecardloaded") {
                 // Settings notecard was loaded/reloaded - re-run bootstrap
                 start_bootstrap();
             }
-            else if (msg_type == "soft_reset" || msg_type == "soft_reset_all") {
+            else if (msg_type == "kernel.reset" || msg_type == "kernel.resetall") {
                 llResetScript();
             }
         }
     }
-    
+
     changed(integer change) {
         if (change & CHANGED_OWNER) {
             check_owner_changed();
@@ -476,12 +478,12 @@ state running
     link_message(integer sender, integer num, string msg, key id) {
         string msg_type = get_msg_type(msg);
         if (msg_type == "") return;
-        
+
         if (num == KERNEL_LIFECYCLE) {
-            if (msg_type == "notecard_loaded") {
+            if (msg_type == "settings.notecardloaded") {
                 llResetScript();
             }
-            else if (msg_type == "soft_reset" || msg_type == "soft_reset_all") {
+            else if (msg_type == "kernel.reset" || msg_type == "kernel.resetall") {
                 llResetScript();
             }
         }

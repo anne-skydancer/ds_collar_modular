@@ -1,10 +1,14 @@
 /*--------------------
 PLUGIN: plugin_lock.lsl
 VERSION: 1.10
-REVISION: 2
+REVISION: 3
 PURPOSE: Toggle collar lock and RLV detach control labels
-ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
+ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility,
+  namespaced internal message protocol
 CHANGES:
+- v1.1 rev 3: Namespaced internal message types. All type strings now use
+  dot-delimited namespace convention (e.g. kernel.register, ui.label.update,
+  settings.set). No behavioral changes.
 - v1.1 rev 2: Honor soft_reset / soft_reset_all from KERNEL_LIFECYCLE so
   factory reset clears cached lock state.
 - v1.1 rev 1: Migrate settings reads from JSON broadcast to direct LSD reads.
@@ -57,7 +61,7 @@ play_toggle_sound() {
 
 /* -------------------- LSD POLICY HELPER -------------------- */
 list get_policy_buttons(string ctx, integer acl) {
-    string policy = llLinksetDataRead("policy:" + ctx);
+    string policy = llLinksetDataRead("acl.policycontext:" + ctx);
     if (policy == "") return [];
     string csv = llJsonGetValue(policy, [(string)acl]);
     if (csv == JSON_INVALID) return [];
@@ -72,7 +76,7 @@ integer btn_allowed(string label) {
 
 register_self() {
     // Write button visibility policy to LSD (only ACL 4 and 5 can toggle)
-    llLinksetDataWrite("policy:" + PLUGIN_CONTEXT, llList2Json(JSON_OBJECT, [
+    llLinksetDataWrite("acl.policycontext:" + PLUGIN_CONTEXT, llList2Json(JSON_OBJECT, [
         "4", "toggle",
         "5", "toggle"
     ]));
@@ -85,7 +89,7 @@ register_self() {
 
     // Register with kernel
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
-        "type", "register",
+        "type", "kernel.register",
         "context", PLUGIN_CONTEXT,
         "label", current_label,
         "script", llGetScriptName()
@@ -94,7 +98,7 @@ register_self() {
 
 send_pong() {
     string msg = llList2Json(JSON_OBJECT, [
-        "type", "pong",
+        "type", "kernel.pong",
         "context", PLUGIN_CONTEXT
     ]);
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, msg, NULL_KEY);
@@ -119,7 +123,7 @@ apply_settings_sync() {
             new_label = PLUGIN_LABEL_LOCKED;
         }
         string label_msg = llList2Json(JSON_OBJECT, [
-            "type", "update_label",
+            "type", "ui.label.update",
             "context", PLUGIN_CONTEXT,
             "label", new_label
         ]);
@@ -134,7 +138,7 @@ persist_locked(integer new_value) {
     llLinksetDataWrite(KEY_LOCKED, (string)new_value);
 
     llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
-        "type", "set",
+        "type", "settings.set",
         "key", KEY_LOCKED,
         "value", (string)new_value
     ]), NULL_KEY);
@@ -200,7 +204,7 @@ update_ui_label_and_return(key user) {
     }
 
     string msg = llList2Json(JSON_OBJECT, [
-        "type", "update_label",
+        "type", "ui.label.update",
         "context", PLUGIN_CONTEXT,
         "label", new_label
     ]);
@@ -208,7 +212,7 @@ update_ui_label_and_return(key user) {
 
     // Return user to root menu to see the updated button
     msg = llList2Json(JSON_OBJECT, [
-        "type", "return",
+        "type", "ui.menu.return",
         "user", (string)user
     ]);
     llMessageLinked(LINK_SET, UI_BUS, msg, NULL_KEY);
@@ -277,18 +281,18 @@ default {
             string msg_type = llJsonGetValue(msg, ["type"]);
             if (msg_type == JSON_INVALID) return;
 
-            if (msg_type == "register_now") {
+            if (msg_type == "kernel.registernow") {
                 apply_settings_sync();
                 register_self();
                 return;
             }
 
-            if (msg_type == "ping") {
+            if (msg_type == "kernel.ping") {
                 send_pong();
                 return;
             }
 
-            if (msg_type == "soft_reset" || msg_type == "soft_reset_all") {
+            if (msg_type == "kernel.reset" || msg_type == "kernel.resetall") {
                 string target_context = llJsonGetValue(msg, ["context"]);
                 if (target_context != JSON_INVALID) {
                     if (target_context != "" && target_context != PLUGIN_CONTEXT) return;
@@ -303,7 +307,7 @@ default {
             string msg_type = llJsonGetValue(msg, ["type"]);
             if (msg_type == JSON_INVALID) return;
 
-            if (msg_type == "settings_sync" || msg_type == "settings_delta") {
+            if (msg_type == "settings.sync" || msg_type == "settings.delta") {
                 apply_settings_sync();
                 return;
             }
@@ -315,7 +319,7 @@ default {
             string msg_type = llJsonGetValue(msg, ["type"]);
             if (msg_type == JSON_INVALID) return;
 
-            if (msg_type == "start") {
+            if (msg_type == "ui.menu.start") {
                 if (llJsonGetValue(msg, ["context"]) == JSON_INVALID) return;
                 if (llJsonGetValue(msg, ["context"]) != PLUGIN_CONTEXT) return;
 

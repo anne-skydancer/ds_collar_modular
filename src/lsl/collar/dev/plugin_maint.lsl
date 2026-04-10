@@ -1,10 +1,11 @@
 /*--------------------
 PLUGIN: plugin_maint.lsl
 VERSION: 1.10
-REVISION: 4
+REVISION: 5
 PURPOSE: Maintenance and utility functions for collar management
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
+- v1.1 rev 5: Namespace internal message type strings (kernel.*, ui.*, etc.)
 - v1.1 rev 4: Fix phantom owner/trustee/blacklist count in View Settings
   and Access List. llCSV2List("") returns [""] (a single empty entry),
   not []. Routed all CSV reads through a csv_read() helper.
@@ -71,7 +72,7 @@ list csv_read(string lsd_key) {
 
 /* -------------------- LSD POLICY HELPER -------------------- */
 list get_policy_buttons(string ctx, integer acl) {
-    string policy = llLinksetDataRead("policy:" + ctx);
+    string policy = llLinksetDataRead("acl.policycontext:" + ctx);
     if (policy == "") return [];
     string csv = llJsonGetValue(policy, [(string)acl]);
     if (csv == JSON_INVALID) return [];
@@ -86,7 +87,7 @@ integer btn_allowed(string label) {
 
 register_self() {
     // Write button visibility policy to LSD (default-deny per ACL level)
-    llLinksetDataWrite("policy:" + PLUGIN_CONTEXT, llList2Json(JSON_OBJECT, [
+    llLinksetDataWrite("acl.policycontext:" + PLUGIN_CONTEXT, llList2Json(JSON_OBJECT, [
         "1", "Get HUD,User Manual",
         "2", "View Settings,Reload Settings,Access List,Reload Collar,Clear Leash,Get HUD,User Manual,Factory Reset",
         "3", "View Settings,Reload Settings,Access List,Reload Collar,Clear Leash,Get HUD,User Manual",
@@ -96,7 +97,7 @@ register_self() {
 
     // Register with kernel
     string msg = llList2Json(JSON_OBJECT, [
-        "type", "register",
+        "type", "kernel.register",
         "context", PLUGIN_CONTEXT,
         "label", PLUGIN_LABEL,
         "script", llGetScriptName()
@@ -106,7 +107,7 @@ register_self() {
 
 send_pong() {
     string msg = llList2Json(JSON_OBJECT, [
-        "type", "pong",
+        "type", "kernel.pong",
         "context", PLUGIN_CONTEXT
     ]);
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, msg, NULL_KEY);
@@ -145,7 +146,7 @@ show_main_menu() {
     SessionId = generate_session_id();
 
     llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
-        "type", "dialog_open",
+        "type", "ui.dialog.open",
         "session_id", SessionId,
         "user", (string)CurrentUser,
         "title", "Maintenance",
@@ -364,7 +365,7 @@ show_factory_reset_confirm() {
     ];
 
     llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
-        "type", "dialog_open",
+        "type", "ui.dialog.open",
         "session_id", SessionId,
         "user", (string)CurrentUser,
         "title", "Factory Reset",
@@ -383,7 +384,7 @@ do_factory_reset() {
 
     // Reset all scripts in the linkset
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
-        "type", "soft_reset_all",
+        "type", "kernel.resetall",
         "from", "factory_reset"
     ]), NULL_KEY);
 
@@ -392,7 +393,7 @@ do_factory_reset() {
 
 do_reload_settings() {
     string msg = llList2Json(JSON_OBJECT, [
-        "type", "settings_get"
+        "type", "settings.get"
     ]);
     llMessageLinked(LINK_SET, SETTINGS_BUS, msg, NULL_KEY);
 
@@ -401,7 +402,7 @@ do_reload_settings() {
 
 do_clear_leash() {
     string msg = llList2Json(JSON_OBJECT, [
-        "type", "leash_action",
+        "type", "plugin.leash.action",
         "action", "release"
     ]);
     llMessageLinked(LINK_SET, UI_BUS, msg, CurrentUser);
@@ -412,7 +413,7 @@ do_clear_leash() {
 do_reload_collar() {
     // Broadcast soft reset to all plugins
     string msg = llList2Json(JSON_OBJECT, [
-        "type", "soft_reset",
+        "type", "kernel.reset",
         "from", "maintenance"
     ]);
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, msg, NULL_KEY);
@@ -444,7 +445,7 @@ do_give_manual() {
 
 return_to_root() {
     string msg = llList2Json(JSON_OBJECT, [
-        "type", "return",
+        "type", "ui.menu.return",
         "user", (string)CurrentUser
     ]);
     llMessageLinked(LINK_SET, UI_BUS, msg, NULL_KEY);
@@ -457,7 +458,7 @@ cleanup_session() {
     // Close the dialog session in the dialog manager
     if (SessionId != "") {
         string msg = llList2Json(JSON_OBJECT, [
-            "type", "dialog_close",
+            "type", "ui.dialog.close",
             "session_id", SessionId
         ]);
         llMessageLinked(LINK_SET, DIALOG_BUS, msg, NULL_KEY);
@@ -576,17 +577,17 @@ default {
             string msg_type = llJsonGetValue(msg, ["type"]);
             if (msg_type == JSON_INVALID) return;
 
-            if (msg_type == "register_now") {
+            if (msg_type == "kernel.registernow") {
                 register_self();
                 return;
             }
 
-            if (msg_type == "ping") {
+            if (msg_type == "kernel.ping") {
                 send_pong();
                 return;
             }
 
-            if (msg_type == "soft_reset" || msg_type == "soft_reset_all") {
+            if (msg_type == "kernel.reset" || msg_type == "kernel.resetall") {
                 // Check if this is a targeted reset
                 string target_context = llJsonGetValue(msg, ["context"]);
                 if (target_context != JSON_INVALID) {
@@ -605,7 +606,7 @@ default {
             string msg_type = llJsonGetValue(msg, ["type"]);
             if (msg_type == JSON_INVALID) return;
 
-            if (msg_type == "start") {
+            if (msg_type == "ui.menu.start") {
                 if (llJsonGetValue(msg, ["context"]) == JSON_INVALID) return;
                 if (llJsonGetValue(msg, ["context"]) != PLUGIN_CONTEXT) return;
 
@@ -624,17 +625,17 @@ default {
             string msg_type = llJsonGetValue(msg, ["type"]);
             if (msg_type == JSON_INVALID) return;
 
-            if (msg_type == "dialog_response") {
+            if (msg_type == "ui.dialog.response") {
                 handle_dialog_response(msg);
                 return;
             }
 
-            if (msg_type == "dialog_timeout") {
+            if (msg_type == "ui.dialog.timeout") {
                 handle_dialog_timeout(msg);
                 return;
             }
 
-            if (msg_type == "dialog_close") {
+            if (msg_type == "ui.dialog.close") {
                 // Dialog was closed externally (e.g., replaced by another dialog)
                 // Clean up our session if it matches
                 string session = llJsonGetValue(msg, ["session_id"]);

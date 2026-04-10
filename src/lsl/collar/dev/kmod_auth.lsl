@@ -1,10 +1,13 @@
 /*--------------------
 MODULE: kmod_auth.lsl
 VERSION: 1.10
-REVISION: 3
+REVISION: 4
 PURPOSE: Authoritative ACL engine - OPTIMIZED
 ARCHITECTURE: Dispatch table pattern with linkset data cache and JSON templates
 CHANGES:
+- v1.1 rev 4: Namespace internal message type strings (acl_result → auth.aclresult,
+  acl_update → auth.aclupdate, acl_query → auth.aclquery, settings_sync → settings.sync,
+  settings_delta → settings.delta, soft_reset → kernel.reset, soft_reset_all → kernel.resetall).
 - v1.1 rev 3: Migrate to two-mode access model. Single-owner mode reads
   scalar access.owner; multi-owner mode reads parallel CSV access.owneruuids.
   Trustees and blacklist now read from CSV keys (access.trusteeuuids,
@@ -43,18 +46,19 @@ string KEY_PUBLIC_ACCESS    = "public.mode";
 string KEY_TPE_MODE         = "tpe.mode";
 
 /* -------------------- LINKSET DATA KEYS -------------------- */
-string LSD_KEY_ACL_OWNERS    = "ACL.OWNERS";
-string LSD_KEY_ACL_TRUSTEES  = "ACL.TRUSTEES";
-string LSD_KEY_ACL_BLACKLIST = "ACL.BLACKLIST";
-string LSD_KEY_ACL_PUBLIC    = "ACL.PUBLIC";
-string LSD_KEY_ACL_TPE       = "ACL.TPE";
-string LSD_KEY_ACL_TIMESTAMP = "ACL.TIMESTAMP";
+string LSD_KEY_ACL_OWNERS    = "acl.owners";
+string LSD_KEY_ACL_TRUSTEES  = "acl.trustees";
+string LSD_KEY_ACL_BLACKLIST = "acl.blacklist";
+string LSD_KEY_ACL_PUBLIC    = "acl.public";
+string LSD_KEY_ACL_TPE       = "acl.wearertpe";
+string LSD_KEY_ACL_TIMESTAMP = "acl.timestamp";
 
-// Per-user ACL query cache prefix. Full key = LSD_ACL_CACHE_PREFIX + (string)avatar_uuid.
+// Per-user ACL query cache prefix. Full key = "acl." + (string)avatar_uuid + ".cache".
 // Value format: "<level>|<unix_timestamp>" — e.g. "5|1712345678".
 // kmod_ui.lsl reads this prefix directly to skip the AUTH_BUS round-trip on touch.
-// CROSS-MODULE CONTRACT: this constant must match LSD_ACL_CACHE_PREFIX in kmod_ui.lsl.
-string LSD_ACL_CACHE_PREFIX = "acl_cache_";
+// CROSS-MODULE CONTRACT: this format must match LSD_ACL_CACHE_PREFIX/SUFFIX in kmod_ui.lsl.
+string LSD_ACL_CACHE_PREFIX = "acl.";
+string LSD_ACL_CACHE_SUFFIX = ".cache";
 
 /* -------------------- CACHE CONSTANTS -------------------- */
 integer CACHE_TTL = 60;  // Cache query results for 60 seconds
@@ -114,7 +118,7 @@ integer is_owner(key av) {
 init_json_templates() {
     // Blacklist: No access (actually on blacklist)
     JSON_TEMPLATE_BLACKLIST = llList2Json(JSON_OBJECT, [
-        "type", "acl_result",
+        "type", "auth.aclresult",
         "avatar", "AVATAR_PLACEHOLDER",
         "level", ACL_BLACKLIST,
         "is_wearer", 0,
@@ -124,7 +128,7 @@ init_json_templates() {
 
     // Unauthorized: stranger with public off (not blacklisted, just no access)
     JSON_TEMPLATE_UNAUTHORIZED = llList2Json(JSON_OBJECT, [
-        "type", "acl_result",
+        "type", "auth.aclresult",
         "avatar", "AVATAR_PLACEHOLDER",
         "level", ACL_BLACKLIST,
         "is_wearer", 0,
@@ -134,7 +138,7 @@ init_json_templates() {
 
     // No Access: TPE wearer
     JSON_TEMPLATE_NOACCESS = llList2Json(JSON_OBJECT, [
-        "type", "acl_result",
+        "type", "auth.aclresult",
         "avatar", "AVATAR_PLACEHOLDER",
         "level", ACL_NOACCESS,
         "is_wearer", 1,
@@ -144,7 +148,7 @@ init_json_templates() {
 
     // Public: Non-wearer with public access
     JSON_TEMPLATE_PUBLIC = llList2Json(JSON_OBJECT, [
-        "type", "acl_result",
+        "type", "auth.aclresult",
         "avatar", "AVATAR_PLACEHOLDER",
         "level", ACL_PUBLIC,
         "is_wearer", 0,
@@ -154,7 +158,7 @@ init_json_templates() {
 
     // Owned: Wearer with owner set
     JSON_TEMPLATE_OWNED = llList2Json(JSON_OBJECT, [
-        "type", "acl_result",
+        "type", "auth.aclresult",
         "avatar", "AVATAR_PLACEHOLDER",
         "level", ACL_OWNED,
         "is_wearer", 1,
@@ -164,7 +168,7 @@ init_json_templates() {
 
     // Trustee: Trustee access
     JSON_TEMPLATE_TRUSTEE = llList2Json(JSON_OBJECT, [
-        "type", "acl_result",
+        "type", "auth.aclresult",
         "avatar", "AVATAR_PLACEHOLDER",
         "level", ACL_TRUSTEE,
         "is_wearer", 0,
@@ -174,7 +178,7 @@ init_json_templates() {
 
     // Unowned: Wearer with no owner
     JSON_TEMPLATE_UNOWNED = llList2Json(JSON_OBJECT, [
-        "type", "acl_result",
+        "type", "auth.aclresult",
         "avatar", "AVATAR_PLACEHOLDER",
         "level", ACL_UNOWNED,
         "is_wearer", 1,
@@ -184,7 +188,7 @@ init_json_templates() {
 
     // Primary Owner: Owner access
     JSON_TEMPLATE_PRIMARY = llList2Json(JSON_OBJECT, [
-        "type", "acl_result",
+        "type", "auth.aclresult",
         "avatar", "AVATAR_PLACEHOLDER",
         "level", ACL_PRIMARY_OWNER,
         "is_wearer", 0,
@@ -197,7 +201,7 @@ init_json_templates() {
 
 // Build cache key for a user's ACL query result
 string get_cache_key(key avatar) {
-    return LSD_ACL_CACHE_PREFIX + (string)avatar;
+    return LSD_ACL_CACHE_PREFIX + (string)avatar + LSD_ACL_CACHE_SUFFIX;
 }
 
 // Try to retrieve cached ACL result (returns TRUE if cache hit)
@@ -252,7 +256,7 @@ store_cached_acl(key avatar, integer level) {
 clear_acl_query_cache() {
     // OPTIMIZED: Use regex search instead of iterating all keys
     // This pushes the search workload to the simulator (C++)
-    list keys = llLinksetDataFindKeys("^" + LSD_ACL_CACHE_PREFIX, 0, 0);
+    list keys = llLinksetDataFindKeys("^acl\\.[0-9a-f-]+\\.cache$", 0, 0);
     integer i = 0;
     while (i < llGetListLength(keys)) {
         llLinksetDataDelete(llList2String(keys, i));
@@ -468,7 +472,7 @@ send_acl_from_level(key avatar, integer level, string correlation_id) {
 
 broadcast_acl_change(string scope, key avatar) {
     string msg = llList2Json(JSON_OBJECT, [
-        "type", "acl_update",
+        "type", "auth.aclupdate",
         "scope", scope,
         "avatar", (string)avatar
     ]);
@@ -686,17 +690,17 @@ default
         if (msg_type == JSON_INVALID) return;
 
         if (num == KERNEL_LIFECYCLE) {
-            if (msg_type == "soft_reset" || msg_type == "soft_reset_all") {
+            if (msg_type == "kernel.reset" || msg_type == "kernel.resetall") {
                 llResetScript();
             }
         }
         else if (num == AUTH_BUS) {
-            if (msg_type == "acl_query") {
+            if (msg_type == "auth.aclquery") {
                 handle_acl_query(msg);
             }
         }
         else if (num == SETTINGS_BUS) {
-            if (msg_type == "settings_sync" || msg_type == "settings_delta") {
+            if (msg_type == "settings.sync" || msg_type == "settings.delta") {
                 apply_settings_sync();
             }
         }
