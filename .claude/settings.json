@@ -2,8 +2,13 @@
   "hooks": {
     "SessionStart": [
       {
-        "type": "command",
-        "command": "./setup-lslint.sh"
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "./setup-lslint.sh"
+          }
+        ]
       }
     ]
   }
