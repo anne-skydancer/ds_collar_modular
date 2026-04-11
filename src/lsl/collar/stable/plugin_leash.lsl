@@ -1,10 +1,18 @@
 /*--------------------
 PLUGIN: plugin_leash.lsl
 VERSION: 1.10
-REVISION: 3
+REVISION: 4
 PURPOSE: User interface and configuration for the leashing system
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
+- v1.1 rev 4: Production hotfix — two bugs found in stable.
+  (1) Grant Unclip to ACL 1 (public) policy so a public user who holds
+      the leash can release it. The existing in-code guard still
+      restricts the button to the current leasher at public level.
+  (2) Make giveHolderObject tolerant of case and whitespace variations
+      on the holder inventory item name (iterate object inventory and
+      match case-insensitively, trimmed). Holder name now lives in
+      HOLDER_OBJECT_NAME module constant for single-point maintenance.
 - v1.1 rev 3: Coffle now scans for nearby AVATARS instead of scripted
   objects. Was scanning SCRIPTED objects, which surfaced random in-world
   scripted props instead of avatars wearing collars. Switched the
@@ -27,6 +35,7 @@ integer DIALOG_BUS = 950;
 /* -------------------- PLUGIN IDENTITY -------------------- */
 string PLUGIN_CONTEXT = "core_leash";
 string PLUGIN_LABEL = "Leash";
+string HOLDER_OBJECT_NAME = "Leash holder";  // canonical name of the holder prim in collar inventory
 
 /* -------------------- CONFIGURATION -------------------- */
 float STATE_QUERY_DELAY = 0.5;  // 500ms delay for non-blocking state queries
@@ -107,9 +116,12 @@ showMenu(string context, string title, string body, list button_data) {
 
 /* -------------------- PLUGIN REGISTRATION -------------------- */
 register_self() {
-    // Write button visibility policy to LSD (default-deny per ACL level)
+    // Write button visibility policy to LSD (default-deny per ACL level).
+    // ACL 1 (public) may Unclip, but the in-code guard at showMainMenu
+    // limits the button to cases where CurrentUser == Leasher — so only
+    // a public user who holds the leash themselves can release it.
     llLinksetDataWrite("policy:" + PLUGIN_CONTEXT, llList2Json(JSON_OBJECT, [
-        "1", "Clip,Post,Get Holder,Settings",
+        "1", "Clip,Unclip,Post,Get Holder,Settings",
         "2", "Offer",
         "3", "Clip,Unclip,Pass,Yank,Take,Coffle,Post,Get Holder,Settings",
         "4", "Clip,Unclip,Pass,Yank,Coffle,Post,Get Holder,Settings",
@@ -394,13 +406,30 @@ giveHolderObject() {
         return;
     }
 
-    string holder_name = "Leash holder";
-    if (llGetInventoryType(holder_name) != INVENTORY_OBJECT) {
-        llRegionSayTo(CurrentUser, 0, "Error: Holder object not found in collar inventory.");
+    // Tolerant inventory lookup based on HOLDER_OBJECT_NAME — matches
+    // case-insensitively and ignores whitespace so the inventory item
+    // doesn't need exact capitalization.
+    string wanted = llToLower(llStringTrim(HOLDER_OBJECT_NAME, STRING_TRIM));
+    string holder_name = "";
+    integer count = llGetInventoryNumber(INVENTORY_OBJECT);
+    integer i = 0;
+    while (i < count) {
+        string nm = llGetInventoryName(INVENTORY_OBJECT, i);
+        if (llToLower(llStringTrim(nm, STRING_TRIM)) == wanted) {
+            holder_name = nm;
+            i = count;
+        }
+        else {
+            i = i + 1;
+        }
+    }
+
+    if (holder_name == "") {
+        llRegionSayTo(CurrentUser, 0, "Error: " + HOLDER_OBJECT_NAME + " object not found in collar inventory.");
         return;
     }
     llGiveInventory(CurrentUser, holder_name);
-    llRegionSayTo(CurrentUser, 0, "Leash holder given.");
+    llRegionSayTo(CurrentUser, 0, HOLDER_OBJECT_NAME + " given.");
 }
 
 sendLeashAction(string action) {

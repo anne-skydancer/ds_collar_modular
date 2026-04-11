@@ -45,7 +45,7 @@ string PLUGIN_LABEL = "Maintenance";
 */
 
 /* -------------------- INVENTORY ITEMS -------------------- */
-string HUD_ITEM = "D/s Collar control HUD";
+string HUD_ITEM = "Control HUD";
 string MANUAL_NOTECARD = "D/s Collar User Manual";
 
 /* -------------------- STATE -------------------- */

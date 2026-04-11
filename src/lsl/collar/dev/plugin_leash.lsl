@@ -1,10 +1,15 @@
 /*--------------------
 PLUGIN: plugin_leash.lsl
 VERSION: 1.10
-REVISION: 4
+REVISION: 5
 PURPOSE: User interface and configuration for the leashing system
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
+- v1.1 rev 5: Grant Unclip to ACL 1 (public) policy so a public user who
+  holds the leash can release it. The existing in-code guard still
+  restricts the button to the current leasher at public level. Also
+  make giveHolderObject tolerant of case and whitespace variations on
+  the "Leash holder" inventory item name.
 - v1.1 rev 4: Namespace internal message type strings (kernel.*, ui.*, plugin.*).
 - v1.1 rev 3: Coffle now scans for nearby AVATARS instead of scripted
   objects. Was scanning SCRIPTED objects, which surfaced random in-world
@@ -108,9 +113,12 @@ showMenu(string context, string title, string body, list button_data) {
 
 /* -------------------- PLUGIN REGISTRATION -------------------- */
 register_self() {
-    // Write button visibility policy to LSD (default-deny per ACL level)
+    // Write button visibility policy to LSD (default-deny per ACL level).
+    // ACL 1 (public) may Unclip, but the in-code guard at showMainMenu
+    // limits the button to cases where CurrentUser == Leasher — so only
+    // a public user who holds the leash themselves can release it.
     llLinksetDataWrite("acl.policycontext:" + PLUGIN_CONTEXT, llList2Json(JSON_OBJECT, [
-        "1", "Clip,Post,Get Holder,Settings",
+        "1", "Clip,Unclip,Post,Get Holder,Settings",
         "2", "Offer",
         "3", "Clip,Unclip,Pass,Yank,Take,Coffle,Post,Get Holder,Settings",
         "4", "Clip,Unclip,Pass,Yank,Coffle,Post,Get Holder,Settings",
@@ -395,9 +403,26 @@ giveHolderObject() {
         return;
     }
 
-    string holder_name = "Leash holder";
-    if (llGetInventoryType(holder_name) != INVENTORY_OBJECT) {
-        llRegionSayTo(CurrentUser, 0, "Error: Holder object not found in collar inventory.");
+    // Tolerant inventory lookup: match case-insensitively and ignore
+    // leading/trailing whitespace, so the holder item doesn't need an
+    // exact "Leash holder" spelling in the collar's inventory.
+    string wanted = "leash holder";
+    string holder_name = "";
+    integer count = llGetInventoryNumber(INVENTORY_OBJECT);
+    integer i = 0;
+    while (i < count) {
+        string nm = llGetInventoryName(INVENTORY_OBJECT, i);
+        if (llToLower(llStringTrim(nm, STRING_TRIM)) == wanted) {
+            holder_name = nm;
+            i = count;
+        }
+        else {
+            i = i + 1;
+        }
+    }
+
+    if (holder_name == "") {
+        llRegionSayTo(CurrentUser, 0, "Error: Leash holder object not found in collar inventory.");
         return;
     }
     llGiveInventory(CurrentUser, holder_name);
