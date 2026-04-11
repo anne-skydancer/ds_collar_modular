@@ -1,10 +1,12 @@
 /*--------------------
 MODULE: kmod_auth.lsl
 VERSION: 1.10
-REVISION: 4
+REVISION: 5
 PURPOSE: Authoritative ACL engine - OPTIMIZED
 ARCHITECTURE: Dispatch table pattern with linkset data cache and JSON templates
 CHANGES:
+- v1.1 rev 5: Document the LSL list== content-equality workaround at the
+  ACL change detection block. No functional changes.
 - v1.1 rev 4: Namespace internal message type strings (acl_result → auth.aclresult,
   acl_update → auth.aclupdate, acl_query → auth.aclquery, settings_sync → settings.sync,
   settings_delta → settings.delta, soft_reset → kernel.reset, soft_reset_all → kernel.resetall).
@@ -596,7 +598,17 @@ apply_settings_sync() {
 
     enforce_role_exclusivity();
 
-    // Detect whether any ACL-relevant state changed
+    /*
+     * Detect whether any ACL-relevant state changed.
+     *
+     * NOTE: LSL's == / != operators on lists compare length only, not
+     * content — [1,2,3,4] == [0,0,0,0] returns TRUE. Serializing both
+     * sides to a JSON array and comparing the resulting strings is the
+     * idiomatic LSL workaround for content equality. This path runs on
+     * settings.sync / settings.delta only (user-driven role changes, a
+     * few times per minute at peak), so the serialization cost is not
+     * measurable in practice.
+     */
     integer acl_changed = FALSE;
     if (MultiOwnerMode != prev_multi) acl_changed = TRUE;
     if (OwnerKey != prev_owner) acl_changed = TRUE;
