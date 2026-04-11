@@ -1,10 +1,12 @@
 /*--------------------
 MODULE: kmod_remote.lsl
 VERSION: 1.10
-REVISION: 1
+REVISION: 2
 PURPOSE: External HUD communication bridge for remote control workflows
 ARCHITECTURE: Consolidated message bus lanes, namespaced internal message protocol
 CHANGES:
+- v1.1 rev 2: Fix ACL response listener — expect "auth.aclresult" instead of stale
+  "acl_result" (missed in kmod_auth v1.1 rev 4 namespace migration).
 - v1.1 rev 1: Namespaced internal message types (auth.aclquery, ui.menu.start, etc.).
 - v1.1 rev 0: Version bump for LSD policy architecture. No functional changes to this module.
 --------------------*/
@@ -463,7 +465,7 @@ default {
 
         // Handle ACL result from AUTH module
         if (num == AUTH_BUS) {
-            if (msg_type != "acl_result") return;
+            if (msg_type != "auth.aclresult") return;
             
             // Extract ACL information
             string avatar_key_str = llJsonGetValue(str, ["avatar"]);
