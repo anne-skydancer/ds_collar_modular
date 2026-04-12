@@ -1,10 +1,13 @@
 /*--------------------
 PLUGIN: plugin_bell.lsl
 VERSION: 1.10
-REVISION: 3
+REVISION: 4
 PURPOSE: Bell visibility and jingling control for the collar
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
+- v1.1 rev 4: Restrict bell policy to ACL 3+ (Trustee, Unowned wearer, Primary Owner).
+  Public (ACL 1) and Owned wearer (ACL 2) no longer see the bell plugin in the menu,
+  as bell settings are owner-imposed controls.
 - v1.1 rev 3: Honor soft_reset / soft_reset_all from KERNEL_LIFECYCLE so
   factory reset clears cached bell state.
 - v1.1 rev 2: Migrate dialog buttons to button_data format with context-based routing.
@@ -138,10 +141,11 @@ show_menu(string context, string title, string body, list button_data) {
 
 /* -------------------- PLUGIN REGISTRATION -------------------- */
 register_self() {
-    // Write button visibility policy to LSD (all ACL levels see same buttons)
+    // Write button visibility policy to LSD.
+    // ACL 1 (Public) and ACL 2 (Owned wearer) are excluded — bell settings
+    // are owner-imposed controls and should not be changed by the public
+    // or by a wearer who is owned.
     llLinksetDataWrite("policy:" + PLUGIN_CONTEXT, llList2Json(JSON_OBJECT, [
-        "1", "Show,Sound,Volume +,Volume -",
-        "2", "Show,Sound,Volume +,Volume -",
         "3", "Show,Sound,Volume +,Volume -",
         "4", "Show,Sound,Volume +,Volume -",
         "5", "Show,Sound,Volume +,Volume -"
