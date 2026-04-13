@@ -1,10 +1,16 @@
 /*--------------------
 MODULE: kmod_leash.lsl
 VERSION: 1.10
-REVISION: 4
+REVISION: 5
 PURPOSE: Leashing engine providing leash services to plugins
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- v1.1 rev 5: Add force_release action for maintenance emergency clear.
+  "Clear Leash" in the maintenance plugin now sends force_release instead
+  of release, which is authorized if the requesting user is the wearer
+  OR has ACL >= 3. Prevents bad actors who leash a public-access collar
+  from blocking the wearer's own emergency clear, and also stops stray
+  leash particles from persisting indefinitely.
 - v1.1 rev 4: Fixed yank anchoring and stiff walking. yankToLeasher now
   pairs llMoveToTarget with llTarget so an at_target event releases the
   physics hold the moment the wearer arrives, instead of leaving them
@@ -316,6 +322,16 @@ handleAclResult(string msg) {
             releaseLeashInternal(PendingActionUser);
         } else {
             denyAccess(PendingActionUser, "only leasher or authorized users can release");
+        }
+    }
+    // Force-release: maintenance emergency clear — wearer always allowed; trustees/owners allowed.
+    // Does NOT require the user to be the current leasher, so it clears stray leashes
+    // from bad actors (e.g., random public users who clip a public-access collar).
+    else if (PendingAction == "force_release") {
+        if (PendingActionUser == llGetOwner() || acl_level >= 3) {
+            releaseLeashInternal(PendingActionUser);
+        } else {
+            denyAccess(PendingActionUser, "only wearer or authorized users can force-clear leash");
         }
     }
     // Special case: pass (current leasher OR policy-allowed can pass, then verify target)

@@ -1,10 +1,14 @@
 /*--------------------
 PLUGIN: plugin_maint.lsl
 VERSION: 1.10
-REVISION: 4
+REVISION: 5
 PURPOSE: Maintenance and utility functions for collar management
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
+- v1.1 rev 5: Switch Clear Leash to force_release and add confirmation dialog.
+  force_release is authorized by wearer identity or ACL >= 3, bypassing the
+  leasher-identity check so it works on bad-actor leashes. Confirmation
+  dialog prevents accidental or malicious triggers.
 - v1.1 rev 4: Fix phantom owner/trustee/blacklist count in View Settings
   and Access List. llCSV2List("") returns [""] (a single empty entry),
   not []. Routed all CSV reads through a csv_read() helper.
@@ -399,10 +403,35 @@ do_reload_settings() {
     llRegionSayTo(CurrentUser, 0, "Settings reload requested.");
 }
 
+show_clear_leash_confirm() {
+    MenuContext = "clear_leash";
+    SessionId = generate_session_id();
+
+    list button_data = [
+        btn("No", "cancel"),
+        btn("Yes", "confirm")
+    ];
+
+    llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
+        "type", "dialog_open",
+        "session_id", SessionId,
+        "user", (string)CurrentUser,
+        "title", "Clear Leash",
+        "body", "Force-release the current leash?\n\nThis bypasses normal permission checks and clears any leash, including one held by a bad actor.\n\nAre you sure?",
+        "button_data", llList2Json(JSON_ARRAY, button_data),
+        "timeout", 30
+    ]), NULL_KEY);
+}
+
 do_clear_leash() {
+    // Use force_release rather than the normal release action.
+    // release requires the user to be the active leasher or hold Unclip
+    // policy; force_release is authorized by wearer identity or ACL >= 3,
+    // allowing an owned wearer (ACL 2) to escape a bad-actor leash and
+    // clearing stray leash particles in all cases.
     string msg = llList2Json(JSON_OBJECT, [
         "type", "leash_action",
-        "action", "release"
+        "action", "force_release"
     ]);
     llMessageLinked(LINK_SET, UI_BUS, msg, CurrentUser);
 
@@ -503,6 +532,15 @@ handle_dialog_response(string msg) {
         return;
     }
 
+    if (MenuContext == "clear_leash") {
+        if (cmd == "confirm") {
+            do_clear_leash();
+            return;
+        }
+        show_main_menu();
+        return;
+    }
+
     // Main menu commands
     if (cmd == "view_settings") {
         do_view_settings();
@@ -520,8 +558,7 @@ handle_dialog_response(string msg) {
         return;
     }
     if (cmd == "clear_leash") {
-        do_clear_leash();
-        show_main_menu();
+        show_clear_leash_confirm();
         return;
     }
     if (cmd == "reload_collar") {
