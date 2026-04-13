@@ -1,10 +1,15 @@
 /*--------------------
 MODULE: kmod_particles.lsl
 VERSION: 1.10
-REVISION: 1
+REVISION: 2
 PURPOSE: Visual connection renderer with Lockmeister compatibility
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- v1.1 rev 2: EXPERIMENTAL - Remove PSYS_PART_FOLLOW_SRC_MASK so wearer movement no
+  longer snaps the ribbon. In-flight particles continue on their ballistic arc; only
+  new emissions originate from the updated collar position. Fix CHANGED_LINK to only
+  restart the particle system when the leashpoint link number actually changes,
+  preventing spurious redraws from unrelated linkset events. Pending in-world testing.
 - v1.1 rev 1: Namespace internal message type strings (particles.*, kernel.*).
 - v1.1 rev 0: Version bump for LSD policy architecture. No functional changes to this module.
 --------------------*/
@@ -234,7 +239,6 @@ render_chain_particles(key target) {
         PSYS_SRC_ACCEL, <0, 0, -1.25>,
         PSYS_PART_FLAGS, 
             PSYS_PART_INTERP_COLOR_MASK |
-            PSYS_PART_FOLLOW_SRC_MASK |
             PSYS_PART_TARGET_POS_MASK |
             PSYS_PART_FOLLOW_VELOCITY_MASK |
             PSYS_PART_RIBBON_MASK,
@@ -408,11 +412,13 @@ default
             llResetScript();
         }
         
-        // If linkset changed, re-detect leashpoint
+        // If linkset changed, re-detect leashpoint but only restart particles
+        // if the link number actually changed — spurious CHANGED_LINK events
+        // (e.g. other attachments on the wearer) must not redraw the ribbon.
         if (change & CHANGED_LINK) {
-            LeashpointLink = 0;
-            if (ParticlesActive) {
-                LeashpointLink = find_leashpoint_link();
+            integer prev_link = LeashpointLink;
+            LeashpointLink = find_leashpoint_link();
+            if (ParticlesActive && LeashpointLink != prev_link) {
                 render_chain_particles(TargetKey);
             }
         }
