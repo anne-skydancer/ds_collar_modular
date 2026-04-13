@@ -127,7 +127,7 @@ local function pruneDeadPlugins()
     for ctx, entry in PluginRegistry do
         if entry.lastSeen < cutoff then
             PluginRegistry[ctx] = nil
-            pruned += 1
+            pruned = pruned + 1
         end
     end
 
@@ -140,7 +140,7 @@ local function pruneMissingScripts()
     for ctx, entry in PluginRegistry do
         if ll.GetInventoryType(entry.script) ~= INVENTORY_SCRIPT then
             PluginRegistry[ctx] = nil
-            pruned += 1
+            pruned = pruned + 1
         end
     end
 
@@ -212,7 +212,7 @@ local function discoverPlugins()
         if scriptName ~= myName then
             local scriptUuid = ll.GetInventoryKey(scriptName)
             if not KnownScriptUUIDs[tostring(scriptUuid)] then
-                discoveries += 1
+                discoveries = discoveries + 1
             end
         end
     end

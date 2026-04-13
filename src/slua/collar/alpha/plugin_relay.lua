@@ -171,7 +171,7 @@ local function addRelay(objKey, objName, chan)
     end
 
     relays[sk] = { name = objName, chan = chan, restrictions = "" }
-    relayCount += 1
+    relayCount = relayCount + 1
     return true
 end
 
@@ -179,7 +179,7 @@ local function removeRelay(objKey)
     local sk = tostring(objKey)
     if relays[sk] then
         relays[sk] = nil
-        relayCount -= 1
+        relayCount = relayCount - 1
         return true
     end
     return false
@@ -498,7 +498,7 @@ showObjectList = function()
         local idx = 1
         for sk, entry in relays do
             message = message .. tostring(idx) .. ". " .. truncateName(entry.name, 20) .. "\n"
-            idx += 1
+            idx = idx + 1
         end
     end
 

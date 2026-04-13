@@ -80,7 +80,7 @@ local function getPolicyButtons(ctx, acl)
 end
 
 local function btnAllowed(label)
-    for _, v in policyButtons do
+    for _, v in ipairs(policyButtons) do
         if v == label then return true end
     end
     return false
@@ -152,7 +152,7 @@ local function applySettingsSync(msg)
         if csv ~= nil then
             if csv ~= "" then
                 restrictions = string.split(csv, ",")
-                for _, r in restrictions do
+                for _, r in ipairs(restrictions) do
                     ll.OwnerSay(r .. "=y")
                 end
             else
@@ -174,7 +174,7 @@ local function applySettingsDelta(msg)
         local csv = changes[KEY_RESTRICTIONS]
         if csv ~= nil then
             -- Clear all current restrictions
-            for _, restrCmd in restrictions do
+            for _, restrCmd in ipairs(restrictions) do
                 ll.OwnerSay("@clear=" .. string.sub(restrCmd, 2))
             end
 
@@ -186,7 +186,7 @@ local function applySettingsDelta(msg)
             end
 
             -- Apply new restrictions and persist to LSD
-            for _, restrCmd in restrictions do
+            for _, restrCmd in ipairs(restrictions) do
                 ll.OwnerSay(restrCmd .. "=y")
             end
             ll.LinksetDataWrite(KEY_RESTRICTIONS, csv)
@@ -197,7 +197,7 @@ end
 -- Restriction logic
 
 local function restrictionIdx(restrCmd)
-    for i, v in restrictions do
+    for i, v in ipairs(restrictions) do
         if v == restrCmd then return i end
     end
     return nil
@@ -223,7 +223,7 @@ local function toggleRestriction(restrCmd)
 end
 
 local function removeAllRestrictions()
-    for _, restrCmd in restrictions do
+    for _, restrCmd in ipairs(restrictions) do
         ll.OwnerSay("@clear=" .. string.sub(restrCmd, 2))
     end
 
@@ -255,7 +255,7 @@ local function labelToCommand(btnLabel, catCmds, catLabels)
         cleanLabel = string.sub(btnLabel, 5)
     end
 
-    for i, lbl in catLabels do
+    for i, lbl in ipairs(catLabels) do
         if lbl == cleanLabel then
             return catCmds[i]
         end
@@ -377,7 +377,7 @@ showCategoryMenu = function(catName, pageNum)
 
     -- Add nav buttons in bottom-left corner
     local finalButtons = {"Back", "<<", ">>"}
-    for _, btn in reversed do
+    for _, btn in ipairs(reversed) do
         finalButtons[#finalButtons + 1] = btn
     end
 
@@ -430,7 +430,7 @@ displaySitTargets = function()
             objName = string.sub(objName, 1, 18) .. "..."
         end
         body = body .. tostring(displayNum) .. ". " .. objName .. "\n"
-        displayNum += 1
+        displayNum = displayNum + 1
     end
 
     if totalPages > 1 then
@@ -503,7 +503,7 @@ local function handleDialogResponse(msg)
             if sitPage == 0 then
                 sitPage = maxPage
             else
-                sitPage -= 1
+                sitPage = sitPage - 1
             end
             displaySitTargets()
         elseif button == ">>" then
@@ -514,7 +514,7 @@ local function handleDialogResponse(msg)
             if sitPage >= maxPage then
                 sitPage = 0
             else
-                sitPage += 1
+                sitPage = sitPage + 1
             end
             displaySitTargets()
         else
@@ -669,7 +669,7 @@ local function init()
     local lsdCsv = ll.LinksetDataRead(KEY_RESTRICTIONS)
     if lsdCsv ~= "" then
         restrictions = string.split(lsdCsv, ",")
-        for _, r in restrictions do
+        for _, r in ipairs(restrictions) do
             ll.OwnerSay(r .. "=y")
         end
     end

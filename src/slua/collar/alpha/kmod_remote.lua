@@ -88,7 +88,7 @@ local function checkRateLimit(requester, requestType)
     -- Prune old entries if table gets large
     local count = 0
     for _ in rateLimitTimestamps do
-        count += 1
+        count = count + 1
     end
     if count > 40 then
         local cutoff = nowTime - 60
@@ -134,7 +134,7 @@ local function addPendingQuery(hudWearer, hudObject)
     local oldestKey = nil
     local oldestTime = nowTime + 1
     for k, ts in queryTimestamps do
-        count += 1
+        count = count + 1
         if ts < oldestTime then
             oldestTime = ts
             oldestKey = k

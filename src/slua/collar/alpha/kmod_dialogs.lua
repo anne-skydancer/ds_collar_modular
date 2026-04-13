@@ -87,7 +87,7 @@ end
 
 local function getNextChannel()
     local channel = math.floor(CHANNEL_BASE) - nextChannelOffset
-    nextChannelOffset += 1
+    nextChannelOffset = nextChannelOffset + 1
     if nextChannelOffset > 1000000 then nextChannelOffset = 1 end
     return channel
 end
@@ -119,7 +119,7 @@ local function enforceSessionLimit()
     local oldestTimeout = math.huge
 
     for sessionId, session in Sessions do
-        count += 1
+        count = count + 1
         if session.timeoutUnix < oldestTimeout then
             oldestTimeout = session.timeoutUnix
             oldestId = sessionId

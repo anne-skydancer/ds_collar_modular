@@ -43,7 +43,7 @@ local function reverseCompleteRows(buttonList, rowSize)
         for i = rowStart, rowStart + rowSize - 1 do
             reordered[#reordered + 1] = buttonList[i]
         end
-        row -= 1
+        row = row - 1
     end
     return reordered
 end
