@@ -28,7 +28,7 @@ integer SETTINGS_BUS = 800;
 integer UI_BUS = 900;
 integer DIALOG_BUS = 950;
 
-string PLUGIN_CONTEXT = "bell";
+string PLUGIN_CONTEXT = "ui.core.bell";
 string PLUGIN_LABEL = "Bell";
 
 // Settings keys

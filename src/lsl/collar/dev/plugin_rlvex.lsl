@@ -28,7 +28,7 @@ integer UI_BUS = 900;
 integer DIALOG_BUS = 950;
 
 /* -------------------- IDENTITY -------------------- */
-string PLUGIN_CONTEXT = "core_rlv_exceptions";
+string PLUGIN_CONTEXT = "ui.core.rlv_exceptions";
 string PLUGIN_LABEL = "Exceptions";
 
 /* -------------------- SETTINGS KEYS -------------------- */

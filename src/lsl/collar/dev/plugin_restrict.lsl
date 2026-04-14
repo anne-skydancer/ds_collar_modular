@@ -27,7 +27,7 @@ integer DIALOG_BUS       = 950;  // Centralized dialog management
 
 /* -------------------- PLUGIN IDENTITY -------------------- */
 
-string  PLUGIN_CONTEXT = "core_rlvrestrict";
+string  PLUGIN_CONTEXT = "ui.core.rlvrestrict";
 string  PLUGIN_LABEL   = "Restrict";
 
 /* -------------------- SETTINGS KEYS -------------------- */

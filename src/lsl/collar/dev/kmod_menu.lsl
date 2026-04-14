@@ -1,10 +1,13 @@
 /*--------------------
 MODULE: kmod_menu.lsl
 VERSION: 1.10
-REVISION: 1
+REVISION: 2
 PURPOSE: Menu rendering and visual presentation service
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- v1.1 rev 2: Namespace context values. ROOT_CONTEXT → "ui.core.root",
+  SOS_CONTEXT → "ui.sos.root". Added ROOT_CONTEXT/SOS_CONTEXT constants
+  to replace the four former hardcoded literals in render_menu().
 - v1.1 rev 1: Namespace internal message type strings (dialog_open→ui.dialog.open, render_menu→ui.menu.render, show_message→ui.message.show).
 - v1.1 rev 0: Version bump for LSD policy architecture. No functional changes to this module.
 --------------------*/
@@ -13,6 +16,11 @@ CHANGES:
 /* -------------------- CONSOLIDATED ABI -------------------- */
 integer UI_BUS = 900;
 integer DIALOG_BUS = 950;
+
+/* -------------------- CONTEXT CONSTANTS -------------------- */
+// Must match ROOT_CONTEXT / SOS_CONTEXT in kmod_ui.lsl, control_hud.lsl, kmod_remote.lsl
+string ROOT_CONTEXT = "ui.core.root";
+string SOS_CONTEXT  = "ui.sos.root";
 
 /* -------------------- HELPERS -------------------- */
 
@@ -100,10 +108,10 @@ render_menu(string msg) {
     }
 
     string title = "";
-    if (menu_type == "core_root") {
+    if (menu_type == ROOT_CONTEXT) {
         title = "Main Menu";
     }
-    else if (menu_type == "sos_root") {
+    else if (menu_type == SOS_CONTEXT) {
         title = "Emergency Menu";
     }
     else {
@@ -115,10 +123,10 @@ render_menu(string msg) {
     }
 
     string body_text = "";
-    if (menu_type == "core_root") {
+    if (menu_type == ROOT_CONTEXT) {
         body_text = "Select an option:";
     }
-    else if (menu_type == "sos_root") {
+    else if (menu_type == SOS_CONTEXT) {
         body_text = "Emergency options:";
     }
     else {

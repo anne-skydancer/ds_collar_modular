@@ -31,7 +31,7 @@ integer UI_BUS = 900;
 integer DIALOG_BUS = 950;
 
 /* -------------------- PLUGIN IDENTITY -------------------- */
-string PLUGIN_CONTEXT = "core_leash";
+string PLUGIN_CONTEXT = "ui.core.leash";
 string PLUGIN_LABEL = "Leash";
 
 /* -------------------- CONFIGURATION -------------------- */

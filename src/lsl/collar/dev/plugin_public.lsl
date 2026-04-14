@@ -27,7 +27,7 @@ integer SETTINGS_BUS = 800;
 integer UI_BUS = 900;
 
 /* -------------------- PLUGIN IDENTITY -------------------- */
-string PLUGIN_CONTEXT = "core_public";
+string PLUGIN_CONTEXT = "ui.core.public";
 string PLUGIN_LABEL_ON = "Public: Y";
 string PLUGIN_LABEL_OFF = "Public: N";
 

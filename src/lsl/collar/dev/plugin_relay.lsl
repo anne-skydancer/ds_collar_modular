@@ -25,7 +25,7 @@ integer UI_BUS = 900;
 integer DIALOG_BUS = 950;
 
 /* -------------------- PLUGIN IDENTITY -------------------- */
-string PLUGIN_CONTEXT = "core_relay";
+string PLUGIN_CONTEXT = "ui.core.relay";
 string PLUGIN_LABEL = "RLV Relay";
 
 /* ACL levels for reference:

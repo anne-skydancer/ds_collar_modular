@@ -19,7 +19,7 @@ integer UI_BUS = 900;
 integer DIALOG_BUS = 950;
 
 /* -------------------- PLUGIN IDENTITY -------------------- */
-string PLUGIN_CONTEXT = "sos_911";
+string PLUGIN_CONTEXT = "ui.sos.911";
 string PLUGIN_LABEL = "SOS";
 
 /* -------------------- STATE -------------------- */

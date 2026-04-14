@@ -38,7 +38,7 @@ integer UI_BUS = 900;
 integer DIALOG_BUS = 950;
 
 /* -------------------- IDENTITY -------------------- */
-string PLUGIN_CONTEXT = "core_owner";
+string PLUGIN_CONTEXT = "ui.core.owner";
 string PLUGIN_LABEL = "Access";
 
 /* -------------------- CONSTANTS -------------------- */

@@ -1,10 +1,16 @@
 /*--------------------
 MODULE: kmod_ui.lsl
 VERSION: 1.10
-REVISION: 0
+REVISION: 1
 PURPOSE: Session management, LSD policy filtering, and plugin list orchestration
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- v1.1 rev 1: Dynamic no-access message for strangers when public access is
+  off. If the collar has a primary owner, the toucher now sees "This collar is
+  owned by [Honorific] Name and is exclusive to them." rather than the generic
+  message. Falls back to the generic message when no owner is set. Added
+  get_primary_owner_display() helper (reads LSD; supports single- and
+  multi-owner modes; includes honorific when present).
 - v1.1 rev 0: Replaced min_acl filtering with LSD policy reads. Root menu
   visibility now determined by llLinksetDataRead("policy:<context>"). Removed
   PluginMinACLs parallel list and plugin_acl_list_request/response flow.
@@ -325,6 +331,34 @@ apply_plugin_list(string plugins_json) {
 
 /* -------------------- MENU RENDERING (delegated to kmod_menu.lsl) -------------------- */
 
+// Returns "[Honorific] Name" for the primary owner (single- or multi-owner mode),
+// or "" when no owner is set.
+string get_primary_owner_display() {
+    // Single-owner mode
+    string owner_uuid = llLinksetDataRead("access.owner");
+    if (owner_uuid != "" && owner_uuid != NULL_KEY) {
+        string owner_name = llLinksetDataRead("access.ownername");
+        string honorific  = llLinksetDataRead("access.ownerhonorific");
+        if (honorific != "") return honorific + " " + owner_name;
+        return owner_name;
+    }
+    // Multi-owner mode — use first owner
+    string names_csv = llLinksetDataRead("access.ownernames");
+    if (names_csv != "") {
+        list names_list = llCSV2List(names_csv);
+        string first_name = llList2String(names_list, 0);
+        if (first_name != "") {
+            string hons_csv = llLinksetDataRead("access.ownerhonorifics");
+            if (hons_csv != "") {
+                string first_hon = llList2String(llCSV2List(hons_csv), 0);
+                if (first_hon != "") return first_hon + " " + first_name;
+            }
+            return first_name;
+        }
+    }
+    return "";
+}
+
 send_message(key user, string message_text) {
     string msg = llList2Json(JSON_OBJECT, [
         "type", "show_message",
@@ -356,7 +390,13 @@ send_render_menu(key user, string menu_type) {
                     send_message(user, "You have been barred from using this collar.");
                 }
                 else {
-                    send_message(user, "This collar is not available for public use.");
+                    string primary_owner = get_primary_owner_display();
+                    if (primary_owner != "") {
+                        send_message(user, "This collar is owned by " + primary_owner + " and is exclusive to them.");
+                    }
+                    else {
+                        send_message(user, "This collar is not available for public use.");
+                    }
                 }
             }
             else if (user_acl == 0) {

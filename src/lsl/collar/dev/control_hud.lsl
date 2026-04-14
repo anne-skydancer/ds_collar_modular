@@ -1,10 +1,12 @@
 /*--------------------
 SCRIPT: control_hud.lsl
 VERSION: 1.10
-REVISION: 1
+REVISION: 2
 PURPOSE: Auto-detect nearby collars and connect automatically
 ARCHITECTURE: RLV relay-style broadcast and listen workflow, namespaced internal message protocol
 CHANGES:
+- v1.1 rev 2: Namespace context values. ROOT_CONTEXT → "ui.core.root",
+  SOS_CONTEXT → "ui.sos.root".
 - v1.1 rev 1: Namespaced internal message types (remote.collarscan, auth.aclqueryexternal, etc.).
 - v1.1 rev 0: Version bump for LSD policy architecture. No functional changes to this module.
 --------------------*/
@@ -31,8 +33,8 @@ float LONG_TOUCH_THRESHOLD = 1.5;
 integer MAX_DIALOG_BUTTONS = 12;  // llDialog button limit
 
 /* -------------------- CONSTANTS -------------------- */
-string ROOT_CONTEXT = "core_root";
-string SOS_CONTEXT = "sos_root";
+string ROOT_CONTEXT = "ui.core.root";
+string SOS_CONTEXT = "ui.sos.root";
 
 /* -------------------- STATE -------------------- */
 key HudWearer = NULL_KEY;

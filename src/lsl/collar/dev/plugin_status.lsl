@@ -34,7 +34,7 @@ integer UI_BUS = 900;
 integer DIALOG_BUS = 950;
 
 /* -------------------- PLUGIN IDENTITY -------------------- */
-string PLUGIN_CONTEXT = "core_status";
+string PLUGIN_CONTEXT = "ui.core.status";
 string PLUGIN_LABEL = "Status";
 
 /* -------------------- SETTINGS KEYS -------------------- */

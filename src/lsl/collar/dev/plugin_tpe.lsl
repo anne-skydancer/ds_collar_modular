@@ -26,7 +26,7 @@ integer UI_BUS = 900;
 integer DIALOG_BUS = 950;
 
 /* -------------------- PLUGIN IDENTITY -------------------- */
-string PLUGIN_CONTEXT = "core_tpe";
+string PLUGIN_CONTEXT = "ui.core.tpe";
 string PLUGIN_LABEL_ON = "TPE: Y";
 string PLUGIN_LABEL_OFF = "TPE: N";
 

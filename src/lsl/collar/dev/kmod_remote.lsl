@@ -1,10 +1,12 @@
 /*--------------------
 MODULE: kmod_remote.lsl
 VERSION: 1.10
-REVISION: 2
+REVISION: 3
 PURPOSE: External HUD communication bridge for remote control workflows
 ARCHITECTURE: Consolidated message bus lanes, namespaced internal message protocol
 CHANGES:
+- v1.1 rev 3: Namespace context values. ROOT_CONTEXT → "ui.core.root",
+  SOS_CONTEXT → "ui.sos.root".
 - v1.1 rev 2: Fix ACL response listener — expect "auth.aclresult" instead of stale
   "acl_result" (missed in kmod_auth v1.1 rev 4 namespace migration).
 - v1.1 rev 1: Namespaced internal message types (auth.aclquery, ui.menu.start, etc.).
@@ -25,8 +27,8 @@ integer EXTERNAL_MENU_CHAN      = -8675311;  // Listen for menu requests
 float MAX_DETECTION_RANGE = 20.0;  // Maximum range in meters for HUD detection
 
 /* -------------------- PROTOCOL MESSAGE TYPES -------------------- */
-string ROOT_CONTEXT = "core_root";
-string SOS_CONTEXT = "sos_root";
+string ROOT_CONTEXT = "ui.core.root";
+string SOS_CONTEXT = "ui.sos.root";
 
 /* -------------------- STATE -------------------- */
 integer AclQueryListenHandle = 0;

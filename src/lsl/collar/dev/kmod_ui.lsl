@@ -1,10 +1,26 @@
 /*--------------------
 MODULE: kmod_ui.lsl
 VERSION: 1.10
-REVISION: 1
+REVISION: 4
 PURPOSE: Session management, LSD policy filtering, and plugin list orchestration
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- v1.1 rev 4: Namespace context strings. ROOT_CONTEXT → "ui.core.root",
+  SOS_CONTEXT → "ui.sos.root", SOS_PREFIX → "ui.sos.". SOS plugins are
+  now detected structurally by namespace prefix rather than flat sos_ prefix.
+- v1.1 rev 3: Views refactor. Replace per-session FilteredPluginIndices heap
+  (SessionFilteredStarts, SessionFilteredCounts, FilteredPluginIndices) with
+  pre-computed view tables (ViewRootIndices, ViewSosIndices) keyed by ACL
+  level. Views are built once in build_views() at plugin list load time.
+  Per-touch LSD reads: 0 (was O(plugins)). cleanup_session() no longer shifts
+  start pointers; create_session() no longer scans plugin policies. Net: -22
+  lines, eliminated off-by-one hazard in pointer-shifting loop.
+- v1.1 rev 2: Dynamic no-access message for strangers when public access is
+  off. If the collar has a primary owner, the toucher now sees "This collar is
+  owned by [Honorific] Name and is exclusive to them." rather than the generic
+  message. Falls back to the generic message when no owner is set. Added
+  get_primary_owner_display() helper (reads LSD; supports single- and
+  multi-owner modes; includes honorific when present).
 - v1.1 rev 1: Namespaced internal message type strings (e.g. "start" -> "ui.menu.start",
   "acl_query" -> "auth.aclquery", "plugin_list" -> "kernel.pluginlist").
 - v1.1 rev 0: Replaced min_acl filtering with LSD policy reads. Root menu
@@ -21,9 +37,9 @@ integer UI_BUS = 900;
 integer DIALOG_BUS = 950;
 
 /* -------------------- CONSTANTS -------------------- */
-string ROOT_CONTEXT = "core_root";
-string SOS_CONTEXT = "sos_root";
-string SOS_PREFIX = "sos_";  // Prefix for SOS plugin contexts
+string ROOT_CONTEXT = "ui.core.root";
+string SOS_CONTEXT = "ui.sos.root";
+string SOS_PREFIX = "ui.sos.";  // Prefix for SOS plugin contexts
 integer MAX_FUNC_BTNS = 9;
 float TOUCH_RANGE_M = 5.0;
 float LONG_TOUCH_THRESHOLD = 1.5;
@@ -49,6 +65,13 @@ integer ACL_BLACKLIST = -1;
 list PluginContexts;
 list PluginLabels;
 
+// View tables: pre-computed per-(acl_level, context) filtered plugin index lists.
+// Built once when the plugin list is received; zero LSD reads per touch.
+// Parallel to VIEW_ACL_LEVELS; each entry is a JSON array of plugin indices.
+list VIEW_ACL_LEVELS = [-1, 0, 1, 2, 3, 4, 5];  // CONSTANT — do not modify at runtime
+list ViewRootIndices;  // root-menu plugin indices per ACL level
+list ViewSosIndices;   // SOS-menu plugin indices per ACL level
+
 // Parallel Lists for Sessions
 list SessionUsers;
 list SessionACLs;
@@ -56,13 +79,8 @@ list SessionBlacklisted;
 list SessionPages;
 list SessionTotalPages;
 list SessionIDs;
-list SessionFilteredStarts;
-list SessionFilteredCounts;
 list SessionCreatedTimes;
 list SessionContexts;
-
-// Filtered Data (Stores indices into Plugin lists)
-list FilteredPluginIndices;
 
 // Parallel Lists for Pending ACL
 list PendingAclAvatars;
@@ -162,13 +180,19 @@ integer find_session_idx(key user) {
 }
 
 list get_session_filtered_indices(integer session_idx) {
-    integer start = llList2Integer(SessionFilteredStarts, session_idx);
-    integer count = llList2Integer(SessionFilteredCounts, session_idx);
-    
-    if (count > 0) {
-        return llList2List(FilteredPluginIndices, start, start + count - 1);
+    integer acl = llList2Integer(SessionACLs, session_idx);
+    string ctx = llList2String(SessionContexts, session_idx);
+    integer view_idx = llListFindList(VIEW_ACL_LEVELS, [acl]);
+    if (view_idx == -1) return [];
+    string json_array;
+    if (ctx == SOS_CONTEXT) {
+        json_array = llList2String(ViewSosIndices, view_idx);
     }
-    return [];
+    else {
+        json_array = llList2String(ViewRootIndices, view_idx);
+    }
+    if (json_array == "" || json_array == "[]") return [];
+    return llJson2List(json_array);
 }
 
 cleanup_session(key user) {
@@ -183,22 +207,6 @@ cleanup_session(key user) {
     ]);
     llMessageLinked(LINK_SET, DIALOG_BUS, close_msg, NULL_KEY);
 
-    integer start = llList2Integer(SessionFilteredStarts, idx);
-    integer count = llList2Integer(SessionFilteredCounts, idx);
-
-    if (count > 0) {
-        FilteredPluginIndices = llDeleteSubList(FilteredPluginIndices, start, start + count - 1);
-    }
-
-    // Shift subsequent session start indices
-    integer i = idx + 1;
-    integer len = llGetListLength(SessionUsers);
-    while (i < len) {
-        integer old_start = llList2Integer(SessionFilteredStarts, i);
-        SessionFilteredStarts = llListReplaceList(SessionFilteredStarts, [old_start - count], i, i);
-        i++;
-    }
-
     // Remove session from parallel lists
     SessionUsers = llDeleteSubList(SessionUsers, idx, idx);
     SessionACLs = llDeleteSubList(SessionACLs, idx, idx);
@@ -206,8 +214,6 @@ cleanup_session(key user) {
     SessionPages = llDeleteSubList(SessionPages, idx, idx);
     SessionTotalPages = llDeleteSubList(SessionTotalPages, idx, idx);
     SessionIDs = llDeleteSubList(SessionIDs, idx, idx);
-    SessionFilteredStarts = llDeleteSubList(SessionFilteredStarts, idx, idx);
-    SessionFilteredCounts = llDeleteSubList(SessionFilteredCounts, idx, idx);
     SessionCreatedTimes = llDeleteSubList(SessionCreatedTimes, idx, idx);
     SessionContexts = llDeleteSubList(SessionContexts, idx, idx);
 }
@@ -223,54 +229,17 @@ create_session(key user, integer acl, integer is_blacklisted, string context_fil
         cleanup_session(oldest_user);
     }
 
-    // Build filtered list based on LSD policy and context (SOS vs root)
-    list filtered_indices = [];
-    integer i = 0;
-    integer len = llGetListLength(PluginContexts);
-
-    while (i < len) {
-        string context = llList2String(PluginContexts, i);
-
-        integer should_include = FALSE;
-        integer is_sos_plugin = (llSubStringIndex(context, SOS_PREFIX) == 0);
-
-        // Check LSD policy for this plugin at the user's ACL level
-        string policy = llLinksetDataRead("acl.policycontext:" + context);
-        if (policy != "") {
-            string csv = llJsonGetValue(policy, [(string)acl]);
-            if (csv != JSON_INVALID) {
-                // Policy exists for this ACL level — apply context filter
-                if (context_filter == SOS_CONTEXT) {
-                    should_include = is_sos_plugin;
-                } else {
-                    should_include = !is_sos_plugin;
-                }
-            }
-        }
-
-        if (should_include) {
-            filtered_indices += [i];
-        }
-
-        i++;
-    }
-
-    integer filtered_start = llGetListLength(FilteredPluginIndices);
-    integer filtered_count = llGetListLength(filtered_indices);
-    FilteredPluginIndices += filtered_indices;
-
+    // Views supply filtered indices — no per-session policy scan needed.
     // Track session creation time
     string session_id = generate_session_id(user);
     integer created_time = llGetUnixTime();
-    
+
     SessionUsers += [user];
     SessionACLs += [acl];
     SessionBlacklisted += [is_blacklisted];
     SessionPages += [0];
     SessionTotalPages += [0];
     SessionIDs += [session_id];
-    SessionFilteredStarts += [filtered_start];
-    SessionFilteredCounts += [filtered_count];
     SessionCreatedTimes += [created_time];
     SessionContexts += [context_filter];
 }
@@ -322,11 +291,78 @@ apply_plugin_list(string plugins_json) {
         i += SORT_STRIDE;
     }
     // No ACL list request needed — policies are in LSD, written by plugins
+    build_views();
+}
+
+// Builds the view tables for all ACL levels and both menu contexts.
+// Called once after apply_plugin_list(). Per-touch cost: zero LSD reads.
+build_views() {
+    ViewRootIndices = [];
+    ViewSosIndices = [];
+
+    integer num_levels = llGetListLength(VIEW_ACL_LEVELS);
+    integer plugin_count = llGetListLength(PluginContexts);
+
+    integer lv = 0;
+    while (lv < num_levels) {
+        integer acl = llList2Integer(VIEW_ACL_LEVELS, lv);
+        list root_idx = [];
+        list sos_idx = [];
+
+        integer i = 0;
+        while (i < plugin_count) {
+            string ctx = llList2String(PluginContexts, i);
+            string policy = llLinksetDataRead("acl.policycontext:" + ctx);
+            if (policy != "") {
+                if (llJsonGetValue(policy, [(string)acl]) != JSON_INVALID) {
+                    if (llSubStringIndex(ctx, SOS_PREFIX) == 0) {
+                        sos_idx += [i];
+                    }
+                    else {
+                        root_idx += [i];
+                    }
+                }
+            }
+            i++;
+        }
+
+        ViewRootIndices += [llList2Json(JSON_ARRAY, root_idx)];
+        ViewSosIndices  += [llList2Json(JSON_ARRAY, sos_idx)];
+        lv++;
+    }
 }
 
 // apply_plugin_acl_list removed in v1.1 — ACL filtering via LSD policies
 
 /* -------------------- MENU RENDERING (delegated to kmod_menu.lsl) -------------------- */
+
+// Returns "[Honorific] Name" for the primary owner (single- or multi-owner mode),
+// or "" when no owner is set.
+string get_primary_owner_display() {
+    // Single-owner mode
+    string owner_uuid = llLinksetDataRead("access.owner");
+    if (owner_uuid != "" && owner_uuid != NULL_KEY) {
+        string owner_name = llLinksetDataRead("access.ownername");
+        string honorific  = llLinksetDataRead("access.ownerhonorific");
+        if (honorific != "") return honorific + " " + owner_name;
+        return owner_name;
+    }
+    // Multi-owner mode — use first owner
+    string names_csv = llLinksetDataRead("access.ownernames");
+    if (names_csv != "") {
+        list names_list = llCSV2List(names_csv);
+        string first_name = llList2String(names_list, 0);
+        if (first_name != "") {
+            string hons_csv = llLinksetDataRead("access.ownerhonorifics");
+            if (hons_csv != "") {
+                string first_hon = llList2String(llCSV2List(hons_csv), 0);
+                if (first_hon != "") return first_hon + " " + first_name;
+            }
+            return first_name;
+        }
+    }
+    return "";
+}
 
 send_message(key user, string message_text) {
     string msg = llList2Json(JSON_OBJECT, [
@@ -359,7 +395,13 @@ send_render_menu(key user, string menu_type) {
                     send_message(user, "You have been barred from using this collar.");
                 }
                 else {
-                    send_message(user, "This collar is not available for public use.");
+                    string primary_owner = get_primary_owner_display();
+                    if (primary_owner != "") {
+                        send_message(user, "This collar is owned by " + primary_owner + " and is exclusive to them.");
+                    }
+                    else {
+                        send_message(user, "This collar is not available for public use.");
+                    }
                 }
             }
             else if (user_acl == 0) {
@@ -547,12 +589,9 @@ handle_plugin_list(string msg) {
         SessionPages = [];
         SessionTotalPages = [];
         SessionIDs = [];
-        SessionFilteredStarts = [];
-        SessionFilteredCounts = [];
         SessionCreatedTimes = [];
         SessionContexts = [];
-        
-        FilteredPluginIndices = [];
+
         PendingAclAvatars = [];
         PendingAclContexts = [];
     }
@@ -731,13 +770,12 @@ default
         SessionPages = [];
         SessionTotalPages = [];
         SessionIDs = [];
-        SessionFilteredStarts = [];
-        SessionFilteredCounts = [];
         SessionCreatedTimes = [];
         SessionContexts = [];
-        
-        FilteredPluginIndices = [];
-        
+
+        ViewRootIndices = [];
+        ViewSosIndices = [];
+
         PendingAclAvatars = [];
         PendingAclContexts = [];
         

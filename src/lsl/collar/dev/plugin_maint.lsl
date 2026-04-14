@@ -36,7 +36,7 @@ integer UI_BUS = 900;
 integer DIALOG_BUS = 950;
 
 /* -------------------- PLUGIN IDENTITY -------------------- */
-string PLUGIN_CONTEXT = "core_maintenance";
+string PLUGIN_CONTEXT = "ui.core.maintenance";
 string PLUGIN_LABEL = "Maintenance";
 
 /* ACL levels for reference:

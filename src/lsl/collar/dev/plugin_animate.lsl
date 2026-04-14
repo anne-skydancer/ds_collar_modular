@@ -20,7 +20,7 @@ integer UI_BUS = 900;
 integer DIALOG_BUS = 950;
 
 /* -------------------- PLUGIN IDENTITY -------------------- */
-string PLUGIN_CONTEXT = "core_animate";
+string PLUGIN_CONTEXT = "ui.core.animate";
 string PLUGIN_LABEL = "Animate";
 
 /* -------------------- OTHER CONSTANTS -------------------- */

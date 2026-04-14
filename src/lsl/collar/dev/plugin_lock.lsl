@@ -28,7 +28,7 @@ integer SETTINGS_BUS = 800;
 integer UI_BUS = 900;
 
 /* -------------------- PLUGIN IDENTITY -------------------- */
-string PLUGIN_CONTEXT = "core_lock";
+string PLUGIN_CONTEXT = "ui.core.lock";
 string PLUGIN_LABEL_LOCKED = "Locked: Y";    // Label when locked
 string PLUGIN_LABEL_UNLOCKED = "Locked: N";    // Label when unlocked
 

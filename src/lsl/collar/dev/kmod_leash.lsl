@@ -48,7 +48,7 @@ integer UI_BUS = 900;
 integer LEASH_CHAN_LM = -8888;
 integer LEASH_CHAN_DS = -192837465;
 
-string PLUGIN_CONTEXT = "core_leash";
+string PLUGIN_CONTEXT = "ui.core.leash";
 
 // Policy button labels (must match plugin_leash policy CSV entries)
 string POL_CLIP     = "Clip";

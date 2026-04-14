@@ -27,7 +27,7 @@ integer UI_BUS = 900;
 integer DIALOG_BUS = 950;
 
 /* -------------------- PLUGIN IDENTITY -------------------- */
-string PLUGIN_CONTEXT = "core_blacklist";
+string PLUGIN_CONTEXT = "ui.core.blacklist";
 string PLUGIN_LABEL = "Blacklist";
 
 /* -------------------- CONSTANTS -------------------- */
