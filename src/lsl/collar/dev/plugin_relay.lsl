@@ -1,10 +1,13 @@
 /*--------------------
 PLUGIN: plugin_relay.lsl
 VERSION: 1.10
-REVISION: 3
+REVISION: 4
 PURPOSE: Provide ORG-compliant RLV relay with hardcore mode and safeword hooks
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
+- v1.1 rev 4: Fix handle_ground_rez called on detach showing "rezzed on
+  ground" message. Now takes a reason string; detach passes "Collar detached"
+  and ground-rez passes "Collar rezzed on ground".
 - v1.1 rev 3: Guard ui.menu.start against raw kmod_chat broadcasts (no acl
   field). Fixes duplicate dialogs when commands are typed in chat.
 - v1.1 rev 2: Namespace internal message type strings (kernel.*, ui.*, settings.*, sos.*).
@@ -618,7 +621,7 @@ cleanup_session() {
 
 /* -------------------- GROUND REZ HANDLER -------------------- */
 
-handle_ground_rez() {
+handle_ground_rez(string reason) {
     // Dismiss any outstanding ASK prompt and clear session trust
     clear_pending_ask();
     SessionTrustedKeys = [];
@@ -637,7 +640,7 @@ handle_ground_rez() {
     // Update listen state
     update_relay_listen_state();
 
-    llOwnerSay("[RELAY] Collar rezzed on ground - Relay turned OFF");
+    if (reason != "") llOwnerSay("[RELAY] " + reason + " - Relay turned OFF");
 }
 
 /* -------------------- MESSAGE HANDLERS -------------------- */
@@ -802,7 +805,7 @@ default
 
         if (!IsAttached) {
             // Ground rez: reset to safe defaults (LSD will be updated via handle_ground_rez)
-            handle_ground_rez();
+            handle_ground_rez("Collar rezzed on ground");
         }
         else {
             // Attached: restore runtime state from LSD immediately
@@ -832,7 +835,7 @@ default
             clear_pending_ask();
             SessionTrustedKeys = [];
             IsAttached = FALSE;
-            handle_ground_rez();
+            handle_ground_rez("");
         }
         else {
             // Attached
