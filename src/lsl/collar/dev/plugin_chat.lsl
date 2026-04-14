@@ -1,14 +1,16 @@
 /*--------------------
 PLUGIN: plugin_chat.lsl
 VERSION: 1.10
-REVISION: 1
+REVISION: 2
 PURPOSE: Configuration UI for kmod_chat — change command prefix and toggle
          public chat (channel 0) listening.
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
-- v1.1 rev 1: Restrict plugin entry to unowned wearer (ACL 4) and primary
-  owner (ACL 5) only. Trustees can use chat commands (kmod_chat) but cannot
-  open the configuration UI. Entry is gated at ui.menu.start with an ACL check.
+- v1.1 rev 2: Remove trustee (ACL 3) from Chat config entirely. Policy entry
+  for ACL 3 dropped; ui.menu.start handler now rejects any caller with acl < 4
+  before opening the menu.
+- v1.1 rev 1: Restrict "Set Prefix" to unowned wearer (ACL 4) and primary
+  owner (ACL 5); trustees (ACL 3) retained "Toggle Public" only.
 - v1.1 rev 0: Initial implementation. Shows current prefix and public-chat
   status; allows owner/trustee to change prefix via local chat input and
   toggle channel 0 listening on/off.
