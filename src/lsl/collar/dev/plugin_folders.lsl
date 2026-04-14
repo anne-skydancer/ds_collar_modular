@@ -1,12 +1,17 @@
 /*--------------------
 PLUGIN: plugin_folders.lsl
 VERSION: 1.10
-REVISION: 3
+REVISION: 5
 PURPOSE: Manage RLV shared folders — enumerate, attach, detach, and lock #RLV subfolders
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility.
              Uses @getinv RLV command to enumerate actual #RLV subfolders in real-time;
              no text input required. Only the locked-folder list is persisted.
 CHANGES:
+- v1.10 rev 5: Folder list uses numbered body text with [+]/[-]/[ ] worn
+  indicators and * for locked; buttons are plain numbers 1-9. Worn status
+  also shown in the per-folder action sub-menu.
+- v1.10 rev 4: Use @getinvworn instead of @getinv to get worn state per folder.
+  Buttons show ● (worn), ◑ (partial), or no prefix (not worn).
 - v1.10 rev 3: Redesign UI flow — scan #RLV folders on menu entry, show folder
   list, then per-folder Attach/Detach/Lock/Unlock sub-menu. Removes action-
   first picker (old Attach/Detach/Lock/Unlock top-level buttons).
@@ -48,7 +53,8 @@ list    gPolicyButtons    = [];
 string  SessionId         = "";
 string  MenuContext       = "";   // "scanning" | "pick" | "action"
 string  SelectedFolder    = "";   // Folder chosen in the "pick" context
-list    DiscoveredFolders = [];   // Populated from @getinv response
+    list    DiscoveredFolders = [];   // Populated from @getinvworn response
+    list    WornStates        = [];   // Parallel to DiscoveredFolders: "0","1","2"
 integer PickPage          = 0;
 integer RlvListenHandle   = 0;
 
@@ -136,6 +142,7 @@ cleanup_session() {
     MenuContext       = "";
     SelectedFolder    = "";
     DiscoveredFolders = [];
+    WornStates        = [];
     PickPage          = 0;
 }
 
@@ -218,18 +225,18 @@ show_main() {
     MenuContext       = "scanning";
     stop_rlv_listen();
     RlvListenHandle = llListen(RLV_CHAN, "", llGetOwner(), "");
-    llOwnerSay("@getinv:=" + (string)RLV_CHAN);
+    llOwnerSay("@getinvworn:=" + (string)RLV_CHAN);
     llSetTimerEvent(RLV_TIMEOUT);
     llRegionSayTo(CurrentUser, 0, "[" + PLUGIN_LABEL + "] Reading #RLV folders...");
 }
 
-// Shows a paginated list of discovered #RLV folders.
-// Nav row: [Back][<<][>>] at bottom; folders fill above.
+// Shows a paginated numbered list of discovered #RLV folders in the body.
+// Buttons are 1..N; nav row [Back][<<][>] anchors the bottom.
 show_folder_pick(integer page) {
     integer total = llGetListLength(DiscoveredFolders);
     if (total == 0) {
         llRegionSayTo(CurrentUser, 0, "No accessible folders found in #RLV.");
-        show_main();
+        return_to_root();
         return;
     }
 
@@ -244,23 +251,27 @@ show_folder_pick(integer page) {
     integer end_idx = start + PAGE_SIZE;
     if (end_idx > total) end_idx = total;
 
-    string body = "Select a folder\ \u2014 tap to manage\n\n" +
-                  "Page " + (string)(page + 1) + " of " + (string)(max_page + 1);
+    string body = "Tap a number to manage a folder.\n" +
+                  "[+]=worn  [-]=partial  *=locked\n" +
+                  "Page " + (string)(page + 1) + " of " + (string)(max_page + 1) + "\n\n";
 
-    // Nav buttons anchor the bottom row; folders fill the rows above
+    // Nav buttons anchor the bottom row; number buttons fill the rows above
     list button_data = [btn("Back", "back"), btn("<<", "prev"), btn(">>", "next")];
 
     integer i = start;
+    integer item_num = 1;
     while (i < end_idx) {
         string folder_name = llList2String(DiscoveredFolders, i);
-        string folder_label;
-        if (llListFindList(LockedNames, [folder_name]) != -1) {
-            folder_label = "[L] " + truncate(folder_name, 20);
-        }
-        else {
-            folder_label = truncate(folder_name, 24);
-        }
-        button_data += [btn(folder_label, "pick:" + (string)i)];
+        string worn        = llList2String(WornStates, i);
+        string worn_ind;
+        if (worn == "1")      worn_ind = "[+]";
+        else if (worn == "2") worn_ind = "[-]";
+        else                  worn_ind = "[ ]";
+        string lock_mark = "";
+        if (llListFindList(LockedNames, [folder_name]) != -1) lock_mark = "*";
+        body += (string)item_num + ". " + worn_ind + " " + folder_name + lock_mark + "\n";
+        button_data += [btn((string)item_num, "pick:" + (string)i)];
+        item_num += 1;
         i += 1;
     }
 
@@ -285,7 +296,15 @@ show_folder_action(string folder_name) {
     if (llListFindList(LockedNames, [folder_name]) != -1) lock_status = "Locked";
     else                                                  lock_status = "Unlocked";
 
-    string body = folder_name + "\nStatus: " + lock_status + "\n\nChoose an action:";
+    string worn_status = "Not worn";
+    integer folder_idx = llListFindList(DiscoveredFolders, [folder_name]);
+    if (folder_idx != -1) {
+        string worn = llList2String(WornStates, folder_idx);
+        if (worn == "1")      worn_status = "Worn";
+        else if (worn == "2") worn_status = "Partially worn";
+    }
+
+    string body = folder_name + "\n" + worn_status + " / " + lock_status + "\n\nChoose an action:";
 
     list button_data = [btn("Back", "back")];
     if (btn_allowed("Attach"))  button_data += [btn("Attach",  "attach")];
@@ -403,14 +422,29 @@ handle_rlv_response(string message) {
     if (CurrentUser == NULL_KEY) return;
 
     DiscoveredFolders = [];
+    WornStates        = [];
     if (message != "") {
+        // @getinvworn returns "name|wornstate" pairs separated by commas.
+        // wornstate: 0=not worn, 1=worn, 2=partially worn.
         list raw = llParseString2List(message, [","], []);
         integer i = 0;
         integer len = llGetListLength(raw);
         while (i < len) {
-            string folder_name = llStringTrim(llList2String(raw, i), STRING_TRIM);
-            if (folder_name != "") {
+            string entry = llStringTrim(llList2String(raw, i), STRING_TRIM);
+            if (entry != "") {
+                integer pipe_pos = llSubStringIndex(entry, "|");
+                string folder_name;
+                string worn_state;
+                if (pipe_pos == -1) {
+                    folder_name = entry;
+                    worn_state  = "0";
+                }
+                else {
+                    folder_name = llGetSubString(entry, 0, pipe_pos - 1);
+                    worn_state  = llGetSubString(entry, pipe_pos + 1, -1);
+                }
                 DiscoveredFolders += [folder_name];
+                WornStates        += [worn_state];
             }
             i += 1;
         }
