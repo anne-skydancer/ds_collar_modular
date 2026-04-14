@@ -1,13 +1,20 @@
 /*--------------------
 MODULE: kmod_chat.lsl
 VERSION: 1.10
-REVISION: 8
+REVISION: 10
 PURPOSE: Local chat command receiver. Listens on channel 1 (always) and
          optionally channel 0 (public chat) for prefixed commands from
          authorised speakers. Dispatches matching commands to UI_BUS so
          plugins receive them identically to menu-driven interactions.
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- v1.1 rev 10: Remove pre-seed of "menu" alias. kmod_ui re-emits its
+  kernel.register for ROOT_CONTEXT/"Menu" in response to kernel.registernow
+  (rev 7 of kmod_ui), so the alias is populated before any human can type.
+  Pre-seeding was incorrect: it allowed command_is_known("menu") to return
+  TRUE before the plugin list had loaded, which could produce an empty menu.
+- v1.1 rev 9: Pre-seed "menu" alias to "ui.core.root" at state_entry as a
+  belt-and-suspenders fallback in case kmod_ui's registernow response races.
 - v1.1 rev 8: Re-enable PublicChat by default. The command_is_known() guard
   makes channel 0 safe; natural words are rejected before dispatch.
 - v1.1 rev 7: Remove mandatory space after prefix. command_is_known() now

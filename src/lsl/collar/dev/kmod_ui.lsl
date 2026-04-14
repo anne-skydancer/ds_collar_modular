@@ -1,10 +1,16 @@
 /*--------------------
 MODULE: kmod_ui.lsl
 VERSION: 1.10
-REVISION: 6
+REVISION: 7
 PURPOSE: Session management, LSD policy filtering, and plugin list orchestration
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- v1.1 rev 7: Re-emit synthetic kernel.register for ROOT_CONTEXT/"Menu" in
+  response to kernel.registernow. Previously only emitted from state_entry,
+  so kmod_chat's alias table never contained "menu" after sending registernow.
+  Also guard against raw unrouted ui.menu.start broadcasts in all dev plugins:
+  messages without an acl field are ignored (fixes duplicate dialogs on chat
+  commands).
 - v1.1 rev 6: handle_start falls back to root session for unrecognized chat
   contexts (e.g. unresolved alias 'menu') instead of silently returning.
   Fixes 'an menu' doing nothing when the alias table was empty at startup.
@@ -933,6 +939,15 @@ default
         /* -------------------- KERNEL LIFECYCLE -------------------- */
         if (num == KERNEL_LIFECYCLE) {
             if (msg_type == "kernel.pluginlist") handle_plugin_list(msg);
+            else if (msg_type == "kernel.registernow") {
+                // Re-emit synthetic registration so kmod_chat rebuilds its alias table.
+                llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
+                    "type",    "kernel.register",
+                    "context", ROOT_CONTEXT,
+                    "label",   "Menu",
+                    "script",  llGetScriptName()
+                ]), NULL_KEY);
+            }
             else if (msg_type == "kernel.reset" || msg_type == "kernel.resetall") {
                 llResetScript();
             }
