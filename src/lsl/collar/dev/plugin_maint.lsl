@@ -1,10 +1,12 @@
 /*--------------------
 PLUGIN: plugin_maint.lsl
 VERSION: 1.10
-REVISION: 6
+REVISION: 7
 PURPOSE: Maintenance and utility functions for collar management
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
+- v1.1 rev 7: Guard ui.menu.start against raw kmod_chat broadcasts (no acl
+  field). Fixes duplicate dialogs when commands are typed in chat.
 - v1.1 rev 6: Switch Clear Leash to force_release and add confirmation dialog.
   force_release is authorized by wearer identity or ACL >= 3, bypassing the
   leasher-identity check so it works on bad-actor leashes. Confirmation
@@ -644,6 +646,7 @@ default {
             if (msg_type == JSON_INVALID) return;
 
             if (msg_type == "ui.menu.start") {
+                if (llJsonGetValue(msg, ["acl"]) == JSON_INVALID) return;
                 if (llJsonGetValue(msg, ["context"]) == JSON_INVALID) return;
                 if (llJsonGetValue(msg, ["context"]) != PLUGIN_CONTEXT) return;
 

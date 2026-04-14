@@ -1,10 +1,12 @@
 /*--------------------
 PLUGIN: plugin_leash.lsl
 VERSION: 1.10
-REVISION: 5
+REVISION: 6
 PURPOSE: User interface and configuration for the leashing system
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
+- v1.1 rev 6: Guard ui.menu.start against raw kmod_chat broadcasts (no acl
+  field). Fixes duplicate dialogs when commands are typed in chat.
 - v1.1 rev 5: Grant Unclip to ACL 1 (public) policy so a public user who
   holds the leash can release it. The existing in-code guard still
   restricts the button to the current leasher at public level. Also
@@ -704,6 +706,7 @@ default
             if (msg_type == JSON_INVALID) return;
 
             if (msg_type == "ui.menu.start") {
+                if (llJsonGetValue(msg, ["acl"]) == JSON_INVALID) return;
                 if (llJsonGetValue(msg, ["context"]) == JSON_INVALID) return;
                 if (llJsonGetValue(msg, ["context"]) != PLUGIN_CONTEXT) return;
                 CurrentUser = id;

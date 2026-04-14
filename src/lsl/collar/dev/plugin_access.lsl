@@ -1,10 +1,12 @@
 /*--------------------
 PLUGIN: plugin_access.lsl
 VERSION: 1.10
-REVISION: 6
+REVISION: 7
 PURPOSE: Owner, trustee, and honorific management workflows
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
+- v1.1 rev 7: Guard ui.menu.start against raw kmod_chat broadcasts (no acl
+  field). Fixes duplicate dialogs when commands are typed in chat.
 - v1.1 rev 6: Namespace internal message type strings (kernel.*, settings.*,
   ui.*) for bus-wide clarity. No behavioral changes.
 - v1.1 rev 5: Honor soft_reset / soft_reset_all from KERNEL_LIFECYCLE so
@@ -817,6 +819,7 @@ default {
         }
         else if (num == UI_BUS) {
             if (type == "ui.menu.start" && (llJsonGetValue(msg, ["context"]) != JSON_INVALID)) {
+                if (llJsonGetValue(msg, ["acl"]) == JSON_INVALID) return;
                 if (llJsonGetValue(msg, ["context"]) == PLUGIN_CONTEXT) {
                     CurrentUser = id;
                     // ACL level provided by UI module

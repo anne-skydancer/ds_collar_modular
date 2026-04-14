@@ -1,11 +1,13 @@
 /*--------------------
 PLUGIN: plugin_tpe.lsl
 VERSION: 1.10
-REVISION: 3
+REVISION: 4
 PURPOSE: Manage TPE mode with wearer confirmation and owner oversight
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility,
   namespaced internal message protocol
 CHANGES:
+- v1.1 rev 4: Guard ui.menu.start against raw kmod_chat broadcasts (no acl
+  field). Fixes duplicate dialogs when commands are typed in chat.
 - v1.1 rev 3: Namespaced internal message types (kernel.register, ui.dialog.open, etc.).
 - v1.1 rev 2: Migrate dialog buttons to button_data format with context-based routing.
 - v1.1 rev 1: Migrate from JSON broadcast payloads to direct LSD reads.
@@ -356,6 +358,7 @@ default
             string msg_type = llJsonGetValue(str, ["type"]);
 
             if (msg_type == "ui.menu.start") {
+                if (llJsonGetValue(str, ["acl"]) == JSON_INVALID) return;
                 string context = llJsonGetValue(str, ["context"]);
                 if (context != PLUGIN_CONTEXT) return;
 

@@ -1,10 +1,12 @@
 /*--------------------
 PLUGIN: plugin_relay.lsl
 VERSION: 1.10
-REVISION: 2
+REVISION: 3
 PURPOSE: Provide ORG-compliant RLV relay with hardcore mode and safeword hooks
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
+- v1.1 rev 3: Guard ui.menu.start against raw kmod_chat broadcasts (no acl
+  field). Fixes duplicate dialogs when commands are typed in chat.
 - v1.1 rev 2: Namespace internal message type strings (kernel.*, ui.*, settings.*, sos.*).
 - v1.1 rev 1: Migrate settings reads from JSON broadcast to direct LSD reads.
   Remove apply_settings_delta(); fold side effects into apply_settings_sync()
@@ -641,6 +643,7 @@ handle_ground_rez() {
 /* -------------------- MESSAGE HANDLERS -------------------- */
 
 handle_start(string msg) {
+    if (llJsonGetValue(msg, ["acl"]) == JSON_INVALID) return;
     if (llJsonGetValue(msg, ["context"]) == JSON_INVALID) return;
     if (llJsonGetValue(msg, ["user"]) == JSON_INVALID) return;
 

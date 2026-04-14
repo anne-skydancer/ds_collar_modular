@@ -1,12 +1,14 @@
 /*--------------------
 PLUGIN: plugin_folders.lsl
 VERSION: 1.10
-REVISION: 0
+REVISION: 1
 PURPOSE: Manage RLV shared folders — enumerate, attach, detach, and lock #RLV subfolders
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility.
              Uses @getinv RLV command to enumerate actual #RLV subfolders in real-time;
              no text input required. Only the locked-folder list is persisted.
 CHANGES:
+- v1.10 rev 1: Guard ui.menu.start against raw kmod_chat broadcasts (no acl
+  field). Fixes duplicate dialogs when commands are typed in chat.
 - v1.10 rev 0: Folder buttons are built from the wearer's actual #RLV inventory.
   Removed FolderNames persistence; only LockedNames is stored. Supports Attach,
   Detach, Lock, and Unlock actions via paginated folder-picker dialog.
@@ -522,6 +524,7 @@ default
         }
         else if (num == UI_BUS) {
             if (msg_type == "ui.menu.start") {
+                if (llJsonGetValue(msg, ["acl"]) == JSON_INVALID) return;
                 string ctx = llJsonGetValue(msg, ["context"]);
                 if (ctx != PLUGIN_CONTEXT) return;
                 CurrentUser = id;

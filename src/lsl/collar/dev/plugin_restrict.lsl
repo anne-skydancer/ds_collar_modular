@@ -1,10 +1,12 @@
 /*--------------------
 PLUGIN: plugin_restrict.lsl
 VERSION: 1.10
-REVISION: 3
+REVISION: 4
 PURPOSE: Manage RLV restriction toggles grouped by functional category
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
+- v1.1 rev 4: Guard ui.menu.start against raw kmod_chat broadcasts (no acl
+  field). Fixes duplicate dialogs when commands are typed in chat.
 - v1.1 rev 3: Namespace internal message type strings (kernel.*, ui.*, settings.*).
 - v1.1 rev 2: Migrate dialog buttons to button_data format with context-based routing.
 - v1.1 rev 1: Migrate from JSON broadcast payloads to direct LSD reads.
@@ -662,6 +664,7 @@ default
             if (type == "ui.menu.start") {
                 string context = llJsonGetValue(msg, ["context"]);
                 if (context == JSON_INVALID) return;
+                if (llJsonGetValue(msg, ["acl"]) == JSON_INVALID) return;
 
                 if (context == PLUGIN_CONTEXT) {
                     CurrentUser = id;

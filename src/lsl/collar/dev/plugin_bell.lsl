@@ -1,11 +1,13 @@
 /*--------------------
 PLUGIN: plugin_bell.lsl
 VERSION: 1.10
-REVISION: 5
+REVISION: 6
 PURPOSE: Bell visibility and jingling control for the collar
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility,
   namespaced internal message protocol
 CHANGES:
+- v1.1 rev 6: Guard ui.menu.start against raw kmod_chat broadcasts (no acl
+  field). Fixes duplicate dialogs when commands are typed in chat.
 - v1.1 rev 5: Restrict bell policy to ACL 3+ (Trustee, Unowned wearer, Primary Owner).
   Public (ACL 1) and Owned wearer (ACL 2) no longer see the bell plugin in the menu,
   as bell settings are owner-imposed controls.
@@ -388,6 +390,7 @@ default {
             if (msg_type == JSON_INVALID) return;
 
             if (msg_type == "ui.menu.start") {
+                if (llJsonGetValue(msg, ["acl"]) == JSON_INVALID) return;
                 if (llJsonGetValue(msg, ["context"]) == JSON_INVALID) return;
                 if (llJsonGetValue(msg, ["context"]) != PLUGIN_CONTEXT) return;
 

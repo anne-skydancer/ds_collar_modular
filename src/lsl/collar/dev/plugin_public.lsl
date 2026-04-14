@@ -1,11 +1,13 @@
 /*--------------------
 PLUGIN: plugin_public.lsl
 VERSION: 1.10
-REVISION: 3
+REVISION: 4
 PURPOSE: Toggle public access mode directly from main menu
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility,
   namespaced internal message protocol
 CHANGES:
+- v1.1 rev 4: Guard ui.menu.start against raw kmod_chat broadcasts (no acl
+  field). Fixes duplicate dialogs when commands are typed in chat.
 - v1.1 rev 3: Namespaced internal message types (kernel.register, settings.set, etc.).
 - v1.1 rev 2: Honor soft_reset / soft_reset_all from KERNEL_LIFECYCLE.
   Without this, factory reset wiped LSD but left PublicModeEnabled cached
@@ -244,6 +246,7 @@ default {
             if (msg_type == JSON_INVALID) return;
 
             if (msg_type == "ui.menu.start") {
+                if (llJsonGetValue(msg, ["acl"]) == JSON_INVALID) return;
                 if (llJsonGetValue(msg, ["context"]) == JSON_INVALID) return;
                 if (llJsonGetValue(msg, ["context"]) != PLUGIN_CONTEXT) return;
 
