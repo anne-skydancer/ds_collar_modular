@@ -1,13 +1,14 @@
 /*--------------------
 PLUGIN: plugin_folders.lsl
 VERSION: 1.10
-REVISION: 7
+REVISION: 8
 PURPOSE: Manage RLV shared folders — enumerate, attach, detach, and lock #RLV subfolders
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility.
              Uses @getinv RLV command to enumerate actual #RLV subfolders in real-time;
              no text input required. Only the locked-folder list is persisted.
 CHANGES:
-- v1.10 rev 7: Fix "all buttons must have label strings" — eliminated space
+- v1.10 rev 8: Skip folders whose name starts with '.' (e.g. .outfits).
+- v1.10 rev 7: Fix llDialog empty-label error — eliminated space
   padding entirely. Button list is now built to exact size using a row-reversal
   algorithm: full rows appended bottom-to-top, then the (possibly partial) top
   row last, giving correct top-to-bottom visual reading with no empty slots.
@@ -476,8 +477,10 @@ handle_rlv_response(string message) {
                     folder_name = llGetSubString(entry, 0, pipe_pos - 1);
                     worn_state  = llGetSubString(entry, pipe_pos + 1, -1);
                 }
-                DiscoveredFolders += [folder_name];
-                WornStates        += [worn_state];
+                if (llGetSubString(folder_name, 0, 0) != ".") {
+                    DiscoveredFolders += [folder_name];
+                    WornStates        += [worn_state];
+                }
             }
             i += 1;
         }
