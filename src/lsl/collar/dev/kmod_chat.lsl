@@ -1,13 +1,17 @@
 /*--------------------
 MODULE: kmod_chat.lsl
 VERSION: 1.10
-REVISION: 2
+REVISION: 3
 PURPOSE: Local chat command receiver. Listens on channel 1 (always) and
          optionally channel 0 (public chat) for prefixed commands from
          authorised speakers. Dispatches matching commands to UI_BUS so
          plugins receive them identically to menu-driven interactions.
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- v1.1 rev 3: Broadcast kernel.registernow on state_entry so kmod_ui and all
+  plugins re-emit kernel.register, ensuring CommandAliases is populated even
+  when kmod_chat starts after kmod_ui. Without this, 'an menu' failed because
+  the 'menu' alias was never built.
 - v1.1 rev 2: Default PublicChat to TRUE on first run. Channel 0 listening
   is now on by default; it was previously off and required explicit opt-in
   via the Chat plugin.
@@ -190,6 +194,11 @@ default
         ListenChan1 = 0;
         CommandAliases = [];
         apply_settings_sync();
+        // Force all scripts to re-broadcast kernel.register so the alias table
+        // is populated regardless of startup order.
+        llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
+            "type", "kernel.registernow"
+        ]), NULL_KEY);
     }
 
     on_rez(integer param) {

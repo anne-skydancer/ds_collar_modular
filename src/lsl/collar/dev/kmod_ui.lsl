@@ -1,10 +1,13 @@
 /*--------------------
 MODULE: kmod_ui.lsl
 VERSION: 1.10
-REVISION: 5
+REVISION: 6
 PURPOSE: Session management, LSD policy filtering, and plugin list orchestration
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- v1.1 rev 6: handle_start falls back to root session for unrecognized chat
+  contexts (e.g. unresolved alias 'menu') instead of silently returning.
+  Fixes 'an menu' doing nothing when the alias table was empty at startup.
 - v1.1 rev 5: Fix chat-driven plugin dispatch. handle_start now handles
   plugin-specific contexts (e.g. "ui.core.chat") dispatched by kmod_chat.
   Added dispatch_to_plugin() helper (extracted from handle_button_click).
@@ -656,7 +659,12 @@ handle_start(string msg, key user_key) {
 
     // Plugin-specific context from kmod_chat dispatch.
     integer pi = llListFindList(PluginContexts, [context]);
-    if (pi == -1) return;  // Unknown plugin
+    if (pi == -1) {
+        // Unrecognized context — unresolved alias or typo. Fall back to root
+        // menu so the user gets something useful rather than silence.
+        start_root_session(user_key);
+        return;
+    }
 
     // Existing session — dispatch immediately using cached ACL.
     integer session_idx = find_session_idx(user_key);
