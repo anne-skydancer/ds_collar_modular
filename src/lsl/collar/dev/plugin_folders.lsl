@@ -1,12 +1,19 @@
 /*--------------------
 PLUGIN: plugin_folders.lsl
 VERSION: 1.10
-REVISION: 1
+REVISION: 3
 PURPOSE: Manage RLV shared folders — enumerate, attach, detach, and lock #RLV subfolders
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility.
              Uses @getinv RLV command to enumerate actual #RLV subfolders in real-time;
              no text input required. Only the locked-folder list is persisted.
 CHANGES:
+- v1.10 rev 3: Redesign UI flow — scan #RLV folders on menu entry, show folder
+  list, then per-folder Attach/Detach/Lock/Unlock sub-menu. Removes action-
+  first picker (old Attach/Detach/Lock/Unlock top-level buttons).
+- v1.10 rev 2: Fix @getinv RLV command syntax — was missing the path separator
+  colon, so the viewer never responded. Correct form is @getinv:=<chan> for
+  the #RLV root (empty path). Without the colon the command is silently
+  ignored and the RLV timeout fires.
 - v1.10 rev 1: Guard ui.menu.start against raw kmod_chat broadcasts (no acl
   field). Fixes duplicate dialogs when commands are typed in chat.
 - v1.10 rev 0: Folder buttons are built from the wearer's actual #RLV inventory.
@@ -39,8 +46,8 @@ key     CurrentUser       = NULL_KEY;
 integer UserAcl           = 0;
 list    gPolicyButtons    = [];
 string  SessionId         = "";
-string  MenuContext       = "";   // "main" | "pick" | "unlock_pick"
-string  PendingAction     = "";   // "attach" | "detach" | "lock"
+string  MenuContext       = "";   // "scanning" | "pick" | "action"
+string  SelectedFolder    = "";   // Folder chosen in the "pick" context
 list    DiscoveredFolders = [];   // Populated from @getinv response
 integer PickPage          = 0;
 integer RlvListenHandle   = 0;
@@ -127,7 +134,7 @@ cleanup_session() {
     UserAcl           = 0;
     gPolicyButtons    = [];
     MenuContext       = "";
-    PendingAction     = "";
+    SelectedFolder    = "";
     DiscoveredFolders = [];
     PickPage          = 0;
 }
@@ -200,46 +207,23 @@ return_to_root() {
     cleanup_session();
 }
 
+// On menu entry, immediately scan #RLV folders. Once the viewer responds,
+// show_folder_pick() presents the list. The user then picks a folder and
+// sees per-folder Attach / Detach / Lock / Unlock action buttons.
 show_main() {
-    SessionId      = generate_session_id();
-    MenuContext    = "main";
-    gPolicyButtons = get_policy_buttons(PLUGIN_CONTEXT, UserAcl);
-
-    integer locked_count = llGetListLength(LockedNames);
-
-    string body = "Shared Folder Manager\n\nLocked: " + (string)locked_count +
-                  " folder(s)\n\nSelect an action:";
-
-    list button_data = [btn("Back", "back")];
-    if (btn_allowed("Attach")) button_data += [btn("Attach", "attach")];
-    if (btn_allowed("Detach")) button_data += [btn("Detach", "detach")];
-    if (btn_allowed("Lock"))   button_data += [btn("Lock",   "lock")];
-    if (btn_allowed("Unlock")) button_data += [btn("Unlock", "unlock")];
-
-    llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
-        "type",        "ui.dialog.open",
-        "session_id",  SessionId,
-        "user",        (string)CurrentUser,
-        "title",       PLUGIN_LABEL,
-        "body",        body,
-        "button_data", llList2Json(JSON_ARRAY, button_data),
-        "timeout",     60
-    ]), NULL_KEY);
-}
-
-// Sends @getinv to enumerate actual #RLV subfolders before showing a pick dialog.
-query_folders(string action_type) {
-    PendingAction     = action_type;
+    gPolicyButtons    = get_policy_buttons(PLUGIN_CONTEXT, UserAcl);
     DiscoveredFolders = [];
+    SelectedFolder    = "";
     PickPage          = 0;
+    MenuContext       = "scanning";
     stop_rlv_listen();
     RlvListenHandle = llListen(RLV_CHAN, "", llGetOwner(), "");
-    llOwnerSay("@getinv=" + (string)RLV_CHAN);
+    llOwnerSay("@getinv:=" + (string)RLV_CHAN);
     llSetTimerEvent(RLV_TIMEOUT);
     llRegionSayTo(CurrentUser, 0, "[" + PLUGIN_LABEL + "] Reading #RLV folders...");
 }
 
-// Shows a paginated list of DiscoveredFolders as pick buttons.
+// Shows a paginated list of discovered #RLV folders.
 // Nav row: [Back][<<][>>] at bottom; folders fill above.
 show_folder_pick(integer page) {
     integer total = llGetListLength(DiscoveredFolders);
@@ -256,33 +240,27 @@ show_folder_pick(integer page) {
     SessionId   = generate_session_id();
     MenuContext = "pick";
 
-    integer start = page * PAGE_SIZE;
-    integer end   = start + PAGE_SIZE;
-    if (end > total) end = total;
+    integer start   = page * PAGE_SIZE;
+    integer end_idx = start + PAGE_SIZE;
+    if (end_idx > total) end_idx = total;
 
-    string action_label;
-    if (PendingAction == "attach")      action_label = "Attach";
-    else if (PendingAction == "detach") action_label = "Detach";
-    else if (PendingAction == "lock")   action_label = "Lock";
-    else                                action_label = PendingAction;
-
-    string body = action_label + " an #RLV folder\n\n" +
+    string body = "Select a folder\ \u2014 tap to manage\n\n" +
                   "Page " + (string)(page + 1) + " of " + (string)(max_page + 1);
 
     // Nav buttons anchor the bottom row; folders fill the rows above
     list button_data = [btn("Back", "back"), btn("<<", "prev"), btn(">>", "next")];
 
     integer i = start;
-    while (i < end) {
+    while (i < end_idx) {
         string folder_name = llList2String(DiscoveredFolders, i);
-        string label;
+        string folder_label;
         if (llListFindList(LockedNames, [folder_name]) != -1) {
-            label = "[L] " + truncate(folder_name, 20);
+            folder_label = "[L] " + truncate(folder_name, 20);
         }
         else {
-            label = truncate(folder_name, 24);
+            folder_label = truncate(folder_name, 24);
         }
-        button_data += [btn(label, "pick:" + (string)i)];
+        button_data += [btn(folder_label, "pick:" + (string)i)];
         i += 1;
     }
 
@@ -290,64 +268,58 @@ show_folder_pick(integer page) {
         "type",        "ui.dialog.open",
         "session_id",  SessionId,
         "user",        (string)CurrentUser,
-        "title",       action_label + " Folder",
+        "title",       PLUGIN_LABEL,
         "body",        body,
         "button_data", llList2Json(JSON_ARRAY, button_data),
         "timeout",     60
     ]), NULL_KEY);
 }
 
-// Shows locked folders directly from LockedNames (no RLV query needed).
-show_unlock_pick() {
-    integer total = llGetListLength(LockedNames);
-    if (total == 0) {
-        llRegionSayTo(CurrentUser, 0, "No folders are currently locked.");
-        show_main();
-        return;
-    }
+// Shows Attach / Detach / Lock (or Unlock) action buttons for a chosen folder.
+show_folder_action(string folder_name) {
+    SelectedFolder = folder_name;
+    SessionId      = generate_session_id();
+    MenuContext    = "action";
 
-    SessionId   = generate_session_id();
-    MenuContext = "unlock_pick";
+    string lock_status;
+    if (llListFindList(LockedNames, [folder_name]) != -1) lock_status = "Locked";
+    else                                                  lock_status = "Unlocked";
 
-    string body = "Select a folder to unlock:\n\nCurrently locked: " + (string)total;
+    string body = folder_name + "\nStatus: " + lock_status + "\n\nChoose an action:";
+
     list button_data = [btn("Back", "back")];
-
-    integer i = 0;
-    integer end = total;
-    if (end > 11) end = 11;  // 12 button max; 1 reserved for Back
-    while (i < end) {
-        string folder_name = llList2String(LockedNames, i);
-        button_data += [btn(truncate(folder_name, 24), "unlock:" + (string)i)];
-        i += 1;
-    }
+    if (btn_allowed("Attach"))  button_data += [btn("Attach",  "attach")];
+    if (btn_allowed("Detach"))  button_data += [btn("Detach",  "detach")];
+    if (btn_allowed("Lock"))    button_data += [btn("Lock",    "lock")];
+    if (btn_allowed("Unlock"))  button_data += [btn("Unlock",  "unlock")];
 
     llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
         "type",        "ui.dialog.open",
         "session_id",  SessionId,
         "user",        (string)CurrentUser,
-        "title",       "Unlock Folder",
+        "title",       PLUGIN_LABEL,
         "body",        body,
         "button_data", llList2Json(JSON_ARRAY, button_data),
         "timeout",     60
     ]), NULL_KEY);
 }
 
-// Applies PendingAction to the chosen folder, then returns to main menu.
-apply_folder_action(string folder_name) {
-    if (PendingAction == "attach") {
+// Executes app_action on folder_name then returns to the folder list.
+apply_folder_action(string folder_name, string app_action) {
+    if (app_action == "attach") {
         attach_folder(folder_name);
         llRegionSayTo(CurrentUser, 0, "Attaching: " + folder_name);
     }
-    else if (PendingAction == "detach") {
+    else if (app_action == "detach") {
         if (llListFindList(LockedNames, [folder_name]) != -1) {
             llRegionSayTo(CurrentUser, 0, folder_name + " is locked. Unlock it first.");
-            show_main();
-            return;
         }
-        detach_folder(folder_name);
-        llRegionSayTo(CurrentUser, 0, "Detaching: " + folder_name);
+        else {
+            detach_folder(folder_name);
+            llRegionSayTo(CurrentUser, 0, "Detaching: " + folder_name);
+        }
     }
-    else if (PendingAction == "lock") {
+    else if (app_action == "lock") {
         if (llListFindList(LockedNames, [folder_name]) != -1) {
             llRegionSayTo(CurrentUser, 0, folder_name + " is already locked.");
         }
@@ -358,7 +330,19 @@ apply_folder_action(string folder_name) {
             llRegionSayTo(CurrentUser, 0, "Locked: " + folder_name);
         }
     }
-    show_main();
+    else if (app_action == "unlock") {
+        integer idx = llListFindList(LockedNames, [folder_name]);
+        if (idx == -1) {
+            llRegionSayTo(CurrentUser, 0, folder_name + " is not locked.");
+        }
+        else {
+            LockedNames = llDeleteSubList(LockedNames, idx, idx);
+            unlock_folder(folder_name);
+            persist_locked();
+            llRegionSayTo(CurrentUser, 0, "Unlocked: " + folder_name);
+        }
+    }
+    show_folder_pick(PickPage);
 }
 
 /* -------------------- DIALOG HANDLER -------------------- */
@@ -367,26 +351,15 @@ handle_dialog_response(string msg) {
     if (!json_has(msg, ["session_id"])) return;
     if (llJsonGetValue(msg, ["session_id"]) != SessionId) return;
 
-    key user = (key)llJsonGetValue(msg, ["user"]);
-    if (user != CurrentUser) return;
+    key response_user = (key)llJsonGetValue(msg, ["user"]);
+    if (response_user != CurrentUser) return;
 
     string ctx = llJsonGetValue(msg, ["context"]);
     if (ctx == JSON_INVALID) ctx = "";
 
-    if (MenuContext == "main") {
+    if (MenuContext == "pick") {
         if (ctx == "back") {
             return_to_root();
-        }
-        else if (ctx == "attach" || ctx == "detach" || ctx == "lock") {
-            query_folders(ctx);
-        }
-        else if (ctx == "unlock") {
-            show_unlock_pick();
-        }
-    }
-    else if (MenuContext == "pick") {
-        if (ctx == "back") {
-            show_main();
         }
         else if (ctx == "prev") {
             integer new_page = PickPage - 1;
@@ -403,25 +376,16 @@ handle_dialog_response(string msg) {
         else if (llSubStringIndex(ctx, "pick:") == 0) {
             integer idx = (integer)llGetSubString(ctx, 5, -1);
             if (idx >= 0 && idx < llGetListLength(DiscoveredFolders)) {
-                string folder_name = llList2String(DiscoveredFolders, idx);
-                apply_folder_action(folder_name);
+                show_folder_action(llList2String(DiscoveredFolders, idx));
             }
         }
     }
-    else if (MenuContext == "unlock_pick") {
+    else if (MenuContext == "action") {
         if (ctx == "back") {
-            show_main();
+            show_folder_pick(PickPage);
         }
-        else if (llSubStringIndex(ctx, "unlock:") == 0) {
-            integer idx = (integer)llGetSubString(ctx, 7, -1);
-            if (idx >= 0 && idx < llGetListLength(LockedNames)) {
-                string folder_name = llList2String(LockedNames, idx);
-                LockedNames = llDeleteSubList(LockedNames, idx, idx);
-                unlock_folder(folder_name);
-                persist_locked();
-                llRegionSayTo(CurrentUser, 0, "Unlocked: " + folder_name);
-            }
-            show_main();
+        else if (ctx == "attach" || ctx == "detach" || ctx == "lock" || ctx == "unlock") {
+            apply_folder_action(SelectedFolder, ctx);
         }
     }
 }
@@ -454,7 +418,7 @@ handle_rlv_response(string message) {
 
     if (llGetListLength(DiscoveredFolders) == 0) {
         llRegionSayTo(CurrentUser, 0, "No shared folders found in #RLV.");
-        show_main();
+        return_to_root();
         return;
     }
 
@@ -484,9 +448,9 @@ default
         // RLV @getinv query timed out — viewer is not RLV-enabled or not responding
         stop_rlv_listen();
         if (CurrentUser != NULL_KEY) {
-            llRegionSayTo(CurrentUser, 0, "RLV not responding. Is RLV mode enabled?");
+            llRegionSayTo(CurrentUser, 0, "[" + PLUGIN_LABEL + "] RLV not responding. Is RLV mode enabled?");
+            return_to_root();
         }
-        show_main();
     }
 
     listen(integer channel, string name, key id, string message) {
