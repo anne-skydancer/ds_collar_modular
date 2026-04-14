@@ -204,15 +204,17 @@ Avatars with no ACL record are silently ignored regardless of channel.
 
 ### Configuring Chat
 
-**Changing the prefix:**
+**Changing the prefix** (unowned wearer or primary owner only):
 1. Touch collar → **Chat**
-2. Select **Prefix**
+2. Select **Set Prefix**
 3. Type your new prefix into local chat when prompted
 4. The new prefix is saved immediately
 
-**Enabling public-chat listening:**
+> Trustees cannot access the Chat settings menu. They can still use chat commands normally (e.g. `/1 an lock`).
+
+**Enabling public-chat listening** (trustees, unowned wearer, or primary owner):
 1. Touch collar → **Chat**
-2. Select **Public: OFF** to toggle it on
+2. Select **Toggle Public** to switch it on or off
 3. The collar will now also listen on channel 0
 
 > **Note:** Public-chat listening and public-access mode are independent settings. Enabling public-chat listening does not grant anyone extra permissions — ACL rules still apply.

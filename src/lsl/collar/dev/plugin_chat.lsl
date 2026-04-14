@@ -1,11 +1,14 @@
 /*--------------------
 PLUGIN: plugin_chat.lsl
 VERSION: 1.10
-REVISION: 0
+REVISION: 1
 PURPOSE: Configuration UI for kmod_chat — change command prefix and toggle
          public chat (channel 0) listening.
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
+- v1.1 rev 1: Restrict plugin entry to unowned wearer (ACL 4) and primary
+  owner (ACL 5) only. Trustees can use chat commands (kmod_chat) but cannot
+  open the configuration UI. Entry is gated at ui.menu.start with an ACL check.
 - v1.1 rev 0: Initial implementation. Shows current prefix and public-chat
   status; allows owner/trustee to change prefix via local chat input and
   toggle channel 0 listening on/off.
@@ -67,7 +70,6 @@ integer btn_allowed(string label) {
 
 register_self() {
     llLinksetDataWrite("acl.policycontext:" + PLUGIN_CONTEXT, llList2Json(JSON_OBJECT, [
-        "3", "Set Prefix,Toggle Public",
         "4", "Set Prefix,Toggle Public",
         "5", "Set Prefix,Toggle Public"
     ]));
@@ -337,8 +339,13 @@ default
             if (msg_type == "ui.menu.start") {
                 string context = llJsonGetValue(msg, ["context"]);
                 if (context != PLUGIN_CONTEXT) return;
+                integer req_acl = (integer)llJsonGetValue(msg, ["acl"]);
+                if (req_acl < 4) {
+                    llRegionSayTo(id, 0, "[Chat] Access denied.");
+                    return;
+                }
                 CurrentUser = id;
-                UserAcl = (integer)llJsonGetValue(msg, ["acl"]);
+                UserAcl = req_acl;
                 show_main();
             }
         }
