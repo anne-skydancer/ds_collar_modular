@@ -1,10 +1,16 @@
 /*--------------------
 MODULE: kmod_ui.lsl
 VERSION: 1.10
-REVISION: 4
+REVISION: 5
 PURPOSE: Session management, LSD policy filtering, and plugin list orchestration
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- v1.1 rev 5: Fix chat-driven plugin dispatch. handle_start now handles
+  plugin-specific contexts (e.g. "ui.core.chat") dispatched by kmod_chat.
+  Added dispatch_to_plugin() helper (extracted from handle_button_click).
+  handle_start guards against already-routed messages (have acl field) to
+  avoid re-entrancy. handle_acl_result routes plugin contexts to the plugin
+  instead of send_render_menu.
 - v1.1 rev 4: Namespace context strings. ROOT_CONTEXT → "ui.core.root",
   SOS_CONTEXT → "ui.sos.root", SOS_PREFIX → "ui.sos.". SOS plugins are
   now detected structurally by namespace prefix rather than flat sos_ prefix.
@@ -474,6 +480,28 @@ send_render_menu(key user, string menu_type) {
 
 /* -------------------- BUTTON HANDLING -------------------- */
 
+// Dispatch ui.menu.start to a specific plugin, with ACL from an existing session.
+// Policy is re-checked here (LSD read) to catch changes since session creation.
+dispatch_to_plugin(key user, string context, integer session_idx) {
+    integer user_acl = llList2Integer(SessionACLs, session_idx);
+    string policy = llLinksetDataRead("acl.policycontext:" + context);
+    if (policy == "") {
+        send_message(user, "Access denied.");
+        return;
+    }
+    string csv = llJsonGetValue(policy, [(string)user_acl]);
+    if (csv == JSON_INVALID) {
+        send_message(user, "Access denied.");
+        return;
+    }
+    llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
+        "type",    "ui.menu.start",
+        "context", context,
+        "user",    (string)user,
+        "acl",     user_acl
+    ]), user);
+}
+
 handle_button_click(key user, string button, string context) {
     integer session_idx = find_session_idx(user);
     if (session_idx == -1) {
@@ -516,32 +544,9 @@ handle_button_click(key user, string button, string context) {
 
     // Plugin button clicked - use context directly for fast lookup
     if (context != "") {
-        // Find plugin by context
         integer i = llListFindList(PluginContexts, [context]);
         if (i != -1) {
-            integer user_acl = llList2Integer(SessionACLs, session_idx);
-
-            // LSD policy filter — verify user still has access
-            string policy = llLinksetDataRead("acl.policycontext:" + context);
-            if (policy == "") {
-                send_message(user, "Access denied.");
-                return;
-            }
-            string csv = llJsonGetValue(policy, [(string)user_acl]);
-            if (csv == JSON_INVALID) {
-                send_message(user, "Access denied.");
-                return;
-            }
-
-            string msg = llList2Json(JSON_OBJECT, [
-                "type", "ui.menu.start",
-                "context", context,
-                "user", (string)user,
-                "acl", user_acl
-            ]);
-
-            llMessageLinked(LINK_SET, UI_BUS, msg, user);
-            return;
+            dispatch_to_plugin(user, context, session_idx);
         }
         return;
     }
@@ -612,11 +617,26 @@ handle_acl_result(string msg) {
     PendingAclAvatars = llDeleteSubList(PendingAclAvatars, idx, idx);
     PendingAclContexts = llDeleteSubList(PendingAclContexts, idx, idx);
 
-    create_session(avatar, level, is_blacklisted, requested_context);
-    send_render_menu(avatar, requested_context);
+    if (requested_context == ROOT_CONTEXT || requested_context == SOS_CONTEXT) {
+        create_session(avatar, level, is_blacklisted, requested_context);
+        send_render_menu(avatar, requested_context);
+    }
+    else {
+        // Plugin context from chat dispatch — create root session for navigation,
+        // then dispatch directly to the plugin.
+        create_session(avatar, level, is_blacklisted, ROOT_CONTEXT);
+        integer session_idx = find_session_idx(avatar);
+        if (session_idx != -1) {
+            dispatch_to_plugin(avatar, requested_context, session_idx);
+        }
+    }
 }
 
 handle_start(string msg, key user_key) {
+    // Messages with an acl field are already routed — destined for a plugin,
+    // not for kmod_ui to process again.
+    if (llJsonGetValue(msg, ["acl"]) != JSON_INVALID) return;
+
     if (llJsonGetValue(msg, ["context"]) == JSON_INVALID) {
         start_root_session(user_key);
         return;
@@ -633,6 +653,40 @@ handle_start(string msg, key user_key) {
         start_sos_session(user_key);
         return;
     }
+
+    // Plugin-specific context from kmod_chat dispatch.
+    integer pi = llListFindList(PluginContexts, [context]);
+    if (pi == -1) return;  // Unknown plugin
+
+    // Existing session — dispatch immediately using cached ACL.
+    integer session_idx = find_session_idx(user_key);
+    if (session_idx != -1) {
+        dispatch_to_plugin(user_key, context, session_idx);
+        return;
+    }
+
+    // LSD cache hit — create root session for navigation then dispatch.
+    string raw = llLinksetDataRead(LSD_ACL_CACHE_PREFIX + (string)user_key + LSD_ACL_CACHE_SUFFIX);
+    if (raw != "") {
+        integer sep = llSubStringIndex(raw, "|");
+        if (sep != -1) {
+            integer level = (integer)llGetSubString(raw, 0, sep - 1);
+            create_session(user_key, level, (level == ACL_BLACKLIST), ROOT_CONTEXT);
+            session_idx = find_session_idx(user_key);
+            if (session_idx != -1) dispatch_to_plugin(user_key, context, session_idx);
+            return;
+        }
+    }
+
+    // Cold miss — queue ACL query, store plugin context as pending.
+    integer pending_idx = find_pending_acl_idx(user_key);
+    if (pending_idx != -1) return;
+    PendingAclAvatars += [user_key];
+    PendingAclContexts += [context];
+    llMessageLinked(LINK_SET, AUTH_BUS, llList2Json(JSON_OBJECT, [
+        "type",   "auth.aclquery",
+        "avatar", (string)user_key
+    ]), NULL_KEY);
 }
 
 start_root_session(key user_key) {

@@ -1,11 +1,15 @@
 /*--------------------
 PLUGIN: plugin_chat.lsl
 VERSION: 1.10
-REVISION: 2
+REVISION: 3
 PURPOSE: Configuration UI for kmod_chat — change command prefix and toggle
          public chat (channel 0) listening.
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
+- v1.1 rev 3: Guard ui.menu.start handler against raw (unrouted) dispatches
+  from kmod_chat. Messages without an acl field are ignored; only messages
+  routed through kmod_ui (which adds the acl field) are processed. Fixes
+  spurious "Access denied" when chat commands were used.
 - v1.1 rev 2: Remove trustee (ACL 3) from Chat config entirely. Policy entry
   for ACL 3 dropped; ui.menu.start handler now rejects any caller with acl < 4
   before opening the menu.
@@ -341,6 +345,9 @@ default
             if (msg_type == "ui.menu.start") {
                 string context = llJsonGetValue(msg, ["context"]);
                 if (context != PLUGIN_CONTEXT) return;
+                // Ignore raw dispatches from kmod_chat (no acl field).
+                // Only process messages already routed through kmod_ui.
+                if (llJsonGetValue(msg, ["acl"]) == JSON_INVALID) return;
                 integer req_acl = (integer)llJsonGetValue(msg, ["acl"]);
                 if (req_acl < 4) {
                     llRegionSayTo(id, 0, "[Chat] Access denied.");
