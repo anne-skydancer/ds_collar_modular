@@ -1,10 +1,13 @@
 /*--------------------
 PLUGIN: plugin_maint.lsl
 VERSION: 1.10
-REVISION: 7
+REVISION: 8
 PURPOSE: Maintenance and utility functions for collar management
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
+- v1.1 rev 8: Fix Clear Leash confirmation dialog — wrong type "dialog_open"
+  should be "ui.dialog.open". kmod_dialogs ignored it so the dialog never
+  opened and the confirm button was never reachable.
 - v1.1 rev 7: Guard ui.menu.start against raw kmod_chat broadcasts (no acl
   field). Fixes duplicate dialogs when commands are typed in chat.
 - v1.1 rev 6: Switch Clear Leash to force_release and add confirmation dialog.
@@ -416,7 +419,7 @@ show_clear_leash_confirm() {
     ];
 
     llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
-        "type", "dialog_open",
+        "type", "ui.dialog.open",
         "session_id", SessionId,
         "user", (string)CurrentUser,
         "title", "Clear Leash",
