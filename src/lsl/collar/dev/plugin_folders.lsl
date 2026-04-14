@@ -1,12 +1,16 @@
 /*--------------------
 PLUGIN: plugin_folders.lsl
 VERSION: 1.10
-REVISION: 5
+REVISION: 6
 PURPOSE: Manage RLV shared folders — enumerate, attach, detach, and lock #RLV subfolders
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility.
              Uses @getinv RLV command to enumerate actual #RLV subfolders in real-time;
              no text input required. Only the locked-folder list is persisted.
 CHANGES:
+- v1.10 rev 6: Folder number buttons use same slot-mapping as plugin_animate —
+  items read top-to-bottom, left-to-right. Full 12-slot grid pre-filled with
+  spaces; nav at slots 0-2, folders mapped into slots 9-11 (row4), 6-8 (row3),
+  3-5 (row2).
 - v1.10 rev 5: Folder list uses numbered body text with [+]/[-]/[ ] worn
   indicators and * for locked; buttons are plain numbers 1-9. Worn status
   also shown in the per-folder action sub-menu.
@@ -231,7 +235,10 @@ show_main() {
 }
 
 // Shows a paginated numbered list of discovered #RLV folders in the body.
-// Buttons are 1..N; nav row [Back][<<][>] anchors the bottom.
+// Buttons are 1..N mapped top-to-bottom, left-to-right (same layout as
+// plugin_animate). Nav row [Back][<<][>>] anchors the bottom (slots 0-2).
+// Folder number buttons fill slots top-down: row4=9-11, row3=6-8, row2=3-5.
+// Unused slots are padded with a single space.
 show_folder_pick(integer page) {
     integer total = llGetListLength(DiscoveredFolders);
     if (total == 0) {
@@ -255,11 +262,20 @@ show_folder_pick(integer page) {
                   "[+]=worn  [-]=partial  *=locked\n" +
                   "Page " + (string)(page + 1) + " of " + (string)(max_page + 1) + "\n\n";
 
-    // Nav buttons anchor the bottom row; number buttons fill the rows above
-    list button_data = [btn("Back", "back"), btn("<<", "prev"), btn(">>", "next")];
+    // Slot order for top-to-bottom visual reading (row4 first, then row3, row2)
+    list target_slots = [9, 10, 11, 6, 7, 8, 3, 4, 5];
 
-    integer i = start;
+    // Initialise full 12-slot grid: nav at bottom, spaces in folder slots
+    list final_buttons = [
+        btn("Back", "back"), btn("<<", "prev"), btn(">>", "next"),
+        btn(" ", "noop"), btn(" ", "noop"), btn(" ", "noop"),
+        btn(" ", "noop"), btn(" ", "noop"), btn(" ", "noop"),
+        btn(" ", "noop"), btn(" ", "noop"), btn(" ", "noop")
+    ];
+
+    integer i        = start;
     integer item_num = 1;
+    integer slot_idx = 0;
     while (i < end_idx) {
         string folder_name = llList2String(DiscoveredFolders, i);
         string worn        = llList2String(WornStates, i);
@@ -270,8 +286,14 @@ show_folder_pick(integer page) {
         string lock_mark = "";
         if (llListFindList(LockedNames, [folder_name]) != -1) lock_mark = "*";
         body += (string)item_num + ". " + worn_ind + " " + folder_name + lock_mark + "\n";
-        button_data += [btn((string)item_num, "pick:" + (string)i)];
+
+        integer target_slot = llList2Integer(target_slots, slot_idx);
+        final_buttons = llListReplaceList(final_buttons,
+            [btn((string)item_num, "pick:" + (string)i)],
+            target_slot, target_slot);
+
         item_num += 1;
+        slot_idx += 1;
         i += 1;
     }
 
@@ -281,7 +303,7 @@ show_folder_pick(integer page) {
         "user",        (string)CurrentUser,
         "title",       PLUGIN_LABEL,
         "body",        body,
-        "button_data", llList2Json(JSON_ARRAY, button_data),
+        "button_data", llList2Json(JSON_ARRAY, final_buttons),
         "timeout",     60
     ]), NULL_KEY);
 }
