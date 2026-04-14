@@ -7,8 +7,7 @@ ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibilit
              Uses @getinv RLV command to enumerate actual #RLV subfolders in real-time;
              no text input required. Only the locked-folder list is persisted.
 CHANGES:
-- v2.0 rev 0: Complete redesign. Replaced chat-input approach with live @getinv
-  enumeration. Folder buttons are built from the wearer's actual #RLV inventory.
+- v1.10 rev 0: Folder buttons are built from the wearer's actual #RLV inventory.
   Removed FolderNames persistence; only LockedNames is stored. Supports Attach,
   Detach, Lock, and Unlock actions via paginated folder-picker dialog.
 --------------------*/
