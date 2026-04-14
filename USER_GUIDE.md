@@ -10,15 +10,16 @@ Welcome to the D/s Collar system! This guide will help you understand and use al
 2. [Quick Start Guide](#quick-start-guide)
 3. [Understanding Access Levels](#understanding-access-levels)
 4. [Basic Operations](#basic-operations)
-5. [Owner & Access Management](#owner--access-management)
-6. [Leash System](#leash-system)
-7. [RLV Features](#rlv-features)
-8. [Animations & Customization](#animations--customization)
-9. [Safety & Emergency Features](#safety--emergency-features)
-10. [Control HUD (Remote Control)](#control-hud-remote-control)
-11. [Configuration & Settings](#configuration--settings)
-12. [Troubleshooting](#troubleshooting)
-13. [FAQ](#faq)
+5. [Chat Commands](#chat-commands)
+6. [Owner & Access Management](#owner--access-management)
+7. [Leash System](#leash-system)
+8. [RLV Features](#rlv-features)
+9. [Animations & Customization](#animations--customization)
+10. [Safety & Emergency Features](#safety--emergency-features)
+11. [Control HUD (Remote Control)](#control-hud-remote-control)
+12. [Configuration & Settings](#configuration--settings)
+13. [Troubleshooting](#troubleshooting)
+14. [FAQ](#faq)
 
 ---
 
@@ -140,6 +141,81 @@ Main Menu
 ├── Maintenance    (View settings)
 └── SOS            (Emergency menu - long touch)
 ```
+
+---
+
+## Chat Commands
+
+The collar responds to prefixed commands typed in local chat, giving you a quick text-based alternative to touch menus. A chat command opens the exact same menu as navigating there by touch — the collar makes no distinction between the two.
+
+### Your Command Prefix
+
+When the collar first starts up it automatically derives a default prefix from the **first two characters of the wearer's username**:
+
+| Username | Default prefix |
+|----------|----------------|
+| `anne.skydancer` | `an` |
+| `john.resident` | `jo` |
+| `phoenix` | `ph` |
+
+The prefix is saved and can be changed any time through the Chat plugin menu.
+
+### Sending Commands
+
+**Channel 1 (private — always active):**
+```
+/1 an menu
+/1 an lock
+/1 an leash
+```
+
+**Channel 0 (public chat — disabled by default):**
+```
+an menu
+an lock
+```
+
+The collar always listens on channel 1 while a prefix is set. Public chat (channel 0) must be explicitly enabled in the Chat plugin.
+
+### Available Commands
+
+Any plugin's display label works as a command (case-insensitive). The alias table is built automatically as each plugin registers at startup, so no configuration is needed:
+
+| Command | Opens |
+|---------|-------|
+| `menu` | Main collar menu |
+| `lock` | Lock plugin |
+| `leash` | Leash plugin |
+| `animate` | Animation menu |
+| `bell` | Bell settings |
+| `restrict` | RLV restrictions |
+| `access` | Access management |
+| `status` | Status display |
+| `chat` | Chat settings |
+
+Full internal context strings also work as a fallback (e.g. `/1 an ui.core.lock`). This is useful for plugins not shown in the table above or for scripting.
+
+### Who Can Use Chat Commands?
+
+- **Collar wearer** — always authorised, on both channels.
+- **Other avatars** — authorised only if they have a cached ACL level of 1 (Public) or higher. On public chat (channel 0) this also requires public chat to be enabled.
+
+Avatars with no ACL record are silently ignored regardless of channel.
+
+### Configuring Chat
+
+**Changing the prefix:**
+1. Touch collar → **Chat**
+2. Select **Prefix**
+3. Type your new prefix into local chat when prompted
+4. The new prefix is saved immediately
+
+**Enabling public-chat listening:**
+1. Touch collar → **Chat**
+2. Select **Public: OFF** to toggle it on
+3. The collar will now also listen on channel 0
+
+> **Note:** Public-chat listening and public-access mode are independent settings. Enabling public-chat listening does not grant anyone extra permissions — ACL rules still apply.
 
 ---
 
