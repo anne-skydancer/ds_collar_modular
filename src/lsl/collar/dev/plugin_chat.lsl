@@ -128,7 +128,6 @@ apply_settings_sync() {
 
 persist_prefix(string new_prefix) {
     ChatPrefix = new_prefix;
-    llLinksetDataWrite(KEY_PREFIX, new_prefix);
     llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
         "type", "settings.set",
         "key", KEY_PREFIX,
@@ -139,7 +138,6 @@ persist_prefix(string new_prefix) {
 persist_public_chat(integer enabled) {
     PublicChat = enabled;
     string val = (string)enabled;
-    llLinksetDataWrite(KEY_PUBLIC_CHAT, val);
     llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
         "type", "settings.set",
         "key", KEY_PUBLIC_CHAT,
