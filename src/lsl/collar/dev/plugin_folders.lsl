@@ -1,12 +1,16 @@
 /*--------------------
 PLUGIN: plugin_folders.lsl
 VERSION: 1.10
-REVISION: 6
+REVISION: 7
 PURPOSE: Manage RLV shared folders — enumerate, attach, detach, and lock #RLV subfolders
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility.
              Uses @getinv RLV command to enumerate actual #RLV subfolders in real-time;
              no text input required. Only the locked-folder list is persisted.
 CHANGES:
+- v1.10 rev 7: Fix "all buttons must have label strings" — eliminated space
+  padding entirely. Button list is now built to exact size using a row-reversal
+  algorithm: full rows appended bottom-to-top, then the (possibly partial) top
+  row last, giving correct top-to-bottom visual reading with no empty slots.
 - v1.10 rev 6: Folder number buttons use same slot-mapping as plugin_animate —
   items read top-to-bottom, left-to-right. Full 12-slot grid pre-filled with
   spaces; nav at slots 0-2, folders mapped into slots 9-11 (row4), 6-8 (row3),
@@ -235,10 +239,10 @@ show_main() {
 }
 
 // Shows a paginated numbered list of discovered #RLV folders in the body.
-// Buttons are 1..N mapped top-to-bottom, left-to-right (same layout as
-// plugin_animate). Nav row [Back][<<][>>] anchors the bottom (slots 0-2).
-// Folder number buttons fill slots top-down: row4=9-11, row3=6-8, row2=3-5.
-// Unused slots are padded with a single space.
+// Buttons are 1..N mapped top-to-bottom, left-to-right with no padding.
+// Algorithm: the top row may be partial (1 or 2 items); all rows below are
+// full (3 items). llDialog fills bottom-left to top-right, so we append
+// bottom rows first and the (partial) top row last.
 show_folder_pick(integer page) {
     integer total = llGetListLength(DiscoveredFolders);
     if (total == 0) {
@@ -257,45 +261,52 @@ show_folder_pick(integer page) {
     integer start   = page * PAGE_SIZE;
     integer end_idx = start + PAGE_SIZE;
     if (end_idx > total) end_idx = total;
+    integer count = end_idx - start;
 
+    // Build body text (natural 1..N order, top-to-bottom)
     string body = "Tap a number to manage a folder.\n" +
                   "[+]=worn  [-]=partial  *=locked\n" +
                   "Page " + (string)(page + 1) + " of " + (string)(max_page + 1) + "\n\n";
 
-    // Slot order for top-to-bottom visual reading (row4 first, then row3, row2)
-    list target_slots = [9, 10, 11, 6, 7, 8, 3, 4, 5];
-
-    // Initialise full 12-slot grid: nav at bottom, spaces in folder slots
-    list final_buttons = [
-        btn("Back", "back"), btn("<<", "prev"), btn(">>", "next"),
-        btn(" ", "noop"), btn(" ", "noop"), btn(" ", "noop"),
-        btn(" ", "noop"), btn(" ", "noop"), btn(" ", "noop"),
-        btn(" ", "noop"), btn(" ", "noop"), btn(" ", "noop")
-    ];
-
-    integer i        = start;
-    integer item_num = 1;
-    integer slot_idx = 0;
-    while (i < end_idx) {
-        string folder_name = llList2String(DiscoveredFolders, i);
-        string worn        = llList2String(WornStates, i);
+    integer k = 0;
+    while (k < count) {
+        string folder_name = llList2String(DiscoveredFolders, start + k);
+        string worn        = llList2String(WornStates, start + k);
         string worn_ind;
         if (worn == "1")      worn_ind = "[+]";
         else if (worn == "2") worn_ind = "[-]";
         else                  worn_ind = "[ ]";
         string lock_mark = "";
         if (llListFindList(LockedNames, [folder_name]) != -1) lock_mark = "*";
-        body += (string)item_num + ". " + worn_ind + " " + folder_name + lock_mark + "\n";
-
-        integer target_slot = llList2Integer(target_slots, slot_idx);
-        final_buttons = llListReplaceList(final_buttons,
-            [btn((string)item_num, "pick:" + (string)i)],
-            target_slot, target_slot);
-
-        item_num += 1;
-        slot_idx += 1;
-        i += 1;
+        body += (string)(k + 1) + ". " + worn_ind + " " + folder_name + lock_mark + "\n";
+        k += 1;
     }
+
+    // Compute rows. Top row may be partial; full rows are below it.
+    integer num_rows  = (count + 2) / 3;          // ceiling division
+    integer top_count = count - (num_rows - 1) * 3; // items in top row (1-3)
+
+    // Append full rows bottom-to-top (skipping the top row)
+    list folder_buttons = [];
+    integer r = num_rows - 1;
+    while (r >= 1) {
+        integer row_start = top_count + (r - 1) * 3;
+        integer ci = 0;
+        while (ci < 3) {
+            integer item_idx = row_start + ci;
+            folder_buttons += [btn((string)(item_idx + 1), "pick:" + (string)(start + item_idx))];
+            ci += 1;
+        }
+        r -= 1;
+    }
+    // Append top (partial) row last
+    integer ti = 0;
+    while (ti < top_count) {
+        folder_buttons += [btn((string)(ti + 1), "pick:" + (string)(start + ti))];
+        ti += 1;
+    }
+
+    list button_data = [btn("Back", "back"), btn("<<", "prev"), btn(">>", "next")] + folder_buttons;
 
     llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
         "type",        "ui.dialog.open",
@@ -303,7 +314,7 @@ show_folder_pick(integer page) {
         "user",        (string)CurrentUser,
         "title",       PLUGIN_LABEL,
         "body",        body,
-        "button_data", llList2Json(JSON_ARRAY, final_buttons),
+        "button_data", llList2Json(JSON_ARRAY, button_data),
         "timeout",     60
     ]), NULL_KEY);
 }
