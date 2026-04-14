@@ -1,13 +1,30 @@
 /*--------------------
 MODULE: kmod_chat.lsl
 VERSION: 1.10
-REVISION: 3
+REVISION: 8
 PURPOSE: Local chat command receiver. Listens on channel 1 (always) and
          optionally channel 0 (public chat) for prefixed commands from
          authorised speakers. Dispatches matching commands to UI_BUS so
          plugins receive them identically to menu-driven interactions.
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- v1.1 rev 8: Re-enable PublicChat by default. The command_is_known() guard
+  makes channel 0 safe; natural words are rejected before dispatch.
+- v1.1 rev 7: Remove mandatory space after prefix. command_is_known() now
+  guards both channels, so "anmenu" and "an menu" are equivalent. Natural
+  words ("and", "an interesting") are rejected on both channels because they
+  don't match any alias or dot-namespaced context.
+- v1.1 rev 6: Validate channel 0 commands against the alias table and plugin
+  context list before dispatching. Natural words that happen to follow the
+  prefix (e.g. "an interesting idea") are silently ignored on public chat.
+  Channel 1 remains unrestricted since it is a private channel.
+- v1.1 rev 5: Revert PublicChat default to FALSE. A short 2-char prefix
+  (e.g. "an") collides with natural English words on public chat, causing
+  accidental triggers. Channel 0 listening remains available as an opt-in
+  via the Chat plugin menu.
+- v1.1 rev 4: Require a space after the prefix in strip_prefix. Previously
+  any word starting with the prefix (e.g. "and") would match "an" and
+  trigger a command. Format is now strictly "<prefix> <command>".
 - v1.1 rev 3: Broadcast kernel.registernow on state_entry so kmod_ui and all
   plugins re-emit kernel.register, ensuring CommandAliases is populated even
   when kmod_chat starts after kmod_ui. Without this, 'an menu' failed because
@@ -119,7 +136,9 @@ apply_settings_sync() {
 /* -------------------- COMMAND DISPATCH -------------------- */
 
 // Strip prefix from message, trim whitespace, return remainder.
-// Returns "" if message does not start with prefix.
+// Prefix may be immediately followed by the command ("anmenu") or separated
+// by whitespace ("an menu") — both forms are accepted.
+// Returns "" if message does not start with the prefix.
 string strip_prefix(string message) {
     integer prefix_len = llStringLength(ChatPrefix);
     if (llStringLength(message) <= prefix_len) return "";
@@ -140,6 +159,17 @@ register_alias(string label, string context) {
         // Update in place (stride 2, alias at idx, context at idx+1)
         CommandAliases = llListReplaceList(CommandAliases, [alias, context], idx, idx + 1);
     }
+}
+
+// Returns TRUE if command is a known alias or a dot-namespaced context string.
+// Used to reject natural-language false positives on channel 0.
+integer command_is_known(string command) {
+    string lower = llToLower(command);
+    // Exact alias match
+    if (llListFindList(CommandAliases, [lower]) != -1) return TRUE;
+    // Full context passthrough: must contain a dot (namespaced)
+    if (llSubStringIndex(command, ".") != -1) return TRUE;
+    return FALSE;
 }
 
 // Resolve an alias to a full context string.
@@ -222,6 +252,10 @@ default
         // Strip prefix
         string command = strip_prefix(message);
         if (command == "") return;
+
+        // Only act on recognised commands (known alias or dot-namespaced context).
+        // This rejects natural words on both channels (e.g. "and", "an interesting").
+        if (!command_is_known(command)) return;
 
         // Validate speaker authorisation
         if (!speaker_authorised(id, channel)) return;

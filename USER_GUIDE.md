@@ -169,11 +169,13 @@ The prefix is saved and can be changed any time through the Chat plugin menu.
 /1 an leash
 ```
 
-**Channel 0 (public chat — disabled by default):**
+**Channel 0 (public chat — on by default):**
 ```
 an menu
-an lock
+anmenu
 ```
+
+Both forms are accepted — with or without a space between prefix and command. The collar only responds to recognised commands, so ordinary sentences that happen to start with your prefix are silently ignored.
 
 The collar always listens on channel 1 while a prefix is set. Public chat (channel 0) must be explicitly enabled in the Chat plugin.
 
