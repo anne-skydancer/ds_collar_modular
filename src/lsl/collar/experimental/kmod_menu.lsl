@@ -9,7 +9,7 @@ CHANGES:
 --------------------*/
 
 
-/* -------------------- CONSOLIDATED ABI -------------------- */
+/* -------------------- CONSOLIDATED ISP -------------------- */
 integer UI_BUS = 900;
 integer DIALOG_BUS = 950;
 

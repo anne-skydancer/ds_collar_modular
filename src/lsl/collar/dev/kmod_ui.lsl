@@ -30,7 +30,7 @@ CHANGES:
 --------------------*/
 
 
-/* -------------------- CONSOLIDATED ABI -------------------- */
+/* -------------------- CONSOLIDATED ISP -------------------- */
 integer KERNEL_LIFECYCLE = 500;
 integer AUTH_BUS = 700;
 integer UI_BUS = 900;
@@ -785,6 +785,14 @@ default
         PluginStateContexts = [];
         PluginStateValues = [];
         
+        // Advertise root menu context so kmod_chat can build a 'menu' alias
+        llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
+            "type",    "kernel.register",
+            "context", ROOT_CONTEXT,
+            "label",   "Menu",
+            "script",  llGetScriptName()
+        ]), NULL_KEY);
+
         // Request plugin list (kernel defers response during active registration)
         string request = llList2Json(JSON_OBJECT, [
             "type", "kernel.pluginlistrequest"

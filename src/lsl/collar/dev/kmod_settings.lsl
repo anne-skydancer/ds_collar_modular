@@ -12,7 +12,7 @@ ARCHITECTURE: Two-mode access model. Single-owner mode uses scalar keys
               resolved asynchronously via llRequestDisplayName.
 CHANGES:
 - v1.1 rev 4: Namespace internal message type strings (e.g. "set" →
-  "settings.set", "settings_sync" → "settings.sync") for ABI clarity.
+  "settings.set", "settings_sync" → "settings.sync") for ISP clarity.
 - v1.1 rev 3: Replace JSON object owner/trustee storage with explicit
   two-mode flat scheme (scalars for single-owner, parallel CSVs for
   multi-owner). Async display name resolution. access.isowned = 0
@@ -30,7 +30,7 @@ CHANGES:
 --------------------*/
 
 
-/* -------------------- CONSOLIDATED ABI -------------------- */
+/* -------------------- CONSOLIDATED ISP -------------------- */
 integer KERNEL_LIFECYCLE = 500;
 integer SETTINGS_BUS = 800;
 

@@ -9,7 +9,7 @@ CHANGES:
 --------------------*/
 
 
-/* -------------------- CONSOLIDATED ABI -------------------- */
+/* -------------------- CONSOLIDATED ISP -------------------- */
 integer KERNEL_LIFECYCLE = 500;
 integer UI_BUS = 900;
 

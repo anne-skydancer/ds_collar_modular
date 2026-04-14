@@ -20,7 +20,7 @@ CHANGES:
 --------------------*/
 
 
-/* -------------------- ABI CHANNELS -------------------- */
+/* -------------------- ISP CHANNELS -------------------- */
 integer KERNEL_LIFECYCLE = 500;
 integer SETTINGS_BUS = 800;
 integer UI_BUS = 900;

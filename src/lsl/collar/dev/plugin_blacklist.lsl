@@ -6,7 +6,7 @@ PURPOSE: Blacklist management with sensor-based avatar selection
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
 - v1.1 rev 5: Namespace internal message type strings (kernel.*, settings.*,
-  ui.*) for consistency with consolidated ABI naming conventions.
+  ui.*) for consistency with CONSOLIDATED ISP naming conventions.
 - v1.1 rev 4: Honor soft_reset / soft_reset_all from KERNEL_LIFECYCLE so
   factory reset clears cached blacklist state.
 - v1.1 rev 3: Migrate to flat CSV blacklist storage. Use new blacklist_add /
@@ -20,7 +20,7 @@ CHANGES:
 --------------------*/
 
 
-/* -------------------- CONSOLIDATED ABI -------------------- */
+/* -------------------- CONSOLIDATED ISP -------------------- */
 integer KERNEL_LIFECYCLE = 500;
 integer SETTINGS_BUS = 800;
 integer UI_BUS = 900;
