@@ -1,10 +1,12 @@
 /*--------------------
 PLUGIN: plugin_status.lsl
 VERSION: 1.10
-REVISION: 6
+REVISION: 7
 PURPOSE: Read-only collar status display for owners and observers
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
+- v1.1 rev 7: Add chat prefix and channel to status report (reads
+  chat.prefix, chat.public, and chat.channel from LSD).
 - v1.1 rev 6: Guard ui.menu.start against raw kmod_chat broadcasts (no acl
   field). Fixes duplicate dialogs when commands are typed in chat.
 - v1.1 rev 5: Namespace internal message type strings (kernel.*, ui.*, settings.*).
@@ -53,6 +55,9 @@ string KEY_TRUSTEE_HONORIFICS = "access.trusteehonorifics";
 string KEY_PUBLIC_ACCESS     = "public.mode";
 string KEY_LOCKED            = "lock.locked";
 string KEY_TPE_MODE          = "tpe.mode";
+string KEY_CHAT_PREFIX       = "chat.prefix";
+string KEY_CHAT_PUBLIC       = "chat.public";
+string KEY_CHAT_CHAN         = "chat.channel";
 
 /* -------------------- STATE -------------------- */
 // Session management
@@ -191,6 +196,18 @@ string build_status_report() {
     // TPE mode
     if ((integer)llLinksetDataRead(KEY_TPE_MODE)) status_text += "TPE Mode: On\n";
     else                                           status_text += "TPE Mode: Off\n";
+
+    // Chat commands
+    string chat_prefix = llLinksetDataRead(KEY_CHAT_PREFIX);
+    if (chat_prefix == "") chat_prefix = "(auto)";
+    string chat_chan_raw = llLinksetDataRead(KEY_CHAT_CHAN);
+    string chat_chan;
+    if (chat_chan_raw == "") chat_chan = "1";
+    else chat_chan = chat_chan_raw;
+    string chat_public_label;
+    if ((integer)llLinksetDataRead(KEY_CHAT_PUBLIC)) chat_public_label = "on";
+    else chat_public_label = "off";
+    status_text += "Chat prefix: " + chat_prefix + "  channel: " + chat_chan + "  public: " + chat_public_label + "\n";
 
     return status_text;
 }
