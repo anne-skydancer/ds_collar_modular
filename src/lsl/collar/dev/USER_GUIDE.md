@@ -56,7 +56,7 @@ The collar uses a modular architecture with a central kernel and plugins, making
 1. **Wear the collar** - Attach it to your avatar
 2. **Touch the collar** - This opens the main menu
 3. **Explore available options** - You'll see menus based on your access level
-4. **Long-touch (1.5+ seconds)** - Access emergency SOS menu at any time
+4. **Long-touch (1.5+ seconds)** - Access emergency SOS menu (only available in TPE mode; owned wearers not in TPE have normal collar access instead)
 
 **Note:** The collar has a built-in RLV relay that defaults to **ASK mode**. When RLV-enabled furniture or objects try to control you, you'll be prompted to accept or deny. You can change this in **RLV Relay** → **Mode**.
 
@@ -85,14 +85,15 @@ The collar controls who can do what based on roles and relationships:
 **Trustee**
 - Trusted users with elevated permissions
 - Can leash, apply RLV restrictions, use animations
-- Cannot change ownership or add/remove other trustees
+- Cannot change ownership, but can add or remove other trustees
 - Set by owner
 
 **Collar Wearer (When Owned)**
-- Can use personal features like animations and bell
+- Can use personal features like animations
 - Limited access to settings
 - Can view status
-- Can use emergency SOS menu (always available)
+
+- **Note:** SOS emergency menu via long-touch is **not** available to owned wearers in normal operation. It is only ever available for wearers in TPE mode (no access state).
 
 **Collar Wearer (When Unowned)**
 - Full self-control
@@ -115,14 +116,14 @@ The collar controls who can do what based on roles and relationships:
 
 **Regular Touch:** Touch the collar once to open the main menu. You'll see all options you have permission to access.
 
-**Long Touch (Emergency):** Touch and hold the collar for 1.5+ seconds to access the emergency SOS menu. This works even when you have no normal access.
+**Long Touch (SOS):** Touch and hold the collar for 1.5+ seconds to trigger a SOS session. This is specifically designed for wearers in **TPE mode** (who have no normal collar access). Owned wearers not in TPE mode have normal collar access and the SOS options will not be available to them via long-touch.
 
 ### Navigating Menus
 
 - **Menu Buttons:** Click any button to select that option
 - **<< and >>:** Navigation arrows for multi-page menus
-- **↩ BACK:** Return to previous menu
-- **✗ CLOSE:** Close all menus
+- **Back:** Return to previous menu
+- **Close:** Close all menus
 - **Timeout:** Menus automatically close after 60 seconds of inactivity
 
 ### Menu Structure (assuming a D/s Collar installation with all plugins installed)
@@ -161,9 +162,13 @@ Main Menu (alphabetical order)
 4. Select the new owner from the list
 5. The selected person receives a confirmation dialog
 6. They click **Yes** to accept, then choose their honorific
-7. Ownership is established
+7. The wearer then receives a final confirmation dialog asking them to submit
+8. Wearer clicks **Yes** to confirm
+9. Ownership is established
 
 **Important:** Once a primary owner is set, the wearer loses the ability to change owners.
+
+**Note:** Ownership may be set without the need of recurring to the collar interface through the settings notecard. Refer to the settings notecard section for more information.
 
 ### Releasing Ownership
 
@@ -181,7 +186,7 @@ Main Menu (alphabetical order)
 - Enabling runaway requires no consent (owner decision only)
 - When available: Touch collar → **Access** → **Runaway** (if button shown)
 - Requires confirmation before executing
-- **Note:** Runaway is only available in single-owner mode. In multi-owner mode, the Runaway button is hidden.
+- **Note:** Runaway is only available in single-owner mode. In multi-owner mode, this functionality is disabled.
 
 ### Transferring Ownership
 
@@ -218,10 +223,11 @@ The collar supports multiple owners sharing equal owner access.
 - Add `multi_owner_mode=1` to your settings notecard
 - Cannot be changed through collar menus - this is intentional for stability
 
-**Adding Additional Owners:**
-- Use the **Access** menu to add owners (they receive full owner access)
+**Managing Owners in Multi-Owner Mode:**
+- Owner lists are managed **exclusively via the settings notecard** (`access.owneruuids`, `access.ownerhonorifics`)
+- All owner-editing buttons in the **Access** menu are hidden in multi-owner mode
 - All owners have equal control
-- Any owner can add/remove other owners
+- Trustee management (add/remove trustees) remains available via the **Access** menu
 
 ### Managing the Blacklist
 
@@ -240,7 +246,6 @@ Blacklisted users (ACL -1) are completely blocked from collar interaction.
 
 **Viewing Blacklist Count:**
 - The blacklist main menu displays the count of currently blacklisted users
-- There is no separate "List" button; the count is shown in the menu body
 
 ---
 
@@ -260,7 +265,7 @@ Leash the wearer to follow another avatar.
 
 **To Unleash:**
 1. Touch collar → **Leash** → **Unclip**
-2. Or: Wearer uses SOS menu → **Unleash**
+2. Or: If in TPE mode — long-touch → **Unleash** via SOS menu
 
 **Features:**
 - Automatic follow mechanics
@@ -315,8 +320,8 @@ Leash wearer to a fixed object or position.
 
 The collar supports multiple leashing protocols for compatibility:
 
-- **D/s Holder** - Native D/s collar holder protocol
-- **OpenCollar 8.x** - Compatible with OpenCollar holders
+- Native D/s collar holder and
+- OpenCollar holders
 Both modes support the Lockmeister chain protocol.
 
 ### Who Can Leash?
@@ -401,7 +406,7 @@ RLV Restrictions directly limit what the wearer can do in Second Life.
 
 **Clearing All Restrictions:**
 - Touch collar → **Restrict** → **Clear All**
-- Or use SOS menu → **Clear RLV**
+- Or if in TPE mode — long-touch → **Clear RLV** via SOS menu
 
 ### RLV Exceptions
 
@@ -459,19 +464,17 @@ The collar bell provides visual and audio feedback for movement.
 
 **Bell Controls:**
 1. Touch collar → **Bell**
-2. Available options:
+2. Available options (available to Trustees, an unowned wearer, or the primary owner):
 
 **Show/Hide Bell:**
-- **Show** - Bell visible on collar
-- **Hide** - Bell invisible
+- **Show: Y** / **Show: N** - Toggle button; shows or hides the bell prim
 
 **Bell Sound:**
-- **Sound On** - Jingle plays on movement
-- **Sound Off** - Silent operation
+- **Sound: On** / **Sound: Off** - Toggle button; enables or silences the jingle
 
 **Volume Control:**
-- Adjustable from 0% to 100% in 10% increments
-- Select **Volume** → Choose level
+- **Volume +** - Increase volume one step
+- **Volume -** - Decrease volume one step
 - Only affects bell sound, not other collar sounds
 
 **Bell Settings Persist:**
@@ -483,12 +486,13 @@ All bell preferences are saved and restored after logout/login.
 
 ### SOS Emergency Menu
 
-**The most important safety feature of the collar.**
+**The emergency escape hatch for TPE-mode wearers.**
 
-**Accessing SOS Menu:**
+The SOS menu is specifically designed for wearers in **TPE mode** (ACL level 0 — no normal collar access). Owned wearers not in TPE have full collar access and can use the regular menus to unleash, clear restrictions, etc. The SOS options simply do not appear for them.
+
+**Accessing SOS Menu (TPE wearers only):**
 1. **Long-touch** the collar (hold for 1.5+ seconds)
-2. SOS menu appears **even if you have no normal collar access**
-3. Available at all times, cannot be disabled
+2. SOS options appear
 
 **SOS Menu Options:**
 
@@ -565,29 +569,28 @@ Controls whether strangers can interact with collar.
 TPE mode gives complete control to the owner by removing wearer's collar access.
 
 **Enabling TPE (Owner):**
-1. Touch collar → **TPE** → **Enable**
-2. Wearer receives confirmation dialog: "Accept TPE mode? You will have no collar access."
-3. Wearer must click **Accept**
+1. Touch collar → **TPE** (the button toggles; click it to enable)
+2. Wearer receives a consent dialog explaining they will relinquish all collar control
+3. Wearer must click **Yes** to consent
 4. Wearer loses all normal collar access
 5. Wearer receives notification: "TPE mode enabled. You have relinquished collar control."
 
 **Disabling TPE (Owner):**
-1. Touch collar → **TPE** → **Disable**
+1. Touch collar → **TPE** (click the toggle button again to disable)
 2. No wearer confirmation required - owner decision only
-3. Wearer returns to normal owned status
+3. Wearer returns to normal operation status
 4. Wearer receives notification: "Your collar access has been restored."
 
 **Important Notes:**
-- **Wearer always retains SOS menu access** (long-touch)
-- Only the Owner can enable/disable TPE
-- TPE state persists across logins
-- Use responsibly with trusted partners
+- **Wearers in TPE mode retain SOS menu access** through long-touch.
+- Only the Owner can enable or disable TPE, and TPE is only available when there is at least one primary owner available.
+- Use TPE responsibly, and only with trusted partners
 
 ---
 
 ## Control HUD (Remote Control)
 
-The D/s Collar Control HUD allows owners/trustees to control the collar from a distance.
+The D/s Collar Control HUD allows owners/trustees to control the collar without relying on touching it directly.
 
 ### Setting Up the HUD
 
@@ -780,7 +783,7 @@ default {
 1. Check scripts are running (Edit object → Contents → Scripts not in "Not Running" state)
 2. Reset scripts: Right-click → Reset Scripts
 3. Check you're within touch range
-4. Try long-touch for SOS menu
+4. If in TPE mode, long-touch for SOS menu; otherwise check script errors
 
 #### Menu Buttons Not Working
 **Symptoms:** Clicking menu buttons has no effect.
@@ -815,8 +818,8 @@ default {
 
 **Solutions:**
 1. Check if TPE mode is enabled (removes collar access)
-2. Use SOS menu (long-touch) to check status
-3. If TPE enabled, contact owner to disable
+2. If TPE is enabled: long-touch to access SOS menu, then contact your owner to disable TPE
+3. If not in TPE mode, you should still have normal access — check for script errors
 4. Check you're not blacklisted (unlikely but possible)
 
 #### Settings Not Saving
@@ -863,8 +866,10 @@ default {
 #### "Invalid UUID"
 - Avatar UUID format incorrect in settings
 - Verify UUID format: `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`
-- For owner/trustee keys, ensure valid JSON object format: `{"uuid": "honorific"}`
-- For blacklist, use bracket format: `[uuid1, uuid2]`
+- Owner UUID uses plain scalar: `access.owner = xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`
+- Multiple trustees/owners use CSV format: `access.trusteeuuids = uuid1,uuid2`
+- Blacklist uses CSV format: `blacklist.blklistuuid = uuid1,uuid2`
+- Do **not** use JSON object or array notation — the parser expects plain scalars and CSVs
 - Check for typos in settings notecard
 
 ### Performance Issues
@@ -909,13 +914,13 @@ A: No. Basic features (owner management, leash, animations, bell) work without R
 A: Yes. The collar is a standard Second Life prim object. You can texture it, resize it, and make it invisible. The scripts work independently of appearance.
 
 **Q: How many plugins can I add?**
-A: The collar supports unlimited plugins within Second Life's script limits (typically 64 scripts per object in most regions). Currently there are 13 standard plugins.
+A: The collar supports unlimited plugins within Second Life's script limits (typically 64 scripts per object in most regions). Currently there are 16 standard plugins in a full installation, but it may have as little as two.
 
 **Q: Is this compatible with OpenCollar?**
-A: Partially. The leash system supports OpenCollar 8.x holder protocol. However, menus and commands are not compatible. This is a separate, independent collar system.
+A: Partially. The leash system supports OpenCollar 8.x holder protocol. However, OpenCollar plugins and add-ons are not compatible. This is a separate, independent collar system.
 
 **Q: Can I copy this collar to give to others?**
-A: Check the LICENSE (MIT) and object permissions. Generally yes, but respect creator permissions and attribution.
+A: Generally yes, as long as the collar is made either no-copy or no-transfer for the next user.
 
 ### Ownership Questions
 
@@ -940,7 +945,7 @@ A: The relay defaults to **ASK** mode, which prompts the wearer to accept or den
 A: Yes. The collar implements ORG relay specification which includes safeword support. Configure your safeword in your RLV viewer settings.
 
 **Q: What if I get stuck in restrictions?**
-A: Use the SOS menu (long-touch collar) → **Clear RLV** or **Clear Relay**. This always works regardless of restrictions.
+A: If you are in **TPE mode**, long-touch the collar to access the SOS menu → **Clear RLV** or **Clear Relay**. If you are an owned wearer not in TPE mode, you have normal collar access — touch the collar and use **Restrict** → **Clear All**, or contact your owner.
 
 **Q: Do RLV exceptions work for everyone?**
 A: No. Only TP and IM exceptions are available, and each can be toggled independently for the owner and for trustees. They bypass specific restrictions only for authorized users.
@@ -960,18 +965,18 @@ A: Only by trustees and owners. Public mode must be ON for strangers to leash.
 A: No. Basic leashing works without RLV using movement scripts. RLV enhances the experience but isn't required.
 
 **Q: Can I unleash myself?**
-A: Yes, via the SOS menu (long-touch) → **Unleash**. This always works as an emergency safety feature.
+A: If you have normal collar access (owned non-TPE, or unowned), touch the collar and use **Leash** → **Unclip**. If you are in **TPE mode**, long-touch the collar to access the SOS menu → **Unleash**. In both cases there is always a path to release the leash.
 
 ### Safety Questions
 
 **Q: Can someone lock me in restrictions permanently?**
-A: No. The SOS menu (long-touch) is always accessible and provides emergency release options regardless of restrictions or access levels.
+A: No. If you have normal collar access, your owner can always clear restrictions, and you can contact them. If you are in TPE mode, the SOS long-touch menu provides emergency restriction removal. In either case there is a path out.
 
 **Q: What if I accidentally enable TPE mode?**
 A: TPE requires wearer confirmation. If enabled, contact your owner to disable it. The SOS menu remains accessible for emergencies.
 
 **Q: Can the blacklist be used to trap me?**
-A: No. The blacklist prevents others from accessing the collar. As the wearer, you always retain your own collar access (owned or unowned status) and SOS menu access.
+A: No. The blacklist prevents others from accessing the collar. As the wearer, you always retain your own collar access (owned or unowned status). If you are placed in TPE mode, the SOS long-touch menu is also available.
 
 **Q: Is my privacy protected?**
 A: The collar operates locally on your avatar. No data is transmitted to external servers. All control is in-world only. Settings are stored in the collar object, not in external databases.
@@ -1000,9 +1005,6 @@ A: The collar is modular and extensible. You can:
 1. Request features via GitHub issues
 2. Write your own plugin (see agents.md for development guide)
 3. Contribute code via pull requests
-
-**Q: I want to customize the menu structure. How?**
-A: Modify `kmod_ui.lsl` for main menu structure. Individual plugin menus are in their respective plugin scripts. The modular architecture makes customization straightforward.
 
 ---
 
@@ -1038,7 +1040,7 @@ For support:
 - **Documentation:** Check README.md and this user guide
 - **Source Code:** Review scripts for detailed behavior
 
-**Remember:** The SOS menu (long-touch) is always available for emergencies. Stay safe and enjoy your collar!
+Stay safe and enjoy your collar!
 
 ---
 
