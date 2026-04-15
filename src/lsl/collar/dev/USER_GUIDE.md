@@ -264,8 +264,9 @@ Leash the wearer to follow another avatar.
 3. Wearer will follow you automatically
 
 **To Unleash:**
-1. Touch collar → **Leash** → **Unclip**
-2. Or: If in TPE mode — long-touch → **Unleash** via SOS menu
+1. Touch collar → **Leash** → **Unclip** (owner, trustee, or unowned wearer)
+2. Or: Owned wearer — **Maintenance** → **Clear Leash**
+3. Or: If in TPE mode — long-touch → **Unleash** via SOS menu
 
 **Features:**
 - Automatic follow mechanics
@@ -678,6 +679,11 @@ bell.sound = 16fcf579-82cb-b110-c1a4-5fa5e1385406
 settings (length, turn-to-face) cannot be pre-configured via notecard.
 These must be set through the collar menus after startup.
 
+**Important:** On startup/relog, the collar re-reads the `settings` notecard.
+Any keys present in that notecard are written back into the collar's stored
+settings, so notecard-configured defaults are re-applied and can override
+runtime changes made through the menus.
+
 ### Available Settings Keys
 
 **Ownership & Access Control:**
@@ -925,13 +931,13 @@ A: If you have no owner set, you already have full owner-level access to your co
 A: The relay defaults to **ASK** mode, which prompts the wearer to accept or deny each request from external objects. **ON** allows external devices to send RLV commands automatically; the wearer can safeword out. **OFF** disables the relay entirely. When the relay is **ON**, an owner or trustee can additionally toggle **Hardcore** mode, which prevents the wearer from using the safeword.
 
 **Q: Can I use a safeword with RLV relay?**
-A: Yes. The collar implements ORG relay specification which includes safeword support. Configure your safeword in your RLV viewer settings.
+A: Yes. When the relay is in **ON** or**ASK** mode and Hardcore is not active, a **Safeword** button appears in the **RLV Relay** menu. Pressing it immediately clears all relay restrictions and releases all bound objects.
 
-**Q: What if I get stuck in restrictions?**
+**Q: What if I get stuck in a trap?**
 A: If you are in **TPE mode**, long-touch the collar to access the SOS menu → **Clear RLV** or **Clear Relay**. If you are an owned wearer not in TPE mode, you have normal collar access — touch the collar and use **Restrict** → **Clear All**, or contact your owner.
 
 **Q: Do RLV exceptions work for everyone?**
-A: No. Only TP and IM exceptions are available, and each can be toggled independently for the owner and for trustees. They bypass specific restrictions only for authorized users.
+A: No. Only TP and IM exceptions are available for the primary owner(s) or trustees, and each can be toggled independently.
 
 ### Leash Questions
 
@@ -948,38 +954,30 @@ A: Only by trustees and owners. Public mode must be ON for strangers to leash.
 A: No. Basic leashing works without RLV using movement scripts. RLV enhances the experience but isn't required.
 
 **Q: Can I unleash myself?**
-A: If you have normal collar access (owned non-TPE, or unowned), touch the collar and use **Leash** → **Unclip**. If you are in **TPE mode**, long-touch the collar to access the SOS menu → **Unleash**. In both cases there is always a path to release the leash.
+A: It depends on your access level. An **unowned wearer** (ACL 4) has **Unclip** available directly in the **Leash** menu. An **owned wearer** (ACL 2) does not have Unclip in the Leash menu; instead, they can use **Maintenance → Clear Leash**, which performs a forced release regardless of who holds the leash. If you are in **TPE mode** (ACL 0), long-touch the collar to access the SOS menu → **Unleash**.
 
 ### Safety Questions
 
 **Q: Can someone lock me in restrictions permanently?**
-A: No. If you have normal collar access, your owner can always clear restrictions, and you can contact them. If you are in TPE mode, the SOS long-touch menu provides emergency restriction removal. In either case there is a path out.
+A: There is always a path out, but it depends on your access level. An **owned wearer** (non-TPE) cannot clear their own restrictions — only the owner or a trustee can use **Restrict → Clear All**. Contact your owner to have restrictions removed. Note that if communication is itself restricted (Chat/IM blocked), you will need IM exceptions pre-configured, or your owner to act unilaterally. A **TPE-mode wearer** can use the SOS long-touch menu → **Clear RLV** or **Clear Relay** for emergency removal.
 
-**Q: What if I accidentally enable TPE mode?**
-A: TPE requires wearer confirmation. If enabled, contact your owner to disable it. The SOS menu remains accessible for emergencies.
+**Q: What if I enable TPE mode and want out?**
+A: If TPE is enabled through the collar menu, it requires your explicit consent via a confirmation dialog. However, TPE can also be pre-enabled from the settings notecard with `tpe.mode=1` as long as an external owner is already set. Also note that on startup/relog the collar re-reads the settings notecard, so if `tpe.mode=1` is present there, TPE will be reinstated even if it was turned off at runtime. In all cases, only your owner can disable TPE through the collar interface, and the notecard must also be updated if you do not want TPE to come back on the next relog. The SOS menu remains available while in TPE for clearing leash and RLV restrictions, but it cannot disable TPE itself.
 
 **Q: Can the blacklist be used to trap me?**
-A: No. The blacklist prevents others from accessing the collar. As the wearer, you always retain your own collar access (owned or unowned status). If you are placed in TPE mode, the SOS long-touch menu is also available.
+A: No. The blacklist prevents others from accessing the collar. As the wearer, you always retain your own collar access (owned or unowned status). If you are placed in TPE mode, the SOS long-touch menu is available to you.
 
 **Q: Is my privacy protected?**
 A: The collar operates locally on your avatar. No data is transmitted to external servers. All control is in-world only. Settings are stored in the collar object, not in external databases.
 
 ### Technical Questions
 
-**Q: Why does the collar use so many scripts?**
-A: The modular architecture uses one script per feature (plugin). This improves performance, maintainability, and allows you to remove features you don't use. Each script is optimized and lightweight.
-
-**Q: What are the script memory limits?**
-A: Each LSL script has 64KB memory limit. The collar kernel and modules are optimized to stay well under this limit.
-
 **Q: Can I see the source code?**
-A: Yes. The collar is open source. All scripts are available at: https://github.com/anne-skydancer/ds_collar_modular
+A: Yes. The collar is open source under MIT licence. All scripts are available at: https://github.com/anne-skydancer/ds_collar_modular
 
 **Q: How do I update to a new version?**
-A: Replace old scripts with new scripts from the latest release. The kernel compatibility ensures plugins work across revisions. Always backup your settings notecard first.
+A: Before updating, **unlock the collar** and **rez it on the ground**. While scripts can be edited on a worn, unlocked collar, it is safer to perform any script-related operation with the collar rezzed in-world. Edit the collar, navigate to the Contents tab, delete the old scripts, and drop in the new scripts from the latest release. The kernel compatibility ensures plugins work across revisions. Always backup your settings notecard first.
 
-**Q: How does the collar implement menus?**
-A: The collar uses llDialog extensively. All menus are standard SL dialog boxes. A centralized dialog bus (link message lane 950) ensures efficient dialog management across all plugins.
 
 ### Feature Requests
 
