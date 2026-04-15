@@ -1,13 +1,22 @@
 /*--------------------
 MODULE: kmod_chat.lsl
 VERSION: 1.10
-REVISION: 10
+REVISION: 12
 PURPOSE: Local chat command receiver. Listens on channel 1 (always) and
          optionally channel 0 (public chat) for prefixed commands from
-         authorised speakers. Dispatches matching commands to UI_BUS so
-         plugins receive them identically to menu-driven interactions.
+         authorised speakers. Sends ui.chat.command to UI_BUS so kmod_ui
+         can route the request; plugins never receive the raw dispatch.
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- v1.1 rev 12: Change dispatch message type from ui.menu.start to
+  ui.chat.command. kmod_ui handles ui.chat.command and routes via
+  dispatch_to_plugin (with acl). This eliminates the double-dialog bug
+  where plugin_animate received the raw broadcast because its label
+  ("Animate") starts with the prefix ("an"), so both the chat dispatch
+  AND kmod_ui's routed dispatch could reach it.
+- v1.1 rev 11: Add configurable secondary channel (chat.channel, default 1).
+  plugin_chat can change it via llTextBox; kmod_chat reads the setting and
+  rebuilds its listener. Channel 0 (public) remains separate.
 - v1.1 rev 10: Remove pre-seed of "menu" alias. kmod_ui re-emits its
   kernel.register for ROOT_CONTEXT/"Menu" in response to kernel.registernow
   (rev 7 of kmod_ui), so the alias is populated before any human can type.
@@ -60,13 +69,15 @@ integer UI_BUS           = 900;
 // Must match plugin_chat.lsl KEY_* constants.
 string KEY_PREFIX       = "chat.prefix";
 string KEY_PUBLIC_CHAT  = "chat.public";  // "1" = enabled, "0" = disabled
+string KEY_CHAT_CHAN    = "chat.channel"; // secondary channel number (default 1)
 
 /* -------------------- STATE -------------------- */
 string ChatPrefix    = "";   // Set from settings or derived on first run
 integer PublicChat   = FALSE; // Channel 0 listening enabled
+integer ChatChan     = 1;    // Secondary channel (default 1)
 
 integer ListenChan0  = 0;    // Handle for channel 0 listener (0 = inactive)
-integer ListenChan1  = 0;    // Handle for channel 1 listener (0 = inactive)
+integer ListenChan1  = 0;    // Handle for secondary channel listener (0 = inactive)
 
 // Stride-2 list: [alias, context, alias, context, ...]
 // Populated by intercepting kernel.register broadcasts from plugins and kmod_ui.
@@ -105,8 +116,8 @@ reset_listeners() {
 
     if (ChatPrefix == "") return;
 
-    // Channel 1 is always active when a prefix is set
-    ListenChan1 = llListen(1, "", NULL_KEY, "");
+    // Secondary channel is always active when a prefix is set
+    ListenChan1 = llListen(ChatChan, "", NULL_KEY, "");
 
     // Channel 0 only if explicitly enabled
     if (PublicChat) {
@@ -135,6 +146,14 @@ apply_settings_sync() {
     else {
         PublicChat = TRUE;
         llLinksetDataWrite(KEY_PUBLIC_CHAT, "1");
+    }
+
+    string stored_chan = llLinksetDataRead(KEY_CHAT_CHAN);
+    if (stored_chan != "") {
+        integer parsed_chan = (integer)stored_chan;
+        if (parsed_chan >= 1 && parsed_chan <= 9) {
+            ChatChan = parsed_chan;
+        }
     }
 
     reset_listeners();
@@ -191,15 +210,15 @@ string resolve_command(string command) {
 // Dispatch a recognised command from an authorised speaker.
 // The command string is resolved through the alias table before sending,
 // so "lock" dispatches as "ui.core.lock" and "menu" as "ui.core.root".
+// We send ui.chat.command (NOT ui.menu.start) so that only kmod_ui
+// receives and routes the request. Plugins never see this message
+// type and therefore cannot accidentally open a second dialog.
 dispatch_command(key speaker, string command) {
     logd("chat cmd: speaker=" + (string)speaker + " cmd=" + command);
     command = resolve_command(command);
 
-    // Query ACL so the receiving plugin can gate on access level.
-    // We send ui.menu.start directly; kmod_ui will route it after the ACL
-    // round-trip exactly as it does for a touch-initiated session.
     llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
-        "type",    "ui.menu.start",
+        "type",    "ui.chat.command",
         "context", command,
         "source",  "chat"
     ]), speaker);
@@ -254,7 +273,7 @@ default
 
         // Validate channel scope
         if (channel == 0 && !PublicChat) return;
-        if (channel != 0 && channel != 1) return;
+        if (channel != 0 && channel != ChatChan) return;
 
         // Strip prefix
         string command = strip_prefix(message);

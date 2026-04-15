@@ -1,10 +1,14 @@
 /*--------------------
 MODULE: kmod_ui.lsl
 VERSION: 1.10
-REVISION: 7
+REVISION: 8
 PURPOSE: Session management, LSD policy filtering, and plugin list orchestration
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- v1.1 rev 8: Handle ui.chat.command (sent by kmod_chat rev 12). Routes to
+  handle_start just like ui.menu.start, but plugins never see ui.chat.command
+  so the double-dialog bug (when a plugin label starts with the chat prefix)
+  is eliminated cleanly without relying on per-plugin acl guards.
 - v1.1 rev 7: Re-emit synthetic kernel.register for ROOT_CONTEXT/"Menu" in
   response to kernel.registernow. Previously only emitted from state_entry,
   so kmod_chat's alias table never contained "menu" after sending registernow.
@@ -974,6 +978,7 @@ default
         /* -------------------- UI BUS -------------------- */
         if (num == UI_BUS) {
             if (msg_type == "ui.menu.start") handle_start(msg, id);
+            else if (msg_type == "ui.chat.command") handle_start(msg, id);
             else if (msg_type == "ui.menu.return") handle_return(msg);
             else if (msg_type == "ui.label.update") handle_update_label(msg);
             else if (msg_type == "ui.state.update") handle_update_state(msg);

@@ -1,11 +1,13 @@
 /*--------------------
 PLUGIN: plugin_chat.lsl
 VERSION: 1.10
-REVISION: 4
+REVISION: 5
 PURPOSE: Configuration UI for kmod_chat — change command prefix and toggle
          public chat (channel 0) listening.
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
+- v1.1 rev 5: Add configurable secondary channel ("Set Channel" button).
+  Uses llTextBox like prefix input; valid range 1-9, not 0.
 - v1.1 rev 4: Replace negative-channel chat input with llTextBox popup for
   prefix input. Removes the need for the user to type on a private channel.
 - v1.1 rev 3: Guard ui.menu.start handler against raw (unrouted) dispatches
@@ -36,6 +38,7 @@ string PLUGIN_LABEL   = "Chat";
 // Must match kmod_chat.lsl KEY_* constants.
 string KEY_PREFIX      = "chat.prefix";
 string KEY_PUBLIC_CHAT = "chat.public";
+string KEY_CHAT_CHAN   = "chat.channel";
 
 /* -------------------- CONSTANTS -------------------- */
 float   INPUT_TIMEOUT = 30.0;
@@ -43,6 +46,7 @@ float   INPUT_TIMEOUT = 30.0;
 /* -------------------- STATE -------------------- */
 string  ChatPrefix   = "";
 integer PublicChat   = FALSE;
+integer ChatChan     = 1;
 
 key    CurrentUser    = NULL_KEY;
 integer UserAcl       = 0;
@@ -77,8 +81,8 @@ integer btn_allowed(string label) {
 
 register_self() {
     llLinksetDataWrite("acl.policycontext:" + PLUGIN_CONTEXT, llList2Json(JSON_OBJECT, [
-        "4", "Set Prefix,Toggle Public",
-        "5", "Set Prefix,Toggle Public"
+        "4", "Set Prefix,Set Channel,Toggle Public",
+        "5", "Set Prefix,Set Channel,Toggle Public"
     ]));
 
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
@@ -125,6 +129,8 @@ apply_settings_sync() {
 
     if (stored_prefix != "") ChatPrefix = stored_prefix;
     if (stored_public != "") PublicChat = (integer)stored_public;
+    string stored_chan = llLinksetDataRead(KEY_CHAT_CHAN);
+    if (stored_chan != "") ChatChan = (integer)stored_chan;
 }
 
 persist_prefix(string new_prefix) {
@@ -133,6 +139,15 @@ persist_prefix(string new_prefix) {
         "type", "settings.set",
         "key", KEY_PREFIX,
         "value", new_prefix
+    ]), NULL_KEY);
+}
+
+persist_chat_chan(integer new_chan) {
+    ChatChan = new_chan;
+    llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
+        "type", "settings.set",
+        "key",  KEY_CHAT_CHAN,
+        "value", (string)new_chan
     ]), NULL_KEY);
 }
 
@@ -174,12 +189,15 @@ show_main() {
     if (prefix_display == "") prefix_display = "(none)";
 
     string body = "Chat Commands\n\nPrefix: " + prefix_display +
-                  "\nChannel 0: " + public_label +
-                  "\n\nChannel 1 is always active.\nChannel 0 allows public commands.";
+                  "\nChannel: " + (string)ChatChan +
+                  "\nPublic chat: " + public_label +
+                  "\n\nChannel " + (string)ChatChan + " is the private channel." +
+                  "\nChannel 0 allows public commands.";
 
     list button_data = [btn("Back", "back")];
-    if (btn_allowed("Set Prefix"))    button_data += [btn("Set Prefix", "set_prefix")];
-    if (btn_allowed("Toggle Public")) button_data += [btn(public_label, "toggle_public")];
+    if (btn_allowed("Set Prefix"))    button_data += [btn("Set Prefix",   "set_prefix")];
+    if (btn_allowed("Set Channel"))   button_data += [btn("Set Channel",  "set_channel")];
+    if (btn_allowed("Toggle Public")) button_data += [btn(public_label,   "toggle_public")];
 
     llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
         "type", "ui.dialog.open",
@@ -190,6 +208,19 @@ show_main() {
         "button_data", llList2Json(JSON_ARRAY, button_data),
         "timeout", 60
     ]), NULL_KEY);
+}
+
+prompt_for_channel() {
+    MenuContext = "input_channel";
+
+    if (InputListen != 0) llListenRemove(InputListen);
+    integer input_chan = -1 - (integer)llFrand(2000000);
+    InputListen = llListen(input_chan, "", CurrentUser, "");
+    llSetTimerEvent(INPUT_TIMEOUT);
+
+    llTextBox(CurrentUser,
+        "Enter secondary channel number (1-9, not 0).\nLeave blank or type 'cancel' to abort.",
+        input_chan);
 }
 
 prompt_for_prefix() {
@@ -221,6 +252,14 @@ handle_dialog_response(string msg) {
     if (MenuContext == "main") {
         if (ctx == "back") {
             return_to_root();
+        }
+        else if (ctx == "set_channel") {
+            if (!btn_allowed("Set Channel")) {
+                llRegionSayTo(CurrentUser, 0, "Access denied.");
+                show_main();
+                return;
+            }
+            prompt_for_channel();
         }
         else if (ctx == "set_prefix") {
             if (!btn_allowed("Set Prefix")) {
@@ -256,6 +295,33 @@ handle_dialog_timeout(string msg) {
 }
 
 /* -------------------- CHAT INPUT HANDLER -------------------- */
+
+handle_channel_input(string raw) {
+    if (InputListen != 0) {
+        llListenRemove(InputListen);
+        InputListen = 0;
+    }
+    llSetTimerEvent(0.0);
+
+    raw = llStringTrim(raw, STRING_TRIM);
+
+    if (raw == "cancel" || raw == "") {
+        llRegionSayTo(CurrentUser, 0, "Cancelled.");
+        show_main();
+        return;
+    }
+
+    integer new_chan = (integer)raw;
+    if (new_chan < 1 || new_chan > 9) {
+        llRegionSayTo(CurrentUser, 0, "Invalid channel. Must be 1-9.");
+        show_main();
+        return;
+    }
+
+    persist_chat_chan(new_chan);
+    llRegionSayTo(CurrentUser, 0, "Channel set to: " + (string)new_chan);
+    show_main();
+}
 
 handle_prefix_input(string new_prefix) {
     if (InputListen != 0) {
@@ -316,9 +382,9 @@ default
     }
 
     listen(integer channel, string name, key id, string message) {
-        if (MenuContext != "input_prefix") return;
         if (id != CurrentUser) return;
-        handle_prefix_input(message);
+        if (MenuContext == "input_prefix")  handle_prefix_input(message);
+        else if (MenuContext == "input_channel") handle_channel_input(message);
     }
 
     link_message(integer sender, integer num, string msg, key id) {
