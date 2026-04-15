@@ -160,24 +160,32 @@ When the collar first starts up it automatically derives a default prefix from t
 
 The prefix is saved and can be changed any time through the Chat plugin menu.
 
+### Your Private Channel
+
+The collar always listens on a **private channel** — channel 1 by default. This can be changed to any number from 1 to 9 through the Chat plugin menu. The private channel is never channel 0 (public chat).
+
 ### Sending Commands
 
-**Channel 1 (private — always active):**
+**Private channel (always active):**
 ```
 /1 an menu
 /1 an lock
 /1 an leash
 ```
 
-**Channel 0 (public chat — on by default):**
+If you change your private channel from 1 to, for example, 3:
+```
+/3 an menu
+/3 an lock
+```
+
+**Channel 0 (public chat — optional):**
 ```
 an menu
 anmenu
 ```
 
 Both forms are accepted — with or without a space between prefix and command. The collar only responds to recognised commands, so ordinary sentences that happen to start with your prefix are silently ignored.
-
-The collar always listens on channel 1 while a prefix is set. Public chat (channel 0) must be explicitly enabled in the Chat plugin.
 
 ### Available Commands
 
@@ -209,10 +217,18 @@ Avatars with no ACL record are silently ignored regardless of channel.
 **Changing the prefix** (unowned wearer or primary owner only):
 1. Touch collar → **Chat**
 2. Select **Set Prefix**
-3. Type your new prefix into local chat when prompted
+3. A text input popup will appear — type your new prefix and submit
 4. The new prefix is saved immediately
 
 > Trustees cannot access the Chat settings menu. They can still use chat commands normally (e.g. `/1 an lock`).
+
+**Changing the private channel** (unowned wearer or primary owner only):
+1. Touch collar → **Chat**
+2. Select **Set Channel**
+3. A text input popup will appear — type a number from 1 to 9 and submit
+4. Both the collar script and any authorized speakers must use the new channel number
+
+> Channel 0 is reserved for public chat and cannot be used as the private channel.
 
 **Enabling public-chat listening** (trustees, unowned wearer, or primary owner):
 1. Touch collar → **Chat**
@@ -220,6 +236,9 @@ Avatars with no ACL record are silently ignored regardless of channel.
 3. The collar will now also listen on channel 0
 
 > **Note:** Public-chat listening and public-access mode are independent settings. Enabling public-chat listening does not grant anyone extra permissions — ACL rules still apply.
+
+**Checking current chat settings:**
+Touch collar → **Status** to see the current prefix, private channel, and public-chat state all in one view.
 
 ---
 
