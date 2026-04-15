@@ -822,15 +822,6 @@ default {
 3. If not in TPE mode, you should still have normal access — check for script errors
 4. Check you're not blacklisted (unlikely but possible)
 
-#### Settings Not Saving
-**Symptoms:** Changes reset after relog.
-
-**Solutions:**
-1. Wait 5 seconds after making changes before relogging
-2. Check `kmod_settings` script is present and running
-3. Check object permissions allow script modifications
-4. Reset collar scripts
-
 #### HUD Not Detecting Collar
 **Symptoms:** Control HUD shows no collars.
 
@@ -867,9 +858,8 @@ default {
 - Avatar UUID format incorrect in settings
 - Verify UUID format: `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`
 - Owner UUID uses plain scalar: `access.owner = xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`
-- Multiple trustees/owners use CSV format: `access.trusteeuuids = uuid1,uuid2`
-- Blacklist uses CSV format: `blacklist.blklistuuid = uuid1,uuid2`
-- Do **not** use JSON object or array notation — the parser expects plain scalars and CSVs
+- Multiple trustees/owners are comma-separated: `access.trusteeuuids = uuid1,uuid2`
+- Blacklist entries are also comma-separated: `blacklist.blklistuuid = uuid1,uuid2`
 - Check for typos in settings notecard
 
 ### Performance Issues
@@ -880,13 +870,6 @@ default {
 2. Ensure collar is worn as attached prim (not temporary)
 3. Check region script limits aren't exceeded
 4. Reduce number of active timers (fewer plugins = fewer timers)
-
-#### Script Memory Errors
-**Solutions:**
-1. LSL scripts have 64KB memory limit per script
-2. Remove custom animations if memory is full
-3. Consider splitting features across multiple collar objects
-4. Remove unused plugins
 
 ### Getting Help
 
@@ -899,7 +882,7 @@ If problems persist:
    - Error messages from console
    - Viewer version and RLV status
    - Collar revision (check script headers if possible)
-4. **Community Support:** Contact the collar creator or community
+4. **Support:** Contact the collar creator in-world
 
 ---
 
