@@ -984,7 +984,7 @@ A: Before updating, **unlock the collar** and **rez it on the ground**. While sc
 **Q: Can you add [feature]?**
 A: The collar is modular and extensible. You can:
 1. Request features via GitHub issues
-2. Write your own plugin (see agents.md for development guide)
+2. Write your own plugin
 3. Contribute code via pull requests
 
 ---
