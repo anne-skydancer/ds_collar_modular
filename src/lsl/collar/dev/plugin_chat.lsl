@@ -1,11 +1,13 @@
 /*--------------------
 PLUGIN: plugin_chat.lsl
 VERSION: 1.10
-REVISION: 3
+REVISION: 4
 PURPOSE: Configuration UI for kmod_chat — change command prefix and toggle
          public chat (channel 0) listening.
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
+- v1.1 rev 4: Replace negative-channel chat input with llTextBox popup for
+  prefix input. Removes the need for the user to type on a private channel.
 - v1.1 rev 3: Guard ui.menu.start handler against raw (unrouted) dispatches
   from kmod_chat. Messages without an acl field are ignored; only messages
   routed through kmod_ui (which adds the acl field) are processed. Fixes
@@ -36,7 +38,6 @@ string KEY_PREFIX      = "chat.prefix";
 string KEY_PUBLIC_CHAT = "chat.public";
 
 /* -------------------- CONSTANTS -------------------- */
-integer INPUT_CHAN    = -7654321;  // Private channel for prefix input
 float   INPUT_TIMEOUT = 30.0;
 
 /* -------------------- STATE -------------------- */
@@ -195,12 +196,14 @@ prompt_for_prefix() {
     MenuContext = "input_prefix";
 
     if (InputListen != 0) llListenRemove(InputListen);
-    InputListen = llListen(INPUT_CHAN, "", CurrentUser, "");
+    // Use a random negative channel so concurrent textboxes don't collide
+    integer input_chan = -1 - (integer)llFrand(2000000);
+    InputListen = llListen(input_chan, "", CurrentUser, "");
     llSetTimerEvent(INPUT_TIMEOUT);
 
-    llRegionSayTo(CurrentUser, 0,
-        "Type the new prefix on channel " + (string)INPUT_CHAN +
-        " (e.g. /" + (string)INPUT_CHAN + " ab). 1-8 characters. Type 'cancel' to abort.");
+    llTextBox(CurrentUser,
+        "Enter new prefix (1-8 characters).\nLeave blank or type 'cancel' to abort.",
+        input_chan);
 }
 
 /* -------------------- DIALOG HANDLER -------------------- */
@@ -313,7 +316,7 @@ default
     }
 
     listen(integer channel, string name, key id, string message) {
-        if (channel != INPUT_CHAN) return;
+        if (MenuContext != "input_prefix") return;
         if (id != CurrentUser) return;
         handle_prefix_input(message);
     }
