@@ -1,10 +1,26 @@
 /*--------------------
 MODULE: kmod_particles.lsl
 VERSION: 1.10
-REVISION: 2
+REVISION: 4
 PURPOSE: Visual connection renderer with Lockmeister compatibility
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- v1.1 rev 4: Adopt the typhartez/Marine-style recipe. Restore
+  PSYS_PART_FOLLOW_SRC_MASK so the collar end of the ribbon is pinned to the
+  wearer instead of trailing through stale world-space positions. Raise
+  PSYS_SRC_BURST_PART_COUNT 1 -> 4 so the per-frame rigid translation caused by
+  FOLLOW_SRC is averaged across ~4x as many live particles and reads as a
+  coherent ribbon rather than a visible snap. Drop PSYS_PART_MAX_AGE 1.2 -> 1.0
+  for the same reason (fewer stale particles alive at any instant). Soften
+  PSYS_SRC_ACCEL Z -4.0 -> -0.6 — with FOLLOW_SRC restored and a shorter
+  lifetime, heavy gravity overbows the ribbon; light gravity produces a cleaner
+  catenary. Change START/END_SCALE Z 0.07 -> 1.0 to match reference ribbon
+  configs (ribbon stride uses the Z component when PATTERN_DROP is active).
+- v1.1 rev 3: Tune ribbon to look like a hanging chain instead of a weightless
+  string. Shorten PSYS_PART_MAX_AGE 2.6 -> 1.2 so the trail no longer floats
+  through 2.6s of stale positions when the wearer moves. Strengthen
+  PSYS_SRC_ACCEL Z from -1.25 -> -4.0 to preserve a natural catenary sag over
+  the shorter lifetime.
 - v1.1 rev 2: EXPERIMENTAL - Remove PSYS_PART_FOLLOW_SRC_MASK so wearer movement no
   longer snaps the ribbon. In-flight particles continue on their ballistic arc; only
   new emissions originate from the updated collar position. Fix CHANGED_LINK to only
@@ -228,19 +244,20 @@ render_chain_particles(key target) {
         PSYS_SRC_PATTERN, PSYS_SRC_PATTERN_DROP,
         PSYS_SRC_TEXTURE, CHAIN_TEXTURE,
         PSYS_SRC_BURST_RATE, 0.0,
-        PSYS_SRC_BURST_PART_COUNT, 1,
+        PSYS_SRC_BURST_PART_COUNT, 4,
         PSYS_PART_START_ALPHA, 1.0,
         PSYS_PART_END_ALPHA, 1.0,
-        PSYS_PART_MAX_AGE, 2.6,
-        PSYS_PART_START_SCALE, <0.07, 0.07, 0.07>,
-        PSYS_PART_END_SCALE, <0.07, 0.07, 0.07>,
+        PSYS_PART_MAX_AGE, 1.0,
+        PSYS_PART_START_SCALE, <0.07, 0.07, 1.0>,
+        PSYS_PART_END_SCALE, <0.07, 0.07, 1.0>,
         PSYS_PART_START_COLOR, <1, 1, 1>,
         PSYS_PART_END_COLOR, <1, 1, 1>,
-        PSYS_SRC_ACCEL, <0, 0, -1.25>,
-        PSYS_PART_FLAGS, 
+        PSYS_SRC_ACCEL, <0, 0, -0.6>,
+        PSYS_PART_FLAGS,
             PSYS_PART_INTERP_COLOR_MASK |
             PSYS_PART_TARGET_POS_MASK |
             PSYS_PART_FOLLOW_VELOCITY_MASK |
+            PSYS_PART_FOLLOW_SRC_MASK |
             PSYS_PART_RIBBON_MASK,
         PSYS_SRC_TARGET_KEY, target
     ]);
