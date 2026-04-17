@@ -1,10 +1,22 @@
 /*--------------------
 MODULE: kmod_particles.lsl
 VERSION: 1.10
-REVISION: 4
+REVISION: 6
 PURPOSE: Visual connection renderer with Lockmeister compatibility
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- v1.1 rev 6: Lift leash ribbon tuning knobs (MAX_AGE, BURST_RATE, BURST_COUNT,
+  ACCEL, SCALE) into top-of-script LEASH_PARTICLE_* globals so future tuning
+  touches one block instead of hunting inside render_chain_particles. No
+  behavioral change from rev 5.
+- v1.1 rev 5: Rev 4 was undertuned on both axes — ribbon drew as a near-
+  straight line with visible FOLLOW_SRC snap artifacts. Raise
+  PSYS_PART_MAX_AGE 1.0 -> 1.6 and PSYS_SRC_ACCEL Z -0.6 -> -1.8 so the
+  gravity x lifetime product (sag potential) goes from ~0.3 m to ~2.3 m —
+  enough for a visible catenary at typical leash distances. Raise
+  PSYS_SRC_BURST_PART_COUNT 4 -> 10 to match typhartez's density, which hides
+  the per-frame FOLLOW_SRC rigid translation across enough live particles
+  that the ribbon reads as a single coherent shape.
 - v1.1 rev 4: Adopt the typhartez/Marine-style recipe. Restore
   PSYS_PART_FOLLOW_SRC_MASK so the collar end of the ribbon is pinned to the
   wearer instead of trailing through stale world-space positions. Raise
@@ -40,6 +52,22 @@ float PARTICLE_UPDATE_RATE = 0.5;  // Update every 0.5 seconds
 
 // Default chain texture
 string CHAIN_TEXTURE = "4d3b6c6f-52e2-da9d-f7be-cccb1e535aca";
+
+/* -------------------- LEASH RIBBON TUNING --------------------
+   Adjust these to tune the catenary look. See module changelog for the
+   reasoning behind the current values.
+   - MAX_AGE x |ACCEL.z| = sag potential in metres. Too small -> straight
+     line; too large -> overbowed rope.
+   - BURST_COUNT is density. Higher values hide the per-frame
+     FOLLOW_SRC rigid translation but cost more client-side rendering.
+   - BURST_RATE 0.0 emits every frame; nonzero meters emissions.
+   - SCALE.x is ribbon thickness. Y/Z are stride hints.
+*/
+float   LEASH_MAX_AGE     = 1.6;
+float   LEASH_BURST_RATE  = 0.0;
+integer LEASH_BURST_COUNT = 10;
+vector  LEASH_ACCEL       = <0.0, 0.0, -1.8>;
+vector  LEASH_SCALE       = <0.07, 0.07, 1.0>;
 
 // Lockmeister protocol
 integer LEASH_CHAN_LM = -8888;
@@ -243,16 +271,16 @@ render_chain_particles(key target) {
     llLinkParticleSystem(LeashpointLink, [
         PSYS_SRC_PATTERN, PSYS_SRC_PATTERN_DROP,
         PSYS_SRC_TEXTURE, CHAIN_TEXTURE,
-        PSYS_SRC_BURST_RATE, 0.0,
-        PSYS_SRC_BURST_PART_COUNT, 4,
+        PSYS_SRC_BURST_RATE, LEASH_BURST_RATE,
+        PSYS_SRC_BURST_PART_COUNT, LEASH_BURST_COUNT,
         PSYS_PART_START_ALPHA, 1.0,
         PSYS_PART_END_ALPHA, 1.0,
-        PSYS_PART_MAX_AGE, 1.0,
-        PSYS_PART_START_SCALE, <0.07, 0.07, 1.0>,
-        PSYS_PART_END_SCALE, <0.07, 0.07, 1.0>,
+        PSYS_PART_MAX_AGE, LEASH_MAX_AGE,
+        PSYS_PART_START_SCALE, LEASH_SCALE,
+        PSYS_PART_END_SCALE, LEASH_SCALE,
         PSYS_PART_START_COLOR, <1, 1, 1>,
         PSYS_PART_END_COLOR, <1, 1, 1>,
-        PSYS_SRC_ACCEL, <0, 0, -0.6>,
+        PSYS_SRC_ACCEL, LEASH_ACCEL,
         PSYS_PART_FLAGS,
             PSYS_PART_INTERP_COLOR_MASK |
             PSYS_PART_TARGET_POS_MASK |
