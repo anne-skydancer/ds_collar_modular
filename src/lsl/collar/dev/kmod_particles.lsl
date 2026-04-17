@@ -1,10 +1,39 @@
 /*--------------------
 MODULE: kmod_particles.lsl
 VERSION: 1.10
-REVISION: 6
+REVISION: 9
 PURPOSE: Visual connection renderer with Lockmeister compatibility
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- v1.1 rev 9: Drop LEASH_BURST_COUNT 10 -> 1. Wiki states verbatim that ribbon
+  segment length is "the distance between particles". With FOLLOW_SRC_MASK
+  disabling SRC_BURST_RADIUS and identical TARGET_POS trajectories, all
+  particles in a single burst occupy the same position — their inter-particle
+  segments have zero length and do not render. BURST_COUNT > 1 was therefore a
+  no-op for this config; density for ribbons must come from BURST_RATE, and
+  BURST_RATE 0.0 already emits at viewer frame rate. Note: the "straight
+  bursts" glitch is suspected to be emitter-prim-Z-axis dependent per wiki:
+  "Ribbon segments will not render if they have no length - this happens when
+  particles move only up or down the local Z-axis of their emitter prim." The
+  leashpoint prim's local Z axis must be roughly vertical relative to the
+  wearer; if it is rotated sideways, ribbon collapses during leasher motion.
+  Verify linkset build.
+- v1.1 rev 8: Two wiki-authoritative fixes (ref
+  https://wiki.secondlife.com/wiki/LlParticleSystem). (1) Remove
+  PSYS_PART_FOLLOW_VELOCITY_MASK — wiki states verbatim "has no effect on
+  ribbons". Vestigial flag carried since v1.x. (2) Change LEASH_SCALE Y from
+  0.07 -> 1.0. Wiki states Y is "used only for computing the maximum visibility
+  distance"; Y=0.07 was short enough to risk the ribbon being culled at
+  moderate distances. X (thickness) unchanged.
+- v1.1 rev 7: Address target-velocity flatten — when the leasher moves, ribbon
+  briefly goes straight before returning to catenary. Cause: TARGET_POS_MASK
+  compensates for target motion by raising newly-emitted particles' initial
+  velocity so they still arrive at end-of-life; higher velocity = straighter
+  transit. Fix: lengthen LEASH_MAX_AGE 1.6 -> 2.5 so per-frame velocity needed
+  to cover leash distance drops (gravity dominates more of the trajectory).
+  Soften LEASH_ACCEL Z -1.8 -> -1.0 to avoid overbow now that the lifetime is
+  longer. Gravity x lifetime product stays similar (~3.1 m sag potential vs
+  previous ~2.3 m). Keep LEASH_BURST_COUNT at 10 for density.
 - v1.1 rev 6: Lift leash ribbon tuning knobs (MAX_AGE, BURST_RATE, BURST_COUNT,
   ACCEL, SCALE) into top-of-script LEASH_PARTICLE_* globals so future tuning
   touches one block instead of hunting inside render_chain_particles. No
@@ -63,11 +92,11 @@ string CHAIN_TEXTURE = "4d3b6c6f-52e2-da9d-f7be-cccb1e535aca";
    - BURST_RATE 0.0 emits every frame; nonzero meters emissions.
    - SCALE.x is ribbon thickness. Y/Z are stride hints.
 */
-float   LEASH_MAX_AGE     = 1.6;
+float   LEASH_MAX_AGE     = 2.5;
 float   LEASH_BURST_RATE  = 0.0;
-integer LEASH_BURST_COUNT = 10;
-vector  LEASH_ACCEL       = <0.0, 0.0, -1.8>;
-vector  LEASH_SCALE       = <0.07, 0.07, 1.0>;
+integer LEASH_BURST_COUNT = 1;
+vector  LEASH_ACCEL       = <0.0, 0.0, -1.0>;
+vector  LEASH_SCALE       = <0.07, 1.0, 1.0>;
 
 // Lockmeister protocol
 integer LEASH_CHAN_LM = -8888;
@@ -284,7 +313,6 @@ render_chain_particles(key target) {
         PSYS_PART_FLAGS,
             PSYS_PART_INTERP_COLOR_MASK |
             PSYS_PART_TARGET_POS_MASK |
-            PSYS_PART_FOLLOW_VELOCITY_MASK |
             PSYS_PART_FOLLOW_SRC_MASK |
             PSYS_PART_RIBBON_MASK,
         PSYS_SRC_TARGET_KEY, target
