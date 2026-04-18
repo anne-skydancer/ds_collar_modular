@@ -1,10 +1,17 @@
 /*--------------------
 MODULE: kmod_particles.lsl
 VERSION: 1.10
-REVISION: 13
+REVISION: 14
 PURPOSE: Visual connection renderer with Lockmeister compatibility
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- v1.1 rev 14: Fix LM handler overriding DS holder particles. The two
+  DS/LM priority gates still hard-coded the pre-namespace source string
+  "core_leash"; kmod_leash migrated to "ui.core.leash" in rev 5, so
+  SourcePlugin never matched. Result: any LM-compatible attachment on
+  the leasher won the race and re-anchored particles to its responder
+  prim (typically near avatar center), regardless of whether the DS
+  native handshake had already succeeded.
 - v1.1 rev 13: Lift PSYS_SRC_MAX_AGE to LEASH_SRC_MAX_AGE global.
 - v1.1 rev 12: PSYS_SRC_MAX_AGE now explicit (0.0 = forever).
 - v1.1 rev 11: LEASH_MAX_AGE 2.5 -> 5.0 for softer target-motion response.
@@ -192,7 +199,7 @@ handle_lm_message(key id, string msg) {
         
         
         // Priority check: If DS native is already rendering to a holder prim, don't override
-        if (SourcePlugin == "core_leash" && TargetKey != NULL_KEY) {
+        if (SourcePlugin == "ui.core.leash" && TargetKey != NULL_KEY) {
             // Check if current target is a prim (not avatar)
             if (llGetAgentSize(TargetKey) == ZERO_VECTOR) {
                 return;
@@ -297,7 +304,7 @@ handle_particles_start(string msg) {
     }
     
     // Priority: Lockmeister < DS leash
-    if (SourcePlugin == "lockmeister" && source == "core_leash") {
+    if (SourcePlugin == "lockmeister" && source == "ui.core.leash") {
         if (LmActive) {
             LmActive = FALSE;
             LmController = NULL_KEY;
