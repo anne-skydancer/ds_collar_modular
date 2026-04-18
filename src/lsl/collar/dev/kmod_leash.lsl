@@ -1,10 +1,25 @@
 /*--------------------
 MODULE: kmod_leash.lsl
 VERSION: 1.10
-REVISION: 7
+REVISION: 9
 PURPOSE: Leashing engine providing leash services to plugins
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- v1.1 rev 9: Post mode now runs the DS handshake too, so particles anchor
+  to the posted holder's "leashpoint" child prim instead of the linkset
+  root. Handler and state-machine reuse LeashMode == MODE_POST to pick
+  root-match validation and skip the OC/LM fallback; LeashTarget stays on
+  the root so followTick distance math is unchanged.
+- v1.1 rev 8: Fix DS holder validation rejecting child-prim leashpoints.
+  handleHolderResponseDs() queried OBJECT_ATTACHED_POINT directly on the
+  candidate holder key, but leash_holder.lsl returns the "leashpoint"
+  CHILD prim when present — and OBJECT_ATTACHED_POINT returns 0 for
+  child prim keys (it is a linkset-level property). The response was
+  therefore rejected as "not worn", the DS phase fell through to OC/LM,
+  and finally to the Leasher avatar key — matching the rev 7 symptom
+  for native DS holders while OC holders kept working. Now resolve
+  OBJECT_ROOT first and query OBJECT_ATTACHED_POINT on the root, per the
+  same pattern already used by the updater script.
 - v1.1 rev 7: Fix native holder response never being accepted.
   handleHolderResponseDs() was still checking for the pre-namespace type
   "leash_target"; leash_holder.lsl rev 1 migrated to "plugin.leash.target"
@@ -480,12 +495,32 @@ handleHolderResponseDs(string msg) {
     key candidate_holder = (key)llJsonGetValue(msg, ["holder"]);
     if (candidate_holder == NULL_KEY) return;
 
-    // Reject in-world holders. The DS request is broadcast via llRegionSay,
-    // so any DS-compatible holder script in the region will reply — including
-    // rezzed-in-world props. Only accept holders that are currently worn as
-    // an attachment by the leasher; otherwise the leash visually anchors to
-    // a random prim instead of the avatar.
-    list odetails = llGetObjectDetails(candidate_holder, [OBJECT_ATTACHED_POINT, OBJECT_OWNER]);
+    // OBJECT_ATTACHED_POINT is a linkset-level property and returns 0 when
+    // queried on a child prim key, so resolve the root first — leash_holder
+    // returns the "leashpoint" child prim key when that child exists.
+    list rootq = llGetObjectDetails(candidate_holder, [OBJECT_ROOT]);
+    if (llGetListLength(rootq) < 1) return;
+    key root_key = llList2Key(rootq, 0);
+    if (root_key == NULL_KEY) return;
+
+    if (LeashMode == MODE_POST) {
+        // Post mode: only accept replies from the posted object's own linkset.
+        // Upgrade particles to the reported leashpoint child; LeashTarget stays
+        // on the root so followTick distance math is unchanged.
+        list targetq = llGetObjectDetails(LeashTarget, [OBJECT_ROOT]);
+        if (llGetListLength(targetq) < 1) return;
+        if (root_key != llList2Key(targetq, 0)) return;
+
+        HolderState = HOLDER_STATE_COMPLETE;
+        closeAllHolderListens();
+        updateParticlesTarget(candidate_holder);
+        return;
+    }
+
+    // Avatar mode: only accept holders currently worn by the leasher. The DS
+    // request is broadcast via llRegionSay, so any DS-compatible holder in
+    // the region could otherwise hijack the response.
+    list odetails = llGetObjectDetails(root_key, [OBJECT_ATTACHED_POINT, OBJECT_OWNER]);
     if (llGetListLength(odetails) < 2) return;
     integer attached_point = llList2Integer(odetails, 0);
     key holder_owner       = llList2Key(odetails, 1);
@@ -493,10 +528,8 @@ handleHolderResponseDs(string msg) {
     if (holder_owner != Leasher) return;      // worn by someone else → reject
 
     HolderTarget = candidate_holder;
-
     HolderState = HOLDER_STATE_COMPLETE;
     closeAllHolderListens();
-
     setParticlesState(TRUE, HolderTarget);
 }
 
@@ -522,6 +555,12 @@ advanceHolderStateMachine() {
     
     if (HolderState == HOLDER_STATE_DS_PHASE) {
         if (elapsed >= DS_PHASE_DURATION) {
+            if (LeashMode == MODE_POST) {
+                // Post mode has no OC/LM fallback — leave particles on the root.
+                HolderState = HOLDER_STATE_COMPLETE;
+                closeAllHolderListens();
+                return;
+            }
             // Transition to OC phase
             HolderState = HOLDER_STATE_OC_PHASE;
             HolderPhaseStart = now();
@@ -532,7 +571,7 @@ advanceHolderStateMachine() {
             if (HolderListenOC == 0) {
                 HolderListenOC = llListen(LEASH_CHAN_LM, "", NULL_KEY, "");
             }
-            
+
             // CRITICAL FIX: Send controller UUID + "collar" AND "handle" per LM protocol (Code Review Fix #4)
             // The holder script expects the controller's UUID, not the wearer's UUID
             // Send BOTH messages as per the LM protocol specification
@@ -769,8 +808,10 @@ postLeashInternal(key user, key post_object) {
 
     setLeashState(user, MODE_POST, post_object, NULL_KEY);
 
-    // Start particles to post object
+    // Start particles on the posted root immediately; DS handshake may
+    // upgrade the anchor to a dedicated leashpoint child prim.
     setParticlesState(TRUE, post_object);
+    beginHolderHandshake(user);
 
     // Enable distance enforcement (via follow mechanics)
     startFollow();
