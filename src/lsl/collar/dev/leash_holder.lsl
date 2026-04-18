@@ -5,7 +5,7 @@ REVISION: 1
 PURPOSE: Minimal leash-holder target responder for external objects
 ARCHITECTURE: Direct channel listener with prim discovery fallback, namespaced message protocol
 CHANGES:
-- v1.1 rev 1: Namespace DS protocol types (plugin.leash.request / plugin.leash.target).
+- v1.1 rev 1: Namespace native protocol types (plugin.leash.request / plugin.leash.target).
 - v1.1 rev 0: Version bump for LSD policy architecture. No functional changes to this module.
 --------------------*/
 

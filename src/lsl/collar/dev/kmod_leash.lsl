@@ -9,7 +9,7 @@ CHANGES:
   dev bus vocabulary (particles.*, auth.*, settings.*, sos.*, plugin.leash.*,
   kernel-none). PLUGIN_CONTEXT becomes "ui.core.leash", LSD policy key
   moves to "acl.policycontext:", LSD setting keys move to "leash.*".
-  External DS holder protocol moves to "plugin.leash.request/target".
+  External native holder protocol moves to "plugin.leash.request/target".
   No kernel-lifecycle integration added (intentional; see README).
 - v1.1 rev 5: Add force_release action for maintenance emergency clear.
   "Clear Leash" in the maintenance plugin now sends force_release instead
@@ -25,12 +25,12 @@ CHANGES:
   out-of-range -> in-range transitions), pulls to 0.85 * length with a
   gentler tau (1.0), and runs at 1.0s instead of 2.0s for responsiveness.
   Offsim/auto-reclip throttle rebalanced to keep its prior ~4s cadence.
-- v1.1 rev 3: Reject DS-protocol holder responses from objects that are
+- v1.1 rev 3: Reject native-protocol holder responses from objects that are
   not worn by the leasher. beginHolderHandshake() broadcasts via
-  llRegionSay on LEASH_CHAN_DS so any in-world DS-compatible holder
+  llRegionSay on LEASH_CHAN_NATIVE so any in-world native-compatible holder
   could reply with its own UUID, hijacking the leash and pulling
   particles to a random world prim instead of the avatar that just
-  accepted an offer. handleHolderResponseDs() now requires the
+  accepted an offer. handleHolderResponseNative() now requires the
   responding object to be an attachment owned by the leasher; otherwise
   the response is dropped and the handshake falls through to OC and
   finally to direct-to-avatar attachment.
@@ -50,7 +50,7 @@ integer UI_BUS = 900;
 
 // Lockmeister/OpenCollar channel
 integer LEASH_CHAN_LM = -8888;
-integer LEASH_CHAN_DS = -192837465;
+integer LEASH_CHAN_NATIVE = -192837465;
 
 string PLUGIN_CONTEXT = "ui.core.leash";
 
@@ -97,7 +97,7 @@ float TURN_THRESHOLD = 0.1;  // ~5.7 degrees
 
 // Holder protocol state machine (IMPROVED)
 integer HOLDER_STATE_IDLE = 0;
-integer HOLDER_STATE_DS_PHASE = 1;
+integer HOLDER_STATE_NATIVE_PHASE = 1;
 integer HOLDER_STATE_OC_PHASE = 2;
 integer HOLDER_STATE_COMPLETE = 4;
 
@@ -107,7 +107,7 @@ integer HolderListen = 0;
 integer HolderListenOC = 0;
 key HolderTarget = NULL_KEY;
 integer HolderSession = 0;
-float DS_PHASE_DURATION = 2.0;   // 2 seconds for DS native
+float NATIVE_PHASE_DURATION = 2.0;   // 2 seconds for native
 float OC_PHASE_DURATION = 2.0;   // 2 seconds for OC
 
 // Offsim detection & auto-reclip (IMPROVED)
@@ -441,19 +441,19 @@ requestAclForPassTarget(key target) {
     
 }
 
-/* -------------------- DS HOLDER PROTOCOL (IMPROVED STATE MACHINE) -------------------- */
+/* -------------------- NATIVE HOLDER PROTOCOL (IMPROVED STATE MACHINE) -------------------- */
 beginHolderHandshake(key user) {
     // Improved randomness for session ID using multiple entropy sources
     HolderSession = (integer)llFrand(9.0E06);
-    HolderState = HOLDER_STATE_DS_PHASE;
+    HolderState = HOLDER_STATE_NATIVE_PHASE;
     HolderPhaseStart = now();
 
-    // Phase 1: DS native only
+    // Phase 1: native only
     if (HolderListen == 0) {
-        HolderListen = llListen(LEASH_CHAN_DS, "", NULL_KEY, "");
+        HolderListen = llListen(LEASH_CHAN_NATIVE, "", NULL_KEY, "");
     }
     
-    // Send DS native JSON format on DS channel
+    // Send native JSON format on native channel
     string msg = llList2Json(JSON_OBJECT, [
         "type", "plugin.leash.request",
         "wearer", (string)llGetOwner(),
@@ -462,12 +462,12 @@ beginHolderHandshake(key user) {
         "session", (string)HolderSession,
         "origin", "leashpoint"
     ]);
-    llRegionSay(LEASH_CHAN_DS, msg);
+    llRegionSay(LEASH_CHAN_NATIVE, msg);
     
 }
 
-handleHolderResponseDs(string msg) {
-    if (HolderState != HOLDER_STATE_DS_PHASE && HolderState != HOLDER_STATE_OC_PHASE) return;
+handleHolderResponseNative(string msg) {
+    if (HolderState != HOLDER_STATE_NATIVE_PHASE && HolderState != HOLDER_STATE_OC_PHASE) return;
     if (llJsonGetValue(msg, ["type"]) != "plugin.leash.target") return;
     if (llJsonGetValue(msg, ["ok"]) != "1") return;
     integer session = (integer)llJsonGetValue(msg, ["session"]);
@@ -476,8 +476,8 @@ handleHolderResponseDs(string msg) {
     key candidate_holder = (key)llJsonGetValue(msg, ["holder"]);
     if (candidate_holder == NULL_KEY) return;
 
-    // Reject in-world holders. The DS request is broadcast via llRegionSay,
-    // so any DS-compatible holder script in the region will reply — including
+    // Reject in-world holders. The native request is broadcast via llRegionSay,
+    // so any native-compatible holder script in the region will reply — including
     // rezzed-in-world props. Only accept holders that are currently worn as
     // an attachment by the leasher; otherwise the leash visually anchors to
     // a random prim instead of the avatar.
@@ -516,8 +516,8 @@ advanceHolderStateMachine() {
     
     float elapsed = (float)(now() - HolderPhaseStart);
     
-    if (HolderState == HOLDER_STATE_DS_PHASE) {
-        if (elapsed >= DS_PHASE_DURATION) {
+    if (HolderState == HOLDER_STATE_NATIVE_PHASE) {
+        if (elapsed >= NATIVE_PHASE_DURATION) {
             // Transition to OC phase
             HolderState = HOLDER_STATE_OC_PHASE;
             HolderPhaseStart = now();
@@ -1114,8 +1114,8 @@ default
     }
     
     listen(integer channel, string name, key id, string msg) {
-        if (channel == LEASH_CHAN_DS) {
-            handleHolderResponseDs(msg);
+        if (channel == LEASH_CHAN_NATIVE) {
+            handleHolderResponseNative(msg);
         }
         else if (channel == LEASH_CHAN_LM) {
             handleHolderResponseOc(id, msg);

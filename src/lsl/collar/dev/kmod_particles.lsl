@@ -6,7 +6,7 @@ PURPOSE: Visual connection renderer with Lockmeister compatibility
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
 - v1.1 rev 1: Namespace pass — align message vocabulary with dev peers
-  (particles.*, kernel.*) and update the DS-priority source match from
+  (particles.*, kernel.*) and update the native-priority source match from
   "core_leash" to "ui.core.leash" to track kmod_leash's PLUGIN_CONTEXT.
 - v1.1 rev 0: Version bump for LSD policy architecture. No functional changes to this module.
 --------------------*/
@@ -52,7 +52,7 @@ integer now() {
 // Helper to determine if timer should be running
 integer needs_timer() {
     if (LmActive) return TRUE;  // Lockmeister needs pinging
-    if (SourcePlugin != "" && ParticlesActive) return TRUE;  // DS rendering active
+    if (SourcePlugin != "" && ParticlesActive) return TRUE;  // native rendering active
     return FALSE;
 }
 
@@ -157,7 +157,7 @@ handle_lm_message(key id, string msg) {
         }
         
         
-        // Priority check: If DS native is already rendering to a holder prim, don't override
+        // Priority check: If native is already rendering to a holder prim, don't override
         if (SourcePlugin == "ui.core.leash" && TargetKey != NULL_KEY) {
             // Check if current target is a prim (not avatar)
             if (llGetAgentSize(TargetKey) == ZERO_VECTOR) {
@@ -262,7 +262,7 @@ handle_particles_start(string msg) {
         return;
     }
     
-    // Priority: Lockmeister < DS leash
+    // Priority: Lockmeister < native leash
     if (SourcePlugin == "lockmeister" && source == "ui.core.leash") {
         if (LmActive) {
             LmActive = FALSE;
