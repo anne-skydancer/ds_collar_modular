@@ -1,38 +1,14 @@
 /*--------------------
 MODULE: kmod_particles.lsl
 VERSION: 1.10
-REVISION: 14
+REVISION: 1
 PURPOSE: Visual connection renderer with Lockmeister compatibility
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
-- v1.1 rev 14: Fix LM handler overriding DS holder particles. The two
-  DS/LM priority gates still hard-coded the pre-namespace source string
-  "core_leash"; kmod_leash migrated to "ui.core.leash" in rev 5, so
-  SourcePlugin never matched. Result: any LM-compatible attachment on
-  the leasher won the race and re-anchored particles to its responder
-  prim (typically near avatar center), regardless of whether the DS
-  native handshake had already succeeded.
-- v1.1 rev 13: Lift PSYS_SRC_MAX_AGE to LEASH_SRC_MAX_AGE global.
-- v1.1 rev 12: PSYS_SRC_MAX_AGE now explicit (0.0 = forever).
-- v1.1 rev 11: LEASH_MAX_AGE 2.5 -> 5.0 for softer target-motion response.
-- v1.1 rev 10: LEASH_BURST_RATE 0.0 -> 0.05 (metered, decoupled from viewer FPS).
-- v1.1 rev  9: LEASH_BURST_COUNT 10 -> 1. With FOLLOW_SRC disabling
-  BURST_RADIUS, same-burst particles stack; inter-particle ribbon segments
-  have zero length and don't render. Density must come from BURST_RATE.
-- v1.1 rev  8: Remove PSYS_PART_FOLLOW_VELOCITY_MASK (wiki: no effect on
-  ribbons). LEASH_SCALE.y 0.07 -> 1.0 (wiki: Y is max visibility distance).
-- v1.1 rev  7: MAX_AGE 1.6 -> 2.5, ACCEL.z -1.8 -> -1.0 — softer TARGET_POS
-  response to leasher motion.
-- v1.1 rev  6: Lift ribbon tuning knobs into LEASH_* globals.
-- v1.1 rev  5: MAX_AGE 1.0 -> 1.6, ACCEL.z -0.6 -> -1.8, BURST_COUNT 4 -> 10.
-- v1.1 rev  4: Restore PSYS_PART_FOLLOW_SRC_MASK. Adopt typhartez-style recipe
-  (short MAX_AGE, light ACCEL, denser bursts).
-- v1.1 rev  3: MAX_AGE 2.6 -> 1.2, ACCEL.z -1.25 -> -4.0 against floaty trail.
-- v1.1 rev  2: EXPERIMENTAL — remove PSYS_PART_FOLLOW_SRC_MASK (reverted in
-  rev 4). Gate CHANGED_LINK particle restart on actual leashpoint link-number
-  change.
-- v1.1 rev  1: Namespace internal message type strings (particles.*, kernel.*).
-- v1.1 rev  0: Version bump for LSD policy architecture. No functional changes.
+- v1.1 rev 1: Namespace pass — align message vocabulary with dev peers
+  (particles.*, kernel.*) and update the DS-priority source match from
+  "core_leash" to "ui.core.leash" to track kmod_leash's PLUGIN_CONTEXT.
+- v1.1 rev 0: Version bump for LSD policy architecture. No functional changes to this module.
 --------------------*/
 
 
@@ -45,23 +21,6 @@ float PARTICLE_UPDATE_RATE = 0.5;  // Update every 0.5 seconds
 
 // Default chain texture
 string CHAIN_TEXTURE = "4d3b6c6f-52e2-da9d-f7be-cccb1e535aca";
-
-/* -------------------- LEASH RIBBON TUNING --------------------
-   Adjust these to tune the catenary look. See module changelog for the
-   reasoning behind the current values.
-   - MAX_AGE x |ACCEL.z| = sag potential in metres. Too small -> straight
-     line; too large -> overbowed rope.
-   - BURST_COUNT is density. Higher values hide the per-frame
-     FOLLOW_SRC rigid translation but cost more client-side rendering.
-   - BURST_RATE 0.0 emits every frame; nonzero meters emissions.
-   - SCALE.x is ribbon thickness. Y/Z are stride hints.
-*/
-float   LEASH_MAX_AGE     = 5.0;
-float   LEASH_SRC_MAX_AGE = 0.0;
-float   LEASH_BURST_RATE  = 0.05;
-integer LEASH_BURST_COUNT = 1;
-vector  LEASH_ACCEL       = <0.0, 0.0, -1.0>;
-vector  LEASH_SCALE       = <0.07, 1.0, 1.0>;
 
 // Lockmeister protocol
 integer LEASH_CHAN_LM = -8888;
@@ -162,7 +121,7 @@ handle_lm_message(key id, string msg) {
             llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
                 "type", "particles.lmreleased"
             ]), NULL_KEY);
-
+            
             // Stop timer if no other source active
             if (SourcePlugin == "lockmeister" || SourcePlugin == "") {
                 SourcePlugin = "";
@@ -265,21 +224,21 @@ render_chain_particles(key target) {
     llLinkParticleSystem(LeashpointLink, [
         PSYS_SRC_PATTERN, PSYS_SRC_PATTERN_DROP,
         PSYS_SRC_TEXTURE, CHAIN_TEXTURE,
-        PSYS_SRC_MAX_AGE, LEASH_SRC_MAX_AGE,
-        PSYS_SRC_BURST_RATE, LEASH_BURST_RATE,
-        PSYS_SRC_BURST_PART_COUNT, LEASH_BURST_COUNT,
+        PSYS_SRC_BURST_RATE, 0.0,
+        PSYS_SRC_BURST_PART_COUNT, 1,
         PSYS_PART_START_ALPHA, 1.0,
         PSYS_PART_END_ALPHA, 1.0,
-        PSYS_PART_MAX_AGE, LEASH_MAX_AGE,
-        PSYS_PART_START_SCALE, LEASH_SCALE,
-        PSYS_PART_END_SCALE, LEASH_SCALE,
+        PSYS_PART_MAX_AGE, 2.6,
+        PSYS_PART_START_SCALE, <0.07, 0.07, 0.07>,
+        PSYS_PART_END_SCALE, <0.07, 0.07, 0.07>,
         PSYS_PART_START_COLOR, <1, 1, 1>,
         PSYS_PART_END_COLOR, <1, 1, 1>,
-        PSYS_SRC_ACCEL, LEASH_ACCEL,
-        PSYS_PART_FLAGS,
+        PSYS_SRC_ACCEL, <0, 0, -1.25>,
+        PSYS_PART_FLAGS, 
             PSYS_PART_INTERP_COLOR_MASK |
-            PSYS_PART_TARGET_POS_MASK |
             PSYS_PART_FOLLOW_SRC_MASK |
+            PSYS_PART_TARGET_POS_MASK |
+            PSYS_PART_FOLLOW_VELOCITY_MASK |
             PSYS_PART_RIBBON_MASK,
         PSYS_SRC_TARGET_KEY, target
     ]);
@@ -451,13 +410,11 @@ default
             llResetScript();
         }
         
-        // If linkset changed, re-detect leashpoint but only restart particles
-        // if the link number actually changed — spurious CHANGED_LINK events
-        // (e.g. other attachments on the wearer) must not redraw the ribbon.
+        // If linkset changed, re-detect leashpoint
         if (change & CHANGED_LINK) {
-            integer prev_link = LeashpointLink;
-            LeashpointLink = find_leashpoint_link();
-            if (ParticlesActive && LeashpointLink != prev_link) {
+            LeashpointLink = 0;
+            if (ParticlesActive) {
+                LeashpointLink = find_leashpoint_link();
                 render_chain_particles(TargetKey);
             }
         }
