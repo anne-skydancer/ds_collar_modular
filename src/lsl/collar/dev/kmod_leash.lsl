@@ -1,10 +1,18 @@
 /*--------------------
 MODULE: kmod_leash.lsl
 VERSION: 1.10
-REVISION: 6
+REVISION: 7
 PURPOSE: Leashing engine providing leash services to plugins
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- v1.1 rev 7: Fix native holder response never being accepted.
+  handleHolderResponseDs() was still checking for the pre-namespace type
+  "leash_target"; leash_holder.lsl rev 1 migrated to "plugin.leash.target"
+  but this handler was missed. The collar therefore fell through to the
+  OC/LockMeister phase and finally to the Leasher avatar key, producing the
+  wiki-documented "particles end up at the geometric center of the avatar's
+  bounding box" behaviour. OpenCollar holders worked because they route
+  through the OC phase, which was unaffected.
 - v1.1 rev 6: Add force_release action for maintenance emergency clear.
   "Clear Leash" in the maintenance plugin now sends force_release instead
   of release, which is authorized if the requesting user is the wearer
@@ -464,7 +472,7 @@ beginHolderHandshake(key user) {
 
 handleHolderResponseDs(string msg) {
     if (HolderState != HOLDER_STATE_DS_PHASE && HolderState != HOLDER_STATE_OC_PHASE) return;
-    if (llJsonGetValue(msg, ["type"]) != "leash_target") return;
+    if (llJsonGetValue(msg, ["type"]) != "plugin.leash.target") return;
     if (llJsonGetValue(msg, ["ok"]) != "1") return;
     integer session = (integer)llJsonGetValue(msg, ["session"]);
     if (session != HolderSession) return;
