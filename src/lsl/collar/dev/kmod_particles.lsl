@@ -1,10 +1,24 @@
 /*--------------------
 MODULE: kmod_particles.lsl
 VERSION: 1.10
-REVISION: 9
+REVISION: 11
 PURPOSE: Visual connection renderer with Lockmeister compatibility
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- v1.1 rev 11: Push LEASH_MAX_AGE 2.5 -> 5.0. Per wiki TARGET_POS mechanics,
+  longer lifetime gives each particle more time budget to absorb leasher
+  motion — the sudden acceleration needed when the target shifts becomes
+  gentler (acceleration required scales inversely with remaining lifetime).
+  Also deepens natural gravity-sag before target-pull dominates end-of-life.
+- v1.1 rev 10: Per in-world empirical observation, ribbon looks correct with
+  long MAX_AGE + short metered BURST_RATE. Change LEASH_BURST_RATE 0.0 -> 0.05.
+  At 0.0 emission is tied to viewer frame rate (variable and frame-synced),
+  causing the per-frame FOLLOW_SRC rigid translation to coincide with every
+  emission; at 0.05 (20 Hz) emissions are metered independently of viewer
+  frame rate, decoupling particle-birth timing from wearer-movement frames
+  and producing a steadier ribbon. MAX_AGE 2.5 retained so ~50 particles are
+  live in transit to target at any time. Not using LINEAR_TARGET_MASK —
+  confirmed in-world to force a straight line (our flags do not include it).
 - v1.1 rev 9: Drop LEASH_BURST_COUNT 10 -> 1. Wiki states verbatim that ribbon
   segment length is "the distance between particles". With FOLLOW_SRC_MASK
   disabling SRC_BURST_RADIUS and identical TARGET_POS trajectories, all
@@ -92,8 +106,8 @@ string CHAIN_TEXTURE = "4d3b6c6f-52e2-da9d-f7be-cccb1e535aca";
    - BURST_RATE 0.0 emits every frame; nonzero meters emissions.
    - SCALE.x is ribbon thickness. Y/Z are stride hints.
 */
-float   LEASH_MAX_AGE     = 2.5;
-float   LEASH_BURST_RATE  = 0.0;
+float   LEASH_MAX_AGE     = 5.0;
+float   LEASH_BURST_RATE  = 0.05;
 integer LEASH_BURST_COUNT = 1;
 vector  LEASH_ACCEL       = <0.0, 0.0, -1.0>;
 vector  LEASH_SCALE       = <0.07, 1.0, 1.0>;
