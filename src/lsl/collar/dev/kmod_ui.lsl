@@ -1,10 +1,15 @@
 /*--------------------
 MODULE: kmod_ui.lsl
 VERSION: 1.10
-REVISION: 8
+REVISION: 9
 PURPOSE: Session management, LSD policy filtering, and plugin list orchestration
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- v1.1 rev 9: Longest-prefix plugin routing for namespaced chat subcommands.
+  Context like "ui.core.animate.pose.nadu" matches plugin "ui.core.animate"
+  and the remainder ("pose.nadu") is passed as a new `subpath` field in
+  ui.menu.start. Plugins ignore subpath to keep menu behaviour, or read
+  it to execute actions directly. ACL stays on the matched parent context.
 - v1.1 rev 8: Handle ui.chat.command (sent by kmod_chat rev 12). Routes to
   handle_start just like ui.menu.start, but plugins never see ui.chat.command
   so the double-dialog bug (when a plugin label starts with the chat prefix)
@@ -493,9 +498,48 @@ send_render_menu(key user, string menu_type) {
 
 /* -------------------- BUTTON HANDLING -------------------- */
 
+// Match a requested context to the longest registered plugin context that
+// is either an exact match or a dot-boundary prefix. Returns the matched
+// plugin context, or "" if none matches.
+// Example: requested "ui.core.animate.pose.nadu" against registered
+// ["ui.core.animate", "ui.core.lock"] returns "ui.core.animate".
+string resolve_plugin_context(string requested) {
+    integer exact = llListFindList(PluginContexts, [requested]);
+    if (exact != -1) return requested;
+
+    integer best_len = 0;
+    string best = "";
+    integer n = llGetListLength(PluginContexts);
+    integer i = 0;
+    while (i < n) {
+        string pc = llList2String(PluginContexts, i);
+        integer plen = llStringLength(pc);
+        if (plen > best_len && llStringLength(requested) > plen) {
+            if (llGetSubString(requested, 0, plen - 1) == pc &&
+                llGetSubString(requested, plen, plen) == ".") {
+                best = pc;
+                best_len = plen;
+            }
+        }
+        i++;
+    }
+    return best;
+}
+
+// Compute the subpath remainder after stripping a matched plugin context.
+// resolve_plugin_context("ui.core.animate.pose.nadu", "ui.core.animate")
+// returns "pose.nadu". Exact matches return "".
+string extract_subpath(string requested, string plugin_context) {
+    integer plen = llStringLength(plugin_context);
+    if (llStringLength(requested) <= plen + 1) return "";
+    return llGetSubString(requested, plen + 1, -1);
+}
+
 // Dispatch ui.menu.start to a specific plugin, with ACL from an existing session.
 // Policy is re-checked here (LSD read) to catch changes since session creation.
-dispatch_to_plugin(key user, string context, integer session_idx) {
+// The subpath field carries namespaced subcommand args (e.g. "pose.nadu");
+// plugins that ignore it keep menu-only behaviour.
+dispatch_to_plugin(key user, string context, string subpath, integer session_idx) {
     integer user_acl = llList2Integer(SessionACLs, session_idx);
     string policy = llLinksetDataRead("acl.policycontext:" + context);
     if (policy == "") {
@@ -510,6 +554,7 @@ dispatch_to_plugin(key user, string context, integer session_idx) {
     llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
         "type",    "ui.menu.start",
         "context", context,
+        "subpath", subpath,
         "user",    (string)user,
         "acl",     user_acl
     ]), user);
@@ -555,11 +600,12 @@ handle_button_click(key user, string button, string context) {
         return;
     }
 
-    // Plugin button clicked - use context directly for fast lookup
+    // Plugin button clicked - use context directly for fast lookup.
+    // Menu buttons always carry an exact plugin context; no subpath.
     if (context != "") {
         integer i = llListFindList(PluginContexts, [context]);
         if (i != -1) {
-            dispatch_to_plugin(user, context, session_idx);
+            dispatch_to_plugin(user, context, "", session_idx);
         }
         return;
     }
@@ -636,11 +682,15 @@ handle_acl_result(string msg) {
     }
     else {
         // Plugin context from chat dispatch — create root session for navigation,
-        // then dispatch directly to the plugin.
+        // then dispatch directly to the plugin (with subpath if namespaced).
         create_session(avatar, level, is_blacklisted, ROOT_CONTEXT);
         integer session_idx = find_session_idx(avatar);
         if (session_idx != -1) {
-            dispatch_to_plugin(avatar, requested_context, session_idx);
+            string matched = resolve_plugin_context(requested_context);
+            if (matched != "") {
+                string subpath = extract_subpath(requested_context, matched);
+                dispatch_to_plugin(avatar, matched, subpath, session_idx);
+            }
         }
     }
 }
@@ -667,19 +717,22 @@ handle_start(string msg, key user_key) {
         return;
     }
 
-    // Plugin-specific context from kmod_chat dispatch.
-    integer pi = llListFindList(PluginContexts, [context]);
-    if (pi == -1) {
+    // Plugin-specific context from kmod_chat dispatch. Longest-prefix match
+    // handles namespaced subcommands (ui.core.animate.pose.nadu → animate +
+    // subpath "pose.nadu"). ACL policy is checked on the matched parent.
+    string matched = resolve_plugin_context(context);
+    if (matched == "") {
         // Unrecognized context — unresolved alias or typo. Fall back to root
         // menu so the user gets something useful rather than silence.
         start_root_session(user_key);
         return;
     }
+    string subpath = extract_subpath(context, matched);
 
     // Existing session — dispatch immediately using cached ACL.
     integer session_idx = find_session_idx(user_key);
     if (session_idx != -1) {
-        dispatch_to_plugin(user_key, context, session_idx);
+        dispatch_to_plugin(user_key, matched, subpath, session_idx);
         return;
     }
 
@@ -691,12 +744,13 @@ handle_start(string msg, key user_key) {
             integer level = (integer)llGetSubString(raw, 0, sep - 1);
             create_session(user_key, level, (level == ACL_BLACKLIST), ROOT_CONTEXT);
             session_idx = find_session_idx(user_key);
-            if (session_idx != -1) dispatch_to_plugin(user_key, context, session_idx);
+            if (session_idx != -1) dispatch_to_plugin(user_key, matched, subpath, session_idx);
             return;
         }
     }
 
-    // Cold miss — queue ACL query, store plugin context as pending.
+    // Cold miss — queue ACL query, store original requested context so the
+    // subpath is preserved when handle_acl_result resumes dispatch.
     integer pending_idx = find_pending_acl_idx(user_key);
     if (pending_idx != -1) return;
     PendingAclAvatars += [user_key];

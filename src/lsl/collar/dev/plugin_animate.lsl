@@ -1,10 +1,14 @@
 /*--------------------
 PLUGIN: plugin_animate.lsl
 VERSION: 1.10
-REVISION: 3
+REVISION: 4
 PURPOSE: Paginated animation menu driven by inventory contents
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
+- v1.1 rev 4: Chat subcommand support. Registers "pose" alias via
+  chat.alias.register so "<prefix> pose nadu" routes here with
+  subpath "pose.nadu" and plays the named animation directly (no menu).
+  Empty subpath keeps existing menu behaviour.
 - v1.1 rev 3: Guard ui.menu.start against raw kmod_chat broadcasts (no acl
   field). Fixes duplicate dialogs when commands are typed in chat.
 - v1.1 rev 2: Namespace internal message type strings (kernel.*, ui.*, settings.*).
@@ -150,6 +154,14 @@ register_self() {
         "label", PLUGIN_LABEL,
         "script", llGetScriptName()
     ]), NULL_KEY);
+
+    // Declare chat subcommand root. Consumed by kmod_chat only; invisible
+    // to the kernel plugin list, so "pose" never renders as a root button.
+    llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
+        "type",    "chat.alias.register",
+        "alias",   "pose",
+        "context", PLUGIN_CONTEXT + ".pose"
+    ]), NULL_KEY);
 }
 
 send_pong() {
@@ -272,6 +284,28 @@ show_animation_menu(integer page) {
     ]);
 
     llMessageLinked(LINK_SET, DIALOG_BUS, msg, NULL_KEY);
+}
+
+/* -------------------- CHAT SUBCOMMAND HANDLING -------------------- */
+
+// Execute a namespaced chat subcommand without opening the menu.
+// subpath example: "pose.nadu" -> play "nadu".
+handle_subpath(string subpath) {
+    list tokens = llParseString2List(subpath, ["."], []);
+    if (llGetListLength(tokens) == 0) return;
+    string action = llList2String(tokens, 0);
+
+    if (action == "pose") {
+        if (llGetListLength(tokens) < 2) {
+            llRegionSayTo(CurrentUser, 0, "Usage: pose <animation name>");
+            return;
+        }
+        string anim = llDumpList2String(llList2List(tokens, 1, -1), ".");
+        start_animation(anim);
+        return;
+    }
+
+    llRegionSayTo(CurrentUser, 0, "Unknown animate subcommand: " + action);
 }
 
 /* -------------------- BUTTON HANDLING -------------------- */
@@ -445,9 +479,18 @@ default {
                 if (id == NULL_KEY) return;
 
                 CurrentUser = id;
-                CurrentPage = 0;
                 UserAcl = (integer)llJsonGetValue(msg, ["acl"]);
 
+                string subpath = "";
+                string sp = llJsonGetValue(msg, ["subpath"]);
+                if (sp != JSON_INVALID) subpath = sp;
+
+                if (subpath != "") {
+                    handle_subpath(subpath);
+                    return;
+                }
+
+                CurrentPage = 0;
                 show_animation_menu(0);
                 return;
             }

@@ -1,13 +1,19 @@
 /*--------------------
 MODULE: kmod_chat.lsl
 VERSION: 1.10
-REVISION: 12
+REVISION: 13
 PURPOSE: Local chat command receiver. Listens on channel 1 (always) and
          optionally channel 0 (public chat) for prefixed commands from
          authorised speakers. Sends ui.chat.command to UI_BUS so kmod_ui
          can route the request; plugins never receive the raw dispatch.
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- v1.1 rev 13: Namespaced subcommands. "<prefix> pose nadu" splits into
+  head="pose" + tail="nadu"; head resolves via alias table, tail tokens
+  are appended as a dot-path (e.g. ui.core.animate.pose.nadu). kmod_ui
+  does longest-prefix plugin routing. Plugins register subcommand roots
+  via new chat.alias.register message (invisible to kernel plugin list).
+  Alias registration is first-wins with an owner warning on collision.
 - v1.1 rev 12: Change dispatch message type from ui.menu.start to
   ui.chat.command. kmod_ui handles ui.chat.command and routes via
   dispatch_to_plugin (with acl). This eliminates the double-dialog bug
@@ -173,53 +179,72 @@ string strip_prefix(string message) {
     return llStringTrim(llGetSubString(message, prefix_len, -1), STRING_TRIM);
 }
 
-// Register a label→context alias from a kernel.register message.
+// Register a label→context alias. First registrant wins; a collision
+// surfaces as an owner notice so it can be fixed at the plugin level.
+// Namespacing makes command ownership explicit (e.g. "pose" belongs to
+// animate), so collisions indicate a developer-side bug rather than a
+// runtime concern.
 register_alias(string label, string context) {
     if (label == "" || context == "") return;
     string alias = llToLower(label);
     integer idx = llListFindList(CommandAliases, [alias]);
     if (idx == -1) {
         CommandAliases += [alias, context];
+        return;
     }
-    else {
-        // Update in place (stride 2, alias at idx, context at idx+1)
-        CommandAliases = llListReplaceList(CommandAliases, [alias, context], idx, idx + 1);
+    string existing = llList2String(CommandAliases, idx + 1);
+    if (existing != context) {
+        llOwnerSay("[chat] alias collision: '" + alias + "' already bound to '" +
+                   existing + "', refusing rebind to '" + context +
+                   "'. Namespaced form still works.");
     }
 }
 
-// Returns TRUE if command is a known alias or a dot-namespaced context string.
-// Used to reject natural-language false positives on channel 0.
-integer command_is_known(string command) {
-    string lower = llToLower(command);
-    // Exact alias match
+// Split a command remainder into head (first whitespace-separated token)
+// and dot-joined tail tokens. "pose nadu down" -> ["pose", "nadu.down"].
+// Multiple spaces collapse; an empty tail returns "".
+list split_head_tail(string remainder) {
+    list tokens = llParseString2List(remainder, [" ", "\t"], []);
+    integer n = llGetListLength(tokens);
+    if (n == 0) return ["", ""];
+    if (n == 1) return [llList2String(tokens, 0), ""];
+    string head = llList2String(tokens, 0);
+    string tail = llDumpList2String(llList2List(tokens, 1, -1), ".");
+    return [head, tail];
+}
+
+// Returns TRUE if the head token is a known alias or itself a dot-namespaced
+// context string. Used to reject natural-language false positives on chat.
+integer command_is_known(string head) {
+    string lower = llToLower(head);
     if (llListFindList(CommandAliases, [lower]) != -1) return TRUE;
-    // Full context passthrough: must contain a dot (namespaced)
-    if (llSubStringIndex(command, ".") != -1) return TRUE;
+    if (llSubStringIndex(head, ".") != -1) return TRUE;
     return FALSE;
 }
 
-// Resolve an alias to a full context string.
-// Returns the input unchanged if no alias matches (allows full context passthrough).
-string resolve_command(string command) {
-    string lower = llToLower(command);
+// Resolve head via alias table and append the tail as a dot-path.
+// "pose" + "nadu" -> "ui.core.animate.pose.nadu"
+// Head unchanged if no alias matches (allows full context passthrough).
+string build_dispatched_context(string head, string tail) {
+    string lower = llToLower(head);
+    string base = head;
     integer idx = llListFindList(CommandAliases, [lower]);
-    if (idx != -1) return llList2String(CommandAliases, idx + 1);
-    return command;
+    if (idx != -1) base = llList2String(CommandAliases, idx + 1);
+    if (tail == "") return base;
+    return base + "." + tail;
 }
 
 // Dispatch a recognised command from an authorised speaker.
-// The command string is resolved through the alias table before sending,
-// so "lock" dispatches as "ui.core.lock" and "menu" as "ui.core.root".
-// We send ui.chat.command (NOT ui.menu.start) so that only kmod_ui
-// receives and routes the request. Plugins never see this message
-// type and therefore cannot accidentally open a second dialog.
-dispatch_command(key speaker, string command) {
-    logd("chat cmd: speaker=" + (string)speaker + " cmd=" + command);
-    command = resolve_command(command);
+// Head resolves through the alias table; tail tokens are appended as a
+// dot-path so "pose nadu" becomes "ui.core.animate.pose.nadu". kmod_ui
+// does longest-prefix plugin routing and passes the remainder as subpath.
+dispatch_command(key speaker, string head, string tail) {
+    string context = build_dispatched_context(head, tail);
+    logd("chat cmd: speaker=" + (string)speaker + " ctx=" + context);
 
     llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
         "type",    "ui.chat.command",
-        "context", command,
+        "context", context,
         "source",  "chat"
     ]), speaker);
 }
@@ -276,17 +301,22 @@ default
         if (channel != 0 && channel != ChatChan) return;
 
         // Strip prefix
-        string command = strip_prefix(message);
-        if (command == "") return;
+        string remainder = strip_prefix(message);
+        if (remainder == "") return;
 
-        // Only act on recognised commands (known alias or dot-namespaced context).
-        // This rejects natural words on both channels (e.g. "and", "an interesting").
-        if (!command_is_known(command)) return;
+        // Split into head + dot-joined tail tokens. Validate the head:
+        // a known alias or an already dot-namespaced context passes.
+        // This rejects natural words on both channels (e.g. "and").
+        list parts = split_head_tail(remainder);
+        string head = llList2String(parts, 0);
+        string tail = llList2String(parts, 1);
+        if (head == "") return;
+        if (!command_is_known(head)) return;
 
         // Validate speaker authorisation
         if (!speaker_authorised(id, channel)) return;
 
-        dispatch_command(id, command);
+        dispatch_command(id, head, tail);
     }
 
     link_message(integer sender, integer num, string msg, key id) {
@@ -302,6 +332,15 @@ default
                 string reg_context = llJsonGetValue(msg, ["context"]);
                 if (reg_label != JSON_INVALID && reg_context != JSON_INVALID) {
                     register_alias(reg_label, reg_context);
+                }
+            }
+            else if (msg_type == "chat.alias.register") {
+                // Plugin-declared subcommand alias (e.g. "pose" for animate).
+                // Consumed only by kmod_chat; invisible to the kernel plugin list.
+                string a = llJsonGetValue(msg, ["alias"]);
+                string c = llJsonGetValue(msg, ["context"]);
+                if (a != JSON_INVALID && c != JSON_INVALID) {
+                    register_alias(a, c);
                 }
             }
         }
