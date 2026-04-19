@@ -5,12 +5,12 @@ REVISION: 9
 PURPOSE: Leashing engine providing leash services to plugins
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
-- v1.1 rev 9: Sub-protocol rename (Phase 1e). particles.lmenable→
+- v1.1 rev 9: Sub-protocol rename (Phase 1). particles.lmenable→
   particles.lm.enable, particles.lmdisable→particles.lm.disable,
   particles.lmgrabbed→particles.lm.grabbed, particles.lmreleased→
   particles.lm.released, plugin.leash.offerpending→plugin.leash.offer.pending,
   sos.leashrelease→sos.leash.release.
-- v1.1 rev 8: AUTH_BUS rename (Phase 1b). auth.aclquery→auth.acl.query,
+- v1.1 rev 8: AUTH_BUS rename (Phase 1). auth.aclquery→auth.acl.query,
   auth.aclresult→auth.acl.result.
 - v1.1 rev 7: Remove stylistic artifact from plugin.leash.state broadcast.
   Integer fields were cast to string for symmetry with the old JSON-object

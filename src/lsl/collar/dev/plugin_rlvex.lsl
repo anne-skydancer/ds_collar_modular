@@ -1,10 +1,13 @@
 /*--------------------
 PLUGIN: plugin_rlvex.lsl
 VERSION: 1.10
-REVISION: 5
+REVISION: 6
 PURPOSE: Manage RLV teleport and IM exceptions for owners and trustees
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
+- v1.1 rev 6: Wire-type rename (Phase 2). kernel.register→kernel.register.declare,
+  kernel.registernow→kernel.register.refresh, kernel.reset→kernel.reset.soft,
+  kernel.resetall→kernel.reset.factory.
 - v1.1 rev 5: Guard ui.menu.start against raw kmod_chat broadcasts (no acl
   field). Fixes duplicate dialogs when commands are typed in chat.
 - v1.1 rev 4: Namespace internal message type strings to dotted convention.
@@ -155,7 +158,7 @@ register_self() {
 
     // Register with kernel
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
-        "type", "kernel.register",
+        "type", "kernel.register.declare",
         "context", PLUGIN_CONTEXT,
         "label", PLUGIN_LABEL,
         "script", llGetScriptName()
@@ -523,12 +526,12 @@ default {
         if (type == JSON_INVALID) return;
 
         if (num == KERNEL_LIFECYCLE) {
-            if (type == "kernel.registernow") {
+            if (type == "kernel.register.refresh") {
                 register_self();
                 apply_settings_sync();
             }
             else if (type == "kernel.ping") send_pong();
-            else if (type == "kernel.reset" || type == "kernel.resetall") {
+            else if (type == "kernel.reset.soft" || type == "kernel.reset.factory") {
                 // On soft reset, reapply RLV exceptions with same delay as settings_sync
                 PendingReconcile = TRUE;
                 llSetTimerEvent(1.0);

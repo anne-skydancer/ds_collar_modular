@@ -12,7 +12,7 @@ CHANGES:
   no-op logd() scaffolding and its sole caller, dropped the vestigial
   `channel` parameter from speaker_authorised() (never branched on; ACL
   check applies to both channels by design). No behavior change.
-- v1.1 rev 14: KERNEL_LIFECYCLE rename (Phase 1a). kernel.register→
+- v1.1 rev 14: KERNEL_LIFECYCLE rename (Phase 1). kernel.register→
   kernel.register.declare, kernel.registernow→kernel.register.refresh,
   kernel.reset→kernel.reset.soft, kernel.resetall→kernel.reset.factory,
   chat.alias.register→chat.alias.declare.

@@ -5,7 +5,7 @@ REVISION: 5
 PURPOSE: Startup coordination, RLV detection, status announcement
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
-- v1.1 rev 5: KERNEL_LIFECYCLE rename (Phase 1a). kernel.reset→
+- v1.1 rev 5: KERNEL_LIFECYCLE rename (Phase 1). kernel.reset→
   kernel.reset.soft, kernel.resetall→kernel.reset.factory,
   settings.notecardloaded→settings.notecard.loaded.
 - v1.1 rev 4: Namespace internal message type strings (settings.sync,

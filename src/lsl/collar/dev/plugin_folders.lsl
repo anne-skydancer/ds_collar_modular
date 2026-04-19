@@ -1,12 +1,17 @@
 /*--------------------
 PLUGIN: plugin_folders.lsl
 VERSION: 1.10
-REVISION: 9
+REVISION: 11
 PURPOSE: Manage RLV shared folders — enumerate, attach, detach, and lock #RLV subfolders
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility.
              Uses @getinv RLV command to enumerate actual #RLV subfolders in real-time;
              no text input required. Only the locked-folder list is persisted.
 CHANGES:
+- v1.10 rev 11: Honor kernel.reset.factory as well as kernel.reset.soft.
+  Removed dead debug scaffolding (DEBUG constant, logd function, unused
+  truncate helper) — all zero callers.
+- v1.10 rev 10: Wire-type rename (Phase 2). kernel.register→kernel.register.declare,
+  kernel.registernow→kernel.register.refresh, kernel.reset→kernel.reset.soft.
 - v1.10 rev 9: Fix parser bug — when pipe_pos==0 (empty name before pipe),
   llGetSubString(entry, 0, -1) returned the whole string (e.g. "|02") as the
   folder name. Now skip any entry where pipe_pos==0.
@@ -49,7 +54,6 @@ string PLUGIN_CONTEXT = "ui.core.folders";
 string PLUGIN_LABEL   = "Folders";
 
 /* -------------------- SETTINGS KEYS & CONSTANTS -------------------- */
-integer DEBUG       = FALSE;
 string  KEY_LOCKED  = "folders.locked";  // CSV of folder names locked via @detachallthis
 
 integer RLV_CHAN    = 1888753;   // Private positive channel for @getinv responses
@@ -72,22 +76,12 @@ integer RlvListenHandle   = 0;
 
 /* -------------------- HELPERS -------------------- */
 
-integer logd(string msg) {
-    if (DEBUG) llOwnerSay("[" + PLUGIN_LABEL + "] " + msg);
-    return FALSE;
-}
-
 integer json_has(string j, list path) {
     return (llJsonGetValue(j, path) != JSON_INVALID);
 }
 
 string generate_session_id() {
     return PLUGIN_CONTEXT + "_" + (string)llGetUnixTime();
-}
-
-string truncate(string s, integer max_len) {
-    if (llStringLength(s) <= max_len) return s;
-    return llGetSubString(s, 0, max_len - 1);
 }
 
 string btn(string label, string cmd) {
@@ -115,7 +109,7 @@ register_self() {
         "5", "Attach,Detach,Lock,Unlock"
     ]));
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
-        "type",    "kernel.register",
+        "type",    "kernel.register.declare",
         "context", PLUGIN_CONTEXT,
         "label",   PLUGIN_LABEL,
         "script",  llGetScriptName()
@@ -538,14 +532,14 @@ default
         if (msg_type == JSON_INVALID) return;
 
         if (num == KERNEL_LIFECYCLE) {
-            if (msg_type == "kernel.registernow") {
+            if (msg_type == "kernel.register.refresh") {
                 register_self();
                 apply_settings_sync();
             }
             else if (msg_type == "kernel.ping") {
                 send_pong();
             }
-            else if (msg_type == "kernel.reset") {
+            else if (msg_type == "kernel.reset.soft" || msg_type == "kernel.reset.factory") {
                 llResetScript();
             }
         }

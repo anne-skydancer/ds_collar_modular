@@ -5,9 +5,9 @@ REVISION: 7
 PURPOSE: Authoritative ACL engine - OPTIMIZED
 ARCHITECTURE: Dispatch table pattern with linkset data cache and JSON templates
 CHANGES:
-- v1.1 rev 7: AUTH_BUS rename (Phase 1b). auth.aclquery→auth.acl.query,
+- v1.1 rev 7: AUTH_BUS rename (Phase 1). auth.aclquery→auth.acl.query,
   auth.aclresult→auth.acl.result, auth.aclupdate→auth.acl.update.
-- v1.1 rev 6: KERNEL_LIFECYCLE rename (Phase 1a). kernel.reset→
+- v1.1 rev 6: KERNEL_LIFECYCLE rename (Phase 1). kernel.reset→
   kernel.reset.soft, kernel.resetall→kernel.reset.factory.
 - v1.1 rev 5: Document the LSL list== content-equality workaround at the
   ACL change detection block. No functional changes.

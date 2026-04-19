@@ -1,11 +1,14 @@
 /*--------------------
 PLUGIN: plugin_tpe.lsl
 VERSION: 1.10
-REVISION: 4
+REVISION: 5
 PURPOSE: Manage TPE mode with wearer confirmation and owner oversight
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility,
   namespaced internal message protocol
 CHANGES:
+- v1.1 rev 5: Wire-type rename (Phase 2). kernel.register→kernel.register.declare,
+  kernel.registernow→kernel.register.refresh, kernel.reset→kernel.reset.soft,
+  kernel.resetall→kernel.reset.factory.
 - v1.1 rev 4: Guard ui.menu.start against raw kmod_chat broadcasts (no acl
   field). Fixes duplicate dialogs when commands are typed in chat.
 - v1.1 rev 3: Namespaced internal message types (kernel.register, ui.dialog.open, etc.).
@@ -116,7 +119,7 @@ register_with_kernel() {
     }
 
     string msg = llList2Json(JSON_OBJECT, [
-        "type", "kernel.register",
+        "type", "kernel.register.declare",
         "context", PLUGIN_CONTEXT,
         "label", initial_label,
         "script", llGetScriptName()
@@ -329,13 +332,13 @@ default
         if (num == KERNEL_LIFECYCLE) {
             string msg_type = llJsonGetValue(str, ["type"]);
 
-            if (msg_type == "kernel.registernow") {
+            if (msg_type == "kernel.register.refresh") {
                 register_with_kernel();
             }
             else if (msg_type == "kernel.ping") {
                 send_pong();
             }
-            else if (msg_type == "kernel.reset" || msg_type == "kernel.resetall") {
+            else if (msg_type == "kernel.reset.soft" || msg_type == "kernel.reset.factory") {
                 // Check if this is a targeted reset
                 string target_context = llJsonGetValue(str, ["context"]);
                 if (target_context != JSON_INVALID) {

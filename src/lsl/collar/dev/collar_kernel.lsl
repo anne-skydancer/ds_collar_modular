@@ -5,7 +5,7 @@ REVISION: 3
 PURPOSE: Plugin registry, lifecycle management, heartbeat monitoring
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
-- v1.1 rev 3: KERNEL_LIFECYCLE wire-type rename (Phase 1a of bus
+- v1.1 rev 3: KERNEL_LIFECYCLE wire-type rename (Phase 1 of bus
   restructuring). kernel.register→kernel.register.declare,
   kernel.registernow→kernel.register.refresh, kernel.pluginlist→
   kernel.plugins.list, kernel.pluginlistrequest→kernel.plugins.request,

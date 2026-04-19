@@ -1,10 +1,14 @@
 /*--------------------
 PLUGIN: plugin_blacklist.lsl
 VERSION: 1.10
-REVISION: 6
+REVISION: 7
 PURPOSE: Blacklist management with sensor-based avatar selection
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
+- v1.1 rev 7: Wire-type rename (Phase 2). kernel.register→kernel.register.declare,
+  kernel.registernow→kernel.register.refresh, kernel.reset→kernel.reset.soft,
+  kernel.resetall→kernel.reset.factory, settings.blacklistadd→
+  settings.blacklist.add, settings.blacklistremove→settings.blacklist.remove.
 - v1.1 rev 6: Guard ui.menu.start against raw kmod_chat broadcasts (no acl
   field). Fixes duplicate dialogs when commands are typed in chat.
 - v1.1 rev 5: Namespace internal message type strings (kernel.*, settings.*,
@@ -118,7 +122,7 @@ register_self() {
 
     // Register with kernel
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
-        "type", "kernel.register",
+        "type", "kernel.register.declare",
         "context", PLUGIN_CONTEXT,
         "label", PLUGIN_LABEL,
         "script", llGetScriptName()
@@ -143,14 +147,14 @@ apply_settings_sync() {
 
 send_blacklist_add(string uuid_str) {
     llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
-        "type", "settings.blacklistadd",
+        "type", "settings.blacklist.add",
         "uuid", uuid_str
     ]), NULL_KEY);
 }
 
 send_blacklist_remove(string uuid_str) {
     llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
-        "type", "settings.blacklistremove",
+        "type", "settings.blacklist.remove",
         "uuid", uuid_str
     ]), NULL_KEY);
 }
@@ -371,7 +375,7 @@ default {
 
         /* -------------------- KERNEL LIFECYCLE -------------------- */
         if (num == KERNEL_LIFECYCLE) {
-            if (msg_type == "kernel.registernow") {
+            if (msg_type == "kernel.register.refresh") {
                 register_self();
                 return;
             }
@@ -381,7 +385,7 @@ default {
                 return;
             }
 
-            if (msg_type == "kernel.reset" || msg_type == "kernel.resetall") {
+            if (msg_type == "kernel.reset.soft" || msg_type == "kernel.reset.factory") {
                 string target_context = llJsonGetValue(msg, ["context"]);
                 if (target_context != JSON_INVALID) {
                     if (target_context != "" && target_context != PLUGIN_CONTEXT) return;

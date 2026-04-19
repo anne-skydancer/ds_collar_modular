@@ -11,14 +11,14 @@ ARCHITECTURE: Two-mode access model. Single-owner mode uses scalar keys
               Trustees and blacklist always use CSVs. Display names are
               resolved asynchronously via llRequestDisplayName.
 CHANGES:
-- v1.1 rev 6: SETTINGS_BUS rename (Phase 1c). Mutation handlers now
+- v1.1 rev 6: SETTINGS_BUS rename (Phase 1). Mutation handlers now
   dispatch on namespaced family names: settings.setowner→settings.owner.set,
   settings.clearowner→settings.owner.clear, settings.addtrustee→
   settings.trustee.add, settings.removetrustee→settings.trustee.remove,
   settings.blacklistadd→settings.blacklist.add, settings.blacklistremove→
   settings.blacklist.remove. Generics (settings.sync/delta/get/set/runaway)
   unchanged.
-- v1.1 rev 5: KERNEL_LIFECYCLE rename (Phase 1a). kernel.resetall→
+- v1.1 rev 5: KERNEL_LIFECYCLE rename (Phase 1). kernel.resetall→
   kernel.reset.factory, settings.notecardloaded→settings.notecard.loaded.
 - v1.1 rev 4: Namespace internal message type strings (e.g. "set" →
   "settings.set", "settings_sync" → "settings.sync") for ISP clarity.

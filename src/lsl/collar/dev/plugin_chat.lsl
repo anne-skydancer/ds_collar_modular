@@ -1,11 +1,16 @@
 /*--------------------
 PLUGIN: plugin_chat.lsl
 VERSION: 1.10
-REVISION: 5
+REVISION: 7
 PURPOSE: Configuration UI for kmod_chat — change command prefix and toggle
          public chat (channel 0) listening.
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
+- v1.1 rev 7: Honor kernel.reset.factory as well as kernel.reset.soft.
+  Previously ignored factory reset, leaving cached session state after
+  factory wipe. Now self-resets on either.
+- v1.1 rev 6: Wire-type rename (Phase 2). kernel.register→kernel.register.declare,
+  kernel.registernow→kernel.register.refresh, kernel.reset→kernel.reset.soft.
 - v1.1 rev 5: Add configurable secondary channel ("Set Channel" button).
   Uses llTextBox like prefix input; valid range 1-9, not 0.
 - v1.1 rev 4: Replace negative-channel chat input with llTextBox popup for
@@ -86,7 +91,7 @@ register_self() {
     ]));
 
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
-        "type", "kernel.register",
+        "type", "kernel.register.declare",
         "context", PLUGIN_CONTEXT,
         "label", PLUGIN_LABEL,
         "script", llGetScriptName()
@@ -392,14 +397,14 @@ default
         if (msg_type == JSON_INVALID) return;
 
         if (num == KERNEL_LIFECYCLE) {
-            if (msg_type == "kernel.registernow") {
+            if (msg_type == "kernel.register.refresh") {
                 register_self();
                 apply_settings_sync();
             }
             else if (msg_type == "kernel.ping") {
                 send_pong();
             }
-            else if (msg_type == "kernel.reset") {
+            else if (msg_type == "kernel.reset.soft" || msg_type == "kernel.reset.factory") {
                 llResetScript();
             }
         }

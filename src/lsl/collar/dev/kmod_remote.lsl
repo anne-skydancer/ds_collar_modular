@@ -5,9 +5,9 @@ REVISION: 5
 PURPOSE: External HUD communication bridge for remote control workflows
 ARCHITECTURE: Consolidated message bus lanes, namespaced internal message protocol
 CHANGES:
-- v1.1 rev 5: AUTH_BUS rename (Phase 1b). auth.aclquery→auth.acl.query,
+- v1.1 rev 5: AUTH_BUS rename (Phase 1). auth.aclquery→auth.acl.query,
   auth.aclresult→auth.acl.result.
-- v1.1 rev 4: KERNEL_LIFECYCLE rename (Phase 1a). kernel.reset→
+- v1.1 rev 4: KERNEL_LIFECYCLE rename (Phase 1). kernel.reset→
   kernel.reset.soft, kernel.resetall→kernel.reset.factory.
 - v1.1 rev 3: Namespace context values. ROOT_CONTEXT → "ui.core.root",
   SOS_CONTEXT → "ui.sos.root".

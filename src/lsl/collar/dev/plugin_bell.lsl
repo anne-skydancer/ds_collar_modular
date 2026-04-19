@@ -1,11 +1,14 @@
 /*--------------------
 PLUGIN: plugin_bell.lsl
 VERSION: 1.10
-REVISION: 6
+REVISION: 7
 PURPOSE: Bell visibility and jingling control for the collar
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility,
   namespaced internal message protocol
 CHANGES:
+- v1.1 rev 7: Wire-type rename (Phase 2). kernel.register→kernel.register.declare,
+  kernel.registernow→kernel.register.refresh, kernel.reset→kernel.reset.soft,
+  kernel.resetall→kernel.reset.factory.
 - v1.1 rev 6: Guard ui.menu.start against raw kmod_chat broadcasts (no acl
   field). Fixes duplicate dialogs when commands are typed in chat.
 - v1.1 rev 5: Restrict bell policy to ACL 3+ (Trustee, Unowned wearer, Primary Owner).
@@ -157,7 +160,7 @@ register_self() {
 
     // Register with kernel
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
-        "type", "kernel.register",
+        "type", "kernel.register.declare",
         "context", PLUGIN_CONTEXT,
         "label", PLUGIN_LABEL,
         "script", llGetScriptName()
@@ -352,7 +355,7 @@ default {
             string msg_type = llJsonGetValue(msg, ["type"]);
             if (msg_type == JSON_INVALID) return;
 
-            if (msg_type == "kernel.registernow") {
+            if (msg_type == "kernel.register.refresh") {
                 register_self();
                 return;
             }
@@ -362,7 +365,7 @@ default {
                 return;
             }
 
-            if (msg_type == "kernel.reset" || msg_type == "kernel.resetall") {
+            if (msg_type == "kernel.reset.soft" || msg_type == "kernel.reset.factory") {
                 string target_context = llJsonGetValue(msg, ["context"]);
                 if (target_context != JSON_INVALID) {
                     if (target_context != "" && target_context != PLUGIN_CONTEXT) return;

@@ -5,9 +5,9 @@ REVISION: 11
 PURPOSE: Session management, LSD policy filtering, and plugin list orchestration
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
-- v1.1 rev 11: AUTH_BUS rename (Phase 1b). auth.aclquery→auth.acl.query,
+- v1.1 rev 11: AUTH_BUS rename (Phase 1). auth.aclquery→auth.acl.query,
   auth.aclresult→auth.acl.result, auth.aclupdate→auth.acl.update.
-- v1.1 rev 10: KERNEL_LIFECYCLE rename (Phase 1a). kernel.register→
+- v1.1 rev 10: KERNEL_LIFECYCLE rename (Phase 1). kernel.register→
   kernel.register.declare, kernel.registernow→kernel.register.refresh,
   kernel.pluginlist→kernel.plugins.list, kernel.pluginlistrequest→
   kernel.plugins.request, kernel.reset→kernel.reset.soft, kernel.resetall

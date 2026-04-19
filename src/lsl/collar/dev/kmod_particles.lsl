@@ -5,11 +5,11 @@ REVISION: 3
 PURPOSE: Visual connection renderer with Lockmeister compatibility
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
-- v1.1 rev 3: Sub-protocol rename (Phase 1e). particles.lmenable→
+- v1.1 rev 3: Sub-protocol rename (Phase 1). particles.lmenable→
   particles.lm.enable, particles.lmdisable→particles.lm.disable,
   particles.lmgrabbed→particles.lm.grabbed, particles.lmreleased→
   particles.lm.released.
-- v1.1 rev 2: KERNEL_LIFECYCLE rename (Phase 1a). kernel.reset→
+- v1.1 rev 2: KERNEL_LIFECYCLE rename (Phase 1). kernel.reset→
   kernel.reset.soft, kernel.resetall→kernel.reset.factory.
 - v1.1 rev 1: Namespace pass — align message vocabulary with dev peers
   (particles.*, kernel.*) and update the native-priority source match from

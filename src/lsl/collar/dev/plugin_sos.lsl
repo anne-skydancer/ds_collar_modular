@@ -1,10 +1,14 @@
 /*--------------------
 PLUGIN: plugin_sos.lsl
 VERSION: 1.10
-REVISION: 3
+REVISION: 4
 PURPOSE: Emergency wearer-accessible actions when ACL is locked out
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
+- v1.1 rev 4: Wire-type rename (Phase 2). kernel.register→kernel.register.declare,
+  kernel.registernow→kernel.register.refresh, kernel.reset→kernel.reset.soft,
+  kernel.resetall→kernel.reset.factory, sos.leashrelease→sos.leash.release,
+  sos.restrictclear→sos.restrict.clear, sos.relayclear→sos.relay.clear.
 - v1.1 rev 3: Guard ui.menu.start against raw kmod_chat broadcasts (no acl
   field). Fixes duplicate dialogs when commands are typed in chat.
 - v1.1 rev 2: Namespace internal message type strings (kernel.*, ui.*, sos.*).
@@ -63,7 +67,7 @@ register_self() {
 
     // Register with kernel
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
-        "type", "kernel.register",
+        "type", "kernel.register.declare",
         "context", PLUGIN_CONTEXT,
         "label", PLUGIN_LABEL,
         "script", llGetScriptName()
@@ -113,7 +117,7 @@ show_sos_menu() {
 action_unleash() {
     // Send emergency leash release on UI_BUS (bypasses ACL)
     llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
-        "type", "sos.leashrelease"
+        "type", "sos.leash.release"
     ]), CurrentUser);
 
     llRegionSayTo(CurrentUser, 0, "[SOS] Leash released.");
@@ -122,7 +126,7 @@ action_unleash() {
 action_clear_rlv() {
     // Send emergency restrict clear on UI_BUS (bypasses ACL)
     llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
-        "type", "sos.restrictclear"
+        "type", "sos.restrict.clear"
     ]), CurrentUser);
 
     // Also send @clear directly to viewer as fallback
@@ -134,7 +138,7 @@ action_clear_rlv() {
 action_clear_relay() {
     // Send emergency relay clear on UI_BUS (bypasses ACL)
     llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
-        "type", "sos.relayclear"
+        "type", "sos.relay.clear"
     ]), CurrentUser);
 
     llRegionSayTo(CurrentUser, 0, "[SOS] All relay restrictions cleared.");
@@ -213,7 +217,7 @@ default {
 
         /* -------------------- KERNEL LIFECYCLE -------------------- */
         if (num == KERNEL_LIFECYCLE) {
-            if (msg_type == "kernel.registernow") {
+            if (msg_type == "kernel.register.refresh") {
                 register_self();
                 return;
             }
@@ -223,7 +227,7 @@ default {
                 return;
             }
 
-            if (msg_type == "kernel.reset" || msg_type == "kernel.resetall") {
+            if (msg_type == "kernel.reset.soft" || msg_type == "kernel.reset.factory") {
                 // Check if this is a targeted reset
                 string target_context = llJsonGetValue(msg, ["context"]);
                 if (target_context != JSON_INVALID) {

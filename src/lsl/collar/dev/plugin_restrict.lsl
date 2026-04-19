@@ -1,10 +1,15 @@
 /*--------------------
 PLUGIN: plugin_restrict.lsl
 VERSION: 1.10
-REVISION: 4
+REVISION: 6
 PURPOSE: Manage RLV restriction toggles grouped by functional category
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
+- v1.1 rev 6: Honor kernel.reset.factory in addition to kernel.reset.soft,
+  and handle sos.restrict.clear by clearing all RLV restrictions. Factory
+  reset previously left cached state; SOS emergency clear wasn't wired.
+- v1.1 rev 5: Wire-type rename (Phase 2). kernel.register→kernel.register.declare,
+  kernel.registernow→kernel.register.refresh, kernel.reset→kernel.reset.soft.
 - v1.1 rev 4: Guard ui.menu.start against raw kmod_chat broadcasts (no acl
   field). Fixes duplicate dialogs when commands are typed in chat.
 - v1.1 rev 3: Namespace internal message type strings (kernel.*, ui.*, settings.*).
@@ -115,7 +120,7 @@ register_self() {
 
     // Register with kernel
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
-        "type", "kernel.register",
+        "type", "kernel.register.declare",
         "context", PLUGIN_CONTEXT,
         "label", PLUGIN_LABEL,
         "script", llGetScriptName()
@@ -642,14 +647,14 @@ default
 
         // Kernel lifecycle
         if (num == KERNEL_LIFECYCLE) {
-            if (type == "kernel.registernow") {
+            if (type == "kernel.register.refresh") {
                 register_self();
                 apply_settings_sync();
             }
             else if (type == "kernel.ping") {
                 send_pong();
             }
-            else if (type == "kernel.reset") {
+            else if (type == "kernel.reset.soft" || type == "kernel.reset.factory") {
                 llResetScript();
             }
         }
@@ -671,6 +676,11 @@ default
                     UserAcl = (integer)llJsonGetValue(msg, ["acl"]);
                     show_main();
                 }
+            }
+            else if (type == "sos.restrict.clear") {
+                // Emergency clear from plugin_sos (wearer-only gate enforced
+                // upstream). Drop every active RLV restriction.
+                remove_all_restrictions();
             }
         }
         // Dialogs

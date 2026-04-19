@@ -1,10 +1,14 @@
 /*--------------------
 PLUGIN: plugin_maint.lsl
 VERSION: 1.10
-REVISION: 8
+REVISION: 9
 PURPOSE: Maintenance and utility functions for collar management
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
+- v1.1 rev 9: Wire-type rename (Phase 2). kernel.register→kernel.register.declare,
+  kernel.registernow→kernel.register.refresh, kernel.reset→kernel.reset.soft,
+  kernel.resetall→kernel.reset.factory. (This plugin is the producer of both
+  soft and factory reset broadcasts from the maintenance menu.)
 - v1.1 rev 8: Fix Clear Leash confirmation dialog — wrong type "dialog_open"
   should be "ui.dialog.open". kmod_dialogs ignored it so the dialog never
   opened and the confirm button was never reachable.
@@ -106,7 +110,7 @@ register_self() {
 
     // Register with kernel
     string msg = llList2Json(JSON_OBJECT, [
-        "type", "kernel.register",
+        "type", "kernel.register.declare",
         "context", PLUGIN_CONTEXT,
         "label", PLUGIN_LABEL,
         "script", llGetScriptName()
@@ -393,7 +397,7 @@ do_factory_reset() {
 
     // Reset all scripts in the linkset
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
-        "type", "kernel.resetall",
+        "type", "kernel.reset.factory",
         "from", "factory_reset"
     ]), NULL_KEY);
 
@@ -447,7 +451,7 @@ do_clear_leash() {
 do_reload_collar() {
     // Broadcast soft reset to all plugins
     string msg = llList2Json(JSON_OBJECT, [
-        "type", "kernel.reset",
+        "type", "kernel.reset.soft",
         "from", "maintenance"
     ]);
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, msg, NULL_KEY);
@@ -619,7 +623,7 @@ default {
             string msg_type = llJsonGetValue(msg, ["type"]);
             if (msg_type == JSON_INVALID) return;
 
-            if (msg_type == "kernel.registernow") {
+            if (msg_type == "kernel.register.refresh") {
                 register_self();
                 return;
             }
@@ -629,7 +633,7 @@ default {
                 return;
             }
 
-            if (msg_type == "kernel.reset" || msg_type == "kernel.resetall") {
+            if (msg_type == "kernel.reset.soft" || msg_type == "kernel.reset.factory") {
                 // Check if this is a targeted reset
                 string target_context = llJsonGetValue(msg, ["context"]);
                 if (target_context != JSON_INVALID) {

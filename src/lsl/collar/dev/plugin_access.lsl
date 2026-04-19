@@ -1,10 +1,15 @@
 /*--------------------
 PLUGIN: plugin_access.lsl
 VERSION: 1.10
-REVISION: 7
+REVISION: 8
 PURPOSE: Owner, trustee, and honorific management workflows
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
+- v1.1 rev 8: Wire-type rename (Phase 2). kernel.register→kernel.register.declare,
+  kernel.registernow→kernel.register.refresh, kernel.reset→kernel.reset.soft,
+  kernel.resetall→kernel.reset.factory, settings.setowner→settings.owner.set,
+  settings.clearowner→settings.owner.clear, settings.addtrustee→
+  settings.trustee.add, settings.removetrustee→settings.trustee.remove.
 - v1.1 rev 7: Guard ui.menu.start against raw kmod_chat broadcasts (no acl
   field). Fixes duplicate dialogs when commands are typed in chat.
 - v1.1 rev 6: Namespace internal message type strings (kernel.*, settings.*,
@@ -191,7 +196,7 @@ register_self() {
 
     // Register with kernel
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
-        "type", "kernel.register",
+        "type", "kernel.register.declare",
         "context", PLUGIN_CONTEXT,
         "label", PLUGIN_LABEL,
         "script", llGetScriptName()
@@ -253,7 +258,7 @@ apply_settings_sync() {
 
 persist_owner(key owner, string hon) {
     llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
-        "type", "settings.setowner",
+        "type", "settings.owner.set",
         "uuid", (string)owner,
         "honorific", hon
     ]), NULL_KEY);
@@ -261,7 +266,7 @@ persist_owner(key owner, string hon) {
 
 add_trustee(key trustee, string hon) {
     llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
-        "type", "settings.addtrustee",
+        "type", "settings.trustee.add",
         "uuid", (string)trustee,
         "honorific", hon
     ]), NULL_KEY);
@@ -269,14 +274,14 @@ add_trustee(key trustee, string hon) {
 
 remove_trustee(key trustee) {
     llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
-        "type", "settings.removetrustee",
+        "type", "settings.trustee.remove",
         "uuid", (string)trustee
     ]), NULL_KEY);
 }
 
 clear_owner() {
     llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
-        "type", "settings.clearowner"
+        "type", "settings.owner.clear"
     ]), NULL_KEY);
 }
 
@@ -804,9 +809,9 @@ default {
         if (type == JSON_INVALID) return;
 
         if (num == KERNEL_LIFECYCLE) {
-            if (type == "kernel.registernow") register_self();
+            if (type == "kernel.register.refresh") register_self();
             else if (type == "kernel.ping") send_pong();
-            else if (type == "kernel.reset" || type == "kernel.resetall") {
+            else if (type == "kernel.reset.soft" || type == "kernel.reset.factory") {
                 string target_context = llJsonGetValue(msg, ["context"]);
                 if (target_context != JSON_INVALID) {
                     if (target_context != "" && target_context != PLUGIN_CONTEXT) return;

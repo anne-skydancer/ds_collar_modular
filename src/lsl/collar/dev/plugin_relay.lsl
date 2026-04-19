@@ -1,10 +1,18 @@
 /*--------------------
 PLUGIN: plugin_relay.lsl
 VERSION: 1.10
-REVISION: 4
+REVISION: 6
 PURPOSE: Provide ORG-compliant RLV relay with hardcore mode and safeword hooks
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
+- v1.1 rev 6: Wire sos.relay.clear handler on UI_BUS — triggers
+  safeword_clear_all() (bypasses Hardcore, matching the emergency intent).
+  Removed the orphan SOS_MSG_NUM=555 lane and its "sos.release" handler;
+  both were unreachable (no producer) since an earlier design that never
+  connected.
+- v1.1 rev 5: Wire-type rename (Phase 2). kernel.register→kernel.register.declare,
+  kernel.registernow→kernel.register.refresh, kernel.reset→kernel.reset.soft,
+  kernel.resetall→kernel.reset.factory.
 - v1.1 rev 4: Fix handle_ground_rez called on detach showing "rezzed on
   ground" message. Now takes a reason string; detach passes "Collar detached"
   and ground-rez passes "Collar rezzed on ground".
@@ -54,7 +62,6 @@ integer MODE_ASK = 2;
 
 integer ASK_TIMEOUT_SEC = 30;  // Wearer has 30 seconds to respond to an ASK dialog
 
-integer SOS_MSG_NUM = 555;  // SOS emergency channel
 
 // ORG relay spec wildcard UUID (accepts commands from any avatar)
 key WILDCARD_UUID = "ffffffff-ffff-ffff-ffff-ffffffffffff";
@@ -138,7 +145,7 @@ register_self() {
 
     // Register with kernel
     string msg = llList2Json(JSON_OBJECT, [
-        "type", "kernel.register",
+        "type", "kernel.register.declare",
         "context", PLUGIN_CONTEXT,
         "label", PLUGIN_LABEL,
         "script", llGetScriptName()
@@ -852,13 +859,13 @@ default
 
         /* -------------------- LIFECYCLE -------------------- */
         if (num == KERNEL_LIFECYCLE) {
-            if (msg_type == "kernel.registernow") {
+            if (msg_type == "kernel.register.refresh") {
                 register_self();
             }
             else if (msg_type == "kernel.ping") {
                 send_pong();
             }
-            else if (msg_type == "kernel.reset" || msg_type == "kernel.resetall") {
+            else if (msg_type == "kernel.reset.soft" || msg_type == "kernel.reset.factory") {
                 llResetScript();
             }
         }
@@ -875,6 +882,13 @@ default
             if (msg_type == "ui.menu.start") {
                 handle_start(msg);
             }
+            else if (msg_type == "sos.relay.clear") {
+                // Emergency safeword from plugin_sos (wearer-only gate
+                // enforced upstream). Bypasses Hardcore, matching the
+                // emergency-exit intent.
+                safeword_clear_all();
+                llOwnerSay("[SOS] All RLV restrictions cleared.");
+            }
         }
 
         /* -------------------- DIALOG -------------------- */
@@ -884,14 +898,6 @@ default
             }
             else if (msg_type == "ui.dialog.timeout") {
                 handle_dialog_timeout(msg);
-            }
-        }
-
-        /* -------------------- SOS -------------------- */
-        else if (num == SOS_MSG_NUM) {
-            if (msg_type == "sos.release") {
-                safeword_clear_all();
-                llOwnerSay("[SOS] All RLV restrictions cleared.");
             }
         }
     }
