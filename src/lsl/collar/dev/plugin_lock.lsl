@@ -1,11 +1,15 @@
 /*--------------------
 PLUGIN: plugin_lock.lsl
 VERSION: 1.10
-REVISION: 5
+REVISION: 6
 PURPOSE: Toggle collar lock and RLV detach control labels
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility,
   namespaced internal message protocol
 CHANGES:
+- v1.1 rev 6: Chat command support (Phase 3). Registers "lock" alias.
+  "<prefix> lock" toggles (same as menu click); "lock locked" /
+  "lock unlocked" set state idempotently. All routes share the same
+  btn_allowed("toggle") ACL gate.
 - v1.1 rev 5: Wire-type rename (Phase 2). kernel.register→kernel.register.declare,
   kernel.registernow→kernel.register.refresh, kernel.reset→kernel.reset.soft,
   kernel.resetall→kernel.reset.factory.
@@ -98,6 +102,13 @@ register_self() {
         "context", PLUGIN_CONTEXT,
         "label", current_label,
         "script", llGetScriptName()
+    ]), NULL_KEY);
+
+    // Declare chat alias.
+    llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
+        "type",    "chat.alias.declare",
+        "alias",   "lock",
+        "context", PLUGIN_CONTEXT
     ]), NULL_KEY);
 }
 
@@ -223,7 +234,47 @@ update_ui_label_and_return(key user) {
     llMessageLinked(LINK_SET, UI_BUS, msg, NULL_KEY);
 }
 
-/* -------------------- DIRECT TOGGLE ACTION -------------------- */
+/* -------------------- DIRECT STATE ACTIONS -------------------- */
+
+// Set the lock to a specific state. No-op with notice if already there.
+set_lock_state(key user, integer acl_level, integer target_locked) {
+    gPolicyButtons = get_policy_buttons(PLUGIN_CONTEXT, acl_level);
+    if (!btn_allowed("toggle")) {
+        llRegionSayTo(user, 0, "Access denied.");
+        gPolicyButtons = [];
+        return;
+    }
+    gPolicyButtons = [];
+
+    if (Locked == target_locked) {
+        if (target_locked) llRegionSayTo(user, 0, "Collar already locked.");
+        else llRegionSayTo(user, 0, "Collar already unlocked.");
+        return;
+    }
+
+    Locked = target_locked;
+    play_toggle_sound();
+    apply_lock_state();
+    persist_locked(Locked);
+
+    if (Locked) llRegionSayTo(user, 0, "Collar locked.");
+    else llRegionSayTo(user, 0, "Collar unlocked.");
+
+    update_ui_label_and_return(user);
+}
+
+// Execute a chat subcommand. Empty subpath handled by caller (toggle).
+handle_subpath(key user, integer acl_level, string subpath) {
+    if (subpath == "locked") {
+        set_lock_state(user, acl_level, TRUE);
+        return;
+    }
+    if (subpath == "unlocked") {
+        set_lock_state(user, acl_level, FALSE);
+        return;
+    }
+    llRegionSayTo(user, 0, "Unknown lock subcommand: " + subpath);
+}
 
 toggle_lock(key user, integer acl_level) {
     // Verify ACL via policy
@@ -332,6 +383,17 @@ default {
                 if (id == NULL_KEY) return;
 
                 integer acl = (integer)llJsonGetValue(msg, ["acl"]);
+
+                string subpath = "";
+                string sp = llJsonGetValue(msg, ["subpath"]);
+                if (sp != JSON_INVALID) subpath = sp;
+
+                if (subpath != "") {
+                    handle_subpath(id, acl, subpath);
+                    return;
+                }
+
+                // Empty subpath: toggle (matches menu-click behavior).
                 toggle_lock(id, acl);
                 return;
             }

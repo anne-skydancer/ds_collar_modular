@@ -1,10 +1,14 @@
 /*--------------------
 PLUGIN: plugin_relay.lsl
 VERSION: 1.10
-REVISION: 6
+REVISION: 7
 PURPOSE: Provide ORG-compliant RLV relay with hardcore mode and safeword hooks
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
+- v1.1 rev 7: Chat command support (Phase 3). Registers "relay" and
+  "safeword" aliases. "relay [on|off|ask]" sets mode (gated by
+  btn_allowed("Mode")); "safeword" performs emergency clear, bypasses
+  Hardcore, gated by btn_allowed("Safeword") OR btn_allowed("Unbind").
 - v1.1 rev 6: Wire sos.relay.clear handler on UI_BUS — triggers
   safeword_clear_all() (bypasses Hardcore, matching the emergency intent).
   Removed the orphan SOS_MSG_NUM=555 lane and its "sos.release" handler;
@@ -151,6 +155,18 @@ register_self() {
         "script", llGetScriptName()
     ]);
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, msg, NULL_KEY);
+
+    // Declare chat aliases.
+    llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
+        "type",    "chat.alias.declare",
+        "alias",   "relay",
+        "context", PLUGIN_CONTEXT
+    ]), NULL_KEY);
+    llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
+        "type",    "chat.alias.declare",
+        "alias",   "safeword",
+        "context", PLUGIN_CONTEXT + ".safeword"
+    ]), NULL_KEY);
 }
 
 send_pong() {
@@ -661,11 +677,76 @@ handle_start(string msg) {
     if (context != PLUGIN_CONTEXT) return;
 
     key user = (key)llJsonGetValue(msg, ["user"]);
+    integer acl = (integer)llJsonGetValue(msg, ["acl"]);
+
+    string subpath = "";
+    string sp = llJsonGetValue(msg, ["subpath"]);
+    if (sp != JSON_INVALID) subpath = sp;
+
+    if (subpath != "") {
+        handle_subpath(user, acl, subpath);
+        return;
+    }
 
     // Start new session
     CurrentUser = user;
-    UserAcl = (integer)llJsonGetValue(msg, ["acl"]);
+    UserAcl = acl;
     show_main_menu();
+}
+
+// Chat subcommand handler. Called from handle_start when subpath is non-empty.
+handle_subpath(key user, integer acl_level, string subpath) {
+    CurrentUser = user;
+    UserAcl = acl_level;
+
+    gPolicyButtons = get_policy_buttons(PLUGIN_CONTEXT, acl_level);
+
+    if (subpath == "on" || subpath == "off" || subpath == "ask") {
+        if (!btn_allowed("Mode")) {
+            llRegionSayTo(user, 0, "Access denied.");
+            gPolicyButtons = [];
+            return;
+        }
+        clear_pending_ask();
+        if (subpath == "off") {
+            SessionTrustedKeys = [];
+            Mode = MODE_OFF;
+            Hardcore = FALSE;
+            persist_mode(MODE_OFF);
+            persist_hardcore(FALSE);
+        }
+        else if (subpath == "ask") {
+            Mode = MODE_ASK;
+            Hardcore = FALSE;
+            persist_mode(MODE_ASK);
+            persist_hardcore(FALSE);
+        }
+        else {
+            Mode = MODE_ON;
+            persist_mode(MODE_ON);
+        }
+        update_relay_listen_state();
+        llRegionSayTo(user, 0, "[RELAY] Mode set to " + llToUpper(subpath) + ".");
+        gPolicyButtons = [];
+        return;
+    }
+
+    if (subpath == "safeword") {
+        // Emergency panic verb. Bypasses Hardcore, matching the sos.relay.clear
+        // semantic. Gate: any user who could Safeword or Unbind via the menu.
+        if (!btn_allowed("Safeword") && !btn_allowed("Unbind")) {
+            llRegionSayTo(user, 0, "Access denied.");
+            gPolicyButtons = [];
+            return;
+        }
+        safeword_clear_all();
+        llRegionSayTo(user, 0, "[RELAY] Safeword used - all restrictions cleared.");
+        gPolicyButtons = [];
+        return;
+    }
+
+    llRegionSayTo(user, 0, "Unknown relay subcommand: " + subpath);
+    gPolicyButtons = [];
 }
 
 handle_dialog_response(string msg) {

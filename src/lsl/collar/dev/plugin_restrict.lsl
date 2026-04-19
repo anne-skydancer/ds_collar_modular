@@ -1,10 +1,14 @@
 /*--------------------
 PLUGIN: plugin_restrict.lsl
 VERSION: 1.10
-REVISION: 6
+REVISION: 7
 PURPOSE: Manage RLV restriction toggles grouped by functional category
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
+- v1.1 rev 7: Chat command support (Phase 3). Registers "restrict" alias.
+  "<prefix> restrict" opens menu; "<prefix> restrict clear" removes all
+  active RLV restrictions (same as the "Clear all" menu button; gated
+  by btn_allowed("Clear all")).
 - v1.1 rev 6: Honor kernel.reset.factory in addition to kernel.reset.soft,
   and handle sos.restrict.clear by clearing all RLV restrictions. Factory
   reset previously left cached state; SOS emergency clear wasn't wired.
@@ -124,6 +128,13 @@ register_self() {
         "context", PLUGIN_CONTEXT,
         "label", PLUGIN_LABEL,
         "script", llGetScriptName()
+    ]), NULL_KEY);
+
+    // Declare chat alias.
+    llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
+        "type",    "chat.alias.declare",
+        "alias",   "restrict",
+        "context", PLUGIN_CONTEXT
     ]), NULL_KEY);
 }
 
@@ -672,8 +683,32 @@ default
                 if (llJsonGetValue(msg, ["acl"]) == JSON_INVALID) return;
 
                 if (context == PLUGIN_CONTEXT) {
+                    integer acl = (integer)llJsonGetValue(msg, ["acl"]);
+
+                    string subpath = "";
+                    string sp = llJsonGetValue(msg, ["subpath"]);
+                    if (sp != JSON_INVALID) subpath = sp;
+
+                    if (subpath == "clear") {
+                        // Chat: <prefix> restrict clear. Gate via menu policy.
+                        gPolicyButtons = get_policy_buttons(PLUGIN_CONTEXT, acl);
+                        if (!btn_allowed("Clear all")) {
+                            llRegionSayTo(id, 0, "Access denied.");
+                            gPolicyButtons = [];
+                            return;
+                        }
+                        gPolicyButtons = [];
+                        remove_all_restrictions();
+                        llRegionSayTo(id, 0, "All restrictions removed.");
+                        return;
+                    }
+                    if (subpath != "") {
+                        llRegionSayTo(id, 0, "Unknown restrict subcommand: " + subpath);
+                        return;
+                    }
+
                     CurrentUser = id;
-                    UserAcl = (integer)llJsonGetValue(msg, ["acl"]);
+                    UserAcl = acl;
                     show_main();
                 }
             }

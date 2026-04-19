@@ -1,10 +1,15 @@
 /*--------------------
 PLUGIN: plugin_leash.lsl
 VERSION: 1.10
-REVISION: 7
+REVISION: 8
 PURPOSE: User interface and configuration for the leashing system
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
+- v1.1 rev 8: Chat command support (Phase 3). Registers "leash" alias.
+  "<prefix> leash" opens menu; subcommands: clip, unclip, turn,
+  length <m>, pass <username>. Username resolved via llName2Key
+  (avatar must be in-sim). kmod_leash does server-side ACL enforcement
+  on the resulting plugin.leash.action, so no duplicate gating here.
 - v1.1 rev 7: Wire-type rename (Phase 2). kernel.register→kernel.register.declare,
   kernel.registernow→kernel.register.refresh, kernel.reset→kernel.reset.soft,
   kernel.resetall→kernel.reset.factory, plugin.leash.offerpending→
@@ -137,6 +142,13 @@ register_self() {
         "context", PLUGIN_CONTEXT,
         "label", PLUGIN_LABEL,
         "script", llGetScriptName()
+    ]), NULL_KEY);
+
+    // Declare chat alias.
+    llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
+        "type",    "chat.alias.declare",
+        "alias",   "leash",
+        "context", PLUGIN_CONTEXT
     ]), NULL_KEY);
 }
 
@@ -458,6 +470,61 @@ sendSetLength(integer length) {
     ]), CurrentUser);
 }
 
+/* -------------------- CHAT SUBCOMMAND HANDLING -------------------- */
+
+// kmod_leash does server-side ACL verification on each action, so we just
+// translate chat verbs into plugin.leash.action messages.
+handle_subpath(key user, integer acl_level, string subpath) {
+    CurrentUser = user;
+    UserAcl = acl_level;
+
+    list tokens = llParseString2List(subpath, ["."], []);
+    integer n = llGetListLength(tokens);
+    if (n == 0) return;
+    string action = llList2String(tokens, 0);
+
+    if (action == "clip") {
+        sendLeashAction("grab");
+        return;
+    }
+    if (action == "unclip") {
+        sendLeashAction("release");
+        return;
+    }
+    if (action == "turn") {
+        sendLeashAction("toggle_turn");
+        return;
+    }
+    if (action == "length") {
+        if (n < 2) {
+            llRegionSayTo(user, 0, "Usage: leash length <meters>");
+            return;
+        }
+        integer len = (integer)llList2String(tokens, 1);
+        if (len < 1) {
+            llRegionSayTo(user, 0, "Length must be at least 1 meter.");
+            return;
+        }
+        sendSetLength(len);
+        return;
+    }
+    if (action == "pass") {
+        if (n < 2) {
+            llRegionSayTo(user, 0, "Usage: leash pass <username>");
+            return;
+        }
+        string username = llDumpList2String(llList2List(tokens, 1, -1), ".");
+        key target = llName2Key(username);
+        if (target == NULL_KEY) {
+            llRegionSayTo(user, 0, "User not found in sim: " + username);
+            return;
+        }
+        sendLeashActionWithTarget("pass", target);
+        return;
+    }
+    llRegionSayTo(user, 0, "Unknown leash subcommand: " + action);
+}
+
 /* -------------------- BUTTON HANDLERS -------------------- */
 handleButtonClick(string ctx) {
 
@@ -713,8 +780,20 @@ default
                 if (llJsonGetValue(msg, ["acl"]) == JSON_INVALID) return;
                 if (llJsonGetValue(msg, ["context"]) == JSON_INVALID) return;
                 if (llJsonGetValue(msg, ["context"]) != PLUGIN_CONTEXT) return;
+
+                integer start_acl = (integer)llJsonGetValue(msg, ["acl"]);
+
+                string subpath = "";
+                string sp = llJsonGetValue(msg, ["subpath"]);
+                if (sp != JSON_INVALID) subpath = sp;
+
+                if (subpath != "") {
+                    handle_subpath(id, start_acl, subpath);
+                    return;
+                }
+
                 CurrentUser = id;
-                UserAcl = (integer)llJsonGetValue(msg, ["acl"]);
+                UserAcl = start_acl;
                 scheduleStateQuery("main");
                 return;
             }

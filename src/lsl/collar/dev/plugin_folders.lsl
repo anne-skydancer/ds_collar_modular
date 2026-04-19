@@ -1,12 +1,17 @@
 /*--------------------
 PLUGIN: plugin_folders.lsl
 VERSION: 1.10
-REVISION: 11
+REVISION: 12
 PURPOSE: Manage RLV shared folders — enumerate, attach, detach, and lock #RLV subfolders
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility.
              Uses @getinv RLV command to enumerate actual #RLV subfolders in real-time;
              no text input required. Only the locked-folder list is persisted.
 CHANGES:
+- v1.10 rev 12: Chat command support (Phase 3). Registers "folders" alias.
+  "folders attach/detach/lock/unlock <name>" — rejects folder names
+  containing dots (collision with subpath separator; use the menu for
+  those). Refactored apply_folder_action to not auto-redraw the menu;
+  menu-click callers now explicitly show_folder_pick after the action.
 - v1.10 rev 11: Honor kernel.reset.factory as well as kernel.reset.soft.
   Removed dead debug scaffolding (DEBUG constant, logd function, unused
   truncate helper) — all zero callers.
@@ -113,6 +118,13 @@ register_self() {
         "context", PLUGIN_CONTEXT,
         "label",   PLUGIN_LABEL,
         "script",  llGetScriptName()
+    ]), NULL_KEY);
+
+    // Declare chat alias.
+    llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
+        "type",    "chat.alias.declare",
+        "alias",   "folders",
+        "context", PLUGIN_CONTEXT
     ]), NULL_KEY);
 }
 
@@ -354,6 +366,52 @@ show_folder_action(string folder_name) {
     ]), NULL_KEY);
 }
 
+// Chat subcommand handler. subpath format: "action.foldername"
+// Rejects folder names that contained dots (they'd be exploded into
+// multiple trailing tokens) — those must be managed via menu.
+handle_subpath(key user, integer acl_level, string subpath) {
+    list tokens = llParseString2List(subpath, ["."], []);
+    integer n = llGetListLength(tokens);
+    if (n == 0) return;
+    string action = llList2String(tokens, 0);
+
+    if (action != "attach" && action != "detach" &&
+        action != "lock" && action != "unlock") {
+        llRegionSayTo(user, 0, "Unknown folders subcommand: " + action);
+        return;
+    }
+
+    if (n < 2) {
+        llRegionSayTo(user, 0, "Usage: folders " + action + " <foldername>");
+        return;
+    }
+    if (n > 2) {
+        llRegionSayTo(user, 0,
+            "Folder names containing dots are not accessible via chat — use the menu.");
+        return;
+    }
+
+    string folder_name = llList2String(tokens, 1);
+
+    // Gate: the menu-button label is the title-cased action name.
+    string btn_label = "Attach";
+    if (action == "detach") btn_label = "Detach";
+    else if (action == "lock") btn_label = "Lock";
+    else if (action == "unlock") btn_label = "Unlock";
+
+    gPolicyButtons = get_policy_buttons(PLUGIN_CONTEXT, acl_level);
+    if (!btn_allowed(btn_label)) {
+        llRegionSayTo(user, 0, "Access denied.");
+        gPolicyButtons = [];
+        return;
+    }
+    gPolicyButtons = [];
+
+    CurrentUser = user;
+    UserAcl = acl_level;
+    apply_folder_action(folder_name, action);
+}
+
 // Executes app_action on folder_name then returns to the folder list.
 apply_folder_action(string folder_name, string app_action) {
     if (app_action == "attach") {
@@ -392,7 +450,6 @@ apply_folder_action(string folder_name, string app_action) {
             llRegionSayTo(CurrentUser, 0, "Unlocked: " + folder_name);
         }
     }
-    show_folder_pick(PickPage);
 }
 
 /* -------------------- DIALOG HANDLER -------------------- */
@@ -436,6 +493,7 @@ handle_dialog_response(string msg) {
         }
         else if (ctx == "attach" || ctx == "detach" || ctx == "lock" || ctx == "unlock") {
             apply_folder_action(SelectedFolder, ctx);
+            show_folder_pick(PickPage);
         }
     }
 }
@@ -559,8 +617,20 @@ default
                 if (llJsonGetValue(msg, ["acl"]) == JSON_INVALID) return;
                 string ctx = llJsonGetValue(msg, ["context"]);
                 if (ctx != PLUGIN_CONTEXT) return;
+
+                integer start_acl = (integer)llJsonGetValue(msg, ["acl"]);
+
+                string subpath = "";
+                string sp = llJsonGetValue(msg, ["subpath"]);
+                if (sp != JSON_INVALID) subpath = sp;
+
+                if (subpath != "") {
+                    handle_subpath(id, start_acl, subpath);
+                    return;
+                }
+
                 CurrentUser = id;
-                UserAcl = (integer)llJsonGetValue(msg, ["acl"]);
+                UserAcl = start_acl;
                 show_main();
             }
         }

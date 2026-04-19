@@ -17,8 +17,9 @@ Welcome to the D/s Collar system! This guide will help you understand and use al
 9. [Safety & Emergency Features](#safety--emergency-features)
 10. [Control HUD (Remote Control)](#control-hud-remote-control)
 11. [Configuration & Settings](#configuration--settings)
-12. [Troubleshooting](#troubleshooting)
-13. [FAQ](#faq)
+12. [Chat Commands](#chat-commands)
+13. [Troubleshooting](#troubleshooting)
+14. [FAQ](#faq)
 
 ---
 
@@ -775,6 +776,173 @@ default {
 - Changes sync across all scripts
 - Survives logout/login
 - Survives script resets
+
+---
+
+## Chat Commands
+
+Most collar features can be driven from local chat in addition to the
+touch menu. Commands are typed on the collar's **chat channel** and
+prefixed with the collar's **chat prefix** (default is derived from the
+wearer's username; configurable via the Chat menu or notecard).
+
+### Syntax
+
+```
+<prefix> <verb> [argument]
+```
+
+Examples (using `an` as the prefix):
+
+```
+an status
+an pose nadu
+an leash clip
+an lock locked
+an safeword
+```
+
+Commands are case-insensitive. Whoever types the command gets the same
+access check the menu would apply — if you can see the plugin in the
+menu, you can use its chat commands.
+
+### Command Reference
+
+The table below lists every alias grouped by plugin. For toggles, the
+bare alias (e.g. `lock`) does whatever the menu click does; explicit
+state or action forms (e.g. `lock locked`) are idempotent.
+
+#### Animate
+
+| Command | Action |
+|---|---|
+| `animate` | Open Animate menu |
+| `pose <name>` | Play the named animation from inventory |
+| `pose stop` | Stop the current animation |
+| `stand` | Stop the current animation (alias for `pose stop`) |
+
+#### Leash
+
+| Command | Action |
+|---|---|
+| `leash` | Open Leash menu |
+| `leash clip` | Grab the leash (leash yourself or the wearer, per ACL) |
+| `leash unclip` | Release the leash |
+| `leash turn` | Toggle turn-to-face |
+| `leash length <m>` | Set leash length in metres |
+| `leash pass <username>` | Hand leash to another avatar. Uses SL username (`firstname.lastname` or mononame). The target must be in-sim. |
+
+#### Lock
+
+| Command | Action |
+|---|---|
+| `lock` | Toggle lock (same as menu click) |
+| `lock locked` | Set state to locked (idempotent) |
+| `lock unlocked` | Set state to unlocked (idempotent) |
+
+#### Public access
+
+| Command | Action |
+|---|---|
+| `public` | Toggle public access |
+| `public on` | Enable public access |
+| `public off` | Disable public access |
+
+#### Bell
+
+| Command | Action |
+|---|---|
+| `bell` | Open Bell menu |
+| `bell show` | Show the bell prim |
+| `bell hide` | Hide the bell prim |
+| `bell jingle` | Play one jingle (respects the sound-enabled flag) |
+
+#### Status
+
+| Command | Action |
+|---|---|
+| `status` | Show the status dialog |
+
+#### RLV Relay
+
+| Command | Action |
+|---|---|
+| `relay` | Open Relay menu |
+| `relay on` / `relay off` / `relay ask` | Set relay mode |
+| `safeword` | Emergency clear all relay restrictions (bypasses Hardcore). Standalone alias — no plugin name needed. |
+
+#### RLV Restrictions
+
+| Command | Action |
+|---|---|
+| `restrict` | Open Restrict menu |
+| `restrict clear` | Remove all active RLV restrictions |
+
+#### Folders
+
+| Command | Action |
+|---|---|
+| `folders` | Open Folders menu |
+| `folders attach <name>` | Attach an RLV folder |
+| `folders detach <name>` | Detach an RLV folder |
+| `folders lock <name>` | Lock a folder (prevent detach) |
+| `folders unlock <name>` | Unlock a folder |
+
+**Caveat:** folder names containing a dot (e.g. `#RLV/boots.v2`) are
+**not** accessible via chat — the dot conflicts with subcommand
+parsing. Use the menu for those.
+
+#### Access (Owner & Trustee management)
+
+Chat enters the existing menu flow. No username in chat — the sensor
+picker, consent dialog, and honorific prompt all stay in the menu.
+
+| Command | Action |
+|---|---|
+| `access` | Open Access menu |
+| `access add owner` | Start the Add Owner flow (sensor pick + consent) |
+| `access rem owner` | Start the Release Owner flow (confirmation) |
+| `access add trustee` | Start the Add Trustee flow |
+| `access rem trustee` | Pick a trustee to remove from the current list |
+
+#### Blacklist
+
+Chat enters the existing menu flow. No username in chat — blacklist
+additions use the sensor picker (visual confirmation of target).
+
+| Command | Action |
+|---|---|
+| `blacklist` | Open Blacklist menu |
+| `blacklist add` | Start the Add-to-Blacklist flow (sensor pick) |
+| `blacklist rem` | Pick an entry to remove from the current blacklist |
+
+#### SOS (Emergency)
+
+Wearer-only, gated by ACL. These are panic verbs — each standalone
+alias triggers one emergency action directly (no menu round-trip).
+
+| Command | Action |
+|---|---|
+| `sos` | Open SOS menu |
+| `sosunleash` | Emergency release the leash |
+| `sosrestrict` | Emergency clear all RLV restrictions |
+| `sosrelay` | Emergency safeword the relay |
+
+### Menu-Only Plugins
+
+The following plugins have no chat commands and are accessible only
+through the touch menu, intentionally:
+
+- **Chat configuration** (prefix, channel, public toggle) — mistyping
+  the prefix through chat could lock you out.
+- **Maintenance** — destructive actions (soft reset, factory reset,
+  clear leash) require the menu's confirmation dialog.
+- **TPE** — Total Power Exchange toggling requires wearer confirmation
+  that can't be short-circuited from chat.
+- **RLV Exceptions** — each exception category and target combination
+  would make chat syntax unwieldy.
+
+For these, touch the collar and use the menu.
 
 ---
 

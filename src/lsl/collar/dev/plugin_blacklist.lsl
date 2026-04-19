@@ -1,10 +1,13 @@
 /*--------------------
 PLUGIN: plugin_blacklist.lsl
 VERSION: 1.10
-REVISION: 7
+REVISION: 8
 PURPOSE: Blacklist management with sensor-based avatar selection
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
+- v1.1 rev 8: Chat command support (Phase 3). Registers "blacklist" alias.
+  "blacklist add" and "blacklist rem" enter the corresponding menu flow
+  (sensor pick for add, numbered remove list). No username in chat.
 - v1.1 rev 7: Wire-type rename (Phase 2). kernel.register→kernel.register.declare,
   kernel.registernow→kernel.register.refresh, kernel.reset→kernel.reset.soft,
   kernel.resetall→kernel.reset.factory, settings.blacklistadd→
@@ -127,6 +130,13 @@ register_self() {
         "label", PLUGIN_LABEL,
         "script", llGetScriptName()
     ]), NULL_KEY);
+
+    // Declare chat alias.
+    llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
+        "type",    "chat.alias.declare",
+        "alias",   "blacklist",
+        "context", PLUGIN_CONTEXT
+    ]), NULL_KEY);
 }
 
 send_pong() {
@@ -187,6 +197,42 @@ show_main_menu() {
     ]);
 
     llMessageLinked(LINK_SET, DIALOG_BUS, msg, NULL_KEY);
+}
+
+// Chat subcommand handler. Enters the add-scan or remove-list flow as
+// if the corresponding main-menu button was clicked.
+handle_subpath(key user, integer acl_level, string subpath) {
+    gPolicyButtons = get_policy_buttons(PLUGIN_CONTEXT, acl_level);
+
+    CurrentUser = user;
+    CurrentUserAcl = acl_level;
+    MenuContext = "main";
+
+    if (subpath == "add") {
+        if (!btn_allowed("+Blacklist")) {
+            llRegionSayTo(user, 0, "Access denied.");
+            gPolicyButtons = [];
+            return;
+        }
+        gPolicyButtons = [];
+        MenuContext = "add_scan";
+        CandidateKeys = [];
+        llSensor("", NULL_KEY, AGENT, BLACKLIST_RADIUS, PI);
+        return;
+    }
+    if (subpath == "rem") {
+        if (!btn_allowed("-Blacklist")) {
+            llRegionSayTo(user, 0, "Access denied.");
+            gPolicyButtons = [];
+            return;
+        }
+        gPolicyButtons = [];
+        show_remove_menu();
+        return;
+    }
+
+    gPolicyButtons = [];
+    llRegionSayTo(user, 0, "Unknown blacklist subcommand: " + subpath);
 }
 
 show_remove_menu() {
@@ -413,9 +459,20 @@ default {
                 if (llJsonGetValue(msg, ["context"]) == JSON_INVALID) return;
                 if (llJsonGetValue(msg, ["context"]) != PLUGIN_CONTEXT) return;
 
+                integer acl = (integer)llJsonGetValue(msg, ["acl"]);
+
+                string subpath = "";
+                string sp = llJsonGetValue(msg, ["subpath"]);
+                if (sp != JSON_INVALID) subpath = sp;
+
+                if (subpath != "") {
+                    handle_subpath(id, acl, subpath);
+                    return;
+                }
+
                 // User wants to start this plugin
                 CurrentUser = id;
-                CurrentUserAcl = (integer)llJsonGetValue(msg, ["acl"]);
+                CurrentUserAcl = acl;
                 show_main_menu();
                 return;
             }

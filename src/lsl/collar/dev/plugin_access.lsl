@@ -1,10 +1,14 @@
 /*--------------------
 PLUGIN: plugin_access.lsl
 VERSION: 1.10
-REVISION: 8
+REVISION: 9
 PURPOSE: Owner, trustee, and honorific management workflows
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
+- v1.1 rev 9: Chat command support (Phase 3). Registers "access" alias.
+  "access add/rem owner/trustee" enter the corresponding menu flow
+  (sensor pick + consent/honorific dialogs). No username in chat —
+  target selection stays in the menu by design.
 - v1.1 rev 8: Wire-type rename (Phase 2). kernel.register→kernel.register.declare,
   kernel.registernow→kernel.register.refresh, kernel.reset→kernel.reset.soft,
   kernel.resetall→kernel.reset.factory, settings.setowner→settings.owner.set,
@@ -200,6 +204,13 @@ register_self() {
         "context", PLUGIN_CONTEXT,
         "label", PLUGIN_LABEL,
         "script", llGetScriptName()
+    ]), NULL_KEY);
+
+    // Declare chat alias.
+    llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
+        "type",    "chat.alias.declare",
+        "alias",   "access",
+        "context", PLUGIN_CONTEXT
     ]), NULL_KEY);
 }
 
@@ -433,6 +444,75 @@ show_confirm(string title, string body, string ctx) {
         "button_data", llList2Json(JSON_ARRAY, [btn("Yes", "confirm"), btn("No", "cancel")]),
         "timeout", 60
     ]), NULL_KEY);
+}
+
+// Chat subcommand handler. Routes into the existing menu flows by
+// setting session state and triggering the same code paths the
+// corresponding main-menu button would fire.
+handle_subpath(key user, integer acl_level, string subpath) {
+    list tokens = llParseString2List(subpath, ["."], []);
+    if (llGetListLength(tokens) < 2) {
+        llRegionSayTo(user, 0, "Usage: access <add|rem> <owner|trustee>");
+        return;
+    }
+    string verb = llList2String(tokens, 0);
+    string role = llList2String(tokens, 1);
+
+    gPolicyButtons = get_policy_buttons(PLUGIN_CONTEXT, acl_level);
+
+    // Session setup mirrors the menu flow entry.
+    CurrentUser = user;
+    UserAcl = acl_level;
+    MenuContext = "main";
+
+    if (verb == "add" && role == "owner") {
+        if (!btn_allowed("Add Owner")) {
+            llRegionSayTo(user, 0, "Access denied.");
+            gPolicyButtons = [];
+            return;
+        }
+        gPolicyButtons = [];
+        MenuContext = "set_scan";
+        CandidateKeys = [];
+        llSensor("", NULL_KEY, AGENT, 10.0, PI);
+        return;
+    }
+    if (verb == "rem" && role == "owner") {
+        if (!btn_allowed("Release")) {
+            llRegionSayTo(user, 0, "Access denied.");
+            gPolicyButtons = [];
+            return;
+        }
+        gPolicyButtons = [];
+        show_confirm("Confirm Release",
+            "Release " + get_name(llGetOwner()) + "?", "release_owner");
+        return;
+    }
+    if (verb == "add" && role == "trustee") {
+        if (!btn_allowed("Add Trustee")) {
+            llRegionSayTo(user, 0, "Access denied.");
+            gPolicyButtons = [];
+            return;
+        }
+        gPolicyButtons = [];
+        MenuContext = "trustee_scan";
+        CandidateKeys = [];
+        llSensor("", NULL_KEY, AGENT, 10.0, PI);
+        return;
+    }
+    if (verb == "rem" && role == "trustee") {
+        if (!btn_allowed("Rem Trustee")) {
+            llRegionSayTo(user, 0, "Access denied.");
+            gPolicyButtons = [];
+            return;
+        }
+        gPolicyButtons = [];
+        show_remove_trustee();
+        return;
+    }
+
+    gPolicyButtons = [];
+    llRegionSayTo(user, 0, "Unknown access subcommand: " + verb + " " + role);
 }
 
 show_remove_trustee() {
@@ -826,10 +906,19 @@ default {
             if (type == "ui.menu.start" && (llJsonGetValue(msg, ["context"]) != JSON_INVALID)) {
                 if (llJsonGetValue(msg, ["acl"]) == JSON_INVALID) return;
                 if (llJsonGetValue(msg, ["context"]) == PLUGIN_CONTEXT) {
-                    CurrentUser = id;
-                    // ACL level provided by UI module
-                    UserAcl = (integer)llJsonGetValue(msg, ["acl"]);
+                    integer acl = (integer)llJsonGetValue(msg, ["acl"]);
 
+                    string subpath = "";
+                    string sp = llJsonGetValue(msg, ["subpath"]);
+                    if (sp != JSON_INVALID) subpath = sp;
+
+                    if (subpath != "") {
+                        handle_subpath(id, acl, subpath);
+                        return;
+                    }
+
+                    CurrentUser = id;
+                    UserAcl = acl;
                     show_main();
                 }
             }

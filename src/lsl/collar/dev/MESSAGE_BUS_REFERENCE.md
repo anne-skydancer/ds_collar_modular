@@ -25,12 +25,12 @@ are listed at the bottom.
 Plugin -> Kernel, Kernel -> kmod_chat (for alias table).
 | Field | Type | Req | Notes |
 |---|---|---|---|
-| `type` | string | yes | `"kernel.register"` |
+| `type` | string | yes | `"kernel.register.declare"` |
 | `context` | string | yes | Plugin context (e.g. `"ui.core.animate"`) |
 | `label` | string | yes | Human label and default chat alias |
 | `script` | string | yes | `llGetScriptName()` of the plugin |
 
-### `kernel.registernow`
+### `kernel.register.refresh`
 Broadcast -> all plugins. Tells every plugin to re-emit `kernel.register`.
 Sender: kmod_chat (on state_entry), kmod_ui (on state_entry), kernel (on rediscover).
 | Field | Type | Req |
@@ -67,16 +67,16 @@ unscoped = everyone resets.
 | `type` | string | yes |
 | `context` | string | no |
 
-### `chat.alias.register` (rev 13)
+### `chat.alias.declare` (rev 13)
 Plugin -> kmod_chat only. Declares a chat subcommand root (e.g. `"pose"`
 for animate). Invisible to the kernel plugin list.
 | Field | Type | Req | Notes |
 |---|---|---|---|
-| `type` | string | yes | `"chat.alias.register"` |
+| `type` | string | yes | `"chat.alias.declare"` |
 | `alias` | string | yes | Lowercase alias word (`"pose"`) |
 | `context` | string | yes | Full namespaced context (`"ui.core.animate.pose"`) |
 
-### `settings.notecardloaded`
+### `settings.notecard.loaded`
 kmod_settings -> kernel. Notecard parse complete on cold start.
 | Field | Type | Req |
 |---|---|---|
@@ -86,7 +86,7 @@ kmod_settings -> kernel. Notecard parse complete on cold start.
 
 ## 700 — AUTH_BUS
 
-### `auth.aclquery`
+### `auth.acl.query`
 Plugin/UI -> kmod_auth. Request ACL level.
 | Field | Type | Req | Notes |
 |---|---|---|---|
@@ -94,7 +94,7 @@ Plugin/UI -> kmod_auth. Request ACL level.
 | `avatar` | string UUID | yes | Subject of the query |
 | `id` | string | no | Correlation id echoed on result |
 
-### `auth.aclresult`
+### `auth.acl.result`
 kmod_auth -> plugin/UI.
 | Field | Type | Req | Notes |
 |---|---|---|---|
@@ -106,7 +106,7 @@ kmod_auth -> plugin/UI.
 | `owner_set` | integer bool | yes | Whether primary owner configured |
 | `id` | string | no | Echo of query correlation id |
 
-### `auth.aclupdate`
+### `auth.acl.update`
 kmod_auth -> everyone. ACL state changed; consumers invalidate caches /
 re-render menus.
 | Field | Type | Req | Notes |
@@ -144,7 +144,7 @@ Caller -> kmod_settings. Generic scalar write.
 | `key` | string | yes | LSD key (e.g. `"chat.prefix"`) |
 | `value` | string | yes | Serialized scalar (`"0"`/`"1"` for bools) |
 
-### `settings.setowner`
+### `settings.owner.set`
 Caller -> kmod_settings.
 | Field | Type | Req | Notes |
 |---|---|---|---|
@@ -152,13 +152,13 @@ Caller -> kmod_settings.
 | `uuid` | string UUID | yes | New primary owner |
 | `honorific` | string | yes | Title prepended to display name |
 
-### `settings.clearowner`
+### `settings.owner.clear`
 Caller -> kmod_settings. Unowned mode.
 | Field | Type | Req |
 |---|---|---|
 | `type` | string | yes |
 
-### `settings.addtrustee` / `settings.removetrustee`
+### `settings.trustee.add` / `settings.trustee.remove`
 Caller -> kmod_settings.
 | Field | Type | Req | Notes |
 |---|---|---|---|
@@ -166,7 +166,7 @@ Caller -> kmod_settings.
 | `uuid` | string UUID | yes |  |
 | `honorific` | string | add only |  |
 
-### `settings.blacklistadd` / `settings.blacklistremove`
+### `settings.blacklist.add` / `settings.blacklist.remove`
 Caller -> kmod_settings. Role-exclusive (adding blacklist removes owner/trustee).
 | Field | Type | Req |
 |---|---|---|
@@ -270,14 +270,14 @@ Leash -> particles.
 | `type` | string | yes |
 | `target` | string UUID | yes |
 
-#### `particles.lmenable` / `particles.lmdisable`
+#### `particles.lm.enable` / `particles.lm.disable`
 Leash <-> particles. Toggle Lockmeister protocol mode.
 | Field | Type | Req | Notes |
 |---|---|---|---|
 | `type` | string | yes |  |
 | `controller` | string UUID | enable only | LM holder |
 
-#### `particles.lmgrabbed` / `particles.lmreleased`
+#### `particles.lm.grabbed` / `particles.lm.released`
 Particles -> leash. LM holder state change notifications.
 | Field | Type | Req | Notes |
 |---|---|---|---|
@@ -305,7 +305,7 @@ kmod_leash -> UI/plugins. Broadcast after state change.
 | `turnto` | integer bool | yes |  |
 | `mode` | integer | yes | 0 avatar, 1 coffle, 2 post |
 
-#### `plugin.leash.offerpending`
+#### `plugin.leash.offer.pending`
 kmod_leash -> UI. Visual cue that an offer is in flight.
 | Field | Type | Req |
 |---|---|---|
@@ -315,19 +315,19 @@ kmod_leash -> UI. Visual cue that an offer is in flight.
 
 ### SOS sub-protocol (lives on UI_BUS)
 
-#### `sos.leashrelease`
+#### `sos.leash.release`
 SOS plugin -> kmod_leash. Emergency release.
 | Field | Type | Req |
 |---|---|---|
 | `type` | string | yes |
 
-#### `sos.restrictclear`
+#### `sos.restrict.clear`
 SOS plugin -> RLV/restrict modules. Clear all restrictions.
 | Field | Type | Req |
 |---|---|---|
 | `type` | string | yes |
 
-#### `sos.relayclear`
+#### `sos.relay.clear`
 SOS plugin -> relay module. Clear relay restrictions.
 | Field | Type | Req |
 |---|---|---|
@@ -387,8 +387,8 @@ Transmitted via `llRegionSay`/`llRegionSayTo` on fixed negative channels.
 | Collar -> HUD | varies | `remote.collarready` | type, collar |
 | Collar -> holder | -192837465 | `plugin.leash.request` | type, wearer, collar, controller, session, origin |
 | Holder -> collar | -192837465 | `plugin.leash.target` | type, ok, holder, session, name |
-| HUD -> collar | varies | `auth.aclqueryexternal` | type |
-| Collar -> HUD | varies | `auth.aclresultexternal` | type, level |
+| HUD -> collar | varies | `auth.acl.queryexternal` | type |
+| Collar -> HUD | varies | `auth.acl.resultexternal` | type, level |
 
 ---
 

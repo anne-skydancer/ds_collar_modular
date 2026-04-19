@@ -1,11 +1,15 @@
 /*--------------------
 PLUGIN: plugin_bell.lsl
 VERSION: 1.10
-REVISION: 7
+REVISION: 8
 PURPOSE: Bell visibility and jingling control for the collar
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility,
   namespaced internal message protocol
 CHANGES:
+- v1.1 rev 8: Chat command support (Phase 3). Registers "bell" alias.
+  "<prefix> bell" opens menu; "bell show"/"bell hide" set visibility
+  (gated by btn_allowed("Show")); "bell jingle" triggers a manual
+  jingle (respects BellSoundEnabled).
 - v1.1 rev 7: Wire-type rename (Phase 2). kernel.register→kernel.register.declare,
   kernel.registernow→kernel.register.refresh, kernel.reset→kernel.reset.soft,
   kernel.resetall→kernel.reset.factory.
@@ -165,6 +169,13 @@ register_self() {
         "label", PLUGIN_LABEL,
         "script", llGetScriptName()
     ]), NULL_KEY);
+
+    // Declare chat alias.
+    llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
+        "type",    "chat.alias.declare",
+        "alias",   "bell",
+        "context", PLUGIN_CONTEXT
+    ]), NULL_KEY);
 }
 
 send_pong() {
@@ -220,6 +231,51 @@ persist_bell_setting(string setting_key, string value) {
         "key", setting_key,
         "value", value
     ]), NULL_KEY);
+}
+
+/* -------------------- CHAT SUBCOMMAND HANDLING -------------------- */
+
+// Set bell visibility idempotently; gated by "Show" policy.
+set_bell_visible_state(key user, integer acl_level, integer target_visible) {
+    gPolicyButtons = get_policy_buttons(PLUGIN_CONTEXT, acl_level);
+    if (!btn_allowed("Show")) {
+        llRegionSayTo(user, 0, "Access denied.");
+        gPolicyButtons = [];
+        return;
+    }
+    gPolicyButtons = [];
+
+    if (BellVisible == target_visible) {
+        if (target_visible) llRegionSayTo(user, 0, "Bell already shown.");
+        else llRegionSayTo(user, 0, "Bell already hidden.");
+        return;
+    }
+
+    BellVisible = target_visible;
+    set_bell_visibility(BellVisible);
+    persist_bell_setting(KEY_BELL_VISIBLE, (string)BellVisible);
+    if (BellVisible) llRegionSayTo(user, 0, "Bell shown.");
+    else llRegionSayTo(user, 0, "Bell hidden.");
+}
+
+handle_subpath(key user, integer acl_level, string subpath) {
+    if (subpath == "show") {
+        set_bell_visible_state(user, acl_level, TRUE);
+        return;
+    }
+    if (subpath == "hide") {
+        set_bell_visible_state(user, acl_level, FALSE);
+        return;
+    }
+    if (subpath == "jingle") {
+        if (!BellSoundEnabled) {
+            llRegionSayTo(user, 0, "Bell sound is disabled.");
+            return;
+        }
+        play_jingle();
+        return;
+    }
+    llRegionSayTo(user, 0, "Unknown bell subcommand: " + subpath);
 }
 
 /* -------------------- BUTTON HANDLER -------------------- */
@@ -399,6 +455,16 @@ default {
 
                 CurrentUser = id;
                 UserAcl = (integer)llJsonGetValue(msg, ["acl"]);
+
+                string subpath = "";
+                string sp = llJsonGetValue(msg, ["subpath"]);
+                if (sp != JSON_INVALID) subpath = sp;
+
+                if (subpath != "") {
+                    handle_subpath(id, UserAcl, subpath);
+                    return;
+                }
+
                 show_main_menu();
                 return;
             }

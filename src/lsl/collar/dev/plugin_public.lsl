@@ -1,11 +1,15 @@
 /*--------------------
 PLUGIN: plugin_public.lsl
 VERSION: 1.10
-REVISION: 5
+REVISION: 6
 PURPOSE: Toggle public access mode directly from main menu
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility,
   namespaced internal message protocol
 CHANGES:
+- v1.1 rev 6: Chat command support (Phase 3). Registers "public" alias.
+  "<prefix> public" toggles (same as menu click); "public on" /
+  "public off" set state idempotently. All routes share the same
+  btn_allowed("toggle") ACL gate.
 - v1.1 rev 5: Wire-type rename (Phase 2). kernel.register→kernel.register.declare,
   kernel.registernow→kernel.register.refresh, kernel.reset→kernel.reset.soft,
   kernel.resetall→kernel.reset.factory.
@@ -92,6 +96,13 @@ register_self() {
         "script", llGetScriptName()
     ]);
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, msg, NULL_KEY);
+
+    // Declare chat alias.
+    llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
+        "type",    "chat.alias.declare",
+        "alias",   "public",
+        "context", PLUGIN_CONTEXT
+    ]), NULL_KEY);
 }
 
 send_pong() {
@@ -155,7 +166,44 @@ update_ui_label_and_return(key user) {
     llMessageLinked(LINK_SET, UI_BUS, msg, NULL_KEY);
 }
 
-/* -------------------- DIRECT TOGGLE ACTION -------------------- */
+/* -------------------- DIRECT STATE ACTIONS -------------------- */
+
+// Set public mode to a specific state. No-op with notice if already there.
+set_public_mode(key user, integer acl_level, integer target_enabled) {
+    gPolicyButtons = get_policy_buttons(PLUGIN_CONTEXT, acl_level);
+    if (!btn_allowed("toggle")) {
+        llRegionSayTo(user, 0, "Access denied.");
+        gPolicyButtons = [];
+        return;
+    }
+    gPolicyButtons = [];
+
+    if (PublicModeEnabled == target_enabled) {
+        if (target_enabled) llRegionSayTo(user, 0, "Public access already enabled.");
+        else llRegionSayTo(user, 0, "Public access already disabled.");
+        return;
+    }
+
+    PublicModeEnabled = target_enabled;
+    persist_public_mode(PublicModeEnabled);
+
+    if (PublicModeEnabled) llRegionSayTo(user, 0, "Public access enabled.");
+    else llRegionSayTo(user, 0, "Public access disabled.");
+
+    update_ui_label_and_return(user);
+}
+
+handle_subpath(key user, integer acl_level, string subpath) {
+    if (subpath == "on") {
+        set_public_mode(user, acl_level, TRUE);
+        return;
+    }
+    if (subpath == "off") {
+        set_public_mode(user, acl_level, FALSE);
+        return;
+    }
+    llRegionSayTo(user, 0, "Unknown public subcommand: " + subpath);
+}
 
 toggle_public_access(key user, integer acl_level) {
     // Verify ACL via policy
@@ -255,8 +303,18 @@ default {
 
                 if (id == NULL_KEY) return;
 
-                // ACL level provided by UI module
                 integer acl = (integer)llJsonGetValue(msg, ["acl"]);
+
+                string subpath = "";
+                string sp = llJsonGetValue(msg, ["subpath"]);
+                if (sp != JSON_INVALID) subpath = sp;
+
+                if (subpath != "") {
+                    handle_subpath(id, acl, subpath);
+                    return;
+                }
+
+                // Empty subpath: toggle (matches menu-click behavior).
                 toggle_public_access(id, acl);
                 return;
             }

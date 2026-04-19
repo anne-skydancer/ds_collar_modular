@@ -1,10 +1,13 @@
 /*--------------------
 PLUGIN: plugin_status.lsl
 VERSION: 1.10
-REVISION: 8
+REVISION: 9
 PURPOSE: Read-only collar status display for owners and observers
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
+- v1.1 rev 9: Chat command support (Phase 3). Registers "status" alias.
+  "<prefix> status" opens the status dialog (same as menu click); plugin
+  has no action-level subcommands, so any non-empty subpath is rejected.
 - v1.1 rev 8: Wire-type rename (Phase 2). kernel.register→kernel.register.declare,
   kernel.registernow→kernel.register.refresh, kernel.reset→kernel.reset.soft,
   kernel.resetall→kernel.reset.factory.
@@ -111,6 +114,13 @@ register_self() {
         "script", llGetScriptName()
     ]);
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, msg, NULL_KEY);
+
+    // Declare chat alias.
+    llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
+        "type",    "chat.alias.declare",
+        "alias",   "status",
+        "context", PLUGIN_CONTEXT
+    ]), NULL_KEY);
 }
 
 send_pong() {
@@ -328,6 +338,13 @@ default {
                 if (llJsonGetValue(msg, ["context"]) != PLUGIN_CONTEXT) return;
 
                 if (id == NULL_KEY) return;
+
+                // Reject non-empty subpath — no action-level subcommands here.
+                string sp = llJsonGetValue(msg, ["subpath"]);
+                if (sp != JSON_INVALID && sp != "") {
+                    llRegionSayTo(id, 0, "Unknown status subcommand: " + sp);
+                    return;
+                }
 
                 CurrentUser = id;
 

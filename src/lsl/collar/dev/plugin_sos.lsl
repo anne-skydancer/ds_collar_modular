@@ -1,10 +1,15 @@
 /*--------------------
 PLUGIN: plugin_sos.lsl
 VERSION: 1.10
-REVISION: 4
+REVISION: 5
 PURPOSE: Emergency wearer-accessible actions when ACL is locked out
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
+- v1.1 rev 5: Chat command support (Phase 3). Registers "sos" alias
+  (opens SOS menu) plus three standalone panic aliases: "sosunleash",
+  "sosrestrict", "sosrelay" — each fires its emergency action directly.
+  ACL gate is automatic via the ui.sos.911 policy (ACL 0 only — the
+  state you're in when locked out of normal access).
 - v1.1 rev 4: Wire-type rename (Phase 2). kernel.register→kernel.register.declare,
   kernel.registernow→kernel.register.refresh, kernel.reset→kernel.reset.soft,
   kernel.resetall→kernel.reset.factory, sos.leashrelease→sos.leash.release,
@@ -71,6 +76,28 @@ register_self() {
         "context", PLUGIN_CONTEXT,
         "label", PLUGIN_LABEL,
         "script", llGetScriptName()
+    ]), NULL_KEY);
+
+    // Declare chat aliases.
+    llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
+        "type",    "chat.alias.declare",
+        "alias",   "sos",
+        "context", PLUGIN_CONTEXT
+    ]), NULL_KEY);
+    llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
+        "type",    "chat.alias.declare",
+        "alias",   "sosunleash",
+        "context", PLUGIN_CONTEXT + ".unleash"
+    ]), NULL_KEY);
+    llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
+        "type",    "chat.alias.declare",
+        "alias",   "sosrestrict",
+        "context", PLUGIN_CONTEXT + ".restrict"
+    ]), NULL_KEY);
+    llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
+        "type",    "chat.alias.declare",
+        "alias",   "sosrelay",
+        "context", PLUGIN_CONTEXT + ".relay"
     ]), NULL_KEY);
 }
 
@@ -142,6 +169,27 @@ action_clear_relay() {
     ]), CurrentUser);
 
     llRegionSayTo(CurrentUser, 0, "[SOS] All relay restrictions cleared.");
+}
+
+/* -------------------- CHAT SUBCOMMAND HANDLING -------------------- */
+
+handle_subpath(key user, integer acl_level, string subpath) {
+    CurrentUser = user;
+    UserAcl = acl_level;
+
+    if (subpath == "unleash") {
+        action_unleash();
+        return;
+    }
+    if (subpath == "restrict") {
+        action_clear_rlv();
+        return;
+    }
+    if (subpath == "relay") {
+        action_clear_relay();
+        return;
+    }
+    llRegionSayTo(user, 0, "Unknown SOS subcommand: " + subpath);
 }
 
 /* -------------------- BUTTON HANDLER -------------------- */
@@ -249,9 +297,19 @@ default {
                 if (llJsonGetValue(msg, ["context"]) == JSON_INVALID) return;
                 if (llJsonGetValue(msg, ["context"]) != PLUGIN_CONTEXT) return;
 
-                CurrentUser = id;
-                UserAcl = (integer)llJsonGetValue(msg, ["acl"]);
+                integer acl = (integer)llJsonGetValue(msg, ["acl"]);
 
+                string subpath = "";
+                string sp = llJsonGetValue(msg, ["subpath"]);
+                if (sp != JSON_INVALID) subpath = sp;
+
+                if (subpath != "") {
+                    handle_subpath(id, acl, subpath);
+                    return;
+                }
+
+                CurrentUser = id;
+                UserAcl = acl;
                 show_sos_menu();
                 return;
             }

@@ -44,37 +44,39 @@ which could mean anything.
 | `leash` | Open leash menu |
 | `leash clip` | Grab (leash the wearer to speaker) |
 | `leash unclip` | Release |
-| `leash pass <uuid>` | Hand leash to another avatar |
+| `leash pass <username>` | Hand leash to another avatar |
 | `leash length <m>` | Change length in metres |
 | `leash turn` | Toggle turn-to-face |
 
 Notes:
 - `clip` target defaults to speaker (same as menu "Grab").
-- `leash pass <uuid>` needs UUID parsing; accept short avatar name as well if feasible.
+- `leash pass` takes **SL username** (`firstname.lastname` or mononame),
+  not UUID — UUIDs aren't chat-typeable. Resolution via `llName2Key`
+  requires the avatar to be in-sim at command time (fine — can't leash
+  to someone who isn't present anyway).
+- **Dot-parsing caveat**: `leash pass alice.wonder` arrives as subpath
+  `pass.alice.wonder`. Plugin splits on `.` → [pass, alice, wonder],
+  then dot-joins tokens[1..] to reconstruct the username.
 
 ## plugin_lock (`ui.core.lock`)
 
-Paired aliases. `lock`/`unlock` are distinct verbs worth their own aliases.
+Single alias, state-as-arg. The passive form reads as "set lock state to X" rather than an imperative, matching the mental model of a stateful lock.
 
 | Command | Action |
 |---|---|
-| `lock` | Lock the collar |
-| `unlock` | Unlock the collar |
-| `lockmenu` | Open lock menu (optional — `lock` is action now, not menu) |
-
-Decision point: do we want `lock` as alias for "open menu" too? Probably not — `lock`/`unlock` are clearer as direct actions.
+| `lock` | Open lock menu (empty subpath) |
+| `lock locked` | Set lock state to locked |
+| `lock unlocked` | Set lock state to unlocked |
 
 ## plugin_public (`ui.core.public`)
 
-Paired aliases; "public on/off" is natural but two aliases read better.
+Single alias, verb-suffix.
 
 | Command | Action |
 |---|---|
 | `public` | Open public access menu |
-| `publicon` | Enable public access |
-| `publicoff` | Disable public access |
-
-Alternative: single alias with verb, `public on` / `public off`. Verb-suffix reads fine here. Your call.
+| `public on` | Enable public access |
+| `public off` | Disable public access |
 
 ## plugin_bell (`ui.core.bell`)
 
@@ -102,19 +104,28 @@ Meta — mistyping could break the prefix. Chat-driven changes are risky; recomm
 
 ## plugin_access (`ui.core.access`)
 
-Owner/trustee management. Individual mutations are sensitive; menu drives confirmation flows. Recommend **menu-only**.
+Chat enters the existing menu flows. No username in chat — consent,
+honorific selection, and confirmation dialogs all live in the menu
+path and must not be bypassed.
 
 | Command | Action |
 |---|---|
-| `access` | Open access menu (label alias) |
+| `access` | Open access menu |
+| `access add owner` | Enter "Add Owner" flow (sensor pick + honorific + consent) |
+| `access rem owner` | Enter "Remove Owner" flow (single-mode: confirm; multi-mode: pick from list) |
+| `access add trustee` | Enter "Add Trustee" flow (sensor pick + honorific + consent) |
+| `access rem trustee` | Enter "Remove Trustee" flow (pick from existing) |
 
 ## plugin_blacklist (`ui.core.blacklist`)
 
-Sensor-based avatar selection in the menu is the safer flow. Chat additions with free-text UUIDs invite typos.
+Chat enters the existing menu flows. No username in chat — sensor-based
+avatar selection lives in the menu path and handles visual confirmation.
 
 | Command | Action |
 |---|---|
 | `blacklist` | Open blacklist menu |
+| `blacklist add` | Enter "Add to Blacklist" flow (sensor pick) |
+| `blacklist rem` | Enter "Remove from Blacklist" flow (pick from existing) |
 
 ## plugin_maint (`ui.core.maint`)
 
@@ -134,8 +145,6 @@ TPE enable/disable requires wearer confirmation. Menu-only preserves the confirm
 
 ## plugin_folders (`ui.core.folders`)
 
-Folder names contain spaces and slashes (`#RLV/boots`). Parsing tail as dot-joined tokens will corrupt `/` characters unless we encode or the plugin reassembles. **Decision needed.**
-
 | Command | Action |
 |---|---|
 | `folders` | Open folder menu |
@@ -144,7 +153,12 @@ Folder names contain spaces and slashes (`#RLV/boots`). Parsing tail as dot-join
 | `folders attach <folder>` | Attach folder |
 | `folders detach <folder>` | Detach folder |
 
-Problem: `<prefix> folders lock #RLV/boots` → kmod_chat splits on whitespace, so tail is `#RLV/boots`, dot-joined (single token) → arrives as subpath `lock.#RLV/boots`. Plugin can re-split on `.` and rejoin — works as long as folder names contain no dots. Flag for testing.
+**Folder names containing dots are not accessible via chat.** Parsing
+`subpath` splits on `.` — any folder name with a literal dot would be
+ambiguous with the action/arg separator. If the parsed token count is
+> 2 (action + one name fragment), the plugin rejects with a "use the
+menu for this folder" message. Folders like `#RLV/boots.v2` or
+`#RLV/outfit.gorean` must be managed via menu.
 
 ## plugin_restrict (`ui.core.restrict`)
 
@@ -223,21 +237,23 @@ Plugins to implement (in order of likely chat usefulness):
 - [ ] plugin_relay (incl. `safeword` alias)
 - [ ] plugin_sos (emergency aliases)
 - [ ] plugin_restrict (chat: `clear` only)
-- [ ] plugin_folders (name-with-dots caveat to resolve)
+- [ ] plugin_folders (reject names containing dots)
+- [ ] plugin_access (chat → existing menu flows)
+- [ ] plugin_blacklist (chat → existing menu flows)
 
-Deferred (menu-only recommended):
-- plugin_chat, plugin_access, plugin_blacklist, plugin_maint, plugin_tpe, plugin_rlvex
-
----
-
-## Decisions to confirm before implementation
-
-1. **plugin_lock**: `lock`/`unlock` as direct actions — do we still want a way to reach the menu via chat? Either a separate `lockmenu` alias or no chat route to menu.
-2. **plugin_public**: paired aliases (`publicon`/`publicoff`) or verb-suffix (`public on`/`public off`)?
-3. **plugin_folders**: do we accept the name-with-dots caveat (plugin re-parses subpath) or forbid chat folder commands for names with dots?
-4. **Deferred list**: is that list the right set of "menu-only" plugins, or do you want any of them exposed to chat anyway (e.g. `maint` for a power user)?
+Deferred (menu-only):
+- plugin_chat, plugin_maint, plugin_tpe, plugin_rlvex
 
 ---
 
-**Plan version:** 1.0
-**Status:** Draft — awaiting decisions on the four points above.
+## Resolved decisions (v1.1)
+
+1. **plugin_lock**: single alias with state-as-arg. `lock` opens menu; `lock locked` / `lock unlocked` set the state directly.
+2. **plugin_public**: single alias, verb-suffix. `public` opens menu; `public on` / `public off` toggle state.
+3. **plugin_folders**: forbid folder names containing dots. Plugin rejects any chat subcommand whose name token-count exceeds 1 after the action; those folders must be managed via menu.
+4. **Deferred list narrowed**: plugin_access and plugin_blacklist now in-scope for chat, routing into their existing menu flows (sensor pick + consent/honorific dialogs). Remaining menu-only: plugin_chat, plugin_maint, plugin_tpe, plugin_rlvex.
+
+---
+
+**Plan version:** 1.1
+**Status:** Approved — ready for implementation.
