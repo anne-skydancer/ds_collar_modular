@@ -1,10 +1,14 @@
 /*--------------------
 PLUGIN: plugin_animate.lsl
 VERSION: 1.10
-REVISION: 5
+REVISION: 6
 PURPOSE: Paginated animation menu driven by inventory contents
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
+- v1.1 rev 6: Add "stand" alias to stop animations. "<prefix> stand" stops
+  the current animation, equivalent to "<prefix> pose stop". Plugin
+  registers the alias via chat.alias.declare; handle_subpath recognises
+  both "stand" and "pose.stop" as stop signals.
 - v1.1 rev 5: Wire-type rename (Phase 2). kernel.register→kernel.register.declare,
   kernel.registernow→kernel.register.refresh, kernel.reset→kernel.reset.soft,
   kernel.resetall→kernel.reset.factory, chat.alias.register→chat.alias.declare.
@@ -158,12 +162,18 @@ register_self() {
         "script", llGetScriptName()
     ]), NULL_KEY);
 
-    // Declare chat subcommand root. Consumed by kmod_chat only; invisible
-    // to the kernel plugin list, so "pose" never renders as a root button.
+    // Declare chat subcommand roots. Consumed by kmod_chat only; invisible
+    // to the kernel plugin list, so these never render as root buttons.
+    // "pose <name>" plays the named animation; "stand" stops the current one.
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
         "type",    "chat.alias.declare",
         "alias",   "pose",
         "context", PLUGIN_CONTEXT + ".pose"
+    ]), NULL_KEY);
+    llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
+        "type",    "chat.alias.declare",
+        "alias",   "stand",
+        "context", PLUGIN_CONTEXT + ".stand"
     ]), NULL_KEY);
 }
 
@@ -292,11 +302,19 @@ show_animation_menu(integer page) {
 /* -------------------- CHAT SUBCOMMAND HANDLING -------------------- */
 
 // Execute a namespaced chat subcommand without opening the menu.
-// subpath example: "pose.nadu" -> play "nadu".
+// Examples:
+//   "pose.nadu"  -> play animation "nadu"
+//   "pose.stop"  -> stop current animation (equivalent to "stand")
+//   "stand"      -> stop current animation
 handle_subpath(string subpath) {
     list tokens = llParseString2List(subpath, ["."], []);
     if (llGetListLength(tokens) == 0) return;
     string action = llList2String(tokens, 0);
+
+    if (action == "stand") {
+        stop_all_animations();
+        return;
+    }
 
     if (action == "pose") {
         if (llGetListLength(tokens) < 2) {
@@ -304,6 +322,10 @@ handle_subpath(string subpath) {
             return;
         }
         string anim = llDumpList2String(llList2List(tokens, 1, -1), ".");
+        if (anim == "stop") {
+            stop_all_animations();
+            return;
+        }
         start_animation(anim);
         return;
     }
