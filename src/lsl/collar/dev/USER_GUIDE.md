@@ -221,7 +221,7 @@ The collar supports multiple owners sharing equal owner access.
 
 **Enabling Multi-Owner Mode:**
 - Multi-owner mode can **only** be enabled via the settings notecard
-- Add `multi_owner_mode=1` to your settings notecard
+- Add `access.multiowner=1` to your settings notecard
 - Cannot be changed through collar menus - this is intentional for stability
 
 **Managing Owners in Multi-Owner Mode:**
@@ -1082,7 +1082,7 @@ A: Generally yes, as long as the collar is made either no-copy or no-transfer fo
 ### Ownership Questions
 
 **Q: Can I have multiple owners?**
-A: Yes. Enable `multi_owner_mode=1` in settings notecard. All owners have equal owner access.
+A: Yes. Enable `access.multiowner=1` in settings notecard. All owners have equal owner access.
 
 **Q: What happens if my owner disappears/quits SL?**
 A: If unowned access is available, you can use the Runaway feature (if enabled). Otherwise, you'll need to reset the collar (which clears ownership) or contact the creator for assistance.

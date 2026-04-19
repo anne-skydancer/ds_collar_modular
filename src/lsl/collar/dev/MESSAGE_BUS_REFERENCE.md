@@ -21,7 +21,7 @@ are listed at the bottom.
 
 ## 500 — KERNEL_LIFECYCLE
 
-### `kernel.register`
+### `kernel.register.declare`
 Plugin -> Kernel, Kernel -> kmod_chat (for alias table).
 | Field | Type | Req | Notes |
 |---|---|---|---|
@@ -31,7 +31,7 @@ Plugin -> Kernel, Kernel -> kmod_chat (for alias table).
 | `script` | string | yes | `llGetScriptName()` of the plugin |
 
 ### `kernel.register.refresh`
-Broadcast -> all plugins. Tells every plugin to re-emit `kernel.register`.
+Broadcast -> all plugins. Tells every plugin to re-emit `kernel.register.declare`.
 Sender: kmod_chat (on state_entry), kmod_ui (on state_entry), kernel (on rediscover).
 | Field | Type | Req |
 |---|---|---|
@@ -44,21 +44,21 @@ Kernel <-> plugin heartbeat.
 | `type` | string | yes | `"kernel.ping"` or `"kernel.pong"` |
 | `context` | string | yes on pong | Plugin context echoing the ping |
 
-### `kernel.pluginlistrequest`
-Requester -> Kernel. Asks kernel to broadcast `kernel.pluginlist`.
+### `kernel.plugins.request`
+Requester -> Kernel. Asks kernel to broadcast `kernel.plugins.list`.
 Sender: kmod_ui (state_entry).
 | Field | Type | Req |
 |---|---|---|
 | `type` | string | yes |
 
-### `kernel.pluginlist`
+### `kernel.plugins.list`
 Kernel -> kmod_ui.
 | Field | Type | Req | Notes |
 |---|---|---|---|
-| `type` | string | yes | `"kernel.pluginlist"` |
+| `type` | string | yes | `"kernel.plugins.list"` |
 | `plugins` | JSON array | yes | Each element `{context, label}` |
 
-### `kernel.reset` / `kernel.resetall`
+### `kernel.reset.soft` / `kernel.reset.factory`
 Broadcast. Soft module reset (self-reset) vs factory reset trigger.
 Plugin-scoped resets may include a `context` field to target one plugin;
 unscoped = everyone resets.
@@ -374,6 +374,18 @@ kmod_dialog -> caller.
 | `session_id` | string | yes |
 | `user` | string UUID | yes |
 
+### `ui.dialog.buttonconfig.register`
+Plugin -> kmod_dialog. Per-context button-label config (e.g. "OK/Cancel"
+vs "Yes/No") for dialogs the plugin opens. Singleton today; the
+`ui.dialog.buttonconfig.*` namespace is extensible if `.clear` or
+`.update` variants appear later.
+| Field | Type | Req | Notes |
+|---|---|---|---|
+| `type` | string | yes |  |
+| `context` | string | yes | Plugin context the config applies to |
+| `button_a` | string | yes | Label for the first confirm button |
+| `button_b` | string | yes | Label for the second (cancel) button |
+
 ---
 
 ## External protocols (not on any bus)
@@ -432,6 +444,9 @@ layers force three different encodings; don't blur them.
 
 ---
 
-**Document version:** 1.0
+**Document version:** 2.0
 **Last updated:** 2026-04-19
-**Covers:** dev branch as of kmod_chat rev 13 / kmod_ui rev 9 / plugin_animate rev 4
+**Covers:** dev branch after the wire-type namespace rename (Phase 1)
+and plugin chat-command migration (Phase 3). Type names reflect the
+current namespaced vocabulary; old flat names have been retired. See
+MESSAGE_BUS_RENAME_PLAN.md for the old→new mapping.
