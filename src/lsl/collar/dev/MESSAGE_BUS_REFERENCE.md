@@ -392,22 +392,41 @@ Transmitted via `llRegionSay`/`llRegionSayTo` on fixed negative channels.
 
 ---
 
-## Known inconsistencies
+## Encoding rules
+
+Follow these when authoring a new message or module. Three different
+layers force three different encodings; don't blur them.
+
+1. **Integers in JSON messages: pass native integer, no `(string)` cast.**
+   `llList2Json(JSON_OBJECT, ["flag", MyInt, ...])` emits unquoted JSON
+   numbers. Consumers use `(integer)llJsonGetValue(...)` which coerces
+   cleanly. Casting to string produces JSON strings like `"0"` — still
+   decodes, but larger on the wire and out of idiom. See kmod_auth
+   templates for the reference pattern.
+2. **`key` values in JSON messages: `(string)` cast is required.** JSON
+   has no key type; keys must be serialized as strings. `(string)NULL_KEY`
+   is fine.
+3. **LSD values are always strings.** `llLinksetDataWrite` is string-only.
+   Booleans go through `normalize_bool()` in kmod_settings so they land
+   as canonical `"0"` / `"1"`. Integers use `(string)n`.
+4. **Optional fields: omit the key rather than sending a sentinel.**
+   Consumers check `llJsonGetValue(...) == JSON_INVALID`. Example:
+   `ui.menu.start.subpath` is absent when opening a menu, present when
+   executing a subcommand.
+
+## Known issues
 
 1. **`settings.delta` has consumers but no producer** in dev. Consumed
    identically to `settings.sync` by kmod_chat and plugin_chat. Either
    legacy or planned — trace before depending on.
-2. **Boolean encoding varies.** Integer `0`/`1` inside messages, but
-   persisted LSD values are string `"0"`/`"1"`. Optional flags use
-   presence/absence. Be explicit on both sides when writing a new message.
-3. **Dialog body field name.** `ui.dialog.open` uses `body` in newer
+2. **Dialog body field name.** `ui.dialog.open` uses `body` in newer
    modules (plugin_chat rev 5) and `message` in older ones (plugin_animate).
    Dialog manager currently accepts both; do not rely on this silently
    continuing.
-4. **UI_BUS is overloaded.** Menu routing, particles, leash state, and SOS
+3. **UI_BUS is overloaded.** Menu routing, particles, leash state, and SOS
    emergency broadcasts all share 900. Functionally fine today; if the
    router grows, splitting `PLUGIN_BUS` out is an option.
-5. **Plugins must filter raw kmod_chat broadcasts.** Any `ui.menu.start`
+4. **Plugins must filter raw kmod_chat broadcasts.** Any `ui.menu.start`
    without an `acl` field is unrouted; plugins MUST drop it or risk
    duplicate dialogs when a plugin label prefix-matches the chat prefix.
 

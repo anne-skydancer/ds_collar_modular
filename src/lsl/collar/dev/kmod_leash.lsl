@@ -1,10 +1,16 @@
 /*--------------------
 MODULE: kmod_leash.lsl
 VERSION: 1.10
-REVISION: 6
+REVISION: 7
 PURPOSE: Leashing engine providing leash services to plugins
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- v1.1 rev 7: Remove stylistic artifact from plugin.leash.state broadcast.
+  Integer fields were cast to string for symmetry with the old JSON-object
+  settings broadcast (retired in rev 2); the symmetry no longer exists, so
+  integers now emit as native JSON numbers matching kmod_auth templates.
+  Consumers already use (integer)llJsonGetValue; decoding is unchanged.
+  Keys retain (string) casts (required — LSL keys aren't strings).
 - v1.1 rev 6: Namespace pass — align all cross-module strings with the
   dev bus vocabulary (particles.*, auth.*, settings.*, sos.*, plugin.leash.*,
   kernel-none). PLUGIN_CONTEXT becomes "ui.core.leash", LSD policy key
@@ -650,11 +656,11 @@ applySettingsSync() {
 broadcastState() {
     string msg = llList2Json(JSON_OBJECT, [
         "type", "plugin.leash.state",
-        "leashed", (string)Leashed,
+        "leashed", Leashed,
         "leasher", (string)Leasher,
-        "length", (string)LeashLength,
-        "turnto", (string)TurnToFace,
-        "mode", (string)LeashMode,
+        "length", LeashLength,
+        "turnto", TurnToFace,
+        "mode", LeashMode,
         "target", (string)LeashTarget
     ]);
     llMessageLinked(LINK_SET, UI_BUS, msg, NULL_KEY);
