@@ -169,7 +169,7 @@ Main Menu (alphabetical order)
 
 **Important:** Once a primary owner is set, the wearer loses the ability to change owners.
 
-**Note:** Ownership may be set without the need of recurring to the collar interface through the settings notecard. Refer to the settings notecard section for more information.
+**Note:** Ownership may be set without the need of recurring to the collar interface through a settings notecard. Refer to the settings notecard section for more information.
 
 ### Releasing Ownership
 
