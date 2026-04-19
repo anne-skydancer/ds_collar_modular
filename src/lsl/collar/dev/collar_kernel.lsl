@@ -1,10 +1,17 @@
 /*--------------------
 MODULE: collar_kernel.lsl
 VERSION: 1.10
-REVISION: 2
+REVISION: 3
 PURPOSE: Plugin registry, lifecycle management, heartbeat monitoring
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- v1.1 rev 3: KERNEL_LIFECYCLE wire-type rename (Phase 1a of bus
+  restructuring). kernel.register→kernel.register.declare,
+  kernel.registernow→kernel.register.refresh, kernel.pluginlist→
+  kernel.plugins.list, kernel.pluginlistrequest→kernel.plugins.request,
+  kernel.reset→kernel.reset.soft, kernel.resetall→kernel.reset.factory.
+  Plugins still emit old names until Phase 2; this module will not
+  register them or respond to their pings until they migrate.
 - v1.1 rev 2: Namespaced internal message type strings with "kernel." prefix
   (register_now → kernel.registernow, ping → kernel.ping, etc.).
 - v1.1 rev 1: Removed min_acl from registry and registration flow. Plugins no
@@ -358,7 +365,7 @@ integer discover_plugins() {
 // Request all plugins to register (no time window - event-driven)
 broadcast_register_now() {
     string msg = llList2Json(JSON_OBJECT, [
-        "type", "kernel.registernow"
+        "type", "kernel.register.refresh"
     ]);
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, msg, NULL_KEY);
 
@@ -403,7 +410,7 @@ broadcast_plugin_list() {
     plugins_array += "]";
 
     // Build final message (no version - UUID tracking handles change detection)
-    string msg = "{\"type\":\"kernel.pluginlist\",\"plugins\":" + plugins_array + "}";
+    string msg = "{\"type\":\"kernel.plugins.list\",\"plugins\":" + plugins_array + "}";
 
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, msg, NULL_KEY);
 }
@@ -572,16 +579,16 @@ default
         if (msg_type == "") return;
 
         if (num == KERNEL_LIFECYCLE) {
-            if (msg_type == "kernel.register") {
+            if (msg_type == "kernel.register.declare") {
                 handle_register(msg);
             }
             else if (msg_type == "kernel.pong") {
                 handle_pong(msg);
             }
-            else if (msg_type == "kernel.pluginlistrequest") {
+            else if (msg_type == "kernel.plugins.request") {
                 handle_plugin_list_request();
             }
-            else if (msg_type == "kernel.reset" || msg_type == "kernel.resetall") {
+            else if (msg_type == "kernel.reset.soft" || msg_type == "kernel.reset.factory") {
                 handle_soft_reset();
             }
         }

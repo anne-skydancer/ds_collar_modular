@@ -1,10 +1,15 @@
 /*--------------------
 MODULE: kmod_dialogs.lsl
 VERSION: 1.10
-REVISION: 2
+REVISION: 4
 PURPOSE: Centralized dialog management for shared listener handling
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- v1.1 rev 4: UI_BUS rename (Phase 1d). ui.dialog.registerbuttonconfig→
+  ui.dialog.buttonconfig.register (was a compound name; split into
+  domain-noun + verb to match house style).
+- v1.1 rev 3: KERNEL_LIFECYCLE rename (Phase 1a). kernel.reset→
+  kernel.reset.soft, kernel.resetall→kernel.reset.factory.
 - v1.1 rev 2: Namespace internal message type strings (ui.dialog.*, kernel.*)
 - v1.1 rev 1: Fix button_data routing — JSON button objects with context+label
   are now routable even without a "state" field. Previously only objects
@@ -502,7 +507,7 @@ default
 
         /* -------------------- KERNEL LIFECYCLE -------------------- */
         if (num == KERNEL_LIFECYCLE) {
-            if (msg_type == "kernel.reset" || msg_type == "kernel.resetall") {
+            if (msg_type == "kernel.reset.soft" || msg_type == "kernel.reset.factory") {
                 llResetScript();
             }
             return;
@@ -517,7 +522,7 @@ default
         else if (msg_type == "ui.dialog.close") {
             handle_dialog_close(msg);
         }
-        else if (msg_type == "ui.dialog.registerbuttonconfig") {
+        else if (msg_type == "ui.dialog.buttonconfig.register") {
             if ((llJsonGetValue(msg, ["context"]) != JSON_INVALID) && (llJsonGetValue(msg, ["button_a"]) != JSON_INVALID) && (llJsonGetValue(msg, ["button_b"]) != JSON_INVALID)) {
                 string context = llJsonGetValue(msg, ["context"]);
                 string button_a = llJsonGetValue(msg, ["button_a"]);

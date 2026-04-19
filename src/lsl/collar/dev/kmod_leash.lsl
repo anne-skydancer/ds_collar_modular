@@ -1,10 +1,17 @@
 /*--------------------
 MODULE: kmod_leash.lsl
 VERSION: 1.10
-REVISION: 7
+REVISION: 9
 PURPOSE: Leashing engine providing leash services to plugins
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- v1.1 rev 9: Sub-protocol rename (Phase 1e). particles.lmenable→
+  particles.lm.enable, particles.lmdisable→particles.lm.disable,
+  particles.lmgrabbed→particles.lm.grabbed, particles.lmreleased→
+  particles.lm.released, plugin.leash.offerpending→plugin.leash.offer.pending,
+  sos.leashrelease→sos.leash.release.
+- v1.1 rev 8: AUTH_BUS rename (Phase 1b). auth.aclquery→auth.acl.query,
+  auth.aclresult→auth.acl.result.
 - v1.1 rev 7: Remove stylistic artifact from plugin.leash.state broadcast.
   Integer fields were cast to string for symmetry with the old JSON-object
   settings broadcast (retired in rev 2); the symmetry no longer exists, so
@@ -177,12 +184,12 @@ setLockmeisterState(integer enabled, key controller) {
     string msg;
     if (enabled) {
         msg = llList2Json(JSON_OBJECT, [
-            "type", "particles.lmenable",
+            "type", "particles.lm.enable",
             "controller", (string)controller
         ]);
     } else {
         msg = llList2Json(JSON_OBJECT, [
-            "type", "particles.lmdisable"
+            "type", "particles.lm.disable"
         ]);
     }
     llMessageLinked(LINK_SET, UI_BUS, msg, NULL_KEY);
@@ -217,7 +224,7 @@ updateParticlesTarget(key target) {
 /* -------------------- OFFER PROTOCOL -------------------- */
 sendOfferPending(key target, key originator) {
     llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
-        "type", "plugin.leash.offerpending",
+        "type", "plugin.leash.offer.pending",
         "target", (string)target,
         "originator", (string)originator
     ]), NULL_KEY);
@@ -309,7 +316,7 @@ requestAclForAction(key user, string action, key pass_target) {
     PendingPassTarget = pass_target;
     
     llMessageLinked(LINK_SET, AUTH_BUS, llList2Json(JSON_OBJECT, [
-        "type", "auth.aclquery",
+        "type", "auth.acl.query",
         "avatar", (string)user
     ]), user);
     
@@ -441,7 +448,7 @@ requestAclForPassTarget(key target) {
     AclPending = TRUE;
     
     llMessageLinked(LINK_SET, AUTH_BUS, llList2Json(JSON_OBJECT, [
-        "type", "auth.aclquery",
+        "type", "auth.acl.query",
         "avatar", (string)target
     ]), target);
     
@@ -1032,7 +1039,7 @@ default
             }
 
             // Emergency release from SOS plugin
-            if (msg_type == "sos.leashrelease") {
+            if (msg_type == "sos.leash.release") {
                 // Verify sender is owner/wearer to prevent abuse
                 if (id == llGetOwner()) {
                     releaseLeashInternal(id);
@@ -1041,7 +1048,7 @@ default
             }
             
             // Lockmeister notifications from particles - VERIFY AUTHORIZATION
-            if (msg_type == "particles.lmgrabbed") {
+            if (msg_type == "particles.lm.grabbed") {
                 key controller = (key)jsonGet(msg, "controller", (string)NULL_KEY);
                 if (controller == NULL_KEY) return;
                 
@@ -1062,7 +1069,7 @@ default
                 return;
             }
             
-            if (msg_type == "particles.lmreleased") {
+            if (msg_type == "particles.lm.released") {
                 if (Leashed) {
                     key old_leasher = Leasher;
                     Leashed = FALSE;
@@ -1079,7 +1086,7 @@ default
         }
         
         if (num == AUTH_BUS) {
-            if (msg_type == "auth.aclresult") {
+            if (msg_type == "auth.acl.result") {
                 handleAclResult(msg);
             }
             return;

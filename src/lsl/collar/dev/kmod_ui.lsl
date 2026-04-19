@@ -1,10 +1,17 @@
 /*--------------------
 MODULE: kmod_ui.lsl
 VERSION: 1.10
-REVISION: 9
+REVISION: 11
 PURPOSE: Session management, LSD policy filtering, and plugin list orchestration
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- v1.1 rev 11: AUTH_BUS rename (Phase 1b). auth.aclquery→auth.acl.query,
+  auth.aclresult→auth.acl.result, auth.aclupdate→auth.acl.update.
+- v1.1 rev 10: KERNEL_LIFECYCLE rename (Phase 1a). kernel.register→
+  kernel.register.declare, kernel.registernow→kernel.register.refresh,
+  kernel.pluginlist→kernel.plugins.list, kernel.pluginlistrequest→
+  kernel.plugins.request, kernel.reset→kernel.reset.soft, kernel.resetall
+  →kernel.reset.factory.
 - v1.1 rev 9: Longest-prefix plugin routing for namespaced chat subcommands.
   Context like "ui.core.animate.pose.nadu" matches plugin "ui.core.animate"
   and the remainder ("pose.nadu") is passed as a new `subpath` field in
@@ -46,7 +53,7 @@ CHANGES:
   get_primary_owner_display() helper (reads LSD; supports single- and
   multi-owner modes; includes honorific when present).
 - v1.1 rev 1: Namespaced internal message type strings (e.g. "start" -> "ui.menu.start",
-  "acl_query" -> "auth.aclquery", "plugin_list" -> "kernel.pluginlist").
+  "acl_query" -> "auth.acl.query", "plugin_list" -> "kernel.plugins.list").
 - v1.1 rev 0: Replaced min_acl filtering with LSD policy reads. Root menu
   visibility now determined by llLinksetDataRead("policy:<context>"). Removed
   PluginMinACLs parallel list and plugin_acl_list_request/response flow.
@@ -756,7 +763,7 @@ handle_start(string msg, key user_key) {
     PendingAclAvatars += [user_key];
     PendingAclContexts += [context];
     llMessageLinked(LINK_SET, AUTH_BUS, llList2Json(JSON_OBJECT, [
-        "type",   "auth.aclquery",
+        "type",   "auth.acl.query",
         "avatar", (string)user_key
     ]), NULL_KEY);
 }
@@ -773,7 +780,7 @@ start_root_session(key user_key) {
     PendingAclContexts += [ROOT_CONTEXT];
 
     string acl_query = llList2Json(JSON_OBJECT, [
-        "type", "auth.aclquery",
+        "type", "auth.acl.query",
         "avatar", (string)user_key
     ]);
     llMessageLinked(LINK_SET, AUTH_BUS, acl_query, NULL_KEY);
@@ -791,7 +798,7 @@ start_sos_session(key user_key) {
     PendingAclContexts += [SOS_CONTEXT];
 
     string acl_query = llList2Json(JSON_OBJECT, [
-        "type", "auth.aclquery",
+        "type", "auth.acl.query",
         "avatar", (string)user_key
     ]);
     llMessageLinked(LINK_SET, AUTH_BUS, acl_query, NULL_KEY);
@@ -913,7 +920,7 @@ default
         
         // Advertise root menu context so kmod_chat can build a 'menu' alias
         llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
-            "type",    "kernel.register",
+            "type",    "kernel.register.declare",
             "context", ROOT_CONTEXT,
             "label",   "Menu",
             "script",  llGetScriptName()
@@ -921,7 +928,7 @@ default
 
         // Request plugin list (kernel defers response during active registration)
         string request = llList2Json(JSON_OBJECT, [
-            "type", "kernel.pluginlistrequest"
+            "type", "kernel.plugins.request"
         ]);
         llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, request, NULL_KEY);
     }
@@ -996,17 +1003,17 @@ default
 
         /* -------------------- KERNEL LIFECYCLE -------------------- */
         if (num == KERNEL_LIFECYCLE) {
-            if (msg_type == "kernel.pluginlist") handle_plugin_list(msg);
-            else if (msg_type == "kernel.registernow") {
+            if (msg_type == "kernel.plugins.list") handle_plugin_list(msg);
+            else if (msg_type == "kernel.register.refresh") {
                 // Re-emit synthetic registration so kmod_chat rebuilds its alias table.
                 llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
-                    "type",    "kernel.register",
+                    "type",    "kernel.register.declare",
                     "context", ROOT_CONTEXT,
                     "label",   "Menu",
                     "script",  llGetScriptName()
                 ]), NULL_KEY);
             }
-            else if (msg_type == "kernel.reset" || msg_type == "kernel.resetall") {
+            else if (msg_type == "kernel.reset.soft" || msg_type == "kernel.reset.factory") {
                 llResetScript();
             }
             return;
@@ -1014,8 +1021,8 @@ default
 
         /* -------------------- AUTH BUS -------------------- */
         if (num == AUTH_BUS) {
-            if (msg_type == "auth.aclresult") handle_acl_result(msg);
-            else if (msg_type == "auth.aclupdate") {
+            if (msg_type == "auth.acl.result") handle_acl_result(msg);
+            else if (msg_type == "auth.acl.update") {
                 // ACL roles changed (ownership, trustees, public, TPE, etc.)
                 // Invalidate all active sessions so they re-create with fresh ACL
                 // on next touch. This prevents stale ACL from granting wrong buttons.

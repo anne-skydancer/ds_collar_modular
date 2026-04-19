@@ -1,13 +1,21 @@
 /*--------------------
 MODULE: kmod_chat.lsl
 VERSION: 1.10
-REVISION: 13
+REVISION: 15
 PURPOSE: Local chat command receiver. Listens on channel 1 (always) and
          optionally channel 0 (public chat) for prefixed commands from
          authorised speakers. Sends ui.chat.command to UI_BUS so kmod_ui
          can route the request; plugins never receive the raw dispatch.
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- v1.1 rev 15: Lint cleanup. Removed unused AUTH_BUS constant, deleted the
+  no-op logd() scaffolding and its sole caller, dropped the vestigial
+  `channel` parameter from speaker_authorised() (never branched on; ACL
+  check applies to both channels by design). No behavior change.
+- v1.1 rev 14: KERNEL_LIFECYCLE rename (Phase 1a). kernel.register→
+  kernel.register.declare, kernel.registernow→kernel.register.refresh,
+  kernel.reset→kernel.reset.soft, kernel.resetall→kernel.reset.factory,
+  chat.alias.register→chat.alias.declare.
 - v1.1 rev 13: Namespaced subcommands. "<prefix> pose nadu" splits into
   head="pose" + tail="nadu"; head resolves via alias table, tail tokens
   are appended as a dot-path (e.g. ui.core.animate.pose.nadu). kmod_ui
@@ -67,7 +75,6 @@ CHANGES:
 
 /* -------------------- CONSOLIDATED ISP -------------------- */
 integer KERNEL_LIFECYCLE = 500;
-integer AUTH_BUS         = 700;
 integer SETTINGS_BUS     = 800;
 integer UI_BUS           = 900;
 
@@ -91,10 +98,6 @@ integer ListenChan1  = 0;    // Handle for secondary channel listener (0 = inact
 list CommandAliases = [];
 
 /* -------------------- HELPERS -------------------- */
-
-integer logd(string msg) {
-    return FALSE;
-}
 
 // Derive a default prefix from the first two characters of the wearer's username.
 // llGetUsername() returns "firstname.lastname" or "firstname" (no spaces).
@@ -240,7 +243,6 @@ string build_dispatched_context(string head, string tail) {
 // does longest-prefix plugin routing and passes the remainder as subpath.
 dispatch_command(key speaker, string head, string tail) {
     string context = build_dispatched_context(head, tail);
-    logd("chat cmd: speaker=" + (string)speaker + " ctx=" + context);
 
     llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
         "type",    "ui.chat.command",
@@ -250,14 +252,13 @@ dispatch_command(key speaker, string head, string tail) {
 }
 
 // Validate that a speaker is authorised to send chat commands.
-// We accept the wearer, and if the command arrives on channel 0 we also
-// check the ACL cache so only public-or-higher users can drive the collar
-// from public chat (prevents griefing).
-integer speaker_authorised(key speaker, integer channel) {
+// Wearer is always allowed. Every non-wearer must have cached ACL >= 1
+// (public or higher), regardless of channel — protects the private channel
+// from griefers who guess the channel number, as well as public chat.
+integer speaker_authorised(key speaker) {
     key wearer = llGetOwner();
     if (speaker == wearer) return TRUE;
 
-    // For channel 0 commands from non-wearers, require cached ACL >= 1 (public)
     string raw = llLinksetDataRead("acl." + (string)speaker + ".cache");
     if (raw == "") return FALSE;
     integer sep = llSubStringIndex(raw, "|");
@@ -278,7 +279,7 @@ default
         // Force all scripts to re-broadcast kernel.register so the alias table
         // is populated regardless of startup order.
         llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
-            "type", "kernel.registernow"
+            "type", "kernel.register.refresh"
         ]), NULL_KEY);
     }
 
@@ -314,7 +315,7 @@ default
         if (!command_is_known(head)) return;
 
         // Validate speaker authorisation
-        if (!speaker_authorised(id, channel)) return;
+        if (!speaker_authorised(id)) return;
 
         dispatch_command(id, head, tail);
     }
@@ -324,17 +325,17 @@ default
         if (msg_type == JSON_INVALID) return;
 
         if (num == KERNEL_LIFECYCLE) {
-            if (msg_type == "kernel.reset" || msg_type == "kernel.resetall") {
+            if (msg_type == "kernel.reset.soft" || msg_type == "kernel.reset.factory") {
                 llResetScript();
             }
-            else if (msg_type == "kernel.register") {
+            else if (msg_type == "kernel.register.declare") {
                 string reg_label   = llJsonGetValue(msg, ["label"]);
                 string reg_context = llJsonGetValue(msg, ["context"]);
                 if (reg_label != JSON_INVALID && reg_context != JSON_INVALID) {
                     register_alias(reg_label, reg_context);
                 }
             }
-            else if (msg_type == "chat.alias.register") {
+            else if (msg_type == "chat.alias.declare") {
                 // Plugin-declared subcommand alias (e.g. "pose" for animate).
                 // Consumed only by kmod_chat; invisible to the kernel plugin list.
                 string a = llJsonGetValue(msg, ["alias"]);

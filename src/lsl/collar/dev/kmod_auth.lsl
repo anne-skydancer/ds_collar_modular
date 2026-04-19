@@ -1,10 +1,14 @@
 /*--------------------
 MODULE: kmod_auth.lsl
 VERSION: 1.10
-REVISION: 5
+REVISION: 7
 PURPOSE: Authoritative ACL engine - OPTIMIZED
 ARCHITECTURE: Dispatch table pattern with linkset data cache and JSON templates
 CHANGES:
+- v1.1 rev 7: AUTH_BUS rename (Phase 1b). auth.aclquery→auth.acl.query,
+  auth.aclresult→auth.acl.result, auth.aclupdate→auth.acl.update.
+- v1.1 rev 6: KERNEL_LIFECYCLE rename (Phase 1a). kernel.reset→
+  kernel.reset.soft, kernel.resetall→kernel.reset.factory.
 - v1.1 rev 5: Document the LSL list== content-equality workaround at the
   ACL change detection block. No functional changes.
 - v1.1 rev 4: Namespace internal message type strings (acl_result → auth.aclresult,
@@ -120,7 +124,7 @@ integer is_owner(key av) {
 init_json_templates() {
     // Blacklist: No access (actually on blacklist)
     JSON_TEMPLATE_BLACKLIST = llList2Json(JSON_OBJECT, [
-        "type", "auth.aclresult",
+        "type", "auth.acl.result",
         "avatar", "AVATAR_PLACEHOLDER",
         "level", ACL_BLACKLIST,
         "is_wearer", 0,
@@ -130,7 +134,7 @@ init_json_templates() {
 
     // Unauthorized: stranger with public off (not blacklisted, just no access)
     JSON_TEMPLATE_UNAUTHORIZED = llList2Json(JSON_OBJECT, [
-        "type", "auth.aclresult",
+        "type", "auth.acl.result",
         "avatar", "AVATAR_PLACEHOLDER",
         "level", ACL_BLACKLIST,
         "is_wearer", 0,
@@ -140,7 +144,7 @@ init_json_templates() {
 
     // No Access: TPE wearer
     JSON_TEMPLATE_NOACCESS = llList2Json(JSON_OBJECT, [
-        "type", "auth.aclresult",
+        "type", "auth.acl.result",
         "avatar", "AVATAR_PLACEHOLDER",
         "level", ACL_NOACCESS,
         "is_wearer", 1,
@@ -150,7 +154,7 @@ init_json_templates() {
 
     // Public: Non-wearer with public access
     JSON_TEMPLATE_PUBLIC = llList2Json(JSON_OBJECT, [
-        "type", "auth.aclresult",
+        "type", "auth.acl.result",
         "avatar", "AVATAR_PLACEHOLDER",
         "level", ACL_PUBLIC,
         "is_wearer", 0,
@@ -160,7 +164,7 @@ init_json_templates() {
 
     // Owned: Wearer with owner set
     JSON_TEMPLATE_OWNED = llList2Json(JSON_OBJECT, [
-        "type", "auth.aclresult",
+        "type", "auth.acl.result",
         "avatar", "AVATAR_PLACEHOLDER",
         "level", ACL_OWNED,
         "is_wearer", 1,
@@ -170,7 +174,7 @@ init_json_templates() {
 
     // Trustee: Trustee access
     JSON_TEMPLATE_TRUSTEE = llList2Json(JSON_OBJECT, [
-        "type", "auth.aclresult",
+        "type", "auth.acl.result",
         "avatar", "AVATAR_PLACEHOLDER",
         "level", ACL_TRUSTEE,
         "is_wearer", 0,
@@ -180,7 +184,7 @@ init_json_templates() {
 
     // Unowned: Wearer with no owner
     JSON_TEMPLATE_UNOWNED = llList2Json(JSON_OBJECT, [
-        "type", "auth.aclresult",
+        "type", "auth.acl.result",
         "avatar", "AVATAR_PLACEHOLDER",
         "level", ACL_UNOWNED,
         "is_wearer", 1,
@@ -190,7 +194,7 @@ init_json_templates() {
 
     // Primary Owner: Owner access
     JSON_TEMPLATE_PRIMARY = llList2Json(JSON_OBJECT, [
-        "type", "auth.aclresult",
+        "type", "auth.acl.result",
         "avatar", "AVATAR_PLACEHOLDER",
         "level", ACL_PRIMARY_OWNER,
         "is_wearer", 0,
@@ -474,7 +478,7 @@ send_acl_from_level(key avatar, integer level, string correlation_id) {
 
 broadcast_acl_change(string scope, key avatar) {
     string msg = llList2Json(JSON_OBJECT, [
-        "type", "auth.aclupdate",
+        "type", "auth.acl.update",
         "scope", scope,
         "avatar", (string)avatar
     ]);
@@ -702,12 +706,12 @@ default
         if (msg_type == JSON_INVALID) return;
 
         if (num == KERNEL_LIFECYCLE) {
-            if (msg_type == "kernel.reset" || msg_type == "kernel.resetall") {
+            if (msg_type == "kernel.reset.soft" || msg_type == "kernel.reset.factory") {
                 llResetScript();
             }
         }
         else if (num == AUTH_BUS) {
-            if (msg_type == "auth.aclquery") {
+            if (msg_type == "auth.acl.query") {
                 handle_acl_query(msg);
             }
         }

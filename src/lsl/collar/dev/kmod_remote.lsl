@@ -1,13 +1,17 @@
 /*--------------------
 MODULE: kmod_remote.lsl
 VERSION: 1.10
-REVISION: 3
+REVISION: 5
 PURPOSE: External HUD communication bridge for remote control workflows
 ARCHITECTURE: Consolidated message bus lanes, namespaced internal message protocol
 CHANGES:
+- v1.1 rev 5: AUTH_BUS rename (Phase 1b). auth.aclquery→auth.acl.query,
+  auth.aclresult→auth.acl.result.
+- v1.1 rev 4: KERNEL_LIFECYCLE rename (Phase 1a). kernel.reset→
+  kernel.reset.soft, kernel.resetall→kernel.reset.factory.
 - v1.1 rev 3: Namespace context values. ROOT_CONTEXT → "ui.core.root",
   SOS_CONTEXT → "ui.sos.root".
-- v1.1 rev 2: Fix ACL response listener — expect "auth.aclresult" instead of stale
+- v1.1 rev 2: Fix ACL response listener — expect "auth.acl.result" instead of stale
   "acl_result" (missed in kmod_auth v1.1 rev 4 namespace migration).
 - v1.1 rev 1: Namespaced internal message types (auth.aclquery, ui.menu.start, etc.).
 - v1.1 rev 0: Version bump for LSD policy architecture. No functional changes to this module.
@@ -184,7 +188,7 @@ remove_pending_query(key hud_wearer) {
 
 request_internal_acl(key avatar_key) {
     string msg = llList2Json(JSON_OBJECT, [
-        "type", "auth.aclquery",
+        "type", "auth.acl.query",
         "avatar", (string)avatar_key,
         "id", "remote_" + (string)avatar_key
     ]);
@@ -459,7 +463,7 @@ default {
         /* -------------------- KERNEL LIFECYCLE -------------------- */
         if (num == KERNEL_LIFECYCLE) {
             KernelAlive = TRUE;  // Any kernel message proves kernel is present
-            if (msg_type == "kernel.reset" || msg_type == "kernel.resetall") {
+            if (msg_type == "kernel.reset.soft" || msg_type == "kernel.reset.factory") {
                 llResetScript();
             }
             return;
@@ -467,7 +471,7 @@ default {
 
         // Handle ACL result from AUTH module
         if (num == AUTH_BUS) {
-            if (msg_type != "auth.aclresult") return;
+            if (msg_type != "auth.acl.result") return;
             
             // Extract ACL information
             string avatar_key_str = llJsonGetValue(str, ["avatar"]);

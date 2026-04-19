@@ -1,10 +1,13 @@
 /*--------------------
 MODULE: kmod_bootstrap.lsl
 VERSION: 1.10
-REVISION: 4
+REVISION: 5
 PURPOSE: Startup coordination, RLV detection, status announcement
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- v1.1 rev 5: KERNEL_LIFECYCLE rename (Phase 1a). kernel.reset→
+  kernel.reset.soft, kernel.resetall→kernel.reset.factory,
+  settings.notecardloaded→settings.notecard.loaded.
 - v1.1 rev 4: Namespace internal message type strings (settings.sync,
   settings.delta, settings.notecardloaded, kernel.reset, kernel.resetall).
 - v1.1 rev 3: Fix phantom owner count in startup announcement and stale
@@ -443,11 +446,11 @@ state starting
 
         /* -------------------- KERNEL LIFECYCLE -------------------- */
         else if (num == KERNEL_LIFECYCLE) {
-            if (msg_type == "settings.notecardloaded") {
+            if (msg_type == "settings.notecard.loaded") {
                 // Settings notecard was loaded/reloaded - re-run bootstrap
                 start_bootstrap();
             }
-            else if (msg_type == "kernel.reset" || msg_type == "kernel.resetall") {
+            else if (msg_type == "kernel.reset.soft" || msg_type == "kernel.reset.factory") {
                 llResetScript();
             }
         }
@@ -480,10 +483,10 @@ state running
         if (msg_type == "") return;
 
         if (num == KERNEL_LIFECYCLE) {
-            if (msg_type == "settings.notecardloaded") {
+            if (msg_type == "settings.notecard.loaded") {
                 llResetScript();
             }
-            else if (msg_type == "kernel.reset" || msg_type == "kernel.resetall") {
+            else if (msg_type == "kernel.reset.soft" || msg_type == "kernel.reset.factory") {
                 llResetScript();
             }
         }

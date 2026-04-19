@@ -1,10 +1,16 @@
 /*--------------------
 MODULE: kmod_particles.lsl
 VERSION: 1.10
-REVISION: 1
+REVISION: 3
 PURPOSE: Visual connection renderer with Lockmeister compatibility
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- v1.1 rev 3: Sub-protocol rename (Phase 1e). particles.lmenable→
+  particles.lm.enable, particles.lmdisable→particles.lm.disable,
+  particles.lmgrabbed→particles.lm.grabbed, particles.lmreleased→
+  particles.lm.released.
+- v1.1 rev 2: KERNEL_LIFECYCLE rename (Phase 1a). kernel.reset→
+  kernel.reset.soft, kernel.resetall→kernel.reset.factory.
 - v1.1 rev 1: Namespace pass — align message vocabulary with dev peers
   (particles.*, kernel.*) and update the native-priority source match from
   "core_leash" to "ui.core.leash" to track kmod_leash's PLUGIN_CONTEXT.
@@ -119,7 +125,7 @@ handle_lm_message(key id, string msg) {
             
             // Notify leash plugin
             llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
-                "type", "particles.lmreleased"
+                "type", "particles.lm.released"
             ]), NULL_KEY);
             
             // Stop timer if no other source active
@@ -179,7 +185,7 @@ handle_lm_message(key id, string msg) {
         
         // Notify leash plugin
         string notify_msg = llList2Json(JSON_OBJECT, [
-            "type", "particles.lmgrabbed",
+            "type", "particles.lm.grabbed",
             "controller", (string)owner_key,
             "prim", (string)id
         ]);
@@ -426,7 +432,7 @@ default
 
         /* -------------------- KERNEL LIFECYCLE -------------------- */
         if (num == KERNEL_LIFECYCLE) {
-            if (msg_type == "kernel.reset" || msg_type == "kernel.resetall") {
+            if (msg_type == "kernel.reset.soft" || msg_type == "kernel.reset.factory") {
                 llResetScript();
             }
             return;
@@ -444,10 +450,10 @@ default
         else if (msg_type == "particles.update") {
             handle_particles_update(msg);
         }
-        else if (msg_type == "particles.lmenable") {
+        else if (msg_type == "particles.lm.enable") {
             handle_lm_enable(msg);
         }
-        else if (msg_type == "particles.lmdisable") {
+        else if (msg_type == "particles.lm.disable") {
             handle_lm_disable();
         }
     }
@@ -481,7 +487,7 @@ default
                     
                     // Notify leash plugin
                     llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
-                        "type", "particles.lmreleased"
+                        "type", "particles.lm.released"
                     ]), NULL_KEY);
                 }
                 
