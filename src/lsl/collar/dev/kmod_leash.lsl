@@ -1,10 +1,21 @@
 /*--------------------
 MODULE: kmod_leash.lsl
 VERSION: 1.10
-REVISION: 9
+REVISION: 10
 PURPOSE: Leashing engine providing leash services to plugins
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- v1.1 rev 10: Extend native/OC holder handshake to coffle and post modes.
+  Previously only grab mode discovered a LeashPoint prim; coffle/post
+  aimed particles at the raw sensor-detected target (avatar pelvis for
+  coffle, root prim for post). Both now run the same two-phase handshake
+  via beginHolderHandshake. Native-phase validation branches on LeashMode:
+  avatar/coffle check attached+owner (expected wearer is Leasher vs
+  CoffleTargetAvatar), post checks the reply's new "root" field equals
+  LeashTarget (needs leash_holder rev 2+). OC phase addresses LeashTarget
+  in non-avatar modes via ocNonceTarget(), giving emergent interop with
+  OC-protocol collars (coffle) and LM-compatible leashposts (post).
+  followTick now prefers HolderTarget over the raw target in all modes.
 - v1.1 rev 9: Sub-protocol rename (Phase 1). particles.lmenable→
   particles.lm.enable, particles.lmdisable→particles.lm.disable,
   particles.lmgrabbed→particles.lm.grabbed, particles.lmreleased→
@@ -489,17 +500,27 @@ handleHolderResponseNative(string msg) {
     key candidate_holder = (key)llJsonGetValue(msg, ["holder"]);
     if (candidate_holder == NULL_KEY) return;
 
-    // Reject in-world holders. The native request is broadcast via llRegionSay,
-    // so any native-compatible holder script in the region will reply — including
-    // rezzed-in-world props. Only accept holders that are currently worn as
-    // an attachment by the leasher; otherwise the leash visually anchors to
-    // a random prim instead of the avatar.
-    list odetails = llGetObjectDetails(candidate_holder, [OBJECT_ATTACHED_POINT, OBJECT_OWNER]);
-    if (llGetListLength(odetails) < 2) return;
-    integer attached_point = llList2Integer(odetails, 0);
-    key holder_owner       = llList2Key(odetails, 1);
-    if (attached_point == 0) return;          // not worn → reject
-    if (holder_owner != Leasher) return;      // worn by someone else → reject
+    // Validation branches on mode. Avatar/coffle require an attachment owned
+    // by the expected wearer (rev-3 anti-hijack rule, extended to coffle).
+    // Post accepts rezzed in-world holders but requires the responder's
+    // linkset root to match the specific object the user selected — the
+    // "root" field added in leash_holder rev 2.
+    if (LeashMode == MODE_POST) {
+        string root_str = llJsonGetValue(msg, ["root"]);
+        if (root_str == JSON_INVALID) return;
+        if ((key)root_str != LeashTarget) return;
+    }
+    else {
+        key expected_wearer = Leasher;
+        if (LeashMode == MODE_COFFLE) expected_wearer = CoffleTargetAvatar;
+
+        list odetails = llGetObjectDetails(candidate_holder, [OBJECT_ATTACHED_POINT, OBJECT_OWNER]);
+        if (llGetListLength(odetails) < 2) return;
+        integer attached_point = llList2Integer(odetails, 0);
+        key holder_owner       = llList2Key(odetails, 1);
+        if (attached_point == 0) return;
+        if (holder_owner != expected_wearer) return;
+    }
 
     HolderTarget = candidate_holder;
 
@@ -509,14 +530,22 @@ handleHolderResponseNative(string msg) {
     setParticlesState(TRUE, HolderTarget);
 }
 
+// Resolve the OC-phase nonce target for the current mode: avatar uses the
+// Leasher avatar, coffle/post use LeashTarget (target avatar or post root).
+// Must match whatever advanceHolderStateMachine sent on LEASH_CHAN_LM.
+key ocNonceTarget() {
+    if (LeashMode == MODE_AVATAR) return Leasher;
+    return LeashTarget;
+}
+
 handleHolderResponseOc(key holder_prim, string msg) {
     if (HolderState != HOLDER_STATE_OC_PHASE) return;
-    // CRITICAL: Must match the UUID we sent in the ping (Leasher, not wearer)
-    string expected = (string)Leasher + "handle ok";
+    // Must match the UUID we sent in the ping; the nonce identifies our
+    // specific handshake so stray LM traffic can't pin HolderTarget.
+    string expected = (string)ocNonceTarget() + "handle ok";
     if (msg != expected) return;
-    
-    HolderTarget = holder_prim;
 
+    HolderTarget = holder_prim;
 
     HolderState = HOLDER_STATE_COMPLETE;
     closeAllHolderListens();
@@ -541,22 +570,27 @@ advanceHolderStateMachine() {
             if (HolderListenOC == 0) {
                 HolderListenOC = llListen(LEASH_CHAN_LM, "", NULL_KEY, "");
             }
-            
-            // CRITICAL FIX: Send controller UUID + "collar" AND "handle" per LM protocol (Code Review Fix #4)
-            // The holder script expects the controller's UUID, not the wearer's UUID
-            // Send BOTH messages as per the LM protocol specification
-            llRegionSayTo(Leasher, LEASH_CHAN_LM, (string)Leasher + "collar");
-            llRegionSayTo(Leasher, LEASH_CHAN_LM, (string)Leasher + "handle");
+
+            // LM handshake: send <target>collar and <target>handle per LM spec.
+            // Target is the Leasher avatar in avatar mode, or LeashTarget in
+            // coffle/post — coffle reaches an OC collar on the target sub,
+            // post reaches an LM-compatible leashpost.
+            key oc_target = ocNonceTarget();
+            if (oc_target != NULL_KEY) {
+                llRegionSayTo(oc_target, LEASH_CHAN_LM, (string)oc_target + "collar");
+                llRegionSayTo(oc_target, LEASH_CHAN_LM, (string)oc_target + "handle");
+            }
         }
     }
     else if (HolderState == HOLDER_STATE_OC_PHASE) {
         if (elapsed >= OC_PHASE_DURATION) {
-            // Fallback to avatar direct
+            // Fallback to aiming at the raw mode target
             HolderState = HOLDER_STATE_COMPLETE;
             closeAllHolderListens();
 
-            if (Leasher != NULL_KEY) {
-                setParticlesState(TRUE, Leasher);
+            key fallback_target = ocNonceTarget();
+            if (fallback_target != NULL_KEY) {
+                setParticlesState(TRUE, fallback_target);
             }
         }
     }
@@ -753,8 +787,11 @@ coffleLeashInternal(key user, key target_collar) {
 
     setLeashState(user, MODE_COFFLE, target_collar, collar_owner);
 
-    // Start particles to target collar
-    setParticlesState(TRUE, target_collar);
+    // Discover a leashpoint on the target via the same two-phase handshake
+    // used by grab. Native phase reaches a DS leash_holder worn by the
+    // target sub; OC phase reaches an OC-protocol collar on the target.
+    // On timeout, setParticlesState falls back to the target avatar.
+    beginHolderHandshake(user);
 
     // Enable follow mechanics to the target avatar (the one wearing the collar)
     startFollow();
@@ -778,8 +815,11 @@ postLeashInternal(key user, key post_object) {
 
     setLeashState(user, MODE_POST, post_object, NULL_KEY);
 
-    // Start particles to post object
-    setParticlesState(TRUE, post_object);
+    // Discover the post's LeashPoint via the same handshake as grab/coffle.
+    // Native phase matches responses whose linkset root equals post_object;
+    // OC phase reaches LM-compatible leashposts. On timeout, particles fall
+    // back to the post root.
+    beginHolderHandshake(user);
 
     // Enable distance enforcement (via follow mechanics)
     startFollow();
@@ -883,42 +923,28 @@ turnToTarget(vector target_pos) {
 followTick() {
     if (!FollowActive || !Leashed) return;
 
-    // Determine target position based on mode
+    // Resolve the per-mode follow anchor (avatar-pelvis fallback).
     vector target_pos;
     key follow_target = NULL_KEY;
-    key target_key = NULL_KEY;
+    if (LeashMode == MODE_AVATAR)      follow_target = Leasher;
+    else if (LeashMode == MODE_COFFLE) follow_target = CoffleTargetAvatar;
+    else if (LeashMode == MODE_POST)   follow_target = LeashTarget;
 
-    if (LeashMode == MODE_AVATAR) {
-        follow_target = Leasher;
-        // Prefer holder if active
-        if (HolderTarget != NULL_KEY) {
-            target_key = HolderTarget;
-        } else {
-            target_key = Leasher;
-        }
-    }
-    else if (LeashMode == MODE_COFFLE) {
-        follow_target = CoffleTargetAvatar;
-        target_key = CoffleTargetAvatar;
-    }
-    else if (LeashMode == MODE_POST) {
-        follow_target = LeashTarget;
-        target_key = LeashTarget;
-    }
+    if (follow_target == NULL_KEY) return;
 
-    if (target_key == NULL_KEY) return;
+    // Prefer the discovered LeashPoint prim over the raw mode target.
+    key target_key = follow_target;
+    if (HolderTarget != NULL_KEY) target_key = HolderTarget;
 
     list details = llGetObjectDetails(target_key, [OBJECT_POS]);
-    
-    // Handle HolderTarget disappearing (special case for Avatar mode)
-    if (llGetListLength(details) == 0) {
-        if (LeashMode == MODE_AVATAR && target_key == HolderTarget) {
-            HolderTarget = NULL_KEY;
-            updateParticlesTarget(Leasher);
-            // Fallback to leasher immediately
-            target_key = Leasher;
-            details = llGetObjectDetails(target_key, [OBJECT_POS]);
-        }
+
+    // HolderTarget vanished (detached/derezzed): drop it and retry with
+    // the mode's avatar-pelvis/root fallback. Applies in all modes now.
+    if (llGetListLength(details) == 0 && target_key == HolderTarget) {
+        HolderTarget = NULL_KEY;
+        updateParticlesTarget(follow_target);
+        target_key = follow_target;
+        details = llGetObjectDetails(target_key, [OBJECT_POS]);
     }
 
     if (llGetListLength(details) == 0) return;
