@@ -1,10 +1,21 @@
 /*--------------------
 MODULE: kmod_particles.lsl
 VERSION: 1.10
-REVISION: 3
+REVISION: 5
 PURPOSE: Visual connection renderer with Lockmeister compatibility
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- v1.1 rev 5: Stop orphaning the rendering slot when the target goes
+  transiently missing. Periodic validation used to clear SourcePlugin
+  alongside TargetKey, which left a subsequent particles.stop with a
+  source mismatch — so unclip couldn't clear particles after a holder
+  detach/update cycle. Now we stop rendering but keep SourcePlugin so
+  the source plugin retains ownership and its stop succeeds. Also
+  restart the validation timer in handle_particles_update so a renderer
+  that resumes after a target-gone gap still gets periodic checks.
+  Drops rev 4 temporary diagnostic (regression was a sim crash).
+- v1.1 rev 4: Temporary diagnostic llOwnerSay in handle_particles_start —
+  remove once particles regression is resolved.
 - v1.1 rev 3: Sub-protocol rename (Phase 1). particles.lmenable→
   particles.lm.enable, particles.lmdisable→particles.lm.disable,
   particles.lmgrabbed→particles.lm.grabbed, particles.lmreleased→
@@ -258,10 +269,10 @@ handle_particles_start(string msg) {
     if (llJsonGetValue(msg, ["source"]) == JSON_INVALID || llJsonGetValue(msg, ["target"]) == JSON_INVALID) {
         return;
     }
-    
+
     string source = llJsonGetValue(msg, ["source"]);
     key target = (key)llJsonGetValue(msg, ["target"]);
-    
+
     // Validate target exists in-world
     list details = llGetObjectDetails(target, [OBJECT_POS]);
     if (llGetListLength(details) == 0) {
@@ -338,6 +349,7 @@ handle_particles_update(string msg) {
     if (new_target != TargetKey) {
         TargetKey = new_target;
         render_chain_particles(TargetKey);
+        llSetTimerEvent(PARTICLE_UPDATE_RATE);
     }
 }
 
@@ -474,9 +486,14 @@ default
         if (ParticlesActive && TargetKey != NULL_KEY) {
             list details = llGetObjectDetails(TargetKey, [OBJECT_POS]);
             if (llGetListLength(details) == 0) {
-                // Target disappeared (offsim or logged out)
+                // Target disappeared (offsim, detached, or logged out).
+                // Stop rendering, but do not clear SourcePlugin: the source
+                // plugin still owns the rendering slot. Clearing it here
+                // orphans a later particles.stop (source mismatch) and
+                // leaves particles stuck if the source plugin sends a
+                // follow-up particles.update with a fresh target.
                 render_chain_particles(NULL_KEY);
-                
+
                 // If Lockmeister was active, stop it
                 if (LmActive) {
                     LmActive = FALSE;
@@ -484,18 +501,14 @@ default
                     LmTargetPrim = NULL_KEY;
                     LmAuthorized = FALSE;
                     close_lm_listen();
-                    
-                    // Notify leash plugin
+
                     llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
                         "type", "particles.lm.released"
                     ]), NULL_KEY);
                 }
-                
-                // Always cleanup when target is lost
-                SourcePlugin = "";
+
                 TargetKey = NULL_KEY;
-                
-                // Only stop timer if nothing needs it
+
                 if (!needs_timer()) {
                     llSetTimerEvent(0.0);
                 }

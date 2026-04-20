@@ -1,10 +1,14 @@
 /*--------------------
 PLUGIN: plugin_leash.lsl
 VERSION: 1.10
-REVISION: 8
+REVISION: 9
 PURPOSE: User interface and configuration for the leashing system
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
+- v1.1 rev 9: Chat subcommands for coffle and post. Both reuse the
+  existing menu flow (showCoffleMenu / showPostMenu), so "leash coffle"
+  and "leash post" each trigger a sensor scan and return a dialog to
+  pick from — same UX as the menu buttons, just reachable from chat.
 - v1.1 rev 8: Chat command support (Phase 3). Registers "leash" alias.
   "<prefix> leash" opens menu; subcommands: clip, unclip, turn,
   length <m>, pass <username>. Username resolved via llName2Key
@@ -520,6 +524,17 @@ handle_subpath(key user, integer acl_level, string subpath) {
             return;
         }
         sendLeashActionWithTarget("pass", target);
+        return;
+    }
+    // coffle/post open the same sensor-menu flow as the dialog buttons.
+    // CurrentUser is already set above so the resulting menu goes to the
+    // chat user.
+    if (action == "coffle") {
+        showCoffleMenu();
+        return;
+    }
+    if (action == "post") {
+        showPostMenu();
         return;
     }
     llRegionSayTo(user, 0, "Unknown leash subcommand: " + action);

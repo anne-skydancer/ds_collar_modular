@@ -1,10 +1,26 @@
 /*--------------------
 MODULE: kmod_leash.lsl
 VERSION: 1.10
-REVISION: 10
+REVISION: 13
 PURPOSE: Leashing engine providing leash services to plugins
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- v1.1 rev 13: Cap auto-reclip waiting window at 2min. Adds ReclipDeadline
+  alongside ReclipScheduled so the wearer isn't surprise-reclipped if the
+  leasher crashes and logs back in hours later. Checked before the
+  MAX_RECLIP_ATTEMPTS cap so a late-returning leasher is never reclipped.
+- v1.1 rev 12: Re-acquire leashpoint after holder detach/reattach.
+  Timer retries beginHolderHandshake every ~10s when Leashed &&
+  HolderTarget == NULL_KEY && HolderState == HOLDER_STATE_COMPLETE,
+  so a reattached holder gets picked up without unclip+re-clip.
+  Drops rev 11 temporary diagnostics (no regression; was a sim crash
+  that failed to persist the emitter child as linkset).
+- v1.1 rev 11: Consolidate leash-action notices to owner IM only; drop
+  duplicate llRegionSayTo on channel 0. Remove notifyLeashAction helper;
+  callers inline llOwnerSay. New formats: "Leash grabbed by X", "Leash
+  released", "Coffled to Y", "Posted to Z". Adds temporary diagnostic
+  llOwnerSays in handleHolderResponseNative — remove once particles
+  regression is resolved.
 - v1.1 rev 10: Extend native/OC holder handshake to coffle and post modes.
   Previously only grab mode discovered a LeashPoint prim; coffle/post
   aimed particles at the raw sensor-detected target (avatar pelvis for
@@ -142,6 +158,12 @@ integer ReclipScheduled = 0;
 key LastLeasher = NULL_KEY;
 integer ReclipAttempts = 0;
 integer MAX_RECLIP_ATTEMPTS = 3;
+// Wall-clock cap on how long we keep waiting for LastLeasher to return.
+// Prevents a surprise reclip if the leasher crashes at noon and logs back
+// in hours later; auto-reclip state clears after RECLIP_SAFETY_WINDOW
+// seconds regardless of whether they returned.
+integer RECLIP_SAFETY_WINDOW = 120;
+integer ReclipDeadline = 0;
 
 // ACL verification system (NEW)
 key PendingActionUser = NULL_KEY;
@@ -291,6 +313,7 @@ clearLeashState(integer clear_reclip) {
         LastLeasher = NULL_KEY;
         ReclipScheduled = 0;
         ReclipAttempts = 0;
+        ReclipDeadline = 0;
     }
 
     setLockmeisterState(FALSE, NULL_KEY);
@@ -300,17 +323,6 @@ clearLeashState(integer clear_reclip) {
 }
 
 /* -------------------- NOTIFICATION HELPERS -------------------- */
-
-// Notify all parties about a leash action
-notifyLeashAction(key actor, string action_msg, string owner_details) {
-    llRegionSayTo(actor, 0, action_msg);
-
-    if (owner_details != "") {
-        llOwnerSay(action_msg + " - " + owner_details);
-    } else {
-        llOwnerSay(action_msg);
-    }
-}
 
 // For multi-party notifications (like pass)
 notifyLeashTransfer(key from_user, key to_user, string action) {
@@ -627,6 +639,7 @@ checkLeasherPresence() {
             autoReleaseOffsim();
             ReclipScheduled = now_time + 2;
             ReclipAttempts = 0;
+            ReclipDeadline = now_time + RECLIP_SAFETY_WINDOW;
         }
     }
     else if (OffsimDetected) {
@@ -642,19 +655,28 @@ autoReleaseOffsim() {
 
 checkAutoReclip() {
     if (ReclipScheduled == 0 || now() < ReclipScheduled) return;
-    
+
+    // Safety window: stop waiting if leasher hasn't returned in time.
+    // Checked before MAX_RECLIP_ATTEMPTS so a leasher who reappears after
+    // the window is never reclipped even if attempts haven't been exhausted.
+    if (ReclipDeadline != 0 && now() >= ReclipDeadline) {
+        ReclipScheduled = 0;
+        LastLeasher = NULL_KEY;
+        ReclipAttempts = 0;
+        ReclipDeadline = 0;
+        return;
+    }
+
     if (ReclipAttempts >= MAX_RECLIP_ATTEMPTS) {
         ReclipScheduled = 0;
         LastLeasher = NULL_KEY;
         ReclipAttempts = 0;
+        ReclipDeadline = 0;
         return;
     }
-    
+
     if (LastLeasher != NULL_KEY && llGetAgentInfo(LastLeasher) != 0) {
-        
-        // Request ACL verification before reclip
         requestAclForAction(LastLeasher, "grab", NULL_KEY);
-        
         ReclipAttempts = ReclipAttempts + 1;
         ReclipScheduled = now() + 2;
     }
@@ -729,7 +751,7 @@ grabLeashInternal(key user, integer acl_level) {
     setLockmeisterState(TRUE, user);
 
     startFollow();
-    notifyLeashAction(user, "Leash grabbed", "by " + llKey2Name(user));
+    llOwnerSay("Leash grabbed by " + llKey2Name(user));
 }
 
 releaseLeashInternal(key user) {
@@ -739,7 +761,7 @@ releaseLeashInternal(key user) {
     }
 
     clearLeashState(TRUE);  // TRUE = clear reclip attempts
-    notifyLeashAction(user, "Leash released", "by " + llKey2Name(user));
+    llOwnerSay("Leash released");
 }
 
 passLeashInternal(key new_leasher) {
@@ -796,8 +818,7 @@ coffleLeashInternal(key user, key target_collar) {
     // Enable follow mechanics to the target avatar (the one wearing the collar)
     startFollow();
 
-    string target_name = llList2String(details, 1);
-    notifyLeashAction(user, "Coffled to " + llKey2Name(collar_owner), target_name);
+    llOwnerSay("Coffled to " + llKey2Name(collar_owner));
 }
 
 postLeashInternal(key user, key post_object) {
@@ -825,7 +846,7 @@ postLeashInternal(key user, key post_object) {
     startFollow();
 
     string object_name = llList2String(details, 1);
-    notifyLeashAction(user, "Posted to " + object_name, "by " + llKey2Name(user));
+    llOwnerSay("Posted to " + object_name);
 }
 
 yankToLeasher() {
@@ -1129,12 +1150,25 @@ default
     timer() {
         // Advance holder detection state machine
         advanceHolderStateMachine();
-        
+
         TickCount++;
         // Check for offsim/auto-release (~4s cadence at 1.0s FOLLOW_TICK)
         if (TickCount % 4 == 0) {
             if (Leashed) checkLeasherPresence();
             if (!Leashed && ReclipScheduled != 0) checkAutoReclip();
+        }
+
+        // Re-acquire a leashpoint every ~10s when we're leashed but have
+        // fallen through to the avatar/root (HolderTarget cleared by a
+        // detach, or initial handshake never found one). Retrying the
+        // handshake picks up a re-attached holder without requiring the
+        // user to unclip and re-clip.
+        if (TickCount % 10 == 0) {
+            if (Leashed && HolderTarget == NULL_KEY
+                && HolderState == HOLDER_STATE_COMPLETE
+                && Leasher != NULL_KEY) {
+                beginHolderHandshake(Leasher);
+            }
         }
 
         // Follow tick
