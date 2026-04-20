@@ -1170,13 +1170,15 @@ A: The collar is modular and extensible. You can:
 ## Version Information
 
 The DS Collar Modular system uses a **Revision-based** versioning scheme.
-- **System Version:** Currently **1.0**
+
+- **System Version:** Currently **1.1**
 - **Revision:** Increments with each update.
 
 This user guide corresponds to:
-- **Kernel Revision:** 39
-- **Module Revisions:** 26 - 44
-- **Plugin Revisions:** 22 - 25
+
+- **Kernel Revision:** 3
+- **Module Revisions:** 2 - 15
+- **Plugin Revisions:** 5 - 12
 
 The revision number can be found in the header of each script.
 

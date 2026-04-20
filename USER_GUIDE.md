@@ -1072,13 +1072,15 @@ A: Modify `kmod_ui.lsl` for main menu structure. Individual plugin menus are in 
 ## Version Information
 
 The DS Collar Modular system uses a **Revision-based** versioning scheme.
-- **System Version:** Currently **1.0**
+
+- **System Version:** Currently **1.1**
 - **Revision:** Increments with each update.
 
 This user guide corresponds to:
-- **Kernel Revision:** 39
-- **Module Revisions:** 26 - 44
-- **Plugin Revisions:** 22 - 25
+
+- **Kernel Revision:** 1
+- **Module Revisions:** 0 - 5
+- **Plugin Revisions:** 1 - 6
 
 The revision number can be found in the header of each script.
 
