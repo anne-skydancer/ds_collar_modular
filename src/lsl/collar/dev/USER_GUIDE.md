@@ -444,6 +444,9 @@ bell.sound       = 16fcf579-82cb-b110-c1a4-5fa5e1385406
 | `bell.sound` | UUID | Bell sound asset |
 | `rlvex.ownertp` / `ownerim` | 0/1 | Owner RLV exceptions |
 | `rlvex.trusteetp` / `trusteeim` | 0/1 | Trustee RLV exceptions |
+| `chat.prefix` | string | Chat command prefix. Defaults to the first two characters of the wearer's username. |
+| `chat.public` | 0/1 | Whether the collar also listens on channel 0 (local chat) |
+| `chat.channel` | 1–9 | Secondary private channel (values outside 1–9 are ignored) |
 
 For full syntax see `SETTINGS_REFERENCE.md`.
 
@@ -466,7 +469,14 @@ Right-click an avatar and choose **Copy Key** (available in Firestorm and most t
 
 ## Chat commands
 
-Most features also work from local chat. Commands are typed on the collar's private channel with the collar's prefix — the prefix defaults to the first two characters of the wearer's username, and is configurable through the **Chat** menu.
+Most features also work from chat. The collar listens on two channels:
+
+- **Channel 0** — ordinary local chat. Commands typed straight into the speak bar are heard by everyone nearby. On by default; can be turned off for privacy (`chat.public = 0` or the toggle in the **Chat** menu).
+- A **private channel** (default `1`) — always on. Type `/1 <prefix> <command>` to issue commands no one else sees.
+
+Either way, every command starts with the collar's **prefix**, which defaults to the first two characters of the wearer's username.
+
+Prefix, private channel number, and channel-0 listening are all configurable — through the **Chat** menu at runtime, or pre-set in the settings notecard with `chat.prefix`, `chat.channel`, and `chat.public`.
 
 ### Form
 
