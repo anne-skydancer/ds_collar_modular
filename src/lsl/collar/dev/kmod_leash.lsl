@@ -1,10 +1,17 @@
 /*--------------------
 MODULE: kmod_leash.lsl
 VERSION: 1.10
-REVISION: 13
+REVISION: 14
 PURPOSE: Leashing engine providing leash services to plugins
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- v1.1 rev 14: Convert all user-facing notices from llOwnerSay to
+  llRegionSayTo(...0, ...) for consistency with project convention.
+  Actor-targeted (user): Leash grabbed/released, Coffled to, Posted to.
+  Wearer-targeted (llGetOwner): offsim notifications, auto-release,
+  notifyLeashTransfer wearer line, yank feedback, Lockmeister
+  grab/release notices. RLV commands (@follow, @setrot) stay as
+  llOwnerSay — required by the RLV delivery protocol.
 - v1.1 rev 13: Cap auto-reclip waiting window at 2min. Adds ReclipDeadline
   alongside ReclipScheduled so the wearer isn't surprise-reclipped if the
   leasher crashes and logs back in hours later. Checked before the
@@ -328,7 +335,7 @@ clearLeashState(integer clear_reclip) {
 notifyLeashTransfer(key from_user, key to_user, string action) {
     llRegionSayTo(from_user, 0, "Leash " + action + " to " + llKey2Name(to_user));
     llRegionSayTo(to_user, 0, "Leash received from " + llKey2Name(from_user));
-    llOwnerSay("Leash " + action + " to " + llKey2Name(to_user) + " by " + llKey2Name(from_user));
+    llRegionSayTo(llGetOwner(), 0, "Leash " + action + " to " + llKey2Name(to_user) + " by " + llKey2Name(from_user));
 }
 
 /* -------------------- ACL VERIFICATION SYSTEM (NEW) -------------------- */
@@ -626,7 +633,7 @@ checkLeasherPresence() {
     
     // Notify if holder-only mode (avatar offline, holder remains)
     if (!avatar_present && holder_present && !OffsimDetected) {
-        llOwnerSay("Leasher offline, leash held by object");
+        llRegionSayTo(llGetOwner(), 0, "Leasher offline, leash held by object");
     }
     
     if (!present) {
@@ -650,7 +657,7 @@ checkLeasherPresence() {
 
 autoReleaseOffsim() {
     clearLeashState(FALSE);  // FALSE = don't clear reclip (we want to try reclipping)
-    llOwnerSay("Auto-released (offsim)");
+    llRegionSayTo(llGetOwner(), 0, "Auto-released (offsim)");
 }
 
 checkAutoReclip() {
@@ -751,7 +758,7 @@ grabLeashInternal(key user, integer acl_level) {
     setLockmeisterState(TRUE, user);
 
     startFollow();
-    llOwnerSay("Leash grabbed by " + llKey2Name(user));
+    llRegionSayTo(user, 0, "Leash grabbed by " + llKey2Name(user));
 }
 
 releaseLeashInternal(key user) {
@@ -761,7 +768,7 @@ releaseLeashInternal(key user) {
     }
 
     clearLeashState(TRUE);  // TRUE = clear reclip attempts
-    llOwnerSay("Leash released");
+    llRegionSayTo(user, 0, "Leash released");
 }
 
 passLeashInternal(key new_leasher) {
@@ -818,7 +825,7 @@ coffleLeashInternal(key user, key target_collar) {
     // Enable follow mechanics to the target avatar (the one wearing the collar)
     startFollow();
 
-    llOwnerSay("Coffled to " + llKey2Name(collar_owner));
+    llRegionSayTo(user, 0, "Coffled to " + llKey2Name(collar_owner));
 }
 
 postLeashInternal(key user, key post_object) {
@@ -846,7 +853,7 @@ postLeashInternal(key user, key post_object) {
     startFollow();
 
     string object_name = llList2String(details, 1);
-    llOwnerSay("Posted to " + object_name);
+    llRegionSayTo(user, 0, "Posted to " + object_name);
 }
 
 yankToLeasher() {
@@ -854,7 +861,7 @@ yankToLeasher() {
 
     list details = llGetObjectDetails(Leasher, [OBJECT_POS]);
     if (llGetListLength(details) == 0) {
-        llOwnerSay("Cannot yank: leasher not in range.");
+        llRegionSayTo(llGetOwner(), 0, "Cannot yank: leasher not in range.");
         return;
     }
 
@@ -871,10 +878,10 @@ yankToLeasher() {
         }
         llMoveToTarget(leasher_pos, 0.3);
         YankTargetHandle = llTarget(leasher_pos, 1.5);
-        llOwnerSay("Yanked to " + llKey2Name(Leasher));
+        llRegionSayTo(llGetOwner(), 0, "Yanked to " + llKey2Name(Leasher));
         llRegionSayTo(Leasher, 0, llKey2Name(llGetOwner()) + " yanked to you.");
     } else {
-        llOwnerSay("Cannot yank: controls not active.");
+        llRegionSayTo(llGetOwner(), 0, "Cannot yank: controls not active.");
     }
 }
 
@@ -1110,7 +1117,7 @@ default
                     LastLeasher = controller;
                     persistLeashState(TRUE, controller);
                     startFollow();
-                    llOwnerSay("Leashed by " + llKey2Name(controller) + " (Lockmeister)");
+                    llRegionSayTo(llGetOwner(), 0, "Leashed by " + llKey2Name(controller) + " (Lockmeister)");
                     broadcastState();
                 }
                 return;
@@ -1124,7 +1131,7 @@ default
                     persistLeashState(FALSE, NULL_KEY);
                     AuthorizedLmController = NULL_KEY;
                     stopFollow();
-                    llOwnerSay("Released by " + llKey2Name(old_leasher) + " (Lockmeister)");
+                    llRegionSayTo(llGetOwner(), 0, "Released by " + llKey2Name(old_leasher) + " (Lockmeister)");
                     broadcastState();
                 }
                 return;

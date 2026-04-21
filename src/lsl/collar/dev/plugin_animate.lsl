@@ -1,10 +1,12 @@
 /*--------------------
 PLUGIN: plugin_animate.lsl
 VERSION: 1.10
-REVISION: 6
+REVISION: 7
 PURPOSE: Paginated animation menu driven by inventory contents
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
+- v1.1 rev 7: Consistency pass — inventory-overflow warning converted
+  from llOwnerSay to llRegionSayTo(llGetOwner(), 0, ...).
 - v1.1 rev 6: Add "stand" alias to stop animations. "<prefix> stand" stops
   the current animation, equivalent to "<prefix> pose stop". Plugin
   registers the alias via chat.alias.declare; handle_subpath recognises
@@ -83,7 +85,7 @@ refresh_animation_list() {
 
     // Safety cap to prevent stack-heap collision
     if (count > MAX_ANIMATIONS) {
-        llOwnerSay("WARNING: Too many animations (" + (string)count + "). Only loading first " + (string)MAX_ANIMATIONS + ".");
+        llRegionSayTo(llGetOwner(), 0, "WARNING: Too many animations (" + (string)count + "). Only loading first " + (string)MAX_ANIMATIONS + ".");
         count = MAX_ANIMATIONS;
     }
 

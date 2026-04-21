@@ -1,10 +1,15 @@
 /*--------------------
 PLUGIN: plugin_relay.lsl
 VERSION: 1.10
-REVISION: 7
+REVISION: 8
 PURPOSE: Provide ORG-compliant RLV relay with hardcore mode and safeword hooks
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
+- v1.1 rev 8: Consistency pass — 3 user-facing notices (relay off,
+  reattach, SOS safeword) converted from llOwnerSay to
+  llRegionSayTo(llGetOwner(), 0, ...); "[RELAY]" and "[SOS]" source
+  prefixes dropped per project convention. RLV command forwarding and
+  @clear still use llOwnerSay (required by RLV delivery protocol).
 - v1.1 rev 7: Chat command support (Phase 3). Registers "relay" and
   "safeword" aliases. "relay [on|off|ask]" sets mode (gated by
   btn_allowed("Mode")); "safeword" performs emergency clear, bypasses
@@ -663,7 +668,7 @@ handle_ground_rez(string reason) {
     // Update listen state
     update_relay_listen_state();
 
-    if (reason != "") llOwnerSay("[RELAY] " + reason + " - Relay turned OFF");
+    if (reason != "") llRegionSayTo(llGetOwner(), 0, reason + " - Relay turned OFF");
 }
 
 /* -------------------- MESSAGE HANDLERS -------------------- */
@@ -930,7 +935,7 @@ default
             IsAttached = TRUE;
             WearerKey = id;  // Update cached wearer UUID
             update_relay_listen_state();
-            llOwnerSay("[RELAY] Collar attached - Relay state restored");
+            llRegionSayTo(llGetOwner(), 0, "Collar attached - Relay state restored");
         }
     }
 
@@ -968,7 +973,7 @@ default
                 // enforced upstream). Bypasses Hardcore, matching the
                 // emergency-exit intent.
                 safeword_clear_all();
-                llOwnerSay("[SOS] All RLV restrictions cleared.");
+                llRegionSayTo(llGetOwner(), 0, "All RLV restrictions cleared.");
             }
         }
 

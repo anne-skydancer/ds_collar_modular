@@ -1,10 +1,12 @@
 /*--------------------
 MODULE: kmod_remote.lsl
 VERSION: 1.10
-REVISION: 5
+REVISION: 6
 PURPOSE: External HUD communication bridge for remote control workflows
 ARCHITECTURE: Consolidated message bus lanes, namespaced internal message protocol
 CHANGES:
+- v1.1 rev 6: Consistency pass — PIN-ready notice converted from
+  llOwnerSay to llRegionSayTo(llGetOwner(), 0, ...).
 - v1.1 rev 5: AUTH_BUS rename (Phase 1). auth.aclquery→auth.acl.query,
   auth.aclresult→auth.acl.result.
 - v1.1 rev 4: KERNEL_LIFECYCLE rename (Phase 1). kernel.reset→
@@ -370,7 +372,7 @@ handle_update_discover(string message) {
     ]);
     
     llRegionSayTo(updater, EXTERNAL_ACL_REPLY_CHAN, response);
-    llOwnerSay("Update ready. PIN generated for secure transfer.");
+    llRegionSayTo(llGetOwner(), 0, "Update ready. PIN generated for secure transfer.");
 }
 
 /* -------------------- EVENTS -------------------- */

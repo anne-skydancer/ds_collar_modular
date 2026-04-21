@@ -1,10 +1,12 @@
 /*--------------------
 MODULE: kmod_dialogs.lsl
 VERSION: 1.10
-REVISION: 4
+REVISION: 5
 PURPOSE: Centralized dialog management for shared listener handling
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- v1.1 rev 5: Consistency pass — item-truncation warning converted from
+  llOwnerSay to llRegionSayTo(llGetOwner(), 0, ...).
 - v1.1 rev 4: UI_BUS rename (Phase 1). ui.dialog.registerbuttonconfig→
   ui.dialog.buttonconfig.register (was a compound name; split into
   domain-noun + verb to match house style).
@@ -363,7 +365,7 @@ handle_numbered_list_dialog(string msg, string session_id, key user) {
     integer max_items = 11;
     if (item_count > max_items) {
         // Warn about truncation
-        llOwnerSay("WARNING: Item list truncated to " + (string)max_items + " items (had " + (string)original_count + ")");
+        llRegionSayTo(llGetOwner(), 0, "WARNING: Item list truncated to " + (string)max_items + " items (had " + (string)original_count + ")");
         item_count = max_items;
     }
     

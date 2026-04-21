@@ -1,7 +1,7 @@
 /*--------------------
 MODULE: kmod_settings.lsl
 VERSION: 1.10
-REVISION: 6
+REVISION: 7
 PURPOSE: Notecard parser, validation guards, and LSD settings store
 ARCHITECTURE: Two-mode access model. Single-owner mode uses scalar keys
               (access.owner, access.ownername, access.ownerhonorific) and
@@ -11,6 +11,9 @@ ARCHITECTURE: Two-mode access model. Single-owner mode uses scalar keys
               Trustees and blacklist always use CSVs. Display names are
               resolved asynchronously via llRequestDisplayName.
 CHANGES:
+- v1.1 rev 7: Consistency pass — 6 ERROR/HINT notices (wearer-as-owner
+  guard, TPE guards, multi-owner menu guards) converted from llOwnerSay
+  to llRegionSayTo(llGetOwner(), 0, ...).
 - v1.1 rev 6: SETTINGS_BUS rename (Phase 1). Mutation handlers now
   dispatch on namespaced family names: settings.setowner→settings.owner.set,
   settings.clearowner→settings.owner.clear, settings.addtrustee→
@@ -271,7 +274,7 @@ handle_name_response(key query_id, string name) {
 integer set_single_owner(string uuid_str, string honorific) {
     if (uuid_str == "" || (key)uuid_str == NULL_KEY) return FALSE;
     if ((key)uuid_str == llGetOwner()) {
-        llOwnerSay("ERROR: Cannot add wearer as owner (role separation required)");
+        llRegionSayTo(llGetOwner(), 0, "ERROR: Cannot add wearer as owner (role separation required)");
         return FALSE;
     }
 
@@ -521,8 +524,8 @@ parse_notecard_line(string line) {
     if (key_name == KEY_TPE_MODE) {
         value = normalize_bool(value);
         if ((integer)value == 1 && !has_external_owner()) {
-            llOwnerSay("ERROR: Cannot enable TPE via notecard - requires external owner");
-            llOwnerSay("HINT: Set owner BEFORE tpe.mode in notecard");
+            llRegionSayTo(llGetOwner(), 0, "ERROR: Cannot enable TPE via notecard - requires external owner");
+            llRegionSayTo(llGetOwner(), 0, "HINT: Set owner BEFORE tpe.mode in notecard");
             return;
         }
         llLinksetDataWrite(KEY_TPE_MODE, value);
@@ -590,7 +593,7 @@ handle_set(string msg) {
     if (key_name == KEY_TPE_MODE) {
         value = normalize_bool(value);
         if ((integer)value == 1 && !has_external_owner()) {
-            llOwnerSay("ERROR: Cannot enable TPE - requires external owner");
+            llRegionSayTo(llGetOwner(), 0, "ERROR: Cannot enable TPE - requires external owner");
             return;
         }
     }
@@ -608,7 +611,7 @@ handle_set(string msg) {
 
 handle_set_owner(string msg) {
     if (is_multi_owner_mode()) {
-        llOwnerSay("ERROR: Cannot set owner via menu in multi-owner mode (notecard managed)");
+        llRegionSayTo(llGetOwner(), 0, "ERROR: Cannot set owner via menu in multi-owner mode (notecard managed)");
         return;
     }
 
@@ -623,7 +626,7 @@ handle_set_owner(string msg) {
 
 handle_clear_owner() {
     if (is_multi_owner_mode()) {
-        llOwnerSay("ERROR: Cannot clear owner via menu in multi-owner mode (notecard managed)");
+        llRegionSayTo(llGetOwner(), 0, "ERROR: Cannot clear owner via menu in multi-owner mode (notecard managed)");
         return;
     }
     clear_single_owner();

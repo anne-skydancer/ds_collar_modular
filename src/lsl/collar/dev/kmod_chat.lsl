@@ -1,13 +1,16 @@
 /*--------------------
 MODULE: kmod_chat.lsl
 VERSION: 1.10
-REVISION: 15
+REVISION: 16
 PURPOSE: Local chat command receiver. Listens on channel 1 (always) and
          optionally channel 0 (public chat) for prefixed commands from
          authorised speakers. Sends ui.chat.command to UI_BUS so kmod_ui
          can route the request; plugins never receive the raw dispatch.
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- v1.1 rev 16: Consistency pass — alias-collision notice converted from
+  llOwnerSay to llRegionSayTo(llGetOwner(), 0, ...); "[chat]" source
+  prefix dropped per project convention.
 - v1.1 rev 15: Lint cleanup. Removed unused AUTH_BUS constant, deleted the
   no-op logd() scaffolding and its sole caller, dropped the vestigial
   `channel` parameter from speaker_authorised() (never branched on; ACL
@@ -197,7 +200,7 @@ register_alias(string label, string context) {
     }
     string existing = llList2String(CommandAliases, idx + 1);
     if (existing != context) {
-        llOwnerSay("[chat] alias collision: '" + alias + "' already bound to '" +
+        llRegionSayTo(llGetOwner(), 0, "Alias collision: '" + alias + "' already bound to '" +
                    existing + "', refusing rebind to '" + context +
                    "'. Namespaced form still works.");
     }
