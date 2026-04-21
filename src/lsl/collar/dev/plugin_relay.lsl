@@ -1,10 +1,15 @@
 /*--------------------
 PLUGIN: plugin_relay.lsl
 VERSION: 1.10
-REVISION: 8
+REVISION: 9
 PURPOSE: Provide ORG-compliant RLV relay with hardcore mode and safeword hooks
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
+- v1.1 rev 9: ASK mode now accepts provisionally — commands apply and
+  ack on arrival, the wearer dialog offers Allow (keep) or Deny
+  (revert via @clear + !release). Fixes capture-furniture having to
+  be re-used after authorization because its state machine timed out
+  while the wearer was reading the prompt.
 - v1.1 rev 8: Consistency pass — 3 user-facing notices (relay off,
   reattach, SOS safeword) converted from llOwnerSay to
   llRegionSayTo(llGetOwner(), 0, ...); "[RELAY]" and "[SOS]" source
@@ -93,12 +98,12 @@ list Relays = [];
 // ASK mode: objects the wearer has accepted this session (not re-prompted)
 list SessionTrustedKeys = [];
 
-// ASK mode: one pending prompt at a time
-// Batches all commands from the same object until wearer responds
+// ASK mode: one pending prompt at a time. Restrictions from an untrusted
+// object are applied + acked on arrival (provisional accept); the prompt
+// asks the wearer to Allow (keep) or Deny (revert via @clear + !release).
 key PendingAskKey = NULL_KEY;
 string PendingAskName = "";
 integer PendingAskChan = 0;
-list PendingAskCommands = [];
 integer AskListenHandle = 0;
 integer AskDialogChan = 0;
 
@@ -296,48 +301,33 @@ show_ask_dialog() {
     if (AskListenHandle) llListenRemove(AskListenHandle);
     AskListenHandle = llListen(AskDialogChan, "", WearerKey, "");
 
-    integer cmd_count = llGetListLength(PendingAskCommands);
     string body = "[RELAY] " + PendingAskName +
-                  "\nwants to apply " + (string)cmd_count +
-                  " restriction(s).\n\nAllow or deny?";
+                  " applied RLV restrictions.\n\nAllow to keep them, or Deny to release.";
 
     // Three buttons: Deny left, Allow right, blank centre for spacing
     llDialog(WearerKey, body, ["Deny", " ", "Allow"], AskDialogChan);
     llSetTimerEvent((float)ASK_TIMEOUT_SEC);
 }
 
-// Wearer accepted: trust the object for this session and execute pending commands.
+// Wearer confirmed: trust the object for this session. Restrictions were
+// already applied on arrival (provisional accept), so nothing to forward.
 accept_ask() {
     if (llListFindList(SessionTrustedKeys, [(string)PendingAskKey]) == -1) {
         SessionTrustedKeys += [(string)PendingAskKey];
     }
-
-    add_relay(PendingAskKey, PendingAskName, PendingAskChan);
-
-    integer i = 0;
-    while (i < llGetListLength(PendingAskCommands)) {
-        string cmd = llList2String(PendingAskCommands, i);
-        store_restriction(PendingAskKey, cmd);
-        llOwnerSay(cmd);
-        llRegionSayTo(PendingAskKey, PendingAskChan,
-            "RLV," + (string)llGetKey() + "," + cmd + ",ok");
-        i++;
-    }
-
     llRegionSayTo(WearerKey, 0, "[RELAY] Allowed: " + PendingAskName);
     clear_pending_ask();
 }
 
-// Wearer declined or dialog timed out: reject all pending commands with ko.
+// Wearer declined or dialog timed out: revert the provisional restrictions
+// from this object and release it.
 decline_ask() {
-    integer i = 0;
-    while (i < llGetListLength(PendingAskCommands)) {
-        string cmd = llList2String(PendingAskCommands, i);
+    if (PendingAskKey != NULL_KEY) {
+        clear_restrictions(PendingAskKey);
+        remove_relay(PendingAskKey);
         llRegionSayTo(PendingAskKey, PendingAskChan,
-            "RLV," + (string)llGetKey() + "," + cmd + ",ko");
-        i++;
+            "RLV," + (string)llGetKey() + ",!release,ok");
     }
-
     llRegionSayTo(WearerKey, 0, "[RELAY] Denied: " + PendingAskName);
     clear_pending_ask();
 }
@@ -352,7 +342,6 @@ clear_pending_ask() {
     PendingAskKey = NULL_KEY;
     PendingAskName = "";
     PendingAskChan = 0;
-    PendingAskCommands = [];
     AskDialogChan = 0;
 }
 
@@ -844,35 +833,33 @@ handle_relay_message(key sender_id, string sender_name, string raw_msg) {
             return;
         }
 
-        // ASK mode: prompt wearer before executing restrictive commands from untrusted objects.
-        // Removal commands (=y, @clear) are always auto-accepted per ORG spec.
-        // Objects the wearer has accepted this session are also auto-accepted without re-prompting.
+        // ASK mode: provisional accept. Apply and ack on arrival so the
+        // object's state machine doesn't time out while the wearer reads
+        // the prompt. Wearer's Deny (or timeout) reverts via @clear +
+        // !release. Removal commands (=y, @clear) bypass the prompt.
+        // Objects already trusted this session skip the prompt entirely.
         if (Mode == MODE_ASK && !is_removal_command(command)) {
             integer already_trusted = (llListFindList(SessionTrustedKeys, [(string)sender_id]) != -1);
             if (!already_trusted) {
                 if (PendingAskKey == NULL_KEY) {
-                    // No active prompt — start one for this object
+                    // No active prompt — open one for this object
                     PendingAskKey = sender_id;
                     PendingAskName = sender_name;
                     PendingAskChan = session_chan;
-                    PendingAskCommands = [command];
                     show_ask_dialog();
                 }
-                else if (PendingAskKey == sender_id) {
-                    // Same object sent another command before wearer responded — batch it
-                    PendingAskCommands += [command];
-                }
-                else {
-                    // Different object arrived while a prompt is already open — reject
+                else if (PendingAskKey != sender_id) {
+                    // Different object arrived while a prompt is open — reject
                     llRegionSayTo(sender_id, session_chan,
                         "RLV," + (string)llGetKey() + "," + command + ",ko");
+                    return;
                 }
-                return;
+                // Fall through to apply (provisional accept)
             }
-            // already_trusted: fall through to accept below
         }
 
-        // Accept command (MODE_ON, or MODE_ASK for trusted objects / removal commands)
+        // Apply command. Reached in MODE_ON, or MODE_ASK either provisionally
+        // (untrusted object, prompt just opened) or directly (trusted / removal).
         add_relay(sender_id, sender_name, session_chan);
         store_restriction(sender_id, command);
         llOwnerSay(command);  // Forward to viewer
