@@ -1,11 +1,15 @@
 /*--------------------
 PLUGIN: plugin_public.lsl
 VERSION: 1.10
-REVISION: 6
+REVISION: 7
 PURPOSE: Toggle public access mode directly from main menu
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility,
   namespaced internal message protocol
 CHANGES:
+- v1.1 rev 7: "public on"/"public off" chat subpaths no longer emit
+  ui.menu.return, which was popping up the root menu after a chat-only
+  action. set_public_mode now uses send_label_update (label-only); the
+  toggle path keeps the full menu-return for menu-click parity.
 - v1.1 rev 6: Chat command support (Phase 3). Registers "public" alias.
   "<prefix> public" toggles (same as menu click); "public on" /
   "public off" set state idempotently. All routes share the same
@@ -145,25 +149,25 @@ persist_public_mode(integer new_value) {
 
 /* -------------------- UI LABEL UPDATE -------------------- */
 
-update_ui_label_and_return(key user) {
+send_label_update() {
     string new_label = PLUGIN_LABEL_OFF;
     if (PublicModeEnabled) {
         new_label = PLUGIN_LABEL_ON;
     }
-
-    string msg = llList2Json(JSON_OBJECT, [
+    llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
         "type", "ui.label.update",
         "context", PLUGIN_CONTEXT,
         "label", new_label
-    ]);
-    llMessageLinked(LINK_SET, UI_BUS, msg, NULL_KEY);
+    ]), NULL_KEY);
+}
 
-    // Return user to root menu
-    msg = llList2Json(JSON_OBJECT, [
+update_ui_label_and_return(key user) {
+    send_label_update();
+
+    llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
         "type", "ui.menu.return",
         "user", (string)user
-    ]);
-    llMessageLinked(LINK_SET, UI_BUS, msg, NULL_KEY);
+    ]), NULL_KEY);
 }
 
 /* -------------------- DIRECT STATE ACTIONS -------------------- */
@@ -190,7 +194,7 @@ set_public_mode(key user, integer acl_level, integer target_enabled) {
     if (PublicModeEnabled) llRegionSayTo(user, 0, "Public access enabled.");
     else llRegionSayTo(user, 0, "Public access disabled.");
 
-    update_ui_label_and_return(user);
+    send_label_update();
 }
 
 handle_subpath(key user, integer acl_level, string subpath) {

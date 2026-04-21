@@ -1,11 +1,13 @@
 /*--------------------
 PLUGIN: plugin_bell.lsl
 VERSION: 1.10
-REVISION: 8
+REVISION: 9
 PURPOSE: Bell visibility and jingling control for the collar
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility,
   namespaced internal message protocol
 CHANGES:
+- v1.1 rev 9: Chat subcommands "bell sound"/"bell silent" (gated by "Sound")
+  and "bell vol up"/"bell vol dn" (gated by "Volume +"/"Volume -").
 - v1.1 rev 8: Chat command support (Phase 3). Registers "bell" alias.
   "<prefix> bell" opens menu; "bell show"/"bell hide" set visibility
   (gated by btn_allowed("Show")); "bell jingle" triggers a manual
@@ -258,6 +260,45 @@ set_bell_visible_state(key user, integer acl_level, integer target_visible) {
     else llRegionSayTo(user, 0, "Bell hidden.");
 }
 
+// Set bell sound enabled state idempotently; gated by "Sound" policy.
+set_bell_sound_state(key user, integer acl_level, integer target_enabled) {
+    gPolicyButtons = get_policy_buttons(PLUGIN_CONTEXT, acl_level);
+    if (!btn_allowed("Sound")) {
+        llRegionSayTo(user, 0, "Access denied.");
+        gPolicyButtons = [];
+        return;
+    }
+    gPolicyButtons = [];
+
+    if (BellSoundEnabled == target_enabled) {
+        if (target_enabled) llRegionSayTo(user, 0, "Bell sound already enabled.");
+        else llRegionSayTo(user, 0, "Bell sound already disabled.");
+        return;
+    }
+
+    BellSoundEnabled = target_enabled;
+    persist_bell_setting(KEY_BELL_SOUND_ENABLED, (string)BellSoundEnabled);
+    if (BellSoundEnabled) llRegionSayTo(user, 0, "Bell sound enabled.");
+    else llRegionSayTo(user, 0, "Bell sound disabled.");
+}
+
+// Adjust bell volume by delta; gated by the matching "Volume +/-" policy.
+adjust_bell_volume(key user, integer acl_level, float delta, string policy_label) {
+    gPolicyButtons = get_policy_buttons(PLUGIN_CONTEXT, acl_level);
+    if (!btn_allowed(policy_label)) {
+        llRegionSayTo(user, 0, "Access denied.");
+        gPolicyButtons = [];
+        return;
+    }
+    gPolicyButtons = [];
+
+    BellVolume = BellVolume + delta;
+    if (BellVolume > 1.0) BellVolume = 1.0;
+    if (BellVolume < 0.0) BellVolume = 0.0;
+    persist_bell_setting(KEY_BELL_VOLUME, (string)BellVolume);
+    llRegionSayTo(user, 0, "Volume: " + (string)((integer)(BellVolume * 100)) + "%");
+}
+
 handle_subpath(key user, integer acl_level, string subpath) {
     if (subpath == "show") {
         set_bell_visible_state(user, acl_level, TRUE);
@@ -265,6 +306,22 @@ handle_subpath(key user, integer acl_level, string subpath) {
     }
     if (subpath == "hide") {
         set_bell_visible_state(user, acl_level, FALSE);
+        return;
+    }
+    if (subpath == "sound") {
+        set_bell_sound_state(user, acl_level, TRUE);
+        return;
+    }
+    if (subpath == "silent") {
+        set_bell_sound_state(user, acl_level, FALSE);
+        return;
+    }
+    if (subpath == "vol.up") {
+        adjust_bell_volume(user, acl_level, 0.1, "Volume +");
+        return;
+    }
+    if (subpath == "vol.dn") {
+        adjust_bell_volume(user, acl_level, -0.1, "Volume -");
         return;
     }
     if (subpath == "jingle") {

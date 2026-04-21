@@ -1,11 +1,16 @@
 /*--------------------
 PLUGIN: plugin_lock.lsl
 VERSION: 1.10
-REVISION: 6
+REVISION: 7
 PURPOSE: Toggle collar lock and RLV detach control labels
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility,
   namespaced internal message protocol
 CHANGES:
+- v1.1 rev 7: "lock locked"/"lock unlocked" chat subpaths no longer
+  trigger ui.menu.return (which was reopening root menu after a bare
+  chat command). Label update is now sent without menu navigation for
+  chat-originated state changes. Toggle (menu-click + bare "lock" chat)
+  still returns to root, matching menu-click expectations.
 - v1.1 rev 6: Chat command support (Phase 3). Registers "lock" alias.
   "<prefix> lock" toggles (same as menu click); "lock locked" /
   "lock unlocked" set state idempotently. All routes share the same
@@ -212,26 +217,25 @@ show_unlocked_prim() {
 
 /* -------------------- UI LABEL UPDATE -------------------- */
 
-update_ui_label_and_return(key user) {
-    // Tell UI our new label
+send_label_update() {
     string new_label = PLUGIN_LABEL_UNLOCKED;
     if (Locked) {
         new_label = PLUGIN_LABEL_LOCKED;
     }
-
-    string msg = llList2Json(JSON_OBJECT, [
+    llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
         "type", "ui.label.update",
         "context", PLUGIN_CONTEXT,
         "label", new_label
-    ]);
-    llMessageLinked(LINK_SET, UI_BUS, msg, NULL_KEY);
+    ]), NULL_KEY);
+}
 
-    // Return user to root menu to see the updated button
-    msg = llList2Json(JSON_OBJECT, [
+update_ui_label_and_return(key user) {
+    send_label_update();
+
+    llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
         "type", "ui.menu.return",
         "user", (string)user
-    ]);
-    llMessageLinked(LINK_SET, UI_BUS, msg, NULL_KEY);
+    ]), NULL_KEY);
 }
 
 /* -------------------- DIRECT STATE ACTIONS -------------------- */
@@ -260,7 +264,7 @@ set_lock_state(key user, integer acl_level, integer target_locked) {
     if (Locked) llRegionSayTo(user, 0, "Collar locked.");
     else llRegionSayTo(user, 0, "Collar unlocked.");
 
-    update_ui_label_and_return(user);
+    send_label_update();
 }
 
 // Execute a chat subcommand. Empty subpath handled by caller (toggle).
