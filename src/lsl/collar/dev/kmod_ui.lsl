@@ -1,10 +1,18 @@
 /*--------------------
 MODULE: kmod_ui.lsl
 VERSION: 1.10
-REVISION: 11
+REVISION: 12
 PURPOSE: Session management, LSD policy filtering, and plugin list orchestration
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- v1.1 rev 12: Memory pressure reduction on plugin-list arrival. Drops the
+  llJson2List-for-counting allocation in apply_plugin_list (iterates until
+  JSON_INVALID instead), frees temp_plugins after splitting, and moves the
+  build_views() call out of apply_plugin_list so that frame unwinds first.
+  build_views now reads each plugin's policy once (not once per ACL level),
+  cutting 7× LSD reads and string allocations to 1× per plugin; levels fan
+  out from the cached policy via CSV accumulators per level. Addresses a
+  stack-heap collision observed on kernel.plugins.list reception.
 - v1.1 rev 11: AUTH_BUS rename (Phase 1). auth.aclquery→auth.acl.query,
   auth.aclresult→auth.acl.result, auth.aclupdate→auth.acl.update.
 - v1.1 rev 10: KERNEL_LIFECYCLE rename (Phase 1). kernel.register→
@@ -290,12 +298,11 @@ apply_plugin_list(string plugins_json) {
     list temp_plugins = [];
     integer SORT_STRIDE = 2;
 
-    integer count = llGetListLength(llJson2List(plugins_json));
-
+    // Iterate until JSON_INVALID — avoids allocating a parallel list of the
+    // entire parsed array just to compute its length.
     integer i = 0;
-    while (i < count) {
-        string plugin_obj = llJsonGetValue(plugins_json, [i]);
-
+    string plugin_obj = llJsonGetValue(plugins_json, [i]);
+    while (plugin_obj != JSON_INVALID) {
         if ((llJsonGetValue(plugin_obj, ["context"]) != JSON_INVALID) &&
             (llJsonGetValue(plugin_obj, ["label"]) != JSON_INVALID)) {
 
@@ -306,6 +313,7 @@ apply_plugin_list(string plugins_json) {
         }
 
         i += 1;
+        plugin_obj = llJsonGetValue(plugins_json, [i]);
     }
 
     // Sort once to avoid per-session sorting overhead
@@ -321,8 +329,10 @@ apply_plugin_list(string plugins_json) {
         PluginLabels += [llList2String(temp_plugins, i + 1)];
         i += SORT_STRIDE;
     }
-    // No ACL list request needed — policies are in LSD, written by plugins
-    build_views();
+
+    // Free the strided buffer before the caller invokes build_views().
+    // No ACL list request needed — policies are in LSD, written by plugins.
+    temp_plugins = [];
 }
 
 // Builds the view tables for all ACL levels and both menu contexts.
@@ -334,31 +344,60 @@ build_views() {
     integer num_levels = llGetListLength(VIEW_ACL_LEVELS);
     integer plugin_count = llGetListLength(PluginContexts);
 
+    // Per-level CSV accumulators of matching plugin indices. Two strings per
+    // level instead of two lists, keeping heap pressure down during the fan-out.
+    list root_csv = [];
+    list sos_csv  = [];
     integer lv = 0;
     while (lv < num_levels) {
-        integer acl = llList2Integer(VIEW_ACL_LEVELS, lv);
-        list root_idx = [];
-        list sos_idx = [];
+        root_csv += [""];
+        sos_csv  += [""];
+        lv++;
+    }
 
-        integer i = 0;
-        while (i < plugin_count) {
-            string ctx = llList2String(PluginContexts, i);
-            string policy = llLinksetDataRead("acl.policycontext:" + ctx);
-            if (policy != "") {
+    // Iterate plugins once — read each policy from LSD a single time and
+    // fan out across levels from the cached string. Previous version read
+    // the same policy num_levels times (7×), which dominated heap churn on
+    // plugin_list arrival.
+    integer i = 0;
+    while (i < plugin_count) {
+        string ctx = llList2String(PluginContexts, i);
+        string policy = llLinksetDataRead("acl.policycontext:" + ctx);
+        if (policy != "") {
+            integer is_sos_plugin = (llSubStringIndex(ctx, SOS_PREFIX) == 0);
+            lv = 0;
+            while (lv < num_levels) {
+                integer acl = llList2Integer(VIEW_ACL_LEVELS, lv);
                 if (llJsonGetValue(policy, [(string)acl]) != JSON_INVALID) {
-                    if (llSubStringIndex(ctx, SOS_PREFIX) == 0) {
-                        sos_idx += [i];
+                    if (is_sos_plugin) {
+                        string cur = llList2String(sos_csv, lv);
+                        if (cur == "") cur = (string)i;
+                        else cur += "," + (string)i;
+                        sos_csv = llListReplaceList(sos_csv, [cur], lv, lv);
                     }
                     else {
-                        root_idx += [i];
+                        string cur = llList2String(root_csv, lv);
+                        if (cur == "") cur = (string)i;
+                        else cur += "," + (string)i;
+                        root_csv = llListReplaceList(root_csv, [cur], lv, lv);
                     }
                 }
+                lv++;
             }
-            i++;
         }
+        i++;
+    }
 
-        ViewRootIndices += [llList2Json(JSON_ARRAY, root_idx)];
-        ViewSosIndices  += [llList2Json(JSON_ARRAY, sos_idx)];
+    // Convert CSVs to JSON arrays for per-touch view lookup. Guard empty
+    // strings: llCSV2List("") returns [""] (a phantom entry), not [].
+    lv = 0;
+    while (lv < num_levels) {
+        string r = llList2String(root_csv, lv);
+        string s = llList2String(sos_csv, lv);
+        if (r == "") ViewRootIndices += ["[]"];
+        else ViewRootIndices += [llList2Json(JSON_ARRAY, llCSV2List(r))];
+        if (s == "") ViewSosIndices += ["[]"];
+        else ViewSosIndices += [llList2Json(JSON_ARRAY, llCSV2List(s))];
         lv++;
     }
 }
@@ -638,6 +677,9 @@ handle_plugin_list(string msg) {
 
     string plugins_json = llJsonGetValue(msg, ["plugins"]);
     apply_plugin_list(plugins_json);
+    // Called after apply_plugin_list returns so its stack frame (plugins_json
+    // string, temp buffers) unwinds before build_views allocates its own.
+    build_views();
 
     // Invalidate all sessions when plugin list changes
     if (llGetListLength(SessionUsers) > 0) {
