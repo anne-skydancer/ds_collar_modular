@@ -294,8 +294,6 @@ Per-folder actions:
 - **Lock** — prevent detachment of items in that folder (`@detachallthis:<name>=n`). Lock state persists.
 - **Unlock** — release the lock.
 
-Folder names containing a dot are menu-only — the dot collides with chat subcommand parsing.
-
 ---
 
 ## Animations
