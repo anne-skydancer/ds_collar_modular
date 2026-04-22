@@ -52,7 +52,11 @@
       "Bash(find \"c:/Users/Anne Skydancer/OneDrive/Documents/GitHub/ds_collar_modular/src/lsl/collar/ng/v1.1\" -name \"*.lsl\" -exec basename {} \\\\;)",
       "Bash(lslint src/lsl/collar/stable/plugin_status.lsl)",
       "Bash(lslint src/lsl/collar/stable/kmod_auth.lsl)",
-      "Bash(lslint src/lsl/collar/stable/kmod_bootstrap.lsl)"
+      "Bash(lslint src/lsl/collar/stable/kmod_bootstrap.lsl)",
+      "Bash(command -v lslint)",
+      "Read(//usr/local/**)",
+      "Bash(lslint \"c:/Users/Anne Skydancer/OneDrive/Documents/GitHub/ds_collar_modular/src/lsl/collar/dev/plugin_chat.lsl\")",
+      "Bash(lslint \"c:/Users/Anne Skydancer/OneDrive/Documents/GitHub/ds_collar_modular/src/lsl/collar/dev/plugin_rlvex.lsl\")"
     ]
   }
 }

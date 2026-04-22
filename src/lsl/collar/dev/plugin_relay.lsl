@@ -1,10 +1,14 @@
 /*--------------------
 PLUGIN: plugin_relay.lsl
 VERSION: 1.10
-REVISION: 9
+REVISION: 10
 PURPOSE: Provide ORG-compliant RLV relay with hardcore mode and safeword hooks
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
+- v1.1 rev 10: Self-declare menu presence via LSD (plugin.reg.<ctx>).
+  Label updates write the same LSD key directly; ui.label.update link_messages
+  are gone. Reset handlers delete plugin.reg.<ctx> and acl.policycontext:<ctx>
+  before llResetScript so kmod_ui drops the button immediately.
 - v1.1 rev 9: ASK mode now accepts provisionally — commands apply and
   ack on arrival, the wearer dialog offers Allow (keep) or Deny
   (revert via @clear + !release). Fixes capture-furniture having to
@@ -148,6 +152,15 @@ integer btn_allowed(string label) {
 
 /* -------------------- LIFECYCLE MANAGEMENT -------------------- */
 
+// Self-declared menu presence. kmod_ui enumerates via llLinksetDataFindKeys
+// and rebuilds its view tables on linkset_data events touching this key.
+write_plugin_reg(string label) {
+    llLinksetDataWrite("plugin.reg." + PLUGIN_CONTEXT, llList2Json(JSON_OBJECT, [
+        "label",  label,
+        "script", llGetScriptName()
+    ]));
+}
+
 register_self() {
     // Write button visibility policy to LSD (default-deny per ACL level)
     llLinksetDataWrite("acl.policycontext:" + PLUGIN_CONTEXT, llList2Json(JSON_OBJECT, [
@@ -157,7 +170,10 @@ register_self() {
         "5", "Mode,Bound by...,Unbind,HC OFF,HC ON"
     ]));
 
-    // Register with kernel
+    // Self-declared menu presence for kmod_ui.
+    write_plugin_reg(PLUGIN_LABEL);
+
+    // Register with kernel (for ping/pong health tracking and alias table).
     string msg = llList2Json(JSON_OBJECT, [
         "type", "kernel.register.declare",
         "context", PLUGIN_CONTEXT,
@@ -939,6 +955,8 @@ default
                 send_pong();
             }
             else if (msg_type == "kernel.reset.soft" || msg_type == "kernel.reset.factory") {
+                llLinksetDataDelete("plugin.reg." + PLUGIN_CONTEXT);
+                llLinksetDataDelete("acl.policycontext:" + PLUGIN_CONTEXT);
                 llResetScript();
             }
         }

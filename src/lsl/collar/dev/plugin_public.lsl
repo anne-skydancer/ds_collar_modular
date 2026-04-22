@@ -1,11 +1,15 @@
 /*--------------------
 PLUGIN: plugin_public.lsl
 VERSION: 1.10
-REVISION: 7
+REVISION: 8
 PURPOSE: Toggle public access mode directly from main menu
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility,
   namespaced internal message protocol
 CHANGES:
+- v1.1 rev 8: Self-declare menu presence via LSD (plugin.reg.<ctx>). Label
+  updates write the same LSD key directly; ui.label.update link_messages are
+  gone. Reset handlers delete plugin.reg.<ctx> and acl.policycontext:<ctx>
+  before llResetScript so kmod_ui drops the button immediately.
 - v1.1 rev 7: "public on"/"public off" chat subpaths no longer emit
   ui.menu.return, which was popping up the root menu after a chat-only
   action. set_public_mode now uses send_label_update (label-only); the
@@ -79,6 +83,15 @@ integer btn_allowed(string label) {
 
 /* -------------------- LIFECYCLE MANAGEMENT -------------------- */
 
+// Self-declared menu presence. kmod_ui enumerates via llLinksetDataFindKeys
+// and rebuilds its view tables on linkset_data events touching this key.
+write_plugin_reg(string label) {
+    llLinksetDataWrite("plugin.reg." + PLUGIN_CONTEXT, llList2Json(JSON_OBJECT, [
+        "label",  label,
+        "script", llGetScriptName()
+    ]));
+}
+
 register_self() {
     string label = PLUGIN_LABEL_OFF;
     if (PublicModeEnabled) {
@@ -92,7 +105,10 @@ register_self() {
         "5", "toggle"
     ]));
 
-    // Register with kernel
+    // Self-declared menu presence for kmod_ui.
+    write_plugin_reg(label);
+
+    // Register with kernel (for ping/pong health tracking and alias table).
     string msg = llList2Json(JSON_OBJECT, [
         "type", "kernel.register.declare",
         "context", PLUGIN_CONTEXT,
@@ -154,11 +170,7 @@ send_label_update() {
     if (PublicModeEnabled) {
         new_label = PLUGIN_LABEL_ON;
     }
-    llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
-        "type", "ui.label.update",
-        "context", PLUGIN_CONTEXT,
-        "label", new_label
-    ]), NULL_KEY);
+    write_plugin_reg(new_label);
 }
 
 update_ui_label_and_return(key user) {
@@ -278,6 +290,8 @@ default {
                         return;
                     }
                 }
+                llLinksetDataDelete("plugin.reg." + PLUGIN_CONTEXT);
+                llLinksetDataDelete("acl.policycontext:" + PLUGIN_CONTEXT);
                 llResetScript();
             }
 

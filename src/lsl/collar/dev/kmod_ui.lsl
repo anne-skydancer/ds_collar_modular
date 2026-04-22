@@ -1,10 +1,28 @@
 /*--------------------
 MODULE: kmod_ui.lsl
 VERSION: 1.10
-REVISION: 12
+REVISION: 14
 PURPOSE: Session management, LSD policy filtering, and plugin list orchestration
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- v1.1 rev 14: LSD-backed plugin enumeration. Plugins self-declare their menu
+  presence by writing plugin.reg.<context> = {"label":...,"script":...} to
+  LSD; kmod_ui enumerates via llLinksetDataFindKeys and rebuilds views when
+  the linkset_data event reports any plugin.reg.* change. A short timer-based
+  debounce collapses the bootstrap burst (N plugins registering in quick
+  succession) into one rebuild. The ~2KB kernel.plugins.list envelope is gone
+  entirely, along with its stack-heap hazard on teleport — so rev 13's
+  deferred rebuild and the kernel.plugins.request bootstrap emit are no
+  longer needed. Label updates now flow through the same LSD key, so
+  ui.label.update is dropped as a message type.
+- v1.1 rev 13: Defer build_views to next event frame on plugin_list arrival.
+  handle_plugin_list's caller frame keeps the full link_message envelope and
+  plugins_json substring alive; running build_views inline stacked per-level
+  accumulators and policy reads on top of ~2KB of stranded JSON, blowing heap
+  on post-teleport re-registration. Self-post "ui.views.rebuild" on UI_BUS so
+  those strings unwind first. apply_plugin_list now also clears the view
+  tables eagerly so a touch landing in the clear/rebuild gap can't index a
+  stale view into a cleared PluginContexts.
 - v1.1 rev 12: Memory pressure reduction on plugin-list arrival. Drops the
   llJson2List-for-counting allocation in apply_plugin_list (iterates until
   JSON_INVALID instead), frees temp_plugins after splitting, and moves the
@@ -95,6 +113,18 @@ integer SESSION_MAX_AGE = 60;  // Seconds before ACL refresh required
 string LSD_ACL_CACHE_PREFIX = "acl.";
 string LSD_ACL_CACHE_SUFFIX = ".cache";
 
+// Per-plugin self-declared menu presence. Written by plugins during
+// registration: plugin.reg.<context> = {"label":"<label>","script":"<script_name>"}.
+// kmod_ui enumerates via llLinksetDataFindKeys; plugins delete their own
+// entries on soft/factory reset, and the kernel sweeps orphans when scripts
+// are removed from inventory. CROSS-MODULE CONTRACT.
+string LSD_PLUGIN_REG_PREFIX = "plugin.reg.";
+
+// Debounce window for linkset_data-driven rebuilds. Small enough to feel
+// instantaneous; large enough to collapse the bootstrap burst of N plugins
+// registering back-to-back into a single rebuild.
+float REBUILD_DEBOUNCE = 0.1;
+
 /* ACL levels (mirrors auth module) */
 integer ACL_BLACKLIST = -1;
 
@@ -132,6 +162,12 @@ list TouchStartTimes;
 // Parallel Lists for Plugin States
 list PluginStateContexts;
 list PluginStateValues;
+
+// Debounce flag for linkset_data-driven rebuilds. When a plugin.reg.* write
+// fires, the handler sets this and arms the timer; the timer event calls
+// rebuild_plugin_list_from_lsd() once, regardless of how many writes landed
+// during the debounce window.
+integer ViewsStale = FALSE;
 
 
 /* -------------------- HELPERS -------------------- */
@@ -285,54 +321,48 @@ create_session(key user, integer acl, integer is_blacklisted, string context_fil
 
 /* -------------------- PLUGIN LIST MANAGEMENT -------------------- */
 
-apply_plugin_list(string plugins_json) {
-    // Clear parallel lists
+// Enumerate plugin.reg.* keys from LSD and rebuild the parallel plugin
+// lists + view tables. Called from the debounced timer after a linkset_data
+// event (or from state_entry to prime initial state).
+//
+// Per-plugin cost: one key enumeration + one LSD read + one JSON parse for
+// the label. No large intermediate envelope is ever materialised, so the
+// per-event frame stays flat regardless of plugin count.
+rebuild_plugin_list_from_lsd() {
     PluginContexts = [];
     PluginLabels = [];
+    ViewRootIndices = [];
+    ViewSosIndices = [];
 
-    if (llJsonValueType(plugins_json, []) != JSON_ARRAY) {
-        return;
-    }
+    list keys = llLinksetDataFindKeys("^plugin\\.reg\\.", 0, -1);
+    // Sorted lexicographically → stable context ordering across reboots.
+    keys = llListSort(keys, 1, TRUE);
 
-    // Temporary strided list for sorting
-    list temp_plugins = [];
-    integer SORT_STRIDE = 2;
-
-    // Iterate until JSON_INVALID — avoids allocating a parallel list of the
-    // entire parsed array just to compute its length.
+    integer prefix_len = llStringLength(LSD_PLUGIN_REG_PREFIX);
+    integer n = llGetListLength(keys);
     integer i = 0;
-    string plugin_obj = llJsonGetValue(plugins_json, [i]);
-    while (plugin_obj != JSON_INVALID) {
-        if ((llJsonGetValue(plugin_obj, ["context"]) != JSON_INVALID) &&
-            (llJsonGetValue(plugin_obj, ["label"]) != JSON_INVALID)) {
-
-            string context = llJsonGetValue(plugin_obj, ["context"]);
-            string label = llJsonGetValue(plugin_obj, ["label"]);
-
-            temp_plugins += [context, label];
+    while (i < n) {
+        string k = llList2String(keys, i);
+        string entry = llLinksetDataRead(k);
+        string label = llJsonGetValue(entry, ["label"]);
+        if (label != JSON_INVALID) {
+            PluginContexts += [llGetSubString(k, prefix_len, -1)];
+            PluginLabels += [label];
         }
-
-        i += 1;
-        plugin_obj = llJsonGetValue(plugins_json, [i]);
+        i++;
     }
 
-    // Sort once to avoid per-session sorting overhead
-    if (llGetListLength(temp_plugins) > SORT_STRIDE) {
-        temp_plugins = llListSortStrided(temp_plugins, SORT_STRIDE, 1, TRUE);
-    }
+    build_views();
+}
 
-    // Split into parallel lists
-    i = 0;
-    integer len = llGetListLength(temp_plugins);
-    while (i < len) {
-        PluginContexts += [llList2String(temp_plugins, i)];
-        PluginLabels += [llList2String(temp_plugins, i + 1)];
-        i += SORT_STRIDE;
+// Arm the debounce timer. Multiple linkset_data writes within the window
+// collapse to a single rebuild; during bootstrap this absorbs the N plugins
+// registering back-to-back.
+schedule_rebuild() {
+    if (!ViewsStale) {
+        ViewsStale = TRUE;
+        llSetTimerEvent(REBUILD_DEBOUNCE);
     }
-
-    // Free the strided buffer before the caller invokes build_views().
-    // No ACL list request needed — policies are in LSD, written by plugins.
-    temp_plugins = [];
 }
 
 // Builds the view tables for all ACL levels and both menu contexts.
@@ -657,57 +687,37 @@ handle_button_click(key user, string button, string context) {
     }
 }
 
-/* -------------------- PLUGIN LABEL UPDATE -------------------- */
-
-update_plugin_label(string context, string new_label) {
-    integer i = llListFindList(PluginContexts, [context]);
-    
-    if (i != -1) {
-        PluginLabels = llListReplaceList(PluginLabels, [new_label], i, i);
-        return;
-    }
-}
-
 /* -------------------- MESSAGE HANDLERS -------------------- */
 
-handle_plugin_list(string msg) {
-    if (llJsonGetValue(msg, ["plugins"]) == JSON_INVALID) {
-        return;
+// Called after a rebuild actually applies (not on every debounced tick).
+// Closes any open dialogs and drops all sessions so the next touch re-creates
+// them against the freshly enumerated plugin list.
+invalidate_all_sessions() {
+    if (llGetListLength(SessionUsers) == 0) return;
+
+    integer i = 0;
+    integer len = llGetListLength(SessionIDs);
+    while (i < len) {
+        string session_id = llList2String(SessionIDs, i);
+        string close_msg = llList2Json(JSON_OBJECT, [
+            "type", "ui.dialog.close",
+            "session_id", session_id
+        ]);
+        llMessageLinked(LINK_SET, DIALOG_BUS, close_msg, NULL_KEY);
+        i++;
     }
 
-    string plugins_json = llJsonGetValue(msg, ["plugins"]);
-    apply_plugin_list(plugins_json);
-    // Called after apply_plugin_list returns so its stack frame (plugins_json
-    // string, temp buffers) unwinds before build_views allocates its own.
-    build_views();
+    SessionUsers = [];
+    SessionACLs = [];
+    SessionBlacklisted = [];
+    SessionPages = [];
+    SessionTotalPages = [];
+    SessionIDs = [];
+    SessionCreatedTimes = [];
+    SessionContexts = [];
 
-    // Invalidate all sessions when plugin list changes
-    if (llGetListLength(SessionUsers) > 0) {
-        // Close all dialogs before clearing sessions
-        integer i = 0;
-        integer len = llGetListLength(SessionIDs);
-        while (i < len) {
-            string session_id = llList2String(SessionIDs, i);
-            string close_msg = llList2Json(JSON_OBJECT, [
-                "type", "ui.dialog.close",
-                "session_id", session_id
-            ]);
-            llMessageLinked(LINK_SET, DIALOG_BUS, close_msg, NULL_KEY);
-            i++;
-        }
-
-        SessionUsers = [];
-        SessionACLs = [];
-        SessionBlacklisted = [];
-        SessionPages = [];
-        SessionTotalPages = [];
-        SessionIDs = [];
-        SessionCreatedTimes = [];
-        SessionContexts = [];
-
-        PendingAclAvatars = [];
-        PendingAclContexts = [];
-    }
+    PendingAclAvatars = [];
+    PendingAclContexts = [];
 }
 
 handle_acl_result(string msg) {
@@ -878,15 +888,6 @@ handle_return(string msg) {
     }
 }
 
-handle_update_label(string msg) {
-    if (!validate_required_fields(msg, ["context", "label"])) return;
-
-    string context = llJsonGetValue(msg, ["context"]);
-    string new_label = llJsonGetValue(msg, ["label"]);
-
-    update_plugin_label(context, new_label);
-}
-
 handle_update_state(string msg) {
     if (!validate_required_fields(msg, ["context", "state"])) return;
 
@@ -960,7 +961,9 @@ default
         PluginStateContexts = [];
         PluginStateValues = [];
         
-        // Advertise root menu context so kmod_chat can build a 'menu' alias
+        // Advertise root menu context so kmod_chat can build a 'menu' alias.
+        // The root context itself is NOT a plugin and does not get a
+        // plugin.reg.* LSD entry — it only exists for kmod_chat's alias table.
         llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
             "type",    "kernel.register.declare",
             "context", ROOT_CONTEXT,
@@ -968,11 +971,10 @@ default
             "script",  llGetScriptName()
         ]), NULL_KEY);
 
-        // Request plugin list (kernel defers response during active registration)
-        string request = llList2Json(JSON_OBJECT, [
-            "type", "kernel.plugins.request"
-        ]);
-        llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, request, NULL_KEY);
+        // Prime an initial rebuild. If plugins have already written their
+        // plugin.reg.* entries, we'll pick them up on the first timer tick;
+        // late registrations stream in via the linkset_data event.
+        schedule_rebuild();
     }
     
     touch_start(integer num_detected) {
@@ -1045,8 +1047,7 @@ default
 
         /* -------------------- KERNEL LIFECYCLE -------------------- */
         if (num == KERNEL_LIFECYCLE) {
-            if (msg_type == "kernel.plugins.list") handle_plugin_list(msg);
-            else if (msg_type == "kernel.register.refresh") {
+            if (msg_type == "kernel.register.refresh") {
                 // Re-emit synthetic registration so kmod_chat rebuilds its alias table.
                 llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
                     "type",    "kernel.register.declare",
@@ -1083,7 +1084,6 @@ default
             if (msg_type == "ui.menu.start") handle_start(msg, id);
             else if (msg_type == "ui.chat.command") handle_start(msg, id);
             else if (msg_type == "ui.menu.return") handle_return(msg);
-            else if (msg_type == "ui.label.update") handle_update_label(msg);
             else if (msg_type == "ui.state.update") handle_update_state(msg);
             return;
         }
@@ -1096,6 +1096,28 @@ default
         }
     }
     
+    // Plugin registry changes: any plugin.reg.* write/delete arms a debounced
+    // rebuild. A full LSD reset (factory wipe) also forces a rebuild so we
+    // don't hold onto dangling indices.
+    linkset_data(integer action, string name, string value) {
+        if (action == LINKSETDATA_RESET) {
+            schedule_rebuild();
+            return;
+        }
+        if (llSubStringIndex(name, LSD_PLUGIN_REG_PREFIX) == 0) {
+            schedule_rebuild();
+        }
+    }
+
+    timer() {
+        if (ViewsStale) {
+            ViewsStale = FALSE;
+            llSetTimerEvent(0.0);
+            rebuild_plugin_list_from_lsd();
+            invalidate_all_sessions();
+        }
+    }
+
     // Reset on owner change
     changed(integer change) {
         if (change & CHANGED_OWNER) {

@@ -1,10 +1,19 @@
 /*--------------------
 MODULE: collar_kernel.lsl
 VERSION: 1.10
-REVISION: 3
+REVISION: 4
 PURPOSE: Plugin registry, lifecycle management, heartbeat monitoring
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- v1.1 rev 4: Drop kernel.plugins.list broadcast. Plugins now self-declare
+  menu presence via LSD (plugin.reg.<ctx>) and kmod_ui enumerates on the
+  linkset_data event. broadcast_plugin_list, handle_plugin_list_request,
+  kernel.plugins.request, and PendingPluginListRequest are removed. Also
+  drop broadcast_register_now on CHANGED_REGION — the kernel's own registry
+  survives the region crossing, and the LastRegionCrossUnix grace window
+  already covers dropped pings. prune_missing_scripts now also sweeps
+  orphaned plugin.reg.<ctx> and acl.policycontext:<ctx> LSD entries whose
+  owning script is no longer in inventory.
 - v1.1 rev 3: KERNEL_LIFECYCLE wire-type rename (Phase 1 of bus
   restructuring). kernel.register→kernel.register.declare,
   kernel.registernow→kernel.register.refresh, kernel.pluginlist→
@@ -54,7 +63,6 @@ list PluginContexts = [];           // Parallel list for O(1) context lookups
 list PluginScripts = [];            // Parallel list for O(1) script lookups
 list RegistrationQueue = [];        // Pending operations queue (Unix modprobe style)
 integer PendingBatchTimer = FALSE;  // TRUE if batch timer is active
-integer PendingPluginListRequest = FALSE;  // TRUE if plugin_list_request received during batch
 integer LastPingUnix = 0;
 integer LastInvSweepUnix = 0;
 integer LastDiscoveryUnix = 0;      // Track last active plugin discovery
@@ -288,7 +296,10 @@ integer prune_dead_plugins() {
     return pruned;
 }
 
-// Remove plugins whose scripts no longer exist in inventory
+// Remove plugins whose scripts no longer exist in inventory.
+// Also sweeps orphaned plugin.reg.<ctx> and acl.policycontext:<ctx> LSD
+// entries whose owning script is gone — the plugin can't run its own
+// cleanup in that case, so the kernel prunes on its behalf.
 integer prune_missing_scripts() {
     list new_registry = [];
     list new_contexts = [];
@@ -309,13 +320,32 @@ integer prune_missing_scripts() {
             // Script missing, prune plugin
             pruned += 1;
         }
-        
+
         i += REG_STRIDE;
     }
-    
+
     PluginRegistry = new_registry;
     PluginContexts = new_contexts;
     PluginScripts = new_scripts;
+
+    // LSD sweep: any plugin.reg.<ctx> whose embedded script is no longer in
+    // inventory gets deleted, along with its ACL policy sibling. kmod_ui's
+    // linkset_data handler picks up the deletions and rebuilds views.
+    list reg_keys = llLinksetDataFindKeys("^plugin\\.reg\\.", 0, -1);
+    integer rk_len = llGetListLength(reg_keys);
+    integer j = 0;
+    while (j < rk_len) {
+        string k = llList2String(reg_keys, j);
+        string entry = llLinksetDataRead(k);
+        string scr = llJsonGetValue(entry, ["script"]);
+        if (scr != JSON_INVALID && llGetInventoryType(scr) != INVENTORY_SCRIPT) {
+            string ctx = llGetSubString(k, 11, -1);  // strip "plugin.reg." prefix
+            llLinksetDataDelete(k);
+            llLinksetDataDelete("acl.policycontext:" + ctx);
+        }
+        j++;
+    }
+
     return pruned;
 }
 
@@ -380,41 +410,6 @@ broadcast_ping() {
     // Ping logging disabled - too noisy
 }
 
-// Send current plugin list (only when registry changes)
-broadcast_plugin_list() {
-    list plugins = [];
-    integer i = 0;
-    integer reg_len = llGetListLength(PluginRegistry);
-    while (i < reg_len) {
-        string context = llList2String(PluginRegistry, i + REG_CONTEXT);
-        string label = llList2String(PluginRegistry, i + REG_LABEL);
-
-        // Build individual plugin object with proper JSON encoding
-        string plugin_obj = llList2Json(JSON_OBJECT, [
-            "context", context,
-            "label", label
-        ]);
-
-        plugins += [plugin_obj];
-        i += REG_STRIDE;
-    }
-
-    // Convert list of JSON objects into JSON array string
-    string plugins_array = "[";
-    integer j;
-    integer plugins_len = llGetListLength(plugins);
-    for (j = 0; j < plugins_len; j = j + 1) {
-        if (j > 0) plugins_array += ",";
-        plugins_array += llList2String(plugins, j);
-    }
-    plugins_array += "]";
-
-    // Build final message (no version - UUID tracking handles change detection)
-    string msg = "{\"type\":\"kernel.plugins.list\",\"plugins\":" + plugins_array + "}";
-
-    llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, msg, NULL_KEY);
-}
-
 /* -------------------- OWNER CHANGE DETECTION -------------------- */
 
 integer check_owner_changed() {
@@ -451,21 +446,6 @@ handle_pong(string msg) {
     // Pong logging disabled - too noisy
 }
 
-handle_plugin_list_request() {
-    // RACE CONDITION FIX: If batch timer is active, defer broadcast
-    // until registration window completes
-    if (PendingBatchTimer) {
-        PendingPluginListRequest = TRUE;
-        return;
-    }
-
-    // Process any pending queue operations first
-    process_queue();
-
-    // Broadcast current list
-    broadcast_plugin_list();
-}
-
 handle_soft_reset() {
     PluginRegistry = [];
     PluginContexts = [];
@@ -473,7 +453,6 @@ handle_soft_reset() {
     RegistrationQueue = [];
     KnownScriptUUIDs = [];
     PendingBatchTimer = FALSE;
-    PendingPluginListRequest = FALSE;
     LastPingUnix = now();
     LastInvSweepUnix = now();
     LastDiscoveryUnix = now();
@@ -492,7 +471,6 @@ default
         PluginScripts = [];
         RegistrationQueue = [];
         PendingBatchTimer = FALSE;
-        PendingPluginListRequest = FALSE;
         LastPingUnix = now();
         LastInvSweepUnix = now();
         LastDiscoveryUnix = now();
@@ -521,14 +499,10 @@ default
 
         // DUAL-MODE TIMER: Batch mode (0.1s) or Heartbeat mode (5s)
         if (PendingBatchTimer) {
-            // Batch mode: Process queue and broadcast
-            integer changes = process_queue();
-
-            // RACE CONDITION FIX: Broadcast if changes OR if plugin_list_request pending
-            if (changes || PendingPluginListRequest) {
-                broadcast_plugin_list();
-                PendingPluginListRequest = FALSE;
-            }
+            // Batch mode: drain the registration queue. Plugins publish their
+            // menu presence directly to LSD now, so there is no list broadcast
+            // to send after the queue flushes.
+            process_queue();
             // process_queue() automatically switches back to heartbeat mode
         }
         else {
@@ -538,27 +512,17 @@ default
 
             if (ping_elapsed >= PING_INTERVAL_SEC) {
                 broadcast_ping();
-
-                // Prune dead plugins and broadcast if any removed
-                integer pruned = prune_dead_plugins();
-                if (pruned > 0) {
-                    broadcast_plugin_list();
-                }
-
+                prune_dead_plugins();
                 LastPingUnix = t;
             }
 
-            // Periodic inventory sweep
+            // Periodic inventory sweep: also cleans up orphaned plugin.reg.*
+            // and acl.policycontext:* LSD entries (see prune_missing_scripts).
             integer inv_elapsed = t - LastInvSweepUnix;
             if (inv_elapsed < 0) inv_elapsed = 0; // Overflow protection
 
             if (inv_elapsed >= INV_SWEEP_INTERVAL) {
-                // Prune missing scripts and broadcast if any removed
-                integer pruned = prune_missing_scripts();
-                if (pruned > 0) {
-                    broadcast_plugin_list();
-                }
-
+                prune_missing_scripts();
                 LastInvSweepUnix = t;
             }
 
@@ -585,9 +549,6 @@ default
             else if (msg_type == "kernel.pong") {
                 handle_pong(msg);
             }
-            else if (msg_type == "kernel.plugins.request") {
-                handle_plugin_list_request();
-            }
             else if (msg_type == "kernel.reset.soft" || msg_type == "kernel.reset.factory") {
                 handle_soft_reset();
             }
@@ -602,13 +563,14 @@ default
         if (change & CHANGED_REGION) {
             // Region crossing: link messages may be lost, causing stale
             // last_seen timestamps. Record crossing time so prune_dead_plugins()
-            // skips culling until one full timeout window has elapsed.
+            // skips culling until one full timeout window has elapsed. The
+            // kernel's own registry survives the crossing, and plugin menu
+            // presence lives in LSD (also persistent across regions), so no
+            // re-registration broadcast is needed.
             LastRegionCrossUnix = llGetUnixTime();
             LastPingUnix = LastRegionCrossUnix;
             LastInvSweepUnix = LastRegionCrossUnix;
             LastDiscoveryUnix = LastRegionCrossUnix;
-
-            broadcast_register_now();
         }
 
         if (change & CHANGED_INVENTORY) {
@@ -625,7 +587,6 @@ default
                 RegistrationQueue = [];
                 KnownScriptUUIDs = [];
                 PendingBatchTimer = FALSE;
-                PendingPluginListRequest = FALSE;
                 llSetTimerEvent(PING_INTERVAL_SEC);
                 broadcast_register_now();
             }

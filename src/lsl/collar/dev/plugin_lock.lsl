@@ -1,11 +1,16 @@
 /*--------------------
 PLUGIN: plugin_lock.lsl
 VERSION: 1.10
-REVISION: 7
+REVISION: 8
 PURPOSE: Toggle collar lock and RLV detach control labels
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility,
   namespaced internal message protocol
 CHANGES:
+- v1.1 rev 8: Self-declare menu presence via LSD (plugin.reg.<ctx>) instead
+  of relying on the kernel to broadcast the plugin list. Label updates write
+  the same LSD key directly; ui.label.update link_messages are gone. Reset
+  handlers delete plugin.reg.<ctx> and acl.policycontext:<ctx> before
+  llResetScript so kmod_ui drops the button as soon as the reset lands.
 - v1.1 rev 7: "lock locked"/"lock unlocked" chat subpaths no longer
   trigger ui.menu.return (which was reopening root menu after a bare
   chat command). Label update is now sent without menu navigation for
@@ -88,6 +93,15 @@ integer btn_allowed(string label) {
 
 /* -------------------- LIFECYCLE MANAGEMENT -------------------- */
 
+// Self-declared menu presence. kmod_ui enumerates via llLinksetDataFindKeys
+// and rebuilds its view tables on linkset_data events touching this key.
+write_plugin_reg(string label) {
+    llLinksetDataWrite("plugin.reg." + PLUGIN_CONTEXT, llList2Json(JSON_OBJECT, [
+        "label",  label,
+        "script", llGetScriptName()
+    ]));
+}
+
 register_self() {
     // Write button visibility policy to LSD (only ACL 4 and 5 can toggle)
     llLinksetDataWrite("acl.policycontext:" + PLUGIN_CONTEXT, llList2Json(JSON_OBJECT, [
@@ -101,7 +115,10 @@ register_self() {
         current_label = PLUGIN_LABEL_LOCKED;
     }
 
-    // Register with kernel
+    // Self-declared menu presence for kmod_ui.
+    write_plugin_reg(current_label);
+
+    // Register with kernel (for ping/pong health tracking and alias table).
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
         "type", "kernel.register.declare",
         "context", PLUGIN_CONTEXT,
@@ -138,17 +155,11 @@ apply_settings_sync() {
     if (Locked != prev_locked) {
         apply_lock_state();
 
-        // Update UI label
         string new_label = PLUGIN_LABEL_UNLOCKED;
         if (Locked) {
             new_label = PLUGIN_LABEL_LOCKED;
         }
-        string label_msg = llList2Json(JSON_OBJECT, [
-            "type", "ui.label.update",
-            "context", PLUGIN_CONTEXT,
-            "label", new_label
-        ]);
-        llMessageLinked(LINK_SET, UI_BUS, label_msg, NULL_KEY);
+        write_plugin_reg(new_label);
     }
 }
 
@@ -222,11 +233,7 @@ send_label_update() {
     if (Locked) {
         new_label = PLUGIN_LABEL_LOCKED;
     }
-    llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
-        "type", "ui.label.update",
-        "context", PLUGIN_CONTEXT,
-        "label", new_label
-    ]), NULL_KEY);
+    write_plugin_reg(new_label);
 }
 
 update_ui_label_and_return(key user) {
@@ -357,6 +364,8 @@ default {
                 if (target_context != JSON_INVALID) {
                     if (target_context != "" && target_context != PLUGIN_CONTEXT) return;
                 }
+                llLinksetDataDelete("plugin.reg." + PLUGIN_CONTEXT);
+                llLinksetDataDelete("acl.policycontext:" + PLUGIN_CONTEXT);
                 llResetScript();
             }
 

@@ -1,10 +1,22 @@
 /*--------------------
 PLUGIN: plugin_rlvex.lsl
 VERSION: 1.10
-REVISION: 6
+REVISION: 8
 PURPOSE: Manage RLV teleport and IM exceptions for owners and trustees
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
+- v1.1 rev 8: Reset handler now follows the standard pattern — delete the
+  plugin's LSD keys and llResetScript on kernel.reset.soft/factory, honouring
+  any target_context guard. Previous rev deferred a reconcile via a 1s timer
+  without resetting the script, which left viewer-side RLV exceptions (tagged
+  to the old script UUID) active past a factory reset; an ex-owner kept TP/IM
+  privileges until the next real script reset. llResetScript drops those
+  viewer entries cleanly, and state_entry's apply_settings_sync reconciles
+  from the current (possibly wiped) LSD on the way back up.
+- v1.1 rev 7: Self-declare menu presence via LSD (plugin.reg.<ctx>).
+  Label updates write the same LSD key directly; ui.label.update link_messages
+  are gone. Reset handlers delete plugin.reg.<ctx> and acl.policycontext:<ctx>
+  before llResetScript so kmod_ui drops the button immediately.
 - v1.1 rev 6: Wire-type rename (Phase 2). kernel.register→kernel.register.declare,
   kernel.registernow→kernel.register.refresh, kernel.reset→kernel.reset.soft,
   kernel.resetall→kernel.reset.factory.
@@ -148,6 +160,15 @@ reconcile_all() {
 
 /* -------------------- LIFECYCLE -------------------- */
 
+// Self-declared menu presence. kmod_ui enumerates via llLinksetDataFindKeys
+// and rebuilds its view tables on linkset_data events touching this key.
+write_plugin_reg(string label) {
+    llLinksetDataWrite("plugin.reg." + PLUGIN_CONTEXT, llList2Json(JSON_OBJECT, [
+        "label",  label,
+        "script", llGetScriptName()
+    ]));
+}
+
 register_self() {
     // Write button visibility policy to LSD (default-deny per ACL level)
     llLinksetDataWrite("acl.policycontext:" + PLUGIN_CONTEXT, llList2Json(JSON_OBJECT, [
@@ -156,7 +177,10 @@ register_self() {
         "5", "Owner,Trustee,TP,IM"
     ]));
 
-    // Register with kernel
+    // Self-declared menu presence for kmod_ui.
+    write_plugin_reg(PLUGIN_LABEL);
+
+    // Register with kernel (for ping/pong health tracking and alias table).
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
         "type", "kernel.register.declare",
         "context", PLUGIN_CONTEXT,
@@ -532,9 +556,13 @@ default {
             }
             else if (type == "kernel.ping") send_pong();
             else if (type == "kernel.reset.soft" || type == "kernel.reset.factory") {
-                // On soft reset, reapply RLV exceptions with same delay as settings_sync
-                PendingReconcile = TRUE;
-                llSetTimerEvent(1.0);
+                string target_context = llJsonGetValue(msg, ["context"]);
+                if (target_context != JSON_INVALID) {
+                    if (target_context != "" && target_context != PLUGIN_CONTEXT) return;
+                }
+                llLinksetDataDelete("plugin.reg." + PLUGIN_CONTEXT);
+                llLinksetDataDelete("acl.policycontext:" + PLUGIN_CONTEXT);
+                llResetScript();
             }
         }
         else if (num == SETTINGS_BUS) {

@@ -1,11 +1,15 @@
 /*--------------------
 PLUGIN: plugin_tpe.lsl
 VERSION: 1.10
-REVISION: 5
+REVISION: 6
 PURPOSE: Manage TPE mode with wearer confirmation and owner oversight
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility,
   namespaced internal message protocol
 CHANGES:
+- v1.1 rev 6: Self-declare menu presence via LSD (plugin.reg.<ctx>).
+  Label updates write the same LSD key directly; ui.label.update link_messages
+  are gone. Reset handlers delete plugin.reg.<ctx> and acl.policycontext:<ctx>
+  before llResetScript so kmod_ui drops the button immediately.
 - v1.1 rev 5: Wire-type rename (Phase 2). kernel.register→kernel.register.declare,
   kernel.registernow→kernel.register.refresh, kernel.reset→kernel.reset.soft,
   kernel.resetall→kernel.reset.factory.
@@ -106,18 +110,31 @@ integer btn_allowed(string label) {
 
 /* -------------------- KERNEL MESSAGES -------------------- */
 
+// Self-declared menu presence. kmod_ui enumerates via llLinksetDataFindKeys
+// and rebuilds its view tables on linkset_data events touching this key.
+write_plugin_reg(string label) {
+    llLinksetDataWrite("plugin.reg." + PLUGIN_CONTEXT, llList2Json(JSON_OBJECT, [
+        "label",  label,
+        "script", llGetScriptName()
+    ]));
+}
+
 register_with_kernel() {
     // Write button visibility policy to LSD (only primary owner ACL 5 gets toggle)
     llLinksetDataWrite("acl.policycontext:" + PLUGIN_CONTEXT, llList2Json(JSON_OBJECT, [
         "5", "toggle"
     ]));
 
-    // Register with kernel
+    // Determine the label based on current TPE state
     string initial_label = PLUGIN_LABEL_OFF;
     if (TpeModeEnabled) {
         initial_label = PLUGIN_LABEL_ON;
     }
 
+    // Self-declared menu presence for kmod_ui.
+    write_plugin_reg(initial_label);
+
+    // Register with kernel (for ping/pong health tracking and alias table).
     string msg = llList2Json(JSON_OBJECT, [
         "type", "kernel.register.declare",
         "context", PLUGIN_CONTEXT,
@@ -157,13 +174,7 @@ update_ui_label() {
     if (TpeModeEnabled) {
         new_label = PLUGIN_LABEL_ON;
     }
-
-    string msg = llList2Json(JSON_OBJECT, [
-        "type", "ui.label.update",
-        "context", PLUGIN_CONTEXT,
-        "label", new_label
-    ]);
-    llMessageLinked(LINK_SET, UI_BUS, msg, NULL_KEY);
+    write_plugin_reg(new_label);
 }
 
 /* -------------------- BUTTON HANDLING -------------------- */
@@ -347,6 +358,8 @@ default
                     }
                 }
                 // Either no context (broadcast) or matches our context
+                llLinksetDataDelete("plugin.reg." + PLUGIN_CONTEXT);
+                llLinksetDataDelete("acl.policycontext:" + PLUGIN_CONTEXT);
                 llResetScript();
             }
         }
