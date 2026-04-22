@@ -1,10 +1,17 @@
 /*--------------------
 MODULE: kmod_leash.lsl
 VERSION: 1.10
-REVISION: 14
+REVISION: 15
 PURPOSE: Leashing engine providing leash services to plugins
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- v1.1 rev 15: Act as a native-protocol leash-holder responder. Collar now
+  replies to plugin.leash.request on LEASH_CHAN_NATIVE with its own
+  LeashPoint prim (same role as leash_holder.lsl), so coffle mode resolves
+  to the target collar's leashpoint instead of falling through to the
+  avatar pelvis. Native listener is now persistent (opened at state_entry,
+  not reopened per handshake); HolderListen removed from closeAllHolderListens
+  and phase transition. Self-sent requests are filtered.
 - v1.1 rev 14: Convert all user-facing notices from llOwnerSay to
   llRegionSayTo(...0, ...) for consistency with project convention.
   Actor-targeted (user): Leash grabbed/released, Coffled to, Posted to.
@@ -291,12 +298,10 @@ integer clampLeashLength(integer len) {
     return len;
 }
 
-// Close all holder protocol listeners
+// Close handshake-scoped listeners. HolderListen (LEASH_CHAN_NATIVE) is
+// persistent because the collar also acts as a responder for incoming
+// plugin.leash.request, so we deliberately do not close it here.
 closeAllHolderListens() {
-    if (HolderListen != 0) {
-        llListenRemove(HolderListen);
-        HolderListen = 0;
-    }
     if (HolderListenOC != 0) {
         llListenRemove(HolderListenOC);
         HolderListenOC = 0;
@@ -491,11 +496,9 @@ beginHolderHandshake(key user) {
     HolderState = HOLDER_STATE_NATIVE_PHASE;
     HolderPhaseStart = now();
 
-    // Phase 1: native only
-    if (HolderListen == 0) {
-        HolderListen = llListen(LEASH_CHAN_NATIVE, "", NULL_KEY, "");
-    }
-    
+    // HolderListen is opened persistently at state_entry (also serves the
+    // responder side), so no need to open it here.
+
     // Send native JSON format on native channel
     string msg = llList2Json(JSON_OBJECT, [
         "type", "plugin.leash.request",
@@ -506,7 +509,46 @@ beginHolderHandshake(key user) {
         "origin", "leashpoint"
     ]);
     llRegionSay(LEASH_CHAN_NATIVE, msg);
-    
+
+}
+
+// Find this collar's LeashPoint prim (child named "leashpoint",
+// case-insensitive). Falls back to root if no dedicated prim exists.
+key findLeashpointPrim() {
+    integer n = llGetNumberOfPrims();
+    integer i = 2;
+    while (i <= n) {
+        string nm = llToLower(llStringTrim(llGetLinkName(i), STRING_TRIM));
+        if (nm == "leashpoint") return llGetLinkKey(i);
+        i = i + 1;
+    }
+    integer ln = llGetLinkNumber();
+    if (ln <= 0) ln = 1;
+    return llGetLinkKey(ln);
+}
+
+// Responder for plugin.leash.request from other collars (coffle mode).
+// Mirrors leash_holder.lsl so a collar without a separate holder attachment
+// still resolves to a proper leashpoint prim instead of the avatar root.
+handleNativeRequest(string msg) {
+    key requesting_collar = (key)llJsonGetValue(msg, ["collar"]);
+    if (requesting_collar == NULL_KEY) return;
+    // Ignore our own broadcast (llRegionSay reaches our own listener).
+    if (requesting_collar == llGetKey()) return;
+    string session_str = llJsonGetValue(msg, ["session"]);
+    if (session_str == JSON_INVALID) return;
+
+    key target_prim = findLeashpointPrim();
+
+    string reply = llList2Json(JSON_OBJECT, [
+        "type", "plugin.leash.target",
+        "ok", "1",
+        "holder", (string)target_prim,
+        "root", (string)llGetLinkKey(1),
+        "name", llGetObjectName(),
+        "session", session_str
+    ]);
+    llRegionSayTo(requesting_collar, LEASH_CHAN_NATIVE, reply);
 }
 
 handleHolderResponseNative(string msg) {
@@ -579,13 +621,10 @@ advanceHolderStateMachine() {
     
     if (HolderState == HOLDER_STATE_NATIVE_PHASE) {
         if (elapsed >= NATIVE_PHASE_DURATION) {
-            // Transition to OC phase
+            // Transition to OC phase. HolderListen stays open (persistent
+            // responder + still useful for late native replies).
             HolderState = HOLDER_STATE_OC_PHASE;
             HolderPhaseStart = now();
-            if (HolderListen != 0) {
-                llListenRemove(HolderListen);
-                HolderListen = 0;
-            }
             if (HolderListenOC == 0) {
                 HolderListenOC = llListen(LEASH_CHAN_LM, "", NULL_KEY, "");
             }
@@ -1021,7 +1060,13 @@ default
         PendingAction = "";
         PendingPassTarget = NULL_KEY;
         AuthorizedLmController = NULL_KEY;
-        
+
+        // Persistent native-protocol listener: catches both our own
+        // handshake replies and incoming plugin.leash.request from other
+        // collars (coffle responder role).
+        if (HolderListen != 0) llListenRemove(HolderListen);
+        HolderListen = llListen(LEASH_CHAN_NATIVE, "", NULL_KEY, "");
+
         applySettingsSync();
         llSetTimerEvent(FOLLOW_TICK);
         llRequestPermissions(llGetOwner(), PERMISSION_TAKE_CONTROLS);
@@ -1195,7 +1240,13 @@ default
     
     listen(integer channel, string name, key id, string msg) {
         if (channel == LEASH_CHAN_NATIVE) {
-            handleHolderResponseNative(msg);
+            string mtype = llJsonGetValue(msg, ["type"]);
+            if (mtype == "plugin.leash.request") {
+                handleNativeRequest(msg);
+            }
+            else if (mtype == "plugin.leash.target") {
+                handleHolderResponseNative(msg);
+            }
         }
         else if (channel == LEASH_CHAN_LM) {
             handleHolderResponseOc(id, msg);
