@@ -1,11 +1,14 @@
 /*--------------------
 PLUGIN: plugin_tpe.lsl
 VERSION: 1.10
-REVISION: 6
+REVISION: 7
 PURPOSE: Manage TPE mode with wearer confirmation and owner oversight
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility,
   namespaced internal message protocol
 CHANGES:
+- v1.1 rev 7: Add dormancy guard in state_entry — script parks itself
+  if the prim's object description is "COLLAR_UPDATER" so it stays dormant
+  when staged in an updater installer prim.
 - v1.1 rev 6: Self-declare menu presence via LSD (plugin.reg.<ctx>).
   Label updates write the same LSD key directly; ui.label.update link_messages
   are gone. Reset handlers delete plugin.reg.<ctx> and acl.policycontext:<ctx>
@@ -319,6 +322,11 @@ apply_settings_sync() {
 default
 {
     state_entry() {
+        if (llGetObjectDesc() == "COLLAR_UPDATER") {
+            llSetScriptState(llGetScriptName(), FALSE);
+            return;
+        }
+
         WearerKey = llGetOwner();
         cleanup_session();
         apply_settings_sync();

@@ -1,10 +1,13 @@
 /*--------------------
 MODULE: kmod_leash.lsl
 VERSION: 1.10
-REVISION: 15
+REVISION: 16
 PURPOSE: Leashing engine providing leash services to plugins
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- v1.1 rev 16: Add dormancy guard in state_entry — script parks itself
+  if the prim's object description is "COLLAR_UPDATER" so it stays dormant
+  when staged in an updater installer prim.
 - v1.1 rev 15: Act as a native-protocol leash-holder responder. Collar now
   replies to plugin.leash.request on LEASH_CHAN_NATIVE with its own
   LeashPoint prim (same role as leash_holder.lsl), so coffle mode resolves
@@ -1052,6 +1055,11 @@ followTick() {
 default
 {
     state_entry() {
+        if (llGetObjectDesc() == "COLLAR_UPDATER") {
+            llSetScriptState(llGetScriptName(), FALSE);
+            return;
+        }
+
         closeAllHolderListens();
         HolderTarget = NULL_KEY;
         HolderState = HOLDER_STATE_IDLE;

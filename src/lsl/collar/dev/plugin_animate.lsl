@@ -1,10 +1,13 @@
 /*--------------------
 PLUGIN: plugin_animate.lsl
 VERSION: 1.10
-REVISION: 8
+REVISION: 9
 PURPOSE: Paginated animation menu driven by inventory contents
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
+- v1.1 rev 9: Add dormancy guard in state_entry — script parks itself
+  if the prim's object description is "COLLAR_UPDATER" so it stays dormant
+  when staged in an updater installer prim.
 - v1.1 rev 8: Self-declare menu presence via LSD (plugin.reg.<ctx>).
   Label updates write the same LSD key directly; ui.label.update link_messages
   are gone. Reset handlers delete plugin.reg.<ctx> and acl.policycontext:<ctx>
@@ -439,6 +442,11 @@ cleanup_session() {
 
 default {
     state_entry() {
+        if (llGetObjectDesc() == "COLLAR_UPDATER") {
+            llSetScriptState(llGetScriptName(), FALSE);
+            return;
+        }
+
         cleanup_session();
         refresh_animation_list();
         ensure_permissions();

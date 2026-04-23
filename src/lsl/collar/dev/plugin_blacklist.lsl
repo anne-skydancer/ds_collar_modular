@@ -1,10 +1,13 @@
 /*--------------------
 PLUGIN: plugin_blacklist.lsl
 VERSION: 1.10
-REVISION: 9
+REVISION: 10
 PURPOSE: Blacklist management with sensor-based avatar selection
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
+- v1.1 rev 10: Add dormancy guard in state_entry — script parks itself
+  if the prim's object description is "COLLAR_UPDATER" so it stays dormant
+  when staged in an updater installer prim.
 - v1.1 rev 9: Self-declare menu presence via LSD (plugin.reg.<ctx>).
   Label updates write the same LSD key directly; ui.label.update link_messages
   are gone. Reset handlers delete plugin.reg.<ctx> and acl.policycontext:<ctx>
@@ -416,6 +419,11 @@ handle_dialog_timeout(string msg) {
 
 default {
     state_entry() {
+        if (llGetObjectDesc() == "COLLAR_UPDATER") {
+            llSetScriptState(llGetScriptName(), FALSE);
+            return;
+        }
+
         cleanup_session();
         register_self();
         apply_settings_sync();

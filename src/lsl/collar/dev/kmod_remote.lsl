@@ -1,10 +1,13 @@
 /*--------------------
 MODULE: kmod_remote.lsl
 VERSION: 1.10
-REVISION: 6
+REVISION: 7
 PURPOSE: External HUD communication bridge for remote control workflows
 ARCHITECTURE: Consolidated message bus lanes, namespaced internal message protocol
 CHANGES:
+- v1.1 rev 7: Add dormancy guard in state_entry — script parks itself
+  if the prim's object description is "COLLAR_UPDATER" so it stays dormant
+  when staged in an updater installer prim.
 - v1.1 rev 6: Consistency pass — PIN-ready notice converted from
   llOwnerSay to llRegionSayTo(llGetOwner(), 0, ...).
 - v1.1 rev 5: AUTH_BUS rename (Phase 1). auth.aclquery→auth.acl.query,
@@ -379,6 +382,11 @@ handle_update_discover(string message) {
 
 default {
     state_entry() {
+        if (llGetObjectDesc() == "COLLAR_UPDATER") {
+            llSetScriptState(llGetScriptName(), FALSE);
+            return;
+        }
+
         // Clean up any existing listens
         if (AclQueryListenHandle != 0) {
             llListenRemove(AclQueryListenHandle);

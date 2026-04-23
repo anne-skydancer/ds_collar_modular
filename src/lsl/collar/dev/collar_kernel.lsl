@@ -1,10 +1,13 @@
 /*--------------------
 MODULE: collar_kernel.lsl
 VERSION: 1.10
-REVISION: 4
+REVISION: 5
 PURPOSE: Plugin registry, lifecycle management, heartbeat monitoring
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- v1.1 rev 5: Add dormancy guard in state_entry — script parks itself
+  if the prim's object description is "COLLAR_UPDATER" so it stays dormant
+  when staged in an updater installer prim.
 - v1.1 rev 4: Drop kernel.plugins.list broadcast. Plugins now self-declare
   menu presence via LSD (plugin.reg.<ctx>) and kmod_ui enumerates on the
   linkset_data event. broadcast_plugin_list, handle_plugin_list_request,
@@ -465,6 +468,11 @@ handle_soft_reset() {
 default
 {
     state_entry() {
+        if (llGetObjectDesc() == "COLLAR_UPDATER") {
+            llSetScriptState(llGetScriptName(), FALSE);
+            return;
+        }
+
         LastOwner = llGetOwner();
         PluginRegistry = [];
         PluginContexts = [];

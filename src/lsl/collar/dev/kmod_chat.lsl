@@ -1,13 +1,16 @@
 /*--------------------
 MODULE: kmod_chat.lsl
 VERSION: 1.10
-REVISION: 16
+REVISION: 17
 PURPOSE: Local chat command receiver. Listens on channel 1 (always) and
          optionally channel 0 (public chat) for prefixed commands from
          authorised speakers. Sends ui.chat.command to UI_BUS so kmod_ui
          can route the request; plugins never receive the raw dispatch.
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- v1.1 rev 17: Add dormancy guard in state_entry — script parks itself
+  if the prim's object description is "COLLAR_UPDATER" so it stays dormant
+  when staged in an updater installer prim.
 - v1.1 rev 16: Consistency pass — alias-collision notice converted from
   llOwnerSay to llRegionSayTo(llGetOwner(), 0, ...); "[chat]" source
   prefix dropped per project convention.
@@ -275,6 +278,11 @@ integer speaker_authorised(key speaker) {
 default
 {
     state_entry() {
+        if (llGetObjectDesc() == "COLLAR_UPDATER") {
+            llSetScriptState(llGetScriptName(), FALSE);
+            return;
+        }
+
         ListenChan0 = 0;
         ListenChan1 = 0;
         CommandAliases = [];

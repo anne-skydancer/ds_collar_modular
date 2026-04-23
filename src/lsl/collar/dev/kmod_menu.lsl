@@ -1,10 +1,13 @@
 /*--------------------
 MODULE: kmod_menu.lsl
 VERSION: 1.10
-REVISION: 2
+REVISION: 3
 PURPOSE: Menu rendering and visual presentation service
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- v1.1 rev 3: Add dormancy guard in state_entry — script parks itself
+  if the prim's object description is "COLLAR_UPDATER" so it stays dormant
+  when staged in an updater installer prim.
 - v1.1 rev 2: Namespace context values. ROOT_CONTEXT → "ui.core.root",
   SOS_CONTEXT → "ui.sos.root". Added ROOT_CONTEXT/SOS_CONTEXT constants
   to replace the four former hardcoded literals in render_menu().
@@ -164,6 +167,11 @@ show_message(string msg) {
 default
 {
     state_entry() {
+        if (llGetObjectDesc() == "COLLAR_UPDATER") {
+            llSetScriptState(llGetScriptName(), FALSE);
+            return;
+        }
+
     }
 
     link_message(integer sender_num, integer num, string msg, key id) {

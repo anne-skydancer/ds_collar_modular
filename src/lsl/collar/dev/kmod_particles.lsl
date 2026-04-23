@@ -1,10 +1,13 @@
 /*--------------------
 MODULE: kmod_particles.lsl
 VERSION: 1.10
-REVISION: 5
+REVISION: 6
 PURPOSE: Visual connection renderer with Lockmeister compatibility
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- v1.1 rev 6: Add dormancy guard in state_entry — script parks itself
+  if the prim's object description is "COLLAR_UPDATER" so it stays dormant
+  when staged in an updater installer prim.
 - v1.1 rev 5: Stop orphaning the rendering slot when the target goes
   transiently missing. Periodic validation used to clear SourcePlugin
   alongside TargetKey, which left a subsequent particles.stop with a
@@ -400,6 +403,11 @@ handle_lm_disable() {
 default
 {
     state_entry() {
+        if (llGetObjectDesc() == "COLLAR_UPDATER") {
+            llSetScriptState(llGetScriptName(), FALSE);
+            return;
+        }
+
         ParticlesActive = FALSE;
         TargetKey = NULL_KEY;
         SourcePlugin = "";

@@ -1,10 +1,13 @@
 /*--------------------
 MODULE: kmod_auth.lsl
 VERSION: 1.10
-REVISION: 7
+REVISION: 8
 PURPOSE: Authoritative ACL engine - OPTIMIZED
 ARCHITECTURE: Dispatch table pattern with linkset data cache and JSON templates
 CHANGES:
+- v1.1 rev 8: Add dormancy guard in state_entry — script parks itself
+  if the prim's object description is "COLLAR_UPDATER" so it stays dormant
+  when staged in an updater installer prim.
 - v1.1 rev 7: AUTH_BUS rename (Phase 1). auth.aclquery→auth.acl.query,
   auth.aclresult→auth.acl.result, auth.aclupdate→auth.acl.update.
 - v1.1 rev 6: KERNEL_LIFECYCLE rename (Phase 1). kernel.reset→
@@ -691,6 +694,11 @@ handle_acl_query(string msg) {
 default
 {
     state_entry() {
+        if (llGetObjectDesc() == "COLLAR_UPDATER") {
+            llSetScriptState(llGetScriptName(), FALSE);
+            return;
+        }
+
         SettingsReady = FALSE;
         PendingQueries = [];
 

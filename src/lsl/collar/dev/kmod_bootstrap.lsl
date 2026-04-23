@@ -1,10 +1,13 @@
 /*--------------------
 MODULE: kmod_bootstrap.lsl
 VERSION: 1.10
-REVISION: 5
+REVISION: 6
 PURPOSE: Startup coordination, RLV detection, status announcement
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- v1.1 rev 6: Add dormancy guard in state_entry — script parks itself
+  if the prim's object description is "COLLAR_UPDATER" so it stays dormant
+  when staged in an updater installer prim.
 - v1.1 rev 5: KERNEL_LIFECYCLE rename (Phase 1). kernel.reset→
   kernel.reset.soft, kernel.resetall→kernel.reset.factory,
   settings.notecardloaded→settings.notecard.loaded.
@@ -335,6 +338,11 @@ announce_status() {
 default
 {
     state_entry() {
+        if (llGetObjectDesc() == "COLLAR_UPDATER") {
+            llSetScriptState(llGetScriptName(), FALSE);
+            return;
+        }
+
         UseFixed4711 = TRUE;
         UseRelayChan = TRUE;
         ProbeRelayBothSigns = TRUE;
@@ -348,6 +356,11 @@ default
 state starting
 {
     state_entry() {
+        if (llGetObjectDesc() == "COLLAR_UPDATER") {
+            llSetScriptState(llGetScriptName(), FALSE);
+            return;
+        }
+
         start_bootstrap();
     }
 
@@ -466,6 +479,11 @@ state starting
 state running
 {
     state_entry() {
+        if (llGetObjectDesc() == "COLLAR_UPDATER") {
+            llSetScriptState(llGetScriptName(), FALSE);
+            return;
+        }
+
         llSetTimerEvent(0.0);
     }
 

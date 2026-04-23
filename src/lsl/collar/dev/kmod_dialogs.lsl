@@ -1,10 +1,13 @@
 /*--------------------
 MODULE: kmod_dialogs.lsl
 VERSION: 1.10
-REVISION: 5
+REVISION: 6
 PURPOSE: Centralized dialog management for shared listener handling
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- v1.1 rev 6: Add dormancy guard in state_entry — script parks itself
+  if the prim's object description is "COLLAR_UPDATER" so it stays dormant
+  when staged in an updater installer prim.
 - v1.1 rev 5: Consistency pass — item-truncation warning converted from
   llOwnerSay to llRegionSayTo(llGetOwner(), 0, ...).
 - v1.1 rev 4: UI_BUS rename (Phase 1). ui.dialog.registerbuttonconfig→
@@ -432,6 +435,11 @@ handle_dialog_close(string msg) {
 default
 {
     state_entry() {
+        if (llGetObjectDesc() == "COLLAR_UPDATER") {
+            llSetScriptState(llGetScriptName(), FALSE);
+            return;
+        }
+
         SessionIDs = [];
         SessionUsers = [];
         SessionChannels = [];

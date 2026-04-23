@@ -1,10 +1,13 @@
 /*--------------------
 MODULE: kmod_ui.lsl
 VERSION: 1.10
-REVISION: 14
+REVISION: 15
 PURPOSE: Session management, LSD policy filtering, and plugin list orchestration
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- v1.1 rev 15: Add dormancy guard in state_entry — script parks itself
+  if the prim's object description is "COLLAR_UPDATER" so it stays dormant
+  when staged in an updater installer prim.
 - v1.1 rev 14: LSD-backed plugin enumeration. Plugins self-declare their menu
   presence by writing plugin.reg.<context> = {"label":...,"script":...} to
   LSD; kmod_ui enumerates via llLinksetDataFindKeys and rebuilds views when
@@ -937,6 +940,11 @@ handle_dialog_timeout(string msg) {
 default
 {
     state_entry() {
+        if (llGetObjectDesc() == "COLLAR_UPDATER") {
+            llSetScriptState(llGetScriptName(), FALSE);
+            return;
+        }
+
         PluginContexts = [];
         PluginLabels = [];
         
