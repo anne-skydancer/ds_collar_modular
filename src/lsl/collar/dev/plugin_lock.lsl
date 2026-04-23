@@ -1,11 +1,17 @@
 /*--------------------
 PLUGIN: plugin_lock.lsl
 VERSION: 1.10
-REVISION: 9
+REVISION: 10
 PURPOSE: Toggle collar lock and RLV detach control labels
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility,
   namespaced internal message protocol
 CHANGES:
+- v1.1 rev 10: apply_settings_sync now plays the toggle sound on settings-
+  driven state changes so notecard-reload lock/unlock events are audibly
+  consistent with menu toggles. Paired with kmod_settings rev 9, which
+  makes "Reload Settings" actually re-read the notecard — the sound now
+  accompanies a real state change (e.g. wearer unlocked via menu, then
+  reload re-applies lock.locked=1 from the notecard).
 - v1.1 rev 9: Add dormancy guard in state_entry — script parks itself
   if the prim's object description is "COLLAR_UPDATER" so it stays dormant
   when staged in an updater installer prim.
@@ -157,6 +163,7 @@ apply_settings_sync() {
 
     if (Locked != prev_locked) {
         apply_lock_state();
+        play_toggle_sound();
 
         string new_label = PLUGIN_LABEL_UNLOCKED;
         if (Locked) {

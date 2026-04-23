@@ -1,10 +1,16 @@
 /*--------------------
 PLUGIN: plugin_relay.lsl
 VERSION: 1.10
-REVISION: 11
+REVISION: 12
 PURPOSE: Provide ORG-compliant RLV relay with hardcore mode and safeword hooks
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
+- v1.1 rev 12: apply_settings_sync now mirrors the Mode-change side effects
+  from the menu handlers — calls clear_pending_ask() on any Mode change and
+  empties SessionTrustedKeys when Mode transitions to OFF. Previously a
+  notecard reload flipping Mode ASK→OFF left a live ASK dialog and stale
+  session-trusted senders in place; the wearer could click Allow on the
+  dialog and restore restrictions the reload was meant to block.
 - v1.1 rev 11: Add dormancy guard in state_entry — script parks itself
   if the prim's object description is "COLLAR_UPDATER" so it stays dormant
   when staged in an updater installer prim.
@@ -374,8 +380,14 @@ apply_settings_sync() {
     Mode = lsd_int(KEY_RELAY_MODE, Mode);
     Hardcore = lsd_int(KEY_RELAY_HARDCORE, Hardcore);
 
-    // Side effect: relay mode changed — update listener state
+    // Side effects on Mode change — must mirror the OFF/ASK/ON menu handlers.
+    // Any live ASK dialog is stale once the mode changes, and an OFF
+    // transition clears session-trusted senders the same way the menu does.
     if (Mode != prev_mode) {
+        clear_pending_ask();
+        if (Mode == MODE_OFF) {
+            SessionTrustedKeys = [];
+        }
         update_relay_listen_state();
     }
 }

@@ -1,7 +1,7 @@
 /*--------------------
 MODULE: kmod_settings.lsl
 VERSION: 1.10
-REVISION: 8
+REVISION: 9
 PURPOSE: Notecard parser, validation guards, and LSD settings store
 ARCHITECTURE: Two-mode access model. Single-owner mode uses scalar keys
               (access.owner, access.ownername, access.ownerhonorific) and
@@ -11,6 +11,12 @@ ARCHITECTURE: Two-mode access model. Single-owner mode uses scalar keys
               Trustees and blacklist always use CSVs. Display names are
               resolved asynchronously via llRequestDisplayName.
 CHANGES:
+- v1.1 rev 9: settings.get now re-reads the notecard when one is present,
+  matching the UI contract that "Reload Settings" re-reads the notecard.
+  Previous behavior rebroadcast LSD only, so a wearer who had (e.g.)
+  unlocked the collar via menu would see "Reload Settings" do nothing for
+  lock state — the notecard's lock.locked=1 was never re-applied. Guarded
+  against concurrent reloads via IsLoadingNotecard.
 - v1.1 rev 8: Add dormancy guard in state_entry — script parks itself
   if the prim's object description is "COLLAR_UPDATER" so it stays dormant
   when staged in an updater installer prim.
@@ -560,7 +566,15 @@ integer start_notecard_reading() {
 /* -------------------- MESSAGE HANDLERS -------------------- */
 
 handle_settings_get() {
-    broadcast_settings_changed();
+    // UI contract ("Reload Settings" button): re-read the notecard and let
+    // plugins resync from the refreshed LSD. Falling back to a plain
+    // rebroadcast when no notecard is present or a reload is already in
+    // flight — broadcast_settings_changed will also fire from the EOF
+    // branch of the dataserver handler once the in-flight read completes.
+    if (IsLoadingNotecard) return;
+    if (!start_notecard_reading()) {
+        broadcast_settings_changed();
+    }
 }
 
 // Generic scalar set for non-access keys (and a few access scalars).
