@@ -1,11 +1,23 @@
 /*--------------------
 PLUGIN: plugin_tpe.lsl
 VERSION: 1.10
-REVISION: 7
+REVISION: 9
 PURPOSE: Manage TPE mode with wearer confirmation and owner oversight
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility,
   namespaced internal message protocol
 CHANGES:
+- v1.1 rev 9: write_plugin_reg guards idempotent writes (read-before-
+  write). Same-value re-registrations on state_entry and
+  kernel.register.refresh no longer fire linkset_data, so kmod_ui's
+  debounced rebuild + session invalidation stops triggering on
+  register.refresh cascades — wearer's open menu survives the event.
+- v1.1 rev 8: Switch to state-based label resolution. register_with_kernel
+  now registers a buttonconfig for the TPE:Y / TPE:N pair via kmod_dialogs
+  and emits ui.state.update with the current state. Toggle paths
+  (handle_tpe_click, handle_button_click, apply_settings_sync) send
+  ui.state.update; plugin.reg.<ctx> is written once at registration and
+  never rewritten on toggle. Removes the LSD write + linkset_data fire +
+  debounce + rebuild that used to happen on every TPE flip.
 - v1.1 rev 7: Add dormancy guard in state_entry — script parks itself
   if the prim's object description is "COLLAR_UPDATER" so it stays dormant
   when staged in an updater installer prim.
@@ -116,10 +128,38 @@ integer btn_allowed(string label) {
 // Self-declared menu presence. kmod_ui enumerates via llLinksetDataFindKeys
 // and rebuilds its view tables on linkset_data events touching this key.
 write_plugin_reg(string label) {
-    llLinksetDataWrite("plugin.reg." + PLUGIN_CONTEXT, llList2Json(JSON_OBJECT, [
+    string k = "plugin.reg." + PLUGIN_CONTEXT;
+    string v = llList2Json(JSON_OBJECT, [
         "label",  label,
         "script", llGetScriptName()
-    ]));
+    ]);
+    // Skip the write (and its linkset_data event) when the stored value
+    // is already what we would write. Idempotent re-registrations on
+    // state_entry or kernel.register.refresh then no longer trigger
+    // kmod_ui's debounced rebuild + session invalidation.
+    if (llLinksetDataRead(k) == v) return;
+    llLinksetDataWrite(k, v);
+}
+
+// Tell kmod_dialogs how to render this plugin's button based on state:
+//   state == 0 → PLUGIN_LABEL_OFF
+//   state != 0 → PLUGIN_LABEL_ON
+register_button_config() {
+    llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
+        "type",     "ui.dialog.buttonconfig.register",
+        "context",  PLUGIN_CONTEXT,
+        "button_a", PLUGIN_LABEL_OFF,
+        "button_b", PLUGIN_LABEL_ON
+    ]), NULL_KEY);
+}
+
+// Push current toggle state to kmod_ui; label gets resolved via buttonconfig.
+send_state_update() {
+    llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
+        "type",    "ui.state.update",
+        "context", PLUGIN_CONTEXT,
+        "state",   TpeModeEnabled
+    ]), NULL_KEY);
 }
 
 register_with_kernel() {
@@ -128,20 +168,20 @@ register_with_kernel() {
         "5", "toggle"
     ]));
 
-    // Determine the label based on current TPE state
-    string initial_label = PLUGIN_LABEL_OFF;
-    if (TpeModeEnabled) {
-        initial_label = PLUGIN_LABEL_ON;
-    }
+    // Self-declared menu presence for kmod_ui. The label here is the
+    // kmod_dialogs fallback used before buttonconfig lands — stable
+    // default, never rewritten on toggle.
+    write_plugin_reg(PLUGIN_LABEL_OFF);
 
-    // Self-declared menu presence for kmod_ui.
-    write_plugin_reg(initial_label);
+    // State-based label resolution.
+    register_button_config();
+    send_state_update();
 
     // Register with kernel (for ping/pong health tracking and alias table).
     string msg = llList2Json(JSON_OBJECT, [
         "type", "kernel.register.declare",
         "context", PLUGIN_CONTEXT,
-        "label", initial_label,
+        "label", PLUGIN_LABEL_OFF,
         "script", llGetScriptName()
     ]);
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, msg, NULL_KEY);
@@ -172,12 +212,11 @@ persist_tpe_mode(integer new_value) {
 
 /* -------------------- UI LABEL UPDATE -------------------- */
 
+// Forwarder kept under the old name so existing callers keep working; the
+// underlying path now pushes state (not a label) and lets kmod_dialogs
+// resolve the final button text via its registered buttonconfig.
 update_ui_label() {
-    string new_label = PLUGIN_LABEL_OFF;
-    if (TpeModeEnabled) {
-        new_label = PLUGIN_LABEL_ON;
-    }
-    write_plugin_reg(new_label);
+    send_state_update();
 }
 
 /* -------------------- BUTTON HANDLING -------------------- */
@@ -313,7 +352,7 @@ apply_settings_sync() {
     // If TPE mode changed, persist to LSD (covers delta-driven updates)
     if (TpeModeEnabled != prev) {
         llLinksetDataWrite(KEY_TPE_MODE, (string)TpeModeEnabled);
-        update_ui_label();
+        send_state_update();
     }
 }
 

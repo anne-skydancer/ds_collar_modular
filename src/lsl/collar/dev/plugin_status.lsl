@@ -1,10 +1,15 @@
 /*--------------------
 PLUGIN: plugin_status.lsl
 VERSION: 1.10
-REVISION: 11
+REVISION: 12
 PURPOSE: Read-only collar status display for owners and observers
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
+- v1.1 rev 12: write_plugin_reg guards idempotent writes (read-before-
+  write). Same-value re-registrations on state_entry and
+  kernel.register.refresh no longer fire linkset_data, so kmod_ui's
+  debounced rebuild + session invalidation stops triggering on
+  register.refresh cascades — wearer's open menu survives the event.
 - v1.1 rev 11: Add dormancy guard in state_entry — script parks itself
   if the prim's object description is "COLLAR_UPDATER" so it stays dormant
   when staged in an updater installer prim.
@@ -106,10 +111,17 @@ list get_policy_buttons(string ctx, integer acl) {
 // Self-declared menu presence. kmod_ui enumerates via llLinksetDataFindKeys
 // and rebuilds its view tables on linkset_data events touching this key.
 write_plugin_reg(string label) {
-    llLinksetDataWrite("plugin.reg." + PLUGIN_CONTEXT, llList2Json(JSON_OBJECT, [
+    string k = "plugin.reg." + PLUGIN_CONTEXT;
+    string v = llList2Json(JSON_OBJECT, [
         "label",  label,
         "script", llGetScriptName()
-    ]));
+    ]);
+    // Skip the write (and its linkset_data event) when the stored value
+    // is already what we would write. Idempotent re-registrations on
+    // state_entry or kernel.register.refresh then no longer trigger
+    // kmod_ui's debounced rebuild + session invalidation.
+    if (llLinksetDataRead(k) == v) return;
+    llLinksetDataWrite(k, v);
 }
 
 register_self() {

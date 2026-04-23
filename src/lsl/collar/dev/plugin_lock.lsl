@@ -1,11 +1,25 @@
 /*--------------------
 PLUGIN: plugin_lock.lsl
 VERSION: 1.10
-REVISION: 10
+REVISION: 12
 PURPOSE: Toggle collar lock and RLV detach control labels
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility,
   namespaced internal message protocol
 CHANGES:
+- v1.1 rev 12: write_plugin_reg guards idempotent writes (read-before-
+  write). Same-value re-registrations on state_entry and
+  kernel.register.refresh no longer fire linkset_data, so kmod_ui's
+  debounced rebuild + session invalidation stops triggering on
+  register.refresh cascades — wearer's open menu survives the event.
+- v1.1 rev 11: Use the existing state-based label resolution path instead
+  of writing labels to plugin.reg.<ctx> on every toggle. register_self now
+  registers a buttonconfig (ui.dialog.buttonconfig.register) for the
+  Locked:Y / Locked:N pair once, and emits ui.state.update with the
+  current state. Toggle paths (set_lock_state, toggle_lock,
+  apply_settings_sync) send ui.state.update; plugin.reg.<ctx> is written
+  once at registration and then left alone. Eliminates the LSD write,
+  linkset_data fire, debounce, and rebuild that used to happen on every
+  single lock/unlock.
 - v1.1 rev 10: apply_settings_sync now plays the toggle sound on settings-
   driven state changes so notecard-reload lock/unlock events are audibly
   consistent with menu toggles. Paired with kmod_settings rev 9, which
@@ -54,6 +68,7 @@ CHANGES:
 integer KERNEL_LIFECYCLE = 500;
 integer SETTINGS_BUS = 800;
 integer UI_BUS = 900;
+integer DIALOG_BUS = 950;
 
 /* -------------------- PLUGIN IDENTITY -------------------- */
 string PLUGIN_CONTEXT = "ui.core.lock";
@@ -105,10 +120,41 @@ integer btn_allowed(string label) {
 // Self-declared menu presence. kmod_ui enumerates via llLinksetDataFindKeys
 // and rebuilds its view tables on linkset_data events touching this key.
 write_plugin_reg(string label) {
-    llLinksetDataWrite("plugin.reg." + PLUGIN_CONTEXT, llList2Json(JSON_OBJECT, [
+    string k = "plugin.reg." + PLUGIN_CONTEXT;
+    string v = llList2Json(JSON_OBJECT, [
         "label",  label,
         "script", llGetScriptName()
-    ]));
+    ]);
+    // Skip the write (and its linkset_data event) when the stored value
+    // is already what we would write. Idempotent re-registrations on
+    // state_entry or kernel.register.refresh then no longer trigger
+    // kmod_ui's debounced rebuild + session invalidation.
+    if (llLinksetDataRead(k) == v) return;
+    llLinksetDataWrite(k, v);
+}
+
+// Tell kmod_dialogs how to render this plugin's button based on state:
+//   state == 0 → PLUGIN_LABEL_UNLOCKED
+//   state != 0 → PLUGIN_LABEL_LOCKED
+// Registered once per state_entry; kmod_dialogs resolves labels per render.
+register_button_config() {
+    llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
+        "type",     "ui.dialog.buttonconfig.register",
+        "context",  PLUGIN_CONTEXT,
+        "button_a", PLUGIN_LABEL_UNLOCKED,
+        "button_b", PLUGIN_LABEL_LOCKED
+    ]), NULL_KEY);
+}
+
+// Push the current toggle state to kmod_ui. Drives the rendered label via
+// the buttonconfig registered above — no need to write a label string
+// anywhere.
+send_state_update() {
+    llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
+        "type",    "ui.state.update",
+        "context", PLUGIN_CONTEXT,
+        "state",   Locked
+    ]), NULL_KEY);
 }
 
 register_self() {
@@ -118,20 +164,20 @@ register_self() {
         "5", "toggle"
     ]));
 
-    // Register with appropriate label based on current lock state
-    string current_label = PLUGIN_LABEL_UNLOCKED;
-    if (Locked) {
-        current_label = PLUGIN_LABEL_LOCKED;
-    }
+    // Self-declared menu presence for kmod_ui. The label here is just the
+    // kmod_dialogs fallback used before buttonconfig lands (cold start) —
+    // stable default, never rewritten on toggle.
+    write_plugin_reg(PLUGIN_LABEL_UNLOCKED);
 
-    // Self-declared menu presence for kmod_ui.
-    write_plugin_reg(current_label);
+    // State-based label resolution.
+    register_button_config();
+    send_state_update();
 
     // Register with kernel (for ping/pong health tracking and alias table).
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
         "type", "kernel.register.declare",
         "context", PLUGIN_CONTEXT,
-        "label", current_label,
+        "label", PLUGIN_LABEL_UNLOCKED,
         "script", llGetScriptName()
     ]), NULL_KEY);
 
@@ -164,12 +210,7 @@ apply_settings_sync() {
     if (Locked != prev_locked) {
         apply_lock_state();
         play_toggle_sound();
-
-        string new_label = PLUGIN_LABEL_UNLOCKED;
-        if (Locked) {
-            new_label = PLUGIN_LABEL_LOCKED;
-        }
-        write_plugin_reg(new_label);
+        send_state_update();
     }
 }
 
@@ -238,16 +279,8 @@ show_unlocked_prim() {
 
 /* -------------------- UI LABEL UPDATE -------------------- */
 
-send_label_update() {
-    string new_label = PLUGIN_LABEL_UNLOCKED;
-    if (Locked) {
-        new_label = PLUGIN_LABEL_LOCKED;
-    }
-    write_plugin_reg(new_label);
-}
-
 update_ui_label_and_return(key user) {
-    send_label_update();
+    send_state_update();
 
     llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
         "type", "ui.menu.return",
@@ -281,7 +314,7 @@ set_lock_state(key user, integer acl_level, integer target_locked) {
     if (Locked) llRegionSayTo(user, 0, "Collar locked.");
     else llRegionSayTo(user, 0, "Collar unlocked.");
 
-    send_label_update();
+    send_state_update();
 }
 
 // Execute a chat subcommand. Empty subpath handled by caller (toggle).

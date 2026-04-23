@@ -1,18 +1,10 @@
 /*--------------------
 MODULE: kmod_ui.lsl
 VERSION: 1.10
-REVISION: 16
+REVISION: 15
 PURPOSE: Session management, LSD policy filtering, and plugin list orchestration
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
-- v1.1 rev 16: send_render_menu now reads each button's label fresh from
-  plugin.reg.<ctx> LSD rather than the cached PluginLabels list. Fixes a
-  lag where toggling a plugin's label (e.g. plugin_lock flipping Locked:N
-  → Locked:Y) and immediately returning to root via ui.menu.return would
-  render the old label because the linkset_data-driven rebuild is
-  debounced and hadn't fired yet. PluginLabels still populates from the
-  debounced rebuild and serves as a safety fallback if LSD returns empty
-  mid-render.
 - v1.1 rev 15: Add dormancy guard in state_entry — script parks itself
   if the prim's object description is "COLLAR_UPDATER" so it stays dormant
   when staged in an updater installer prim.
@@ -548,28 +540,9 @@ send_render_menu(key user, string menu_type) {
     integer i = start_idx;
     while (i < end_idx) {
         integer plugin_idx = llList2Integer(filtered_indices, i);
-
+        
         string context = llList2String(PluginContexts, plugin_idx);
-        // Read the label fresh from LSD rather than the cached PluginLabels
-        // list: a plugin that just updated its plugin.reg.<ctx> LSD key (e.g.
-        // plugin_lock toggling on click) arms the debounced rebuild timer,
-        // but the ui.menu.return that follows the toggle renders BEFORE that
-        // timer fires — so the cache is stale for exactly the button the
-        // wearer just tapped. Reading LSD at render time costs one
-        // llLinksetDataRead per visible button (≤ MAX_FUNC_BTNS) and makes
-        // label updates appear immediately. Fall back to the cached label
-        // if LSD somehow returns empty (e.g. the plugin deregistered
-        // mid-render).
-        string entry = llLinksetDataRead(LSD_PLUGIN_REG_PREFIX + context);
-        string label;
-        if (entry != "") {
-            string lsd_label = llJsonGetValue(entry, ["label"]);
-            if (lsd_label != JSON_INVALID) label = lsd_label;
-            else label = llList2String(PluginLabels, plugin_idx);
-        }
-        else {
-            label = llList2String(PluginLabels, plugin_idx);
-        }
+        string label = llList2String(PluginLabels, plugin_idx);
         integer button_state = get_plugin_state(context);
 
         // Create button data object with context, label, and state

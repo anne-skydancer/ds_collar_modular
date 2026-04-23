@@ -1,11 +1,23 @@
 /*--------------------
 PLUGIN: plugin_public.lsl
 VERSION: 1.10
-REVISION: 9
+REVISION: 11
 PURPOSE: Toggle public access mode directly from main menu
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility,
   namespaced internal message protocol
 CHANGES:
+- v1.1 rev 11: write_plugin_reg guards idempotent writes (read-before-
+  write). Same-value re-registrations on state_entry and
+  kernel.register.refresh no longer fire linkset_data, so kmod_ui's
+  debounced rebuild + session invalidation stops triggering on
+  register.refresh cascades — wearer's open menu survives the event.
+- v1.1 rev 10: Switch to state-based label resolution. register_self now
+  registers a buttonconfig for the Public:Y / Public:N pair via kmod_dialogs
+  and emits ui.state.update with the current state. Toggle paths
+  (set_public_mode, apply_settings_sync) send ui.state.update;
+  plugin.reg.<ctx> is written once at registration and never rewritten on
+  toggle. Removes the LSD write + linkset_data fire + debounce + rebuild
+  that used to happen on every public-mode flip.
 - v1.1 rev 9: Add dormancy guard in state_entry — script parks itself
   if the prim's object description is "COLLAR_UPDATER" so it stays dormant
   when staged in an updater installer prim.
@@ -45,6 +57,7 @@ CHANGES:
 integer KERNEL_LIFECYCLE = 500;
 integer SETTINGS_BUS = 800;
 integer UI_BUS = 900;
+integer DIALOG_BUS = 950;
 
 /* -------------------- PLUGIN IDENTITY -------------------- */
 string PLUGIN_CONTEXT = "ui.core.public";
@@ -89,18 +102,41 @@ integer btn_allowed(string label) {
 // Self-declared menu presence. kmod_ui enumerates via llLinksetDataFindKeys
 // and rebuilds its view tables on linkset_data events touching this key.
 write_plugin_reg(string label) {
-    llLinksetDataWrite("plugin.reg." + PLUGIN_CONTEXT, llList2Json(JSON_OBJECT, [
+    string k = "plugin.reg." + PLUGIN_CONTEXT;
+    string v = llList2Json(JSON_OBJECT, [
         "label",  label,
         "script", llGetScriptName()
-    ]));
+    ]);
+    // Skip the write (and its linkset_data event) when the stored value
+    // is already what we would write. Idempotent re-registrations on
+    // state_entry or kernel.register.refresh then no longer trigger
+    // kmod_ui's debounced rebuild + session invalidation.
+    if (llLinksetDataRead(k) == v) return;
+    llLinksetDataWrite(k, v);
+}
+
+// Tell kmod_dialogs how to render this plugin's button based on state:
+//   state == 0 → PLUGIN_LABEL_OFF
+//   state != 0 → PLUGIN_LABEL_ON
+register_button_config() {
+    llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
+        "type",     "ui.dialog.buttonconfig.register",
+        "context",  PLUGIN_CONTEXT,
+        "button_a", PLUGIN_LABEL_OFF,
+        "button_b", PLUGIN_LABEL_ON
+    ]), NULL_KEY);
+}
+
+// Push current toggle state to kmod_ui; label gets resolved via buttonconfig.
+send_state_update() {
+    llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
+        "type",    "ui.state.update",
+        "context", PLUGIN_CONTEXT,
+        "state",   PublicModeEnabled
+    ]), NULL_KEY);
 }
 
 register_self() {
-    string label = PLUGIN_LABEL_OFF;
-    if (PublicModeEnabled) {
-        label = PLUGIN_LABEL_ON;
-    }
-
     // Write button visibility policy to LSD (default-deny per ACL level)
     llLinksetDataWrite("acl.policycontext:" + PLUGIN_CONTEXT, llList2Json(JSON_OBJECT, [
         "3", "toggle",
@@ -108,14 +144,20 @@ register_self() {
         "5", "toggle"
     ]));
 
-    // Self-declared menu presence for kmod_ui.
-    write_plugin_reg(label);
+    // Self-declared menu presence for kmod_ui. The label here is the
+    // kmod_dialogs fallback used before buttonconfig lands — stable
+    // default, never rewritten on toggle.
+    write_plugin_reg(PLUGIN_LABEL_OFF);
+
+    // State-based label resolution.
+    register_button_config();
+    send_state_update();
 
     // Register with kernel (for ping/pong health tracking and alias table).
     string msg = llList2Json(JSON_OBJECT, [
         "type", "kernel.register.declare",
         "context", PLUGIN_CONTEXT,
-        "label", label,
+        "label", PLUGIN_LABEL_OFF,
         "script", llGetScriptName()
     ]);
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, msg, NULL_KEY);
@@ -147,7 +189,7 @@ apply_settings_sync() {
     }
 
     if (old_state != PublicModeEnabled) {
-        register_self();
+        send_state_update();
     }
 }
 
@@ -168,16 +210,8 @@ persist_public_mode(integer new_value) {
 
 /* -------------------- UI LABEL UPDATE -------------------- */
 
-send_label_update() {
-    string new_label = PLUGIN_LABEL_OFF;
-    if (PublicModeEnabled) {
-        new_label = PLUGIN_LABEL_ON;
-    }
-    write_plugin_reg(new_label);
-}
-
 update_ui_label_and_return(key user) {
-    send_label_update();
+    send_state_update();
 
     llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
         "type", "ui.menu.return",
@@ -209,7 +243,7 @@ set_public_mode(key user, integer acl_level, integer target_enabled) {
     if (PublicModeEnabled) llRegionSayTo(user, 0, "Public access enabled.");
     else llRegionSayTo(user, 0, "Public access disabled.");
 
-    send_label_update();
+    send_state_update();
 }
 
 handle_subpath(key user, integer acl_level, string subpath) {
