@@ -1,10 +1,17 @@
 /*--------------------
 MODULE: kmod_ui.lsl
 VERSION: 1.10
-REVISION: 15
+REVISION: 16
 PURPOSE: Session management, LSD policy filtering, and plugin list orchestration
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- v1.1 rev 16: Drop the in-memory toggle state cache. Toggleable plugins
+  now write plugin.<short>.state to LSD and kmod_dialogs reads it directly
+  at render time via the existing buttonconfig path. PluginStateContexts /
+  PluginStateValues / find_plugin_state_idx / get_plugin_state /
+  set_plugin_state / handle_update_state and the ui.state.update
+  link_message branch all go away. button_data objects stop carrying a
+  "state" field. One less round-trip, two fewer globals, ~30 fewer lines.
 - v1.1 rev 15: Add dormancy guard in state_entry — script parks itself
   if the prim's object description is "COLLAR_UPDATER" so it stays dormant
   when staged in an updater installer prim.
@@ -162,10 +169,6 @@ list PendingAclContexts;
 list TouchKeys;
 list TouchStartTimes;
 
-// Parallel Lists for Plugin States
-list PluginStateContexts;
-list PluginStateValues;
-
 // Debounce flag for linkset_data-driven rebuilds. When a plugin.reg.* write
 // fires, the handler sets this and arms the timer; the timer event calls
 // rebuild_plugin_list_from_lsd() once, regardless of how many writes landed
@@ -198,34 +201,6 @@ integer validate_required_fields(string json_str, list field_names) {
 
 string generate_session_id(key user) {
     return "ui_" + (string)user + "_" + (string)llGetUnixTime();
-}
-
-/* -------------------- PLUGIN STATE MANAGEMENT -------------------- */
-
-integer find_plugin_state_idx(string context) {
-    return llListFindList(PluginStateContexts, [context]);
-}
-
-integer get_plugin_state(string context) {
-    integer idx = find_plugin_state_idx(context);
-    if (idx == -1) {
-        return 0;  // Default state
-    }
-    return llList2Integer(PluginStateValues, idx);
-}
-
-set_plugin_state(string context, integer button_state) {
-    integer idx = find_plugin_state_idx(context);
-
-    if (idx != -1) {
-        // Update existing state
-        PluginStateValues = llListReplaceList(PluginStateValues, [button_state], idx, idx);
-    }
-    else {
-        // Add new state
-        PluginStateContexts += [context];
-        PluginStateValues += [button_state];
-    }
 }
 
 /* -------------------- ACL CACHE MANAGEMENT -------------------- */
@@ -540,16 +515,17 @@ send_render_menu(key user, string menu_type) {
     integer i = start_idx;
     while (i < end_idx) {
         integer plugin_idx = llList2Integer(filtered_indices, i);
-        
+
         string context = llList2String(PluginContexts, plugin_idx);
         string label = llList2String(PluginLabels, plugin_idx);
-        integer button_state = get_plugin_state(context);
 
-        // Create button data object with context, label, and state
+        // button_data carries context + default label. For toggleable
+        // buttons (registered buttonconfig in kmod_dialogs), kmod_dialogs
+        // reads the live state from plugin.<short>.state in LSD and
+        // overrides the label at render time.
         string btn_obj = llList2Json(JSON_OBJECT, [
             "context", context,
-            "label", label,
-            "state", button_state
+            "label", label
         ]);
         button_data += [btn_obj];
         i++;
@@ -891,14 +867,8 @@ handle_return(string msg) {
     }
 }
 
-handle_update_state(string msg) {
-    if (!validate_required_fields(msg, ["context", "state"])) return;
-
-    string context = llJsonGetValue(msg, ["context"]);
-    integer plugin_state = (integer)llJsonGetValue(msg, ["state"]);
-
-    set_plugin_state(context, plugin_state);
-}
+// handle_update_state removed in rev 16 — toggle state now lives in LSD
+// (plugin.<short>.state) and kmod_dialogs reads it at render time.
 
 // handle_plugin_acl_bus removed in v1.1 — ACL filtering via LSD policies
 
@@ -965,10 +935,7 @@ default
         
         TouchKeys = [];
         TouchStartTimes = [];
-        
-        PluginStateContexts = [];
-        PluginStateValues = [];
-        
+
         // Advertise root menu context so kmod_chat can build a 'menu' alias.
         // The root context itself is NOT a plugin and does not get a
         // plugin.reg.* LSD entry — it only exists for kmod_chat's alias table.
@@ -1092,7 +1059,6 @@ default
             if (msg_type == "ui.menu.start") handle_start(msg, id);
             else if (msg_type == "ui.chat.command") handle_start(msg, id);
             else if (msg_type == "ui.menu.return") handle_return(msg);
-            else if (msg_type == "ui.state.update") handle_update_state(msg);
             return;
         }
 

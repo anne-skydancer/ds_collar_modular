@@ -1,11 +1,16 @@
 /*--------------------
 PLUGIN: plugin_lock.lsl
 VERSION: 1.10
-REVISION: 12
+REVISION: 13
 PURPOSE: Toggle collar lock and RLV detach control labels
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility,
   namespaced internal message protocol
 CHANGES:
+- v1.1 rev 13: Toggle state now written to plugin.state.<ctx> in LSD
+  (via idempotent write_plugin_state helper) instead of pushed via
+  ui.state.update link_message. kmod_ui rev 17 reads plugin.state.<ctx>
+  live at render time, so the state-cache hop is gone. Reset handler
+  now also deletes plugin.state.<ctx> alongside the other LSD cleanup.
 - v1.1 rev 12: write_plugin_reg guards idempotent writes (read-before-
   write). Same-value re-registrations on state_entry and
   kernel.register.refresh no longer fire linkset_data, so kmod_ui's
@@ -146,15 +151,17 @@ register_button_config() {
     ]), NULL_KEY);
 }
 
-// Push the current toggle state to kmod_ui. Drives the rendered label via
-// the buttonconfig registered above — no need to write a label string
-// anywhere.
+// Write the current toggle state to LSD at plugin.lock.state. kmod_ui
+// reads this at render time and passes it in button_data; kmod_dialogs
+// resolves the final button label via its registered buttonconfig.
+// Key convention: "plugin.<short>.state" where <short> is the trailing
+// dotted segment of the plugin context. Idempotent read-before-write
+// skips the linkset_data event when the stored value already matches.
 send_state_update() {
-    llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
-        "type",    "ui.state.update",
-        "context", PLUGIN_CONTEXT,
-        "state",   Locked
-    ]), NULL_KEY);
+    string k = "plugin.lock.state";
+    string v = (string)Locked;
+    if (llLinksetDataRead(k) == v) return;
+    llLinksetDataWrite(k, v);
 }
 
 register_self() {
@@ -413,6 +420,7 @@ default {
                     if (target_context != "" && target_context != PLUGIN_CONTEXT) return;
                 }
                 llLinksetDataDelete("plugin.reg." + PLUGIN_CONTEXT);
+                llLinksetDataDelete("plugin.lock.state");
                 llLinksetDataDelete("acl.policycontext:" + PLUGIN_CONTEXT);
                 llResetScript();
             }

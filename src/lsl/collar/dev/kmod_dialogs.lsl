@@ -1,10 +1,17 @@
 /*--------------------
 MODULE: kmod_dialogs.lsl
 VERSION: 1.10
-REVISION: 6
+REVISION: 7
 PURPOSE: Centralized dialog management for shared listener handling
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- v1.1 rev 7: Toggle-button state is now read directly from LSD at render
+  time rather than taken from the button_data "state" field. Convention:
+  for context "ui.core.lock" the state key is "plugin.lock.state" (the
+  trailing dotted segment of the context). This lets plugins update their
+  toggle state with a single LSD write — no ui.state.update link_message
+  round-trip through kmod_ui — and kmod_dialogs picks the right label via
+  the existing buttonconfig at render.
 - v1.1 rev 6: Add dormancy guard in state_entry — script parks itself
   if the prim's object description is "COLLAR_UPDATER" so it stays dormant
   when staged in an updater installer prim.
@@ -176,6 +183,16 @@ string get_button_label(string context, integer button_state) {
     }
 }
 
+// Read the toggle state for a context from LSD. Convention: the state
+// lives at "plugin.<short>.state" where <short> is the trailing dotted
+// segment of the plugin context. Missing key → 0 (default off).
+integer read_toggle_state(string context) {
+    list parts = llParseString2List(context, ["."], []);
+    string short_name = llList2String(parts, -1);
+    if (short_name == "") return 0;
+    return (integer)llLinksetDataRead("plugin." + short_name + ".state");
+}
+
 /* -------------------- DIALOG DISPLAY -------------------- */
 
 handle_dialog_open(string msg) {
@@ -220,12 +237,12 @@ handle_dialog_open(string msg) {
                 integer config_idx = find_button_config_idx(context);
 
                 if (config_idx != -1) {
-                    // Toggle button: resolve label via registered config + state (defaults to 0)
-                    integer button_state = 0;
-                    string state_str = llJsonGetValue(item, ["state"]);
-                    if (state_str != JSON_INVALID) {
-                        button_state = (integer)state_str;
-                    }
+                    // Toggle button: resolve label via registered config.
+                    // State comes from plugin.<short>.state in LSD —
+                    // read live so menu renders always reflect the
+                    // latest toggle flip, including one that landed
+                    // mid-dialog.
+                    integer button_state = read_toggle_state(context);
                     button_text = get_button_label(context, button_state);
                 }
                 else {

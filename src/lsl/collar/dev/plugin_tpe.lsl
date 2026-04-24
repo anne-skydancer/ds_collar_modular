@@ -1,11 +1,16 @@
 /*--------------------
 PLUGIN: plugin_tpe.lsl
 VERSION: 1.10
-REVISION: 9
+REVISION: 10
 PURPOSE: Manage TPE mode with wearer confirmation and owner oversight
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility,
   namespaced internal message protocol
 CHANGES:
+- v1.1 rev 10: Toggle state now written to plugin.state.<ctx> in LSD
+  (via idempotent write_plugin_state helper) instead of pushed via
+  ui.state.update link_message. kmod_ui rev 17 reads plugin.state.<ctx>
+  live at render time, so the state-cache hop is gone. Reset handler
+  now also deletes plugin.state.<ctx> alongside the other LSD cleanup.
 - v1.1 rev 9: write_plugin_reg guards idempotent writes (read-before-
   write). Same-value re-registrations on state_entry and
   kernel.register.refresh no longer fire linkset_data, so kmod_ui's
@@ -153,13 +158,16 @@ register_button_config() {
     ]), NULL_KEY);
 }
 
-// Push current toggle state to kmod_ui; label gets resolved via buttonconfig.
+// Write the current toggle state to LSD at plugin.tpe.state. kmod_dialogs
+// reads this at render time (via buttonconfig) to pick the right label.
+// Key convention: "plugin.<short>.state" where <short> is the trailing
+// dotted segment of the plugin context. Idempotent read-before-write
+// skips the linkset_data event when the stored value already matches.
 send_state_update() {
-    llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
-        "type",    "ui.state.update",
-        "context", PLUGIN_CONTEXT,
-        "state",   TpeModeEnabled
-    ]), NULL_KEY);
+    string k = "plugin.tpe.state";
+    string v = (string)TpeModeEnabled;
+    if (llLinksetDataRead(k) == v) return;
+    llLinksetDataWrite(k, v);
 }
 
 register_with_kernel() {
@@ -406,6 +414,7 @@ default
                 }
                 // Either no context (broadcast) or matches our context
                 llLinksetDataDelete("plugin.reg." + PLUGIN_CONTEXT);
+                llLinksetDataDelete("plugin.tpe.state");
                 llLinksetDataDelete("acl.policycontext:" + PLUGIN_CONTEXT);
                 llResetScript();
             }
