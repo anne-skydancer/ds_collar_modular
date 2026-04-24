@@ -1,10 +1,36 @@
 /*--------------------
 PLUGIN: plugin_rlvex.lsl
 VERSION: 1.10
-REVISION: 3
+REVISION: 10
 PURPOSE: Manage RLV teleport and IM exceptions for owners and trustees
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
+- v1.1 rev 10: write_plugin_reg guards idempotent writes (read-before-
+  write). Same-value re-registrations on state_entry and
+  kernel.register.refresh no longer fire linkset_data, so kmod_ui's
+  debounced rebuild + session invalidation stops triggering on
+  register.refresh cascades — wearer's open menu survives the event.
+- v1.1 rev 9: Add dormancy guard in state_entry — script parks itself
+  if the prim's object description is "COLLAR_UPDATER" so it stays dormant
+  when staged in an updater installer prim.
+- v1.1 rev 8: Reset handler now follows the standard pattern — delete the
+  plugin's LSD keys and llResetScript on kernel.reset.soft/factory, honouring
+  any target_context guard. Previous rev deferred a reconcile via a 1s timer
+  without resetting the script, which left viewer-side RLV exceptions (tagged
+  to the old script UUID) active past a factory reset; an ex-owner kept TP/IM
+  privileges until the next real script reset. llResetScript drops those
+  viewer entries cleanly, and state_entry's apply_settings_sync reconciles
+  from the current (possibly wiped) LSD on the way back up.
+- v1.1 rev 7: Self-declare menu presence via LSD (plugin.reg.<ctx>).
+  Label updates write the same LSD key directly; ui.label.update link_messages
+  are gone. Reset handlers delete plugin.reg.<ctx> and acl.policycontext:<ctx>
+  before llResetScript so kmod_ui drops the button immediately.
+- v1.1 rev 6: Wire-type rename (Phase 2). kernel.register→kernel.register.declare,
+  kernel.registernow→kernel.register.refresh, kernel.reset→kernel.reset.soft,
+  kernel.resetall→kernel.reset.factory.
+- v1.1 rev 5: Guard ui.menu.start against raw kmod_chat broadcasts (no acl
+  field). Fixes duplicate dialogs when commands are typed in chat.
+- v1.1 rev 4: Namespace internal message type strings to dotted convention.
 - v1.1 rev 3: Two-mode access model. Read primary owner from access.owner
   scalar (single mode) or access.owneruuids CSV (multi mode). Trustees
   read from access.trusteeuuids CSV.
@@ -27,7 +53,7 @@ integer UI_BUS = 900;
 integer DIALOG_BUS = 950;
 
 /* -------------------- IDENTITY -------------------- */
-string PLUGIN_CONTEXT = "core_rlv_exceptions";
+string PLUGIN_CONTEXT = "ui.core.rlv_exceptions";
 string PLUGIN_LABEL = "Exceptions";
 
 /* -------------------- SETTINGS KEYS -------------------- */
@@ -77,7 +103,7 @@ string gen_session() {
 
 /* -------------------- LSD POLICY HELPER -------------------- */
 list get_policy_buttons(string ctx, integer acl) {
-    string policy = llLinksetDataRead("policy:" + ctx);
+    string policy = llLinksetDataRead("acl.policycontext:" + ctx);
     if (policy == "") return [];
     string csv = llJsonGetValue(policy, [(string)acl]);
     if (csv == JSON_INVALID) return [];
@@ -142,17 +168,36 @@ reconcile_all() {
 
 /* -------------------- LIFECYCLE -------------------- */
 
+// Self-declared menu presence. kmod_ui enumerates via llLinksetDataFindKeys
+// and rebuilds its view tables on linkset_data events touching this key.
+write_plugin_reg(string label) {
+    string k = "plugin.reg." + PLUGIN_CONTEXT;
+    string v = llList2Json(JSON_OBJECT, [
+        "label",  label,
+        "script", llGetScriptName()
+    ]);
+    // Skip the write (and its linkset_data event) when the stored value
+    // is already what we would write. Idempotent re-registrations on
+    // state_entry or kernel.register.refresh then no longer trigger
+    // kmod_ui's debounced rebuild + session invalidation.
+    if (llLinksetDataRead(k) == v) return;
+    llLinksetDataWrite(k, v);
+}
+
 register_self() {
     // Write button visibility policy to LSD (default-deny per ACL level)
-    llLinksetDataWrite("policy:" + PLUGIN_CONTEXT, llList2Json(JSON_OBJECT, [
+    llLinksetDataWrite("acl.policycontext:" + PLUGIN_CONTEXT, llList2Json(JSON_OBJECT, [
         "3", "Owner,Trustee,TP,IM",
         "4", "Owner,Trustee,TP,IM",
         "5", "Owner,Trustee,TP,IM"
     ]));
 
-    // Register with kernel
+    // Self-declared menu presence for kmod_ui.
+    write_plugin_reg(PLUGIN_LABEL);
+
+    // Register with kernel (for ping/pong health tracking and alias table).
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
-        "type", "register",
+        "type", "kernel.register.declare",
         "context", PLUGIN_CONTEXT,
         "label", PLUGIN_LABEL,
         "script", llGetScriptName()
@@ -161,7 +206,7 @@ register_self() {
 
 send_pong() {
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
-        "type", "pong",
+        "type", "kernel.pong",
         "context", PLUGIN_CONTEXT
     ]), NULL_KEY);
 }
@@ -272,7 +317,7 @@ apply_settings_sync() {
 persist_setting(string setting_key, integer value) {
     llLinksetDataWrite(setting_key, (string)value);
     llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
-        "type", "set",
+        "type", "settings.set",
         "key", setting_key,
         "value", (string)value
     ]), NULL_KEY);
@@ -294,7 +339,7 @@ show_main() {
     if (btn_allowed("Trustee")) button_data += [btn("Trustee", "trustee")];
 
     llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
-        "type", "dialog_open",
+        "type", "ui.dialog.open",
         "session_id", SessionId,
         "user", (string)CurrentUser,
         "title", PLUGIN_LABEL,
@@ -319,7 +364,7 @@ show_owner_menu() {
     if (btn_allowed("IM")) button_data += [btn("IM", "im")];
 
     llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
-        "type", "dialog_open",
+        "type", "ui.dialog.open",
         "session_id", SessionId,
         "user", (string)CurrentUser,
         "title", "Owner Exceptions",
@@ -344,7 +389,7 @@ show_trustee_menu() {
     if (btn_allowed("IM")) button_data += [btn("IM", "im")];
 
     llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
-        "type", "dialog_open",
+        "type", "ui.dialog.open",
         "session_id", SessionId,
         "user", (string)CurrentUser,
         "title", "Trustee Exceptions",
@@ -367,7 +412,7 @@ show_toggle(string role, string exception_type, integer current) {
     list button_data = [btn("Back", "back"), btn("Allow", "allow"), btn("Deny", "deny")];
 
     llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
-        "type", "dialog_open",
+        "type", "ui.dialog.open",
         "session_id", SessionId,
         "user", (string)CurrentUser,
         "title", role + " " + exception_type,
@@ -383,7 +428,7 @@ handle_button(string ctx) {
     if (ctx == "back") {
         if (MenuContext == "main") {
             llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
-                "type", "return", "user", (string)CurrentUser
+                "type", "ui.menu.return", "user", (string)CurrentUser
             ]), NULL_KEY);
             cleanup();
         }
@@ -477,7 +522,7 @@ handle_button(string ctx) {
 cleanup() {
     if (SessionId != "") {
         llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
-            "type", "dialog_close",
+            "type", "ui.dialog.close",
             "session_id", SessionId
         ]), NULL_KEY);
     }
@@ -494,6 +539,11 @@ cleanup() {
 
 default {
     state_entry() {
+        if (llGetObjectDesc() == "COLLAR_UPDATER") {
+            llSetScriptState(llGetScriptName(), FALSE);
+            return;
+        }
+
         cleanup();
         register_self();
         apply_settings_sync();
@@ -520,22 +570,27 @@ default {
         if (type == JSON_INVALID) return;
 
         if (num == KERNEL_LIFECYCLE) {
-            if (type == "register_now") {
+            if (type == "kernel.register.refresh") {
                 register_self();
                 apply_settings_sync();
             }
-            else if (type == "ping") send_pong();
-            else if (type == "soft_reset" || type == "soft_reset_all") {
-                // On soft reset, reapply RLV exceptions with same delay as settings_sync
-                PendingReconcile = TRUE;
-                llSetTimerEvent(1.0);
+            else if (type == "kernel.ping") send_pong();
+            else if (type == "kernel.reset.soft" || type == "kernel.reset.factory") {
+                string target_context = llJsonGetValue(msg, ["context"]);
+                if (target_context != JSON_INVALID) {
+                    if (target_context != "" && target_context != PLUGIN_CONTEXT) return;
+                }
+                llLinksetDataDelete("plugin.reg." + PLUGIN_CONTEXT);
+                llLinksetDataDelete("acl.policycontext:" + PLUGIN_CONTEXT);
+                llResetScript();
             }
         }
         else if (num == SETTINGS_BUS) {
-            if (type == "settings_sync" || type == "settings_delta") apply_settings_sync();
+            if (type == "settings.sync" || type == "settings.delta") apply_settings_sync();
         }
         else if (num == UI_BUS) {
-            if (type == "start" && (llJsonGetValue(msg, ["context"]) != JSON_INVALID)) {
+            if (type == "ui.menu.start" && (llJsonGetValue(msg, ["context"]) != JSON_INVALID)) {
+                if (llJsonGetValue(msg, ["acl"]) == JSON_INVALID) return;
                 if (llJsonGetValue(msg, ["context"]) == PLUGIN_CONTEXT) {
                     CurrentUser = id;
                     UserAcl = (integer)llJsonGetValue(msg, ["acl"]);
@@ -544,14 +599,14 @@ default {
             }
         }
         else if (num == DIALOG_BUS) {
-            if (type == "dialog_response") {
+            if (type == "ui.dialog.response") {
                 if ((llJsonGetValue(msg, ["session_id"]) != JSON_INVALID) && (llJsonGetValue(msg, ["context"]) != JSON_INVALID)) {
                     if (llJsonGetValue(msg, ["session_id"]) == SessionId) {
                         handle_button(llJsonGetValue(msg, ["context"]));
                     }
                 }
             }
-            else if (type == "dialog_timeout") {
+            else if (type == "ui.dialog.timeout") {
                 if ((llJsonGetValue(msg, ["session_id"]) != JSON_INVALID)) {
                     if (llJsonGetValue(msg, ["session_id"]) == SessionId) cleanup();
                 }

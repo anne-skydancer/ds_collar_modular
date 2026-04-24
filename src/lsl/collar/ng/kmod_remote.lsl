@@ -1,10 +1,24 @@
 /*--------------------
 MODULE: kmod_remote.lsl
 VERSION: 1.10
-REVISION: 0
+REVISION: 7
 PURPOSE: External HUD communication bridge for remote control workflows
-ARCHITECTURE: Consolidated message bus lanes
+ARCHITECTURE: Consolidated message bus lanes, namespaced internal message protocol
 CHANGES:
+- v1.1 rev 7: Add dormancy guard in state_entry — script parks itself
+  if the prim's object description is "COLLAR_UPDATER" so it stays dormant
+  when staged in an updater installer prim.
+- v1.1 rev 6: Consistency pass — PIN-ready notice converted from
+  llOwnerSay to llRegionSayTo(llGetOwner(), 0, ...).
+- v1.1 rev 5: AUTH_BUS rename (Phase 1). auth.aclquery→auth.acl.query,
+  auth.aclresult→auth.acl.result.
+- v1.1 rev 4: KERNEL_LIFECYCLE rename (Phase 1). kernel.reset→
+  kernel.reset.soft, kernel.resetall→kernel.reset.factory.
+- v1.1 rev 3: Namespace context values. ROOT_CONTEXT → "ui.core.root",
+  SOS_CONTEXT → "ui.sos.root".
+- v1.1 rev 2: Fix ACL response listener — expect "auth.acl.result" instead of stale
+  "acl_result" (missed in kmod_auth v1.1 rev 4 namespace migration).
+- v1.1 rev 1: Namespaced internal message types (auth.aclquery, ui.menu.start, etc.).
 - v1.1 rev 0: Version bump for LSD policy architecture. No functional changes to this module.
 --------------------*/
 
@@ -22,8 +36,8 @@ integer EXTERNAL_MENU_CHAN      = -8675311;  // Listen for menu requests
 float MAX_DETECTION_RANGE = 20.0;  // Maximum range in meters for HUD detection
 
 /* -------------------- PROTOCOL MESSAGE TYPES -------------------- */
-string ROOT_CONTEXT = "core_root";
-string SOS_CONTEXT = "sos_root";
+string ROOT_CONTEXT = "ui.core.root";
+string SOS_CONTEXT = "ui.sos.root";
 
 /* -------------------- STATE -------------------- */
 integer AclQueryListenHandle = 0;
@@ -179,7 +193,7 @@ remove_pending_query(key hud_wearer) {
 
 request_internal_acl(key avatar_key) {
     string msg = llList2Json(JSON_OBJECT, [
-        "type", "acl_query",
+        "type", "auth.acl.query",
         "avatar", (string)avatar_key,
         "id", "remote_" + (string)avatar_key
     ]);
@@ -189,7 +203,7 @@ request_internal_acl(key avatar_key) {
 
 send_external_acl_response(key hud_wearer, integer level) {
     string msg = llList2Json(JSON_OBJECT, [
-        "type", "acl_result_external",
+        "type", "auth.aclresultexternal",
         "avatar", (string)hud_wearer,
         "level", (string)level,
         "collar_owner", (string)CollarOwner
@@ -204,7 +218,7 @@ send_external_acl_response(key hud_wearer, integer level) {
 trigger_menu_for_external_user(key user_key, string context) {
     // Send start message to UI module with external user
     string msg = llList2Json(JSON_OBJECT, [
-        "type", "start",
+        "type", "ui.menu.start",
         "context", context
     ]);
 
@@ -244,7 +258,7 @@ handle_collar_scan(string message) {
     
     
     string response = llList2Json(JSON_OBJECT, [
-        "type", "collar_scan_response",
+        "type", "remote.collarscanresponse",
         "collar_owner", (string)CollarOwner
     ]);
     
@@ -350,7 +364,7 @@ handle_update_discover(string message) {
     
     // Respond with collar presence, PIN, and inventory status
     string response = llList2Json(JSON_OBJECT, [
-        "type", "collar_ready",
+        "type", "remote.collarready",
         "collar", (string)llGetKey(),
         "owner", (string)CollarOwner,
         "wearer", (string)llGetOwner(),
@@ -361,13 +375,18 @@ handle_update_discover(string message) {
     ]);
     
     llRegionSayTo(updater, EXTERNAL_ACL_REPLY_CHAN, response);
-    llOwnerSay("Update ready. PIN generated for secure transfer.");
+    llRegionSayTo(llGetOwner(), 0, "Update ready. PIN generated for secure transfer.");
 }
 
 /* -------------------- EVENTS -------------------- */
 
 default {
     state_entry() {
+        if (llGetObjectDesc() == "COLLAR_UPDATER") {
+            llSetScriptState(llGetScriptName(), FALSE);
+            return;
+        }
+
         // Clean up any existing listens
         if (AclQueryListenHandle != 0) {
             llListenRemove(AclQueryListenHandle);
@@ -413,19 +432,19 @@ default {
             if (msg_type == JSON_INVALID) return;
             
             // Respond to collar scan
-            if (msg_type == "collar_scan") {
+            if (msg_type == "remote.collarscan") {
                 handle_collar_scan(message);
                 return;
             }
             
             // Handle ACL queries
-            if (msg_type == "acl_query_external") {
+            if (msg_type == "auth.aclqueryexternal") {
                 handle_acl_query_external(message);
                 return;
             }
             
             // Handle update discovery
-            if (msg_type == "update_discover") {
+            if (msg_type == "remote.updatediscover") {
                 handle_update_discover(message);
                 return;
             }
@@ -438,7 +457,7 @@ default {
             string msg_type = llJsonGetValue(message, ["type"]);
             if (msg_type == JSON_INVALID) return;
             
-            if (msg_type == "menu_request_external") {
+            if (msg_type == "remote.menurequest") {
                 handle_menu_request_external(message);
                 return;
             }
@@ -454,7 +473,7 @@ default {
         /* -------------------- KERNEL LIFECYCLE -------------------- */
         if (num == KERNEL_LIFECYCLE) {
             KernelAlive = TRUE;  // Any kernel message proves kernel is present
-            if (msg_type == "soft_reset" || msg_type == "soft_reset_all") {
+            if (msg_type == "kernel.reset.soft" || msg_type == "kernel.reset.factory") {
                 llResetScript();
             }
             return;
@@ -462,7 +481,7 @@ default {
 
         // Handle ACL result from AUTH module
         if (num == AUTH_BUS) {
-            if (msg_type != "acl_result") return;
+            if (msg_type != "auth.acl.result") return;
             
             // Extract ACL information
             string avatar_key_str = llJsonGetValue(str, ["avatar"]);

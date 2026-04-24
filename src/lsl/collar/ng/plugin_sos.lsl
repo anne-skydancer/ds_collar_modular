@@ -1,10 +1,34 @@
 /*--------------------
 PLUGIN: plugin_sos.lsl
 VERSION: 1.10
-REVISION: 1
+REVISION: 8
 PURPOSE: Emergency wearer-accessible actions when ACL is locked out
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
+- v1.1 rev 8: write_plugin_reg guards idempotent writes (read-before-
+  write). Same-value re-registrations on state_entry and
+  kernel.register.refresh no longer fire linkset_data, so kmod_ui's
+  debounced rebuild + session invalidation stops triggering on
+  register.refresh cascades — wearer's open menu survives the event.
+- v1.1 rev 7: Add dormancy guard in state_entry — script parks itself
+  if the prim's object description is "COLLAR_UPDATER" so it stays dormant
+  when staged in an updater installer prim.
+- v1.1 rev 6: Self-declare menu presence via LSD (plugin.reg.<ctx>).
+  Label updates write the same LSD key directly; ui.label.update link_messages
+  are gone. Reset handlers delete plugin.reg.<ctx> and acl.policycontext:<ctx>
+  before llResetScript so kmod_ui drops the button immediately.
+- v1.1 rev 5: Chat command support (Phase 3). Registers "sos" alias
+  (opens SOS menu) plus three standalone panic aliases: "sosunleash",
+  "sosrestrict", "sosrelay" — each fires its emergency action directly.
+  ACL gate is automatic via the ui.sos.911 policy (ACL 0 only — the
+  state you're in when locked out of normal access).
+- v1.1 rev 4: Wire-type rename (Phase 2). kernel.register→kernel.register.declare,
+  kernel.registernow→kernel.register.refresh, kernel.reset→kernel.reset.soft,
+  kernel.resetall→kernel.reset.factory, sos.leashrelease→sos.leash.release,
+  sos.restrictclear→sos.restrict.clear, sos.relayclear→sos.relay.clear.
+- v1.1 rev 3: Guard ui.menu.start against raw kmod_chat broadcasts (no acl
+  field). Fixes duplicate dialogs when commands are typed in chat.
+- v1.1 rev 2: Namespace internal message type strings (kernel.*, ui.*, sos.*).
 - v1.1 rev 1: Migrate dialog buttons to button_data format with context-based routing.
 - v1.1 rev 0: Self-declares button visibility policy to LSD on registration.
   Replaces hardcoded PLUGIN_MIN_ACL with policy reads.
@@ -18,7 +42,7 @@ integer UI_BUS = 900;
 integer DIALOG_BUS = 950;
 
 /* -------------------- PLUGIN IDENTITY -------------------- */
-string PLUGIN_CONTEXT = "sos_911";
+string PLUGIN_CONTEXT = "ui.sos.911";
 string PLUGIN_LABEL = "SOS";
 
 /* -------------------- STATE -------------------- */
@@ -40,7 +64,7 @@ string generate_session_id() {
 
 /* -------------------- LSD POLICY HELPER -------------------- */
 list get_policy_buttons(string ctx, integer acl) {
-    string policy = llLinksetDataRead("policy:" + ctx);
+    string policy = llLinksetDataRead("acl.policycontext:" + ctx);
     if (policy == "") return [];
     string csv = llJsonGetValue(policy, [(string)acl]);
     if (csv == JSON_INVALID) return [];
@@ -52,24 +76,66 @@ integer btn_allowed(string label) {
 }
 
 /* -------------------- PLUGIN REGISTRATION -------------------- */
+
+// Self-declared menu presence. kmod_ui enumerates via llLinksetDataFindKeys
+// and rebuilds its view tables on linkset_data events touching this key.
+write_plugin_reg(string label) {
+    string k = "plugin.reg." + PLUGIN_CONTEXT;
+    string v = llList2Json(JSON_OBJECT, [
+        "label",  label,
+        "script", llGetScriptName()
+    ]);
+    // Skip the write (and its linkset_data event) when the stored value
+    // is already what we would write. Idempotent re-registrations on
+    // state_entry or kernel.register.refresh then no longer trigger
+    // kmod_ui's debounced rebuild + session invalidation.
+    if (llLinksetDataRead(k) == v) return;
+    llLinksetDataWrite(k, v);
+}
+
 register_self() {
     // Write button visibility policy to LSD (emergency access for ACL 0 only)
-    llLinksetDataWrite("policy:" + PLUGIN_CONTEXT, llList2Json(JSON_OBJECT, [
+    llLinksetDataWrite("acl.policycontext:" + PLUGIN_CONTEXT, llList2Json(JSON_OBJECT, [
         "0", "Unleash,Clear RLV,Clear Relay"
     ]));
 
-    // Register with kernel
+    // Self-declared menu presence for kmod_ui.
+    write_plugin_reg(PLUGIN_LABEL);
+
+    // Register with kernel (for ping/pong health tracking and alias table).
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
-        "type", "register",
+        "type", "kernel.register.declare",
         "context", PLUGIN_CONTEXT,
         "label", PLUGIN_LABEL,
         "script", llGetScriptName()
+    ]), NULL_KEY);
+
+    // Declare chat aliases.
+    llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
+        "type",    "chat.alias.declare",
+        "alias",   "sos",
+        "context", PLUGIN_CONTEXT
+    ]), NULL_KEY);
+    llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
+        "type",    "chat.alias.declare",
+        "alias",   "sosunleash",
+        "context", PLUGIN_CONTEXT + ".unleash"
+    ]), NULL_KEY);
+    llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
+        "type",    "chat.alias.declare",
+        "alias",   "sosrestrict",
+        "context", PLUGIN_CONTEXT + ".restrict"
+    ]), NULL_KEY);
+    llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
+        "type",    "chat.alias.declare",
+        "alias",   "sosrelay",
+        "context", PLUGIN_CONTEXT + ".relay"
     ]), NULL_KEY);
 }
 
 send_pong() {
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
-        "type", "pong",
+        "type", "kernel.pong",
         "context", PLUGIN_CONTEXT
     ]), NULL_KEY);
 }
@@ -95,7 +161,7 @@ show_sos_menu() {
     body += "• Clear Relay - Clear relay restrictions";
 
     llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
-        "type", "dialog_open",
+        "type", "ui.dialog.open",
         "session_id", SessionId,
         "user", (string)CurrentUser,
         "title", "SOS Emergency",
@@ -110,7 +176,7 @@ show_sos_menu() {
 action_unleash() {
     // Send emergency leash release on UI_BUS (bypasses ACL)
     llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
-        "type", "emergency_leash_release"
+        "type", "sos.leash.release"
     ]), CurrentUser);
 
     llRegionSayTo(CurrentUser, 0, "[SOS] Leash released.");
@@ -119,7 +185,7 @@ action_unleash() {
 action_clear_rlv() {
     // Send emergency restrict clear on UI_BUS (bypasses ACL)
     llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
-        "type", "emergency_restrict_clear"
+        "type", "sos.restrict.clear"
     ]), CurrentUser);
 
     // Also send @clear directly to viewer as fallback
@@ -131,10 +197,31 @@ action_clear_rlv() {
 action_clear_relay() {
     // Send emergency relay clear on UI_BUS (bypasses ACL)
     llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
-        "type", "emergency_relay_clear"
+        "type", "sos.relay.clear"
     ]), CurrentUser);
 
     llRegionSayTo(CurrentUser, 0, "[SOS] All relay restrictions cleared.");
+}
+
+/* -------------------- CHAT SUBCOMMAND HANDLING -------------------- */
+
+handle_subpath(key user, integer acl_level, string subpath) {
+    CurrentUser = user;
+    UserAcl = acl_level;
+
+    if (subpath == "unleash") {
+        action_unleash();
+        return;
+    }
+    if (subpath == "restrict") {
+        action_clear_rlv();
+        return;
+    }
+    if (subpath == "relay") {
+        action_clear_relay();
+        return;
+    }
+    llRegionSayTo(user, 0, "Unknown SOS subcommand: " + subpath);
 }
 
 /* -------------------- BUTTON HANDLER -------------------- */
@@ -167,7 +254,7 @@ handle_button_click(string cmd) {
 /* -------------------- NAVIGATION -------------------- */
 return_to_root() {
     llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
-        "type", "return",
+        "type", "ui.menu.return",
         "user", (string)CurrentUser
     ]), NULL_KEY);
 
@@ -177,7 +264,7 @@ return_to_root() {
 cleanup_session() {
     if (SessionId != "") {
         llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
-            "type", "dialog_close",
+            "type", "ui.dialog.close",
             "session_id", SessionId
         ]), NULL_KEY);
     }
@@ -190,6 +277,11 @@ cleanup_session() {
 /* -------------------- EVENT HANDLERS -------------------- */
 default {
     state_entry() {
+        if (llGetObjectDesc() == "COLLAR_UPDATER") {
+            llSetScriptState(llGetScriptName(), FALSE);
+            return;
+        }
+
         cleanup_session();
         register_self();
     }
@@ -210,17 +302,17 @@ default {
 
         /* -------------------- KERNEL LIFECYCLE -------------------- */
         if (num == KERNEL_LIFECYCLE) {
-            if (msg_type == "register_now") {
+            if (msg_type == "kernel.register.refresh") {
                 register_self();
                 return;
             }
 
-            if (msg_type == "ping") {
+            if (msg_type == "kernel.ping") {
                 send_pong();
                 return;
             }
 
-            if (msg_type == "soft_reset" || msg_type == "soft_reset_all") {
+            if (msg_type == "kernel.reset.soft" || msg_type == "kernel.reset.factory") {
                 // Check if this is a targeted reset
                 string target_context = llJsonGetValue(msg, ["context"]);
                 if (target_context != JSON_INVALID) {
@@ -229,6 +321,8 @@ default {
                     }
                 }
                 // Either no context (broadcast) or matches our context
+                llLinksetDataDelete("plugin.reg." + PLUGIN_CONTEXT);
+                llLinksetDataDelete("acl.policycontext:" + PLUGIN_CONTEXT);
                 llResetScript();
             }
 
@@ -237,13 +331,24 @@ default {
 
         /* -------------------- UI START -------------------- */
         if (num == UI_BUS) {
-            if (msg_type == "start") {
+            if (msg_type == "ui.menu.start") {
+                if (llJsonGetValue(msg, ["acl"]) == JSON_INVALID) return;
                 if (llJsonGetValue(msg, ["context"]) == JSON_INVALID) return;
                 if (llJsonGetValue(msg, ["context"]) != PLUGIN_CONTEXT) return;
 
-                CurrentUser = id;
-                UserAcl = (integer)llJsonGetValue(msg, ["acl"]);
+                integer acl = (integer)llJsonGetValue(msg, ["acl"]);
 
+                string subpath = "";
+                string sp = llJsonGetValue(msg, ["subpath"]);
+                if (sp != JSON_INVALID) subpath = sp;
+
+                if (subpath != "") {
+                    handle_subpath(id, acl, subpath);
+                    return;
+                }
+
+                CurrentUser = id;
+                UserAcl = acl;
                 show_sos_menu();
                 return;
             }
@@ -253,7 +358,7 @@ default {
 
         /* -------------------- DIALOG RESPONSE -------------------- */
         if (num == DIALOG_BUS) {
-            if (msg_type == "dialog_response") {
+            if (msg_type == "ui.dialog.response") {
                 if (llJsonGetValue(msg, ["session_id"]) == JSON_INVALID) return;
 
                 string response_session = llJsonGetValue(msg, ["session_id"]);
@@ -265,7 +370,7 @@ default {
                 return;
             }
 
-            if (msg_type == "dialog_timeout") {
+            if (msg_type == "ui.dialog.timeout") {
                 string timeout_session = llJsonGetValue(msg, ["session_id"]);
                 if (timeout_session == JSON_INVALID) return;
                 if (timeout_session != SessionId) return;

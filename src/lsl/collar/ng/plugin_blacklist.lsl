@@ -1,10 +1,33 @@
 /*--------------------
 PLUGIN: plugin_blacklist.lsl
 VERSION: 1.10
-REVISION: 4
+REVISION: 11
 PURPOSE: Blacklist management with sensor-based avatar selection
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
+- v1.1 rev 11: write_plugin_reg guards idempotent writes (read-before-
+  write). Same-value re-registrations on state_entry and
+  kernel.register.refresh no longer fire linkset_data, so kmod_ui's
+  debounced rebuild + session invalidation stops triggering on
+  register.refresh cascades — wearer's open menu survives the event.
+- v1.1 rev 10: Add dormancy guard in state_entry — script parks itself
+  if the prim's object description is "COLLAR_UPDATER" so it stays dormant
+  when staged in an updater installer prim.
+- v1.1 rev 9: Self-declare menu presence via LSD (plugin.reg.<ctx>).
+  Label updates write the same LSD key directly; ui.label.update link_messages
+  are gone. Reset handlers delete plugin.reg.<ctx> and acl.policycontext:<ctx>
+  before llResetScript so kmod_ui drops the button immediately.
+- v1.1 rev 8: Chat command support (Phase 3). Registers "blacklist" alias.
+  "blacklist add" and "blacklist rem" enter the corresponding menu flow
+  (sensor pick for add, numbered remove list). No username in chat.
+- v1.1 rev 7: Wire-type rename (Phase 2). kernel.register→kernel.register.declare,
+  kernel.registernow→kernel.register.refresh, kernel.reset→kernel.reset.soft,
+  kernel.resetall→kernel.reset.factory, settings.blacklistadd→
+  settings.blacklist.add, settings.blacklistremove→settings.blacklist.remove.
+- v1.1 rev 6: Guard ui.menu.start against raw kmod_chat broadcasts (no acl
+  field). Fixes duplicate dialogs when commands are typed in chat.
+- v1.1 rev 5: Namespace internal message type strings (kernel.*, settings.*,
+  ui.*) for consistency with CONSOLIDATED ISP naming conventions.
 - v1.1 rev 4: Honor soft_reset / soft_reset_all from KERNEL_LIFECYCLE so
   factory reset clears cached blacklist state.
 - v1.1 rev 3: Migrate to flat CSV blacklist storage. Use new blacklist_add /
@@ -25,7 +48,7 @@ integer UI_BUS = 900;
 integer DIALOG_BUS = 950;
 
 /* -------------------- PLUGIN IDENTITY -------------------- */
-string PLUGIN_CONTEXT = "core_blacklist";
+string PLUGIN_CONTEXT = "ui.core.blacklist";
 string PLUGIN_LABEL = "Blacklist";
 
 /* -------------------- CONSTANTS -------------------- */
@@ -76,7 +99,7 @@ string generate_session_id() {
 
 /* -------------------- LSD POLICY HELPER -------------------- */
 list get_policy_buttons(string ctx, integer acl) {
-    string policy = llLinksetDataRead("policy:" + ctx);
+    string policy = llLinksetDataRead("acl.policycontext:" + ctx);
     if (policy == "") return [];
     string csv = llJsonGetValue(policy, [(string)acl]);
     if (csv == JSON_INVALID) return [];
@@ -103,27 +126,53 @@ list blacklist_names() {
 
 /* -------------------- LIFECYCLE -------------------- */
 
+// Self-declared menu presence. kmod_ui enumerates via llLinksetDataFindKeys
+// and rebuilds its view tables on linkset_data events touching this key.
+write_plugin_reg(string label) {
+    string k = "plugin.reg." + PLUGIN_CONTEXT;
+    string v = llList2Json(JSON_OBJECT, [
+        "label",  label,
+        "script", llGetScriptName()
+    ]);
+    // Skip the write (and its linkset_data event) when the stored value
+    // is already what we would write. Idempotent re-registrations on
+    // state_entry or kernel.register.refresh then no longer trigger
+    // kmod_ui's debounced rebuild + session invalidation.
+    if (llLinksetDataRead(k) == v) return;
+    llLinksetDataWrite(k, v);
+}
+
 register_self() {
     // Write button visibility policy to LSD (Owned+ can manage blacklist)
-    llLinksetDataWrite("policy:" + PLUGIN_CONTEXT, llList2Json(JSON_OBJECT, [
+    llLinksetDataWrite("acl.policycontext:" + PLUGIN_CONTEXT, llList2Json(JSON_OBJECT, [
         "2", "+Blacklist,-Blacklist",
         "3", "+Blacklist,-Blacklist",
         "4", "+Blacklist,-Blacklist",
         "5", "+Blacklist,-Blacklist"
     ]));
 
-    // Register with kernel
+    // Self-declared menu presence for kmod_ui.
+    write_plugin_reg(PLUGIN_LABEL);
+
+    // Register with kernel (for ping/pong health tracking and alias table).
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
-        "type", "register",
+        "type", "kernel.register.declare",
         "context", PLUGIN_CONTEXT,
         "label", PLUGIN_LABEL,
         "script", llGetScriptName()
+    ]), NULL_KEY);
+
+    // Declare chat alias.
+    llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
+        "type",    "chat.alias.declare",
+        "alias",   "blacklist",
+        "context", PLUGIN_CONTEXT
     ]), NULL_KEY);
 }
 
 send_pong() {
     string msg = llList2Json(JSON_OBJECT, [
-        "type", "pong",
+        "type", "kernel.pong",
         "context", PLUGIN_CONTEXT
     ]);
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, msg, NULL_KEY);
@@ -139,14 +188,14 @@ apply_settings_sync() {
 
 send_blacklist_add(string uuid_str) {
     llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
-        "type", "blacklist_add",
+        "type", "settings.blacklist.add",
         "uuid", uuid_str
     ]), NULL_KEY);
 }
 
 send_blacklist_remove(string uuid_str) {
     llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
-        "type", "blacklist_remove",
+        "type", "settings.blacklist.remove",
         "uuid", uuid_str
     ]), NULL_KEY);
 }
@@ -169,7 +218,7 @@ show_main_menu() {
     MenuContext = "main";
 
     string msg = llList2Json(JSON_OBJECT, [
-        "type", "dialog_open",
+        "type", "ui.dialog.open",
         "session_id", SessionId,
         "user", (string)CurrentUser,
         "title", "Blacklist",
@@ -179,6 +228,42 @@ show_main_menu() {
     ]);
 
     llMessageLinked(LINK_SET, DIALOG_BUS, msg, NULL_KEY);
+}
+
+// Chat subcommand handler. Enters the add-scan or remove-list flow as
+// if the corresponding main-menu button was clicked.
+handle_subpath(key user, integer acl_level, string subpath) {
+    gPolicyButtons = get_policy_buttons(PLUGIN_CONTEXT, acl_level);
+
+    CurrentUser = user;
+    CurrentUserAcl = acl_level;
+    MenuContext = "main";
+
+    if (subpath == "add") {
+        if (!btn_allowed("+Blacklist")) {
+            llRegionSayTo(user, 0, "Access denied.");
+            gPolicyButtons = [];
+            return;
+        }
+        gPolicyButtons = [];
+        MenuContext = "add_scan";
+        CandidateKeys = [];
+        llSensor("", NULL_KEY, AGENT, BLACKLIST_RADIUS, PI);
+        return;
+    }
+    if (subpath == "rem") {
+        if (!btn_allowed("-Blacklist")) {
+            llRegionSayTo(user, 0, "Access denied.");
+            gPolicyButtons = [];
+            return;
+        }
+        gPolicyButtons = [];
+        show_remove_menu();
+        return;
+    }
+
+    gPolicyButtons = [];
+    llRegionSayTo(user, 0, "Unknown blacklist subcommand: " + subpath);
 }
 
 show_remove_menu() {
@@ -194,7 +279,7 @@ show_remove_menu() {
     MenuContext = "remove";
 
     string msg = llList2Json(JSON_OBJECT, [
-        "type", "dialog_open",
+        "type", "ui.dialog.open",
         "dialog_type", "numbered_list",
         "session_id", SessionId,
         "user", (string)CurrentUser,
@@ -229,7 +314,7 @@ show_add_candidates() {
     MenuContext = "add_pick";
 
     string msg = llList2Json(JSON_OBJECT, [
-        "type", "dialog_open",
+        "type", "ui.dialog.open",
         "dialog_type", "numbered_list",
         "session_id", SessionId,
         "user", (string)CurrentUser,
@@ -246,7 +331,7 @@ show_add_candidates() {
 
 return_to_root() {
     string msg = llList2Json(JSON_OBJECT, [
-        "type", "return",
+        "type", "ui.menu.return",
         "user", (string)CurrentUser
     ]);
     llMessageLinked(LINK_SET, UI_BUS, msg, NULL_KEY);
@@ -258,7 +343,7 @@ return_to_root() {
 cleanup_session() {
     if (SessionId != "") {
         llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
-            "type", "dialog_close",
+            "type", "ui.dialog.close",
             "session_id", SessionId
         ]), NULL_KEY);
     }
@@ -346,6 +431,11 @@ handle_dialog_timeout(string msg) {
 
 default {
     state_entry() {
+        if (llGetObjectDesc() == "COLLAR_UPDATER") {
+            llSetScriptState(llGetScriptName(), FALSE);
+            return;
+        }
+
         cleanup_session();
         register_self();
         apply_settings_sync();
@@ -367,21 +457,23 @@ default {
 
         /* -------------------- KERNEL LIFECYCLE -------------------- */
         if (num == KERNEL_LIFECYCLE) {
-            if (msg_type == "register_now") {
+            if (msg_type == "kernel.register.refresh") {
                 register_self();
                 return;
             }
 
-            if (msg_type == "ping") {
+            if (msg_type == "kernel.ping") {
                 send_pong();
                 return;
             }
 
-            if (msg_type == "soft_reset" || msg_type == "soft_reset_all") {
+            if (msg_type == "kernel.reset.soft" || msg_type == "kernel.reset.factory") {
                 string target_context = llJsonGetValue(msg, ["context"]);
                 if (target_context != JSON_INVALID) {
                     if (target_context != "" && target_context != PLUGIN_CONTEXT) return;
                 }
+                llLinksetDataDelete("plugin.reg." + PLUGIN_CONTEXT);
+                llLinksetDataDelete("acl.policycontext:" + PLUGIN_CONTEXT);
                 llResetScript();
             }
 
@@ -390,7 +482,7 @@ default {
 
         /* -------------------- SETTINGS BUS -------------------- */
         if (num == SETTINGS_BUS) {
-            if (msg_type == "settings_sync" || msg_type == "settings_delta") {
+            if (msg_type == "settings.sync" || msg_type == "settings.delta") {
                 apply_settings_sync();
                 return;
             }
@@ -400,13 +492,25 @@ default {
 
         /* -------------------- UI START -------------------- */
         if (num == UI_BUS) {
-            if (msg_type == "start") {
+            if (msg_type == "ui.menu.start") {
+                if (llJsonGetValue(msg, ["acl"]) == JSON_INVALID) return;
                 if (llJsonGetValue(msg, ["context"]) == JSON_INVALID) return;
                 if (llJsonGetValue(msg, ["context"]) != PLUGIN_CONTEXT) return;
 
+                integer acl = (integer)llJsonGetValue(msg, ["acl"]);
+
+                string subpath = "";
+                string sp = llJsonGetValue(msg, ["subpath"]);
+                if (sp != JSON_INVALID) subpath = sp;
+
+                if (subpath != "") {
+                    handle_subpath(id, acl, subpath);
+                    return;
+                }
+
                 // User wants to start this plugin
                 CurrentUser = id;
-                CurrentUserAcl = (integer)llJsonGetValue(msg, ["acl"]);
+                CurrentUserAcl = acl;
                 show_main_menu();
                 return;
             }
@@ -416,12 +520,12 @@ default {
 
         /* -------------------- DIALOG RESPONSES -------------------- */
         if (num == DIALOG_BUS) {
-            if (msg_type == "dialog_response") {
+            if (msg_type == "ui.dialog.response") {
                 handle_dialog_response(msg);
                 return;
             }
 
-            if (msg_type == "dialog_timeout") {
+            if (msg_type == "ui.dialog.timeout") {
                 handle_dialog_timeout(msg);
                 return;
             }

@@ -1,10 +1,73 @@
 /*--------------------
 MODULE: kmod_leash.lsl
 VERSION: 1.10
-REVISION: 5
+REVISION: 16
 PURPOSE: Leashing engine providing leash services to plugins
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- v1.1 rev 16: Add dormancy guard in state_entry — script parks itself
+  if the prim's object description is "COLLAR_UPDATER" so it stays dormant
+  when staged in an updater installer prim.
+- v1.1 rev 15: Act as a native-protocol leash-holder responder. Collar now
+  replies to plugin.leash.request on LEASH_CHAN_NATIVE with its own
+  LeashPoint prim (same role as leash_holder.lsl), so coffle mode resolves
+  to the target collar's leashpoint instead of falling through to the
+  avatar pelvis. Native listener is now persistent (opened at state_entry,
+  not reopened per handshake); HolderListen removed from closeAllHolderListens
+  and phase transition. Self-sent requests are filtered.
+- v1.1 rev 14: Convert all user-facing notices from llOwnerSay to
+  llRegionSayTo(...0, ...) for consistency with project convention.
+  Actor-targeted (user): Leash grabbed/released, Coffled to, Posted to.
+  Wearer-targeted (llGetOwner): offsim notifications, auto-release,
+  notifyLeashTransfer wearer line, yank feedback, Lockmeister
+  grab/release notices. RLV commands (@follow, @setrot) stay as
+  llOwnerSay — required by the RLV delivery protocol.
+- v1.1 rev 13: Cap auto-reclip waiting window at 2min. Adds ReclipDeadline
+  alongside ReclipScheduled so the wearer isn't surprise-reclipped if the
+  leasher crashes and logs back in hours later. Checked before the
+  MAX_RECLIP_ATTEMPTS cap so a late-returning leasher is never reclipped.
+- v1.1 rev 12: Re-acquire leashpoint after holder detach/reattach.
+  Timer retries beginHolderHandshake every ~10s when Leashed &&
+  HolderTarget == NULL_KEY && HolderState == HOLDER_STATE_COMPLETE,
+  so a reattached holder gets picked up without unclip+re-clip.
+  Drops rev 11 temporary diagnostics (no regression; was a sim crash
+  that failed to persist the emitter child as linkset).
+- v1.1 rev 11: Consolidate leash-action notices to owner IM only; drop
+  duplicate llRegionSayTo on channel 0. Remove notifyLeashAction helper;
+  callers inline llOwnerSay. New formats: "Leash grabbed by X", "Leash
+  released", "Coffled to Y", "Posted to Z". Adds temporary diagnostic
+  llOwnerSays in handleHolderResponseNative — remove once particles
+  regression is resolved.
+- v1.1 rev 10: Extend native/OC holder handshake to coffle and post modes.
+  Previously only grab mode discovered a LeashPoint prim; coffle/post
+  aimed particles at the raw sensor-detected target (avatar pelvis for
+  coffle, root prim for post). Both now run the same two-phase handshake
+  via beginHolderHandshake. Native-phase validation branches on LeashMode:
+  avatar/coffle check attached+owner (expected wearer is Leasher vs
+  CoffleTargetAvatar), post checks the reply's new "root" field equals
+  LeashTarget (needs leash_holder rev 2+). OC phase addresses LeashTarget
+  in non-avatar modes via ocNonceTarget(), giving emergent interop with
+  OC-protocol collars (coffle) and LM-compatible leashposts (post).
+  followTick now prefers HolderTarget over the raw target in all modes.
+- v1.1 rev 9: Sub-protocol rename (Phase 1). particles.lmenable→
+  particles.lm.enable, particles.lmdisable→particles.lm.disable,
+  particles.lmgrabbed→particles.lm.grabbed, particles.lmreleased→
+  particles.lm.released, plugin.leash.offerpending→plugin.leash.offer.pending,
+  sos.leashrelease→sos.leash.release.
+- v1.1 rev 8: AUTH_BUS rename (Phase 1). auth.aclquery→auth.acl.query,
+  auth.aclresult→auth.acl.result.
+- v1.1 rev 7: Remove stylistic artifact from plugin.leash.state broadcast.
+  Integer fields were cast to string for symmetry with the old JSON-object
+  settings broadcast (retired in rev 2); the symmetry no longer exists, so
+  integers now emit as native JSON numbers matching kmod_auth templates.
+  Consumers already use (integer)llJsonGetValue; decoding is unchanged.
+  Keys retain (string) casts (required — LSL keys aren't strings).
+- v1.1 rev 6: Namespace pass — align all cross-module strings with the
+  dev bus vocabulary (particles.*, auth.*, settings.*, sos.*, plugin.leash.*,
+  kernel-none). PLUGIN_CONTEXT becomes "ui.core.leash", LSD policy key
+  moves to "acl.policycontext:", LSD setting keys move to "leash.*".
+  External native holder protocol moves to "plugin.leash.request/target".
+  No kernel-lifecycle integration added (intentional; see README).
 - v1.1 rev 5: Add force_release action for maintenance emergency clear.
   "Clear Leash" in the maintenance plugin now sends force_release instead
   of release, which is authorized if the requesting user is the wearer
@@ -19,12 +82,12 @@ CHANGES:
   out-of-range -> in-range transitions), pulls to 0.85 * length with a
   gentler tau (1.0), and runs at 1.0s instead of 2.0s for responsiveness.
   Offsim/auto-reclip throttle rebalanced to keep its prior ~4s cadence.
-- v1.1 rev 3: Reject DS-protocol holder responses from objects that are
+- v1.1 rev 3: Reject native-protocol holder responses from objects that are
   not worn by the leasher. beginHolderHandshake() broadcasts via
-  llRegionSay on LEASH_CHAN_DS so any in-world DS-compatible holder
+  llRegionSay on LEASH_CHAN_NATIVE so any in-world native-compatible holder
   could reply with its own UUID, hijacking the leash and pulling
   particles to a random world prim instead of the avatar that just
-  accepted an offer. handleHolderResponseDs() now requires the
+  accepted an offer. handleHolderResponseNative() now requires the
   responding object to be an attachment owned by the leasher; otherwise
   the response is dropped and the handshake falls through to OC and
   finally to direct-to-avatar attachment.
@@ -44,9 +107,9 @@ integer UI_BUS = 900;
 
 // Lockmeister/OpenCollar channel
 integer LEASH_CHAN_LM = -8888;
-integer LEASH_CHAN_DS = -192837465;
+integer LEASH_CHAN_NATIVE = -192837465;
 
-string PLUGIN_CONTEXT = "core_leash";
+string PLUGIN_CONTEXT = "ui.core.leash";
 
 // Policy button labels (must match plugin_leash policy CSV entries)
 string POL_CLIP     = "Clip";
@@ -64,10 +127,10 @@ integer MODE_COFFLE = 1;  // Collar-to-collar leashpoint connection
 integer MODE_POST = 2;    // Posted to a static object
 
 // Settings keys
-string KEY_LEASHED = "leashed";
-string KEY_LEASHER = "leasher_key";
-string KEY_LEASH_LENGTH = "leash_length";
-string KEY_LEASH_TURNTO = "leash_turnto";
+string KEY_LEASHED = "leash.leashedavatar";
+string KEY_LEASHER = "leash.leasherkey";
+string KEY_LEASH_LENGTH = "leash.length";
+string KEY_LEASH_TURNTO = "leash.turnto";
 
 // Leash state
 integer Leashed = FALSE;
@@ -91,7 +154,7 @@ float TURN_THRESHOLD = 0.1;  // ~5.7 degrees
 
 // Holder protocol state machine (IMPROVED)
 integer HOLDER_STATE_IDLE = 0;
-integer HOLDER_STATE_DS_PHASE = 1;
+integer HOLDER_STATE_NATIVE_PHASE = 1;
 integer HOLDER_STATE_OC_PHASE = 2;
 integer HOLDER_STATE_COMPLETE = 4;
 
@@ -101,7 +164,7 @@ integer HolderListen = 0;
 integer HolderListenOC = 0;
 key HolderTarget = NULL_KEY;
 integer HolderSession = 0;
-float DS_PHASE_DURATION = 2.0;   // 2 seconds for DS native
+float NATIVE_PHASE_DURATION = 2.0;   // 2 seconds for native
 float OC_PHASE_DURATION = 2.0;   // 2 seconds for OC
 
 // Offsim detection & auto-reclip (IMPROVED)
@@ -112,6 +175,12 @@ integer ReclipScheduled = 0;
 key LastLeasher = NULL_KEY;
 integer ReclipAttempts = 0;
 integer MAX_RECLIP_ATTEMPTS = 3;
+// Wall-clock cap on how long we keep waiting for LastLeasher to return.
+// Prevents a surprise reclip if the leasher crashes at noon and logs back
+// in hours later; auto-reclip state clears after RECLIP_SAFETY_WINDOW
+// seconds regardless of whether they returned.
+integer RECLIP_SAFETY_WINDOW = 120;
+integer ReclipDeadline = 0;
 
 // ACL verification system (NEW)
 key PendingActionUser = NULL_KEY;
@@ -147,7 +216,7 @@ integer now() {
 }
 // Check if a button label is allowed at the given ACL level via LSD policy
 integer policy_allows(string btn_label, integer acl_level) {
-    string policy = llLinksetDataRead("policy:" + PLUGIN_CONTEXT);
+    string policy = llLinksetDataRead("acl.policycontext:" + PLUGIN_CONTEXT);
     if (policy == "") return FALSE;
     string csv = llJsonGetValue(policy, [(string)acl_level]);
     if (csv == JSON_INVALID) return FALSE;
@@ -165,12 +234,12 @@ setLockmeisterState(integer enabled, key controller) {
     string msg;
     if (enabled) {
         msg = llList2Json(JSON_OBJECT, [
-            "type", "lm_enable",
+            "type", "particles.lm.enable",
             "controller", (string)controller
         ]);
     } else {
         msg = llList2Json(JSON_OBJECT, [
-            "type", "lm_disable"
+            "type", "particles.lm.disable"
         ]);
     }
     llMessageLinked(LINK_SET, UI_BUS, msg, NULL_KEY);
@@ -181,14 +250,14 @@ setParticlesState(integer active, key target) {
     string msg;
     if (active) {
         msg = llList2Json(JSON_OBJECT, [
-            "type", "particles_start",
+            "type", "particles.start",
             "source", PLUGIN_CONTEXT,
             "target", (string)target,
             "style", "chain"
         ]);
     } else {
         msg = llList2Json(JSON_OBJECT, [
-            "type", "particles_stop",
+            "type", "particles.stop",
             "source", PLUGIN_CONTEXT
         ]);
     }
@@ -197,7 +266,7 @@ setParticlesState(integer active, key target) {
 
 updateParticlesTarget(key target) {
     llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
-        "type", "particles_update",
+        "type", "particles.update",
         "target", (string)target
     ]), NULL_KEY);
 }
@@ -205,7 +274,7 @@ updateParticlesTarget(key target) {
 /* -------------------- OFFER PROTOCOL -------------------- */
 sendOfferPending(key target, key originator) {
     llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
-        "type", "offer_pending",
+        "type", "plugin.leash.offer.pending",
         "target", (string)target,
         "originator", (string)originator
     ]), NULL_KEY);
@@ -232,12 +301,10 @@ integer clampLeashLength(integer len) {
     return len;
 }
 
-// Close all holder protocol listeners
+// Close handshake-scoped listeners. HolderListen (LEASH_CHAN_NATIVE) is
+// persistent because the collar also acts as a responder for incoming
+// plugin.leash.request, so we deliberately do not close it here.
 closeAllHolderListens() {
-    if (HolderListen != 0) {
-        llListenRemove(HolderListen);
-        HolderListen = 0;
-    }
     if (HolderListenOC != 0) {
         llListenRemove(HolderListenOC);
         HolderListenOC = 0;
@@ -261,6 +328,7 @@ clearLeashState(integer clear_reclip) {
         LastLeasher = NULL_KEY;
         ReclipScheduled = 0;
         ReclipAttempts = 0;
+        ReclipDeadline = 0;
     }
 
     setLockmeisterState(FALSE, NULL_KEY);
@@ -271,22 +339,11 @@ clearLeashState(integer clear_reclip) {
 
 /* -------------------- NOTIFICATION HELPERS -------------------- */
 
-// Notify all parties about a leash action
-notifyLeashAction(key actor, string action_msg, string owner_details) {
-    llRegionSayTo(actor, 0, action_msg);
-
-    if (owner_details != "") {
-        llOwnerSay(action_msg + " - " + owner_details);
-    } else {
-        llOwnerSay(action_msg);
-    }
-}
-
 // For multi-party notifications (like pass)
 notifyLeashTransfer(key from_user, key to_user, string action) {
     llRegionSayTo(from_user, 0, "Leash " + action + " to " + llKey2Name(to_user));
     llRegionSayTo(to_user, 0, "Leash received from " + llKey2Name(from_user));
-    llOwnerSay("Leash " + action + " to " + llKey2Name(to_user) + " by " + llKey2Name(from_user));
+    llRegionSayTo(llGetOwner(), 0, "Leash " + action + " to " + llKey2Name(to_user) + " by " + llKey2Name(from_user));
 }
 
 /* -------------------- ACL VERIFICATION SYSTEM (NEW) -------------------- */
@@ -297,7 +354,7 @@ requestAclForAction(key user, string action, key pass_target) {
     PendingPassTarget = pass_target;
     
     llMessageLinked(LINK_SET, AUTH_BUS, llList2Json(JSON_OBJECT, [
-        "type", "acl_query",
+        "type", "auth.acl.query",
         "avatar", (string)user
     ]), user);
     
@@ -429,40 +486,77 @@ requestAclForPassTarget(key target) {
     AclPending = TRUE;
     
     llMessageLinked(LINK_SET, AUTH_BUS, llList2Json(JSON_OBJECT, [
-        "type", "acl_query",
+        "type", "auth.acl.query",
         "avatar", (string)target
     ]), target);
     
 }
 
-/* -------------------- DS HOLDER PROTOCOL (IMPROVED STATE MACHINE) -------------------- */
+/* -------------------- NATIVE HOLDER PROTOCOL (IMPROVED STATE MACHINE) -------------------- */
 beginHolderHandshake(key user) {
     // Improved randomness for session ID using multiple entropy sources
     HolderSession = (integer)llFrand(9.0E06);
-    HolderState = HOLDER_STATE_DS_PHASE;
+    HolderState = HOLDER_STATE_NATIVE_PHASE;
     HolderPhaseStart = now();
 
-    // Phase 1: DS native only
-    if (HolderListen == 0) {
-        HolderListen = llListen(LEASH_CHAN_DS, "", NULL_KEY, "");
-    }
-    
-    // Send DS native JSON format on DS channel
+    // HolderListen is opened persistently at state_entry (also serves the
+    // responder side), so no need to open it here.
+
+    // Send native JSON format on native channel
     string msg = llList2Json(JSON_OBJECT, [
-        "type", "leash_req",
+        "type", "plugin.leash.request",
         "wearer", (string)llGetOwner(),
         "collar", (string)llGetKey(),
         "controller", (string)user,
         "session", (string)HolderSession,
         "origin", "leashpoint"
     ]);
-    llRegionSay(LEASH_CHAN_DS, msg);
-    
+    llRegionSay(LEASH_CHAN_NATIVE, msg);
+
 }
 
-handleHolderResponseDs(string msg) {
-    if (HolderState != HOLDER_STATE_DS_PHASE && HolderState != HOLDER_STATE_OC_PHASE) return;
-    if (llJsonGetValue(msg, ["type"]) != "leash_target") return;
+// Find this collar's LeashPoint prim (child named "leashpoint",
+// case-insensitive). Falls back to root if no dedicated prim exists.
+key findLeashpointPrim() {
+    integer n = llGetNumberOfPrims();
+    integer i = 2;
+    while (i <= n) {
+        string nm = llToLower(llStringTrim(llGetLinkName(i), STRING_TRIM));
+        if (nm == "leashpoint") return llGetLinkKey(i);
+        i = i + 1;
+    }
+    integer ln = llGetLinkNumber();
+    if (ln <= 0) ln = 1;
+    return llGetLinkKey(ln);
+}
+
+// Responder for plugin.leash.request from other collars (coffle mode).
+// Mirrors leash_holder.lsl so a collar without a separate holder attachment
+// still resolves to a proper leashpoint prim instead of the avatar root.
+handleNativeRequest(string msg) {
+    key requesting_collar = (key)llJsonGetValue(msg, ["collar"]);
+    if (requesting_collar == NULL_KEY) return;
+    // Ignore our own broadcast (llRegionSay reaches our own listener).
+    if (requesting_collar == llGetKey()) return;
+    string session_str = llJsonGetValue(msg, ["session"]);
+    if (session_str == JSON_INVALID) return;
+
+    key target_prim = findLeashpointPrim();
+
+    string reply = llList2Json(JSON_OBJECT, [
+        "type", "plugin.leash.target",
+        "ok", "1",
+        "holder", (string)target_prim,
+        "root", (string)llGetLinkKey(1),
+        "name", llGetObjectName(),
+        "session", session_str
+    ]);
+    llRegionSayTo(requesting_collar, LEASH_CHAN_NATIVE, reply);
+}
+
+handleHolderResponseNative(string msg) {
+    if (HolderState != HOLDER_STATE_NATIVE_PHASE && HolderState != HOLDER_STATE_OC_PHASE) return;
+    if (llJsonGetValue(msg, ["type"]) != "plugin.leash.target") return;
     if (llJsonGetValue(msg, ["ok"]) != "1") return;
     integer session = (integer)llJsonGetValue(msg, ["session"]);
     if (session != HolderSession) return;
@@ -470,17 +564,27 @@ handleHolderResponseDs(string msg) {
     key candidate_holder = (key)llJsonGetValue(msg, ["holder"]);
     if (candidate_holder == NULL_KEY) return;
 
-    // Reject in-world holders. The DS request is broadcast via llRegionSay,
-    // so any DS-compatible holder script in the region will reply — including
-    // rezzed-in-world props. Only accept holders that are currently worn as
-    // an attachment by the leasher; otherwise the leash visually anchors to
-    // a random prim instead of the avatar.
-    list odetails = llGetObjectDetails(candidate_holder, [OBJECT_ATTACHED_POINT, OBJECT_OWNER]);
-    if (llGetListLength(odetails) < 2) return;
-    integer attached_point = llList2Integer(odetails, 0);
-    key holder_owner       = llList2Key(odetails, 1);
-    if (attached_point == 0) return;          // not worn → reject
-    if (holder_owner != Leasher) return;      // worn by someone else → reject
+    // Validation branches on mode. Avatar/coffle require an attachment owned
+    // by the expected wearer (rev-3 anti-hijack rule, extended to coffle).
+    // Post accepts rezzed in-world holders but requires the responder's
+    // linkset root to match the specific object the user selected — the
+    // "root" field added in leash_holder rev 2.
+    if (LeashMode == MODE_POST) {
+        string root_str = llJsonGetValue(msg, ["root"]);
+        if (root_str == JSON_INVALID) return;
+        if ((key)root_str != LeashTarget) return;
+    }
+    else {
+        key expected_wearer = Leasher;
+        if (LeashMode == MODE_COFFLE) expected_wearer = CoffleTargetAvatar;
+
+        list odetails = llGetObjectDetails(candidate_holder, [OBJECT_ATTACHED_POINT, OBJECT_OWNER]);
+        if (llGetListLength(odetails) < 2) return;
+        integer attached_point = llList2Integer(odetails, 0);
+        key holder_owner       = llList2Key(odetails, 1);
+        if (attached_point == 0) return;
+        if (holder_owner != expected_wearer) return;
+    }
 
     HolderTarget = candidate_holder;
 
@@ -490,14 +594,22 @@ handleHolderResponseDs(string msg) {
     setParticlesState(TRUE, HolderTarget);
 }
 
+// Resolve the OC-phase nonce target for the current mode: avatar uses the
+// Leasher avatar, coffle/post use LeashTarget (target avatar or post root).
+// Must match whatever advanceHolderStateMachine sent on LEASH_CHAN_LM.
+key ocNonceTarget() {
+    if (LeashMode == MODE_AVATAR) return Leasher;
+    return LeashTarget;
+}
+
 handleHolderResponseOc(key holder_prim, string msg) {
     if (HolderState != HOLDER_STATE_OC_PHASE) return;
-    // CRITICAL: Must match the UUID we sent in the ping (Leasher, not wearer)
-    string expected = (string)Leasher + "handle ok";
+    // Must match the UUID we sent in the ping; the nonce identifies our
+    // specific handshake so stray LM traffic can't pin HolderTarget.
+    string expected = (string)ocNonceTarget() + "handle ok";
     if (msg != expected) return;
-    
-    HolderTarget = holder_prim;
 
+    HolderTarget = holder_prim;
 
     HolderState = HOLDER_STATE_COMPLETE;
     closeAllHolderListens();
@@ -510,34 +622,36 @@ advanceHolderStateMachine() {
     
     float elapsed = (float)(now() - HolderPhaseStart);
     
-    if (HolderState == HOLDER_STATE_DS_PHASE) {
-        if (elapsed >= DS_PHASE_DURATION) {
-            // Transition to OC phase
+    if (HolderState == HOLDER_STATE_NATIVE_PHASE) {
+        if (elapsed >= NATIVE_PHASE_DURATION) {
+            // Transition to OC phase. HolderListen stays open (persistent
+            // responder + still useful for late native replies).
             HolderState = HOLDER_STATE_OC_PHASE;
             HolderPhaseStart = now();
-            if (HolderListen != 0) {
-                llListenRemove(HolderListen);
-                HolderListen = 0;
-            }
             if (HolderListenOC == 0) {
                 HolderListenOC = llListen(LEASH_CHAN_LM, "", NULL_KEY, "");
             }
-            
-            // CRITICAL FIX: Send controller UUID + "collar" AND "handle" per LM protocol (Code Review Fix #4)
-            // The holder script expects the controller's UUID, not the wearer's UUID
-            // Send BOTH messages as per the LM protocol specification
-            llRegionSayTo(Leasher, LEASH_CHAN_LM, (string)Leasher + "collar");
-            llRegionSayTo(Leasher, LEASH_CHAN_LM, (string)Leasher + "handle");
+
+            // LM handshake: send <target>collar and <target>handle per LM spec.
+            // Target is the Leasher avatar in avatar mode, or LeashTarget in
+            // coffle/post — coffle reaches an OC collar on the target sub,
+            // post reaches an LM-compatible leashpost.
+            key oc_target = ocNonceTarget();
+            if (oc_target != NULL_KEY) {
+                llRegionSayTo(oc_target, LEASH_CHAN_LM, (string)oc_target + "collar");
+                llRegionSayTo(oc_target, LEASH_CHAN_LM, (string)oc_target + "handle");
+            }
         }
     }
     else if (HolderState == HOLDER_STATE_OC_PHASE) {
         if (elapsed >= OC_PHASE_DURATION) {
-            // Fallback to avatar direct
+            // Fallback to aiming at the raw mode target
             HolderState = HOLDER_STATE_COMPLETE;
             closeAllHolderListens();
 
-            if (Leasher != NULL_KEY) {
-                setParticlesState(TRUE, Leasher);
+            key fallback_target = ocNonceTarget();
+            if (fallback_target != NULL_KEY) {
+                setParticlesState(TRUE, fallback_target);
             }
         }
     }
@@ -561,7 +675,7 @@ checkLeasherPresence() {
     
     // Notify if holder-only mode (avatar offline, holder remains)
     if (!avatar_present && holder_present && !OffsimDetected) {
-        llOwnerSay("Leasher offline, leash held by object");
+        llRegionSayTo(llGetOwner(), 0, "Leasher offline, leash held by object");
     }
     
     if (!present) {
@@ -574,6 +688,7 @@ checkLeasherPresence() {
             autoReleaseOffsim();
             ReclipScheduled = now_time + 2;
             ReclipAttempts = 0;
+            ReclipDeadline = now_time + RECLIP_SAFETY_WINDOW;
         }
     }
     else if (OffsimDetected) {
@@ -584,24 +699,33 @@ checkLeasherPresence() {
 
 autoReleaseOffsim() {
     clearLeashState(FALSE);  // FALSE = don't clear reclip (we want to try reclipping)
-    llOwnerSay("Auto-released (offsim)");
+    llRegionSayTo(llGetOwner(), 0, "Auto-released (offsim)");
 }
 
 checkAutoReclip() {
     if (ReclipScheduled == 0 || now() < ReclipScheduled) return;
-    
+
+    // Safety window: stop waiting if leasher hasn't returned in time.
+    // Checked before MAX_RECLIP_ATTEMPTS so a leasher who reappears after
+    // the window is never reclipped even if attempts haven't been exhausted.
+    if (ReclipDeadline != 0 && now() >= ReclipDeadline) {
+        ReclipScheduled = 0;
+        LastLeasher = NULL_KEY;
+        ReclipAttempts = 0;
+        ReclipDeadline = 0;
+        return;
+    }
+
     if (ReclipAttempts >= MAX_RECLIP_ATTEMPTS) {
         ReclipScheduled = 0;
         LastLeasher = NULL_KEY;
         ReclipAttempts = 0;
+        ReclipDeadline = 0;
         return;
     }
-    
+
     if (LastLeasher != NULL_KEY && llGetAgentInfo(LastLeasher) != 0) {
-        
-        // Request ACL verification before reclip
         requestAclForAction(LastLeasher, "grab", NULL_KEY);
-        
         ReclipAttempts = ReclipAttempts + 1;
         ReclipScheduled = now() + 2;
     }
@@ -610,7 +734,7 @@ checkAutoReclip() {
 /* -------------------- SETTINGS PERSISTENCE -------------------- */
 persistSetting(string setting_key, string value) {
     llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
-        "type", "set",
+        "type", "settings.set",
         "key", setting_key,
         "value", value
     ]), NULL_KEY);
@@ -643,12 +767,12 @@ applySettingsSync() {
 /* -------------------- STATE BROADCAST -------------------- */
 broadcastState() {
     string msg = llList2Json(JSON_OBJECT, [
-        "type", "leash_state",
-        "leashed", (string)Leashed,
+        "type", "plugin.leash.state",
+        "leashed", Leashed,
         "leasher", (string)Leasher,
-        "length", (string)LeashLength,
-        "turnto", (string)TurnToFace,
-        "mode", (string)LeashMode,
+        "length", LeashLength,
+        "turnto", TurnToFace,
+        "mode", LeashMode,
         "target", (string)LeashTarget
     ]);
     llMessageLinked(LINK_SET, UI_BUS, msg, NULL_KEY);
@@ -676,7 +800,7 @@ grabLeashInternal(key user, integer acl_level) {
     setLockmeisterState(TRUE, user);
 
     startFollow();
-    notifyLeashAction(user, "Leash grabbed", "by " + llKey2Name(user));
+    llRegionSayTo(user, 0, "Leash grabbed by " + llKey2Name(user));
 }
 
 releaseLeashInternal(key user) {
@@ -686,7 +810,7 @@ releaseLeashInternal(key user) {
     }
 
     clearLeashState(TRUE);  // TRUE = clear reclip attempts
-    notifyLeashAction(user, "Leash released", "by " + llKey2Name(user));
+    llRegionSayTo(user, 0, "Leash released");
 }
 
 passLeashInternal(key new_leasher) {
@@ -734,14 +858,16 @@ coffleLeashInternal(key user, key target_collar) {
 
     setLeashState(user, MODE_COFFLE, target_collar, collar_owner);
 
-    // Start particles to target collar
-    setParticlesState(TRUE, target_collar);
+    // Discover a leashpoint on the target via the same two-phase handshake
+    // used by grab. Native phase reaches a DS leash_holder worn by the
+    // target sub; OC phase reaches an OC-protocol collar on the target.
+    // On timeout, setParticlesState falls back to the target avatar.
+    beginHolderHandshake(user);
 
     // Enable follow mechanics to the target avatar (the one wearing the collar)
     startFollow();
 
-    string target_name = llList2String(details, 1);
-    notifyLeashAction(user, "Coffled to " + llKey2Name(collar_owner), target_name);
+    llRegionSayTo(user, 0, "Coffled to " + llKey2Name(collar_owner));
 }
 
 postLeashInternal(key user, key post_object) {
@@ -759,14 +885,17 @@ postLeashInternal(key user, key post_object) {
 
     setLeashState(user, MODE_POST, post_object, NULL_KEY);
 
-    // Start particles to post object
-    setParticlesState(TRUE, post_object);
+    // Discover the post's LeashPoint via the same handshake as grab/coffle.
+    // Native phase matches responses whose linkset root equals post_object;
+    // OC phase reaches LM-compatible leashposts. On timeout, particles fall
+    // back to the post root.
+    beginHolderHandshake(user);
 
     // Enable distance enforcement (via follow mechanics)
     startFollow();
 
     string object_name = llList2String(details, 1);
-    notifyLeashAction(user, "Posted to " + object_name, "by " + llKey2Name(user));
+    llRegionSayTo(user, 0, "Posted to " + object_name);
 }
 
 yankToLeasher() {
@@ -774,7 +903,7 @@ yankToLeasher() {
 
     list details = llGetObjectDetails(Leasher, [OBJECT_POS]);
     if (llGetListLength(details) == 0) {
-        llOwnerSay("Cannot yank: leasher not in range.");
+        llRegionSayTo(llGetOwner(), 0, "Cannot yank: leasher not in range.");
         return;
     }
 
@@ -791,10 +920,10 @@ yankToLeasher() {
         }
         llMoveToTarget(leasher_pos, 0.3);
         YankTargetHandle = llTarget(leasher_pos, 1.5);
-        llOwnerSay("Yanked to " + llKey2Name(Leasher));
+        llRegionSayTo(llGetOwner(), 0, "Yanked to " + llKey2Name(Leasher));
         llRegionSayTo(Leasher, 0, llKey2Name(llGetOwner()) + " yanked to you.");
     } else {
-        llOwnerSay("Cannot yank: controls not active.");
+        llRegionSayTo(llGetOwner(), 0, "Cannot yank: controls not active.");
     }
 }
 
@@ -864,42 +993,28 @@ turnToTarget(vector target_pos) {
 followTick() {
     if (!FollowActive || !Leashed) return;
 
-    // Determine target position based on mode
+    // Resolve the per-mode follow anchor (avatar-pelvis fallback).
     vector target_pos;
     key follow_target = NULL_KEY;
-    key target_key = NULL_KEY;
+    if (LeashMode == MODE_AVATAR)      follow_target = Leasher;
+    else if (LeashMode == MODE_COFFLE) follow_target = CoffleTargetAvatar;
+    else if (LeashMode == MODE_POST)   follow_target = LeashTarget;
 
-    if (LeashMode == MODE_AVATAR) {
-        follow_target = Leasher;
-        // Prefer holder if active
-        if (HolderTarget != NULL_KEY) {
-            target_key = HolderTarget;
-        } else {
-            target_key = Leasher;
-        }
-    }
-    else if (LeashMode == MODE_COFFLE) {
-        follow_target = CoffleTargetAvatar;
-        target_key = CoffleTargetAvatar;
-    }
-    else if (LeashMode == MODE_POST) {
-        follow_target = LeashTarget;
-        target_key = LeashTarget;
-    }
+    if (follow_target == NULL_KEY) return;
 
-    if (target_key == NULL_KEY) return;
+    // Prefer the discovered LeashPoint prim over the raw mode target.
+    key target_key = follow_target;
+    if (HolderTarget != NULL_KEY) target_key = HolderTarget;
 
     list details = llGetObjectDetails(target_key, [OBJECT_POS]);
-    
-    // Handle HolderTarget disappearing (special case for Avatar mode)
-    if (llGetListLength(details) == 0) {
-        if (LeashMode == MODE_AVATAR && target_key == HolderTarget) {
-            HolderTarget = NULL_KEY;
-            updateParticlesTarget(Leasher);
-            // Fallback to leasher immediately
-            target_key = Leasher;
-            details = llGetObjectDetails(target_key, [OBJECT_POS]);
-        }
+
+    // HolderTarget vanished (detached/derezzed): drop it and retry with
+    // the mode's avatar-pelvis/root fallback. Applies in all modes now.
+    if (llGetListLength(details) == 0 && target_key == HolderTarget) {
+        HolderTarget = NULL_KEY;
+        updateParticlesTarget(follow_target);
+        target_key = follow_target;
+        details = llGetObjectDetails(target_key, [OBJECT_POS]);
     }
 
     if (llGetListLength(details) == 0) return;
@@ -940,6 +1055,11 @@ followTick() {
 default
 {
     state_entry() {
+        if (llGetObjectDesc() == "COLLAR_UPDATER") {
+            llSetScriptState(llGetScriptName(), FALSE);
+            return;
+        }
+
         closeAllHolderListens();
         HolderTarget = NULL_KEY;
         HolderState = HOLDER_STATE_IDLE;
@@ -948,7 +1068,13 @@ default
         PendingAction = "";
         PendingPassTarget = NULL_KEY;
         AuthorizedLmController = NULL_KEY;
-        
+
+        // Persistent native-protocol listener: catches both our own
+        // handshake replies and incoming plugin.leash.request from other
+        // collars (coffle responder role).
+        if (HolderListen != 0) llListenRemove(HolderListen);
+        HolderListen = llListen(LEASH_CHAN_NATIVE, "", NULL_KEY, "");
+
         applySettingsSync();
         llSetTimerEvent(FOLLOW_TICK);
         llRequestPermissions(llGetOwner(), PERMISSION_TAKE_CONTROLS);
@@ -978,7 +1104,7 @@ default
         if (num == UI_BUS) {
             
             // Commands from config plugin - NOW WITH ACL VERIFICATION
-            if (msg_type == "leash_action") {
+            if (msg_type == "plugin.leash.action") {
                 string action = jsonGet(msg, "action", "");
                 if (action == "") return;
                 key user = id;
@@ -1020,7 +1146,7 @@ default
             }
 
             // Emergency release from SOS plugin
-            if (msg_type == "emergency_leash_release") {
+            if (msg_type == "sos.leash.release") {
                 // Verify sender is owner/wearer to prevent abuse
                 if (id == llGetOwner()) {
                     releaseLeashInternal(id);
@@ -1029,7 +1155,7 @@ default
             }
             
             // Lockmeister notifications from particles - VERIFY AUTHORIZATION
-            if (msg_type == "lm_grabbed") {
+            if (msg_type == "particles.lm.grabbed") {
                 key controller = (key)jsonGet(msg, "controller", (string)NULL_KEY);
                 if (controller == NULL_KEY) return;
                 
@@ -1044,13 +1170,13 @@ default
                     LastLeasher = controller;
                     persistLeashState(TRUE, controller);
                     startFollow();
-                    llOwnerSay("Leashed by " + llKey2Name(controller) + " (Lockmeister)");
+                    llRegionSayTo(llGetOwner(), 0, "Leashed by " + llKey2Name(controller) + " (Lockmeister)");
                     broadcastState();
                 }
                 return;
             }
             
-            if (msg_type == "lm_released") {
+            if (msg_type == "particles.lm.released") {
                 if (Leashed) {
                     key old_leasher = Leasher;
                     Leashed = FALSE;
@@ -1058,7 +1184,7 @@ default
                     persistLeashState(FALSE, NULL_KEY);
                     AuthorizedLmController = NULL_KEY;
                     stopFollow();
-                    llOwnerSay("Released by " + llKey2Name(old_leasher) + " (Lockmeister)");
+                    llRegionSayTo(llGetOwner(), 0, "Released by " + llKey2Name(old_leasher) + " (Lockmeister)");
                     broadcastState();
                 }
                 return;
@@ -1067,14 +1193,14 @@ default
         }
         
         if (num == AUTH_BUS) {
-            if (msg_type == "acl_result") {
+            if (msg_type == "auth.acl.result") {
                 handleAclResult(msg);
             }
             return;
         }
         
         if (num == SETTINGS_BUS) {
-            if (msg_type == "settings_sync" || msg_type == "settings_delta") {
+            if (msg_type == "settings.sync" || msg_type == "settings.delta") {
                 applySettingsSync();
             }
             return;
@@ -1084,12 +1210,25 @@ default
     timer() {
         // Advance holder detection state machine
         advanceHolderStateMachine();
-        
+
         TickCount++;
         // Check for offsim/auto-release (~4s cadence at 1.0s FOLLOW_TICK)
         if (TickCount % 4 == 0) {
             if (Leashed) checkLeasherPresence();
             if (!Leashed && ReclipScheduled != 0) checkAutoReclip();
+        }
+
+        // Re-acquire a leashpoint every ~10s when we're leashed but have
+        // fallen through to the avatar/root (HolderTarget cleared by a
+        // detach, or initial handshake never found one). Retrying the
+        // handshake picks up a re-attached holder without requiring the
+        // user to unclip and re-clip.
+        if (TickCount % 10 == 0) {
+            if (Leashed && HolderTarget == NULL_KEY
+                && HolderState == HOLDER_STATE_COMPLETE
+                && Leasher != NULL_KEY) {
+                beginHolderHandshake(Leasher);
+            }
         }
 
         // Follow tick
@@ -1108,8 +1247,14 @@ default
     }
     
     listen(integer channel, string name, key id, string msg) {
-        if (channel == LEASH_CHAN_DS) {
-            handleHolderResponseDs(msg);
+        if (channel == LEASH_CHAN_NATIVE) {
+            string mtype = llJsonGetValue(msg, ["type"]);
+            if (mtype == "plugin.leash.request") {
+                handleNativeRequest(msg);
+            }
+            else if (mtype == "plugin.leash.target") {
+                handleHolderResponseNative(msg);
+            }
         }
         else if (channel == LEASH_CHAN_LM) {
             handleHolderResponseOc(id, msg);

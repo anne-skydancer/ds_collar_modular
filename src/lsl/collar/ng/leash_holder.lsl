@@ -1,10 +1,14 @@
 /*--------------------
 SCRIPT: leash_holder.lsl
 VERSION: 1.10
-REVISION: 0
+REVISION: 2
 PURPOSE: Minimal leash-holder target responder for external objects
-ARCHITECTURE: Direct channel listener with prim discovery fallback
+ARCHITECTURE: Direct channel listener with prim discovery fallback, namespaced message protocol
 CHANGES:
+- v1.1 rev 2: Include "root" (linkset root UUID) in plugin.leash.target
+  reply so the collar can validate post-mode responses against the
+  user-selected target root. Additive field; old collars ignore it.
+- v1.1 rev 1: Namespace native protocol types (plugin.leash.request / plugin.leash.target).
 - v1.1 rev 0: Version bump for LSD policy architecture. No functional changes to this module.
 --------------------*/
 
@@ -78,8 +82,8 @@ default {
     listen(integer ch, string name, key src, string msg) {
         if (ch != LEASH_HOLDER_CHAN) return;
 
-        // Expect JSON: {"type":"leash_req","wearer":"...","collar":"...","session":"..."}
-        if (llJsonGetValue(msg, ["type"]) != "leash_req") return;
+        // Expect JSON: {"type":"plugin.leash.request","wearer":"...","collar":"...","session":"..."}
+        if (llJsonGetValue(msg, ["type"]) != "plugin.leash.request") return;
 
         key collar = (key)llJsonGetValue(msg, ["collar"]);
         integer session = (integer)llJsonGetValue(msg, ["session"]);
@@ -87,9 +91,10 @@ default {
         key targetPrim = leashPrimKey();
 
         string reply = llList2Json(JSON_OBJECT, [
-            "type", "leash_target",
+            "type", "plugin.leash.target",
             "ok", "1",
             "holder", (string)targetPrim,
+            "root", (string)llGetLinkKey(1),
             "name", llGetObjectName(),
             "session", (string)session
         ]);

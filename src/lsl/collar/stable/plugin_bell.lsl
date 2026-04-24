@@ -1,13 +1,38 @@
 /*--------------------
 PLUGIN: plugin_bell.lsl
 VERSION: 1.10
-REVISION: 4
+REVISION: 12
 PURPOSE: Bell visibility and jingling control for the collar
-ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
+ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility,
+  namespaced internal message protocol
 CHANGES:
-- v1.1 rev 4: Restrict bell policy to ACL 3+ (Trustee, Unowned wearer, Primary Owner).
+- v1.1 rev 12: write_plugin_reg guards idempotent writes (read-before-
+  write). Same-value re-registrations on state_entry and
+  kernel.register.refresh no longer fire linkset_data, so kmod_ui's
+  debounced rebuild + session invalidation stops triggering on
+  register.refresh cascades — wearer's open menu survives the event.
+- v1.1 rev 11: Add dormancy guard in state_entry — script parks itself
+  if the prim's object description is "COLLAR_UPDATER" so it stays dormant
+  when staged in an updater installer prim.
+- v1.1 rev 10: Self-declare menu presence via LSD (plugin.reg.<ctx>).
+  Label updates write the same LSD key directly; ui.label.update link_messages
+  are gone. Reset handlers delete plugin.reg.<ctx> and acl.policycontext:<ctx>
+  before llResetScript so kmod_ui drops the button immediately.
+- v1.1 rev 9: Chat subcommands "bell sound"/"bell silent" (gated by "Sound")
+  and "bell vol up"/"bell vol dn" (gated by "Volume +"/"Volume -").
+- v1.1 rev 8: Chat command support (Phase 3). Registers "bell" alias.
+  "<prefix> bell" opens menu; "bell show"/"bell hide" set visibility
+  (gated by btn_allowed("Show")); "bell jingle" triggers a manual
+  jingle (respects BellSoundEnabled).
+- v1.1 rev 7: Wire-type rename (Phase 2). kernel.register→kernel.register.declare,
+  kernel.registernow→kernel.register.refresh, kernel.reset→kernel.reset.soft,
+  kernel.resetall→kernel.reset.factory.
+- v1.1 rev 6: Guard ui.menu.start against raw kmod_chat broadcasts (no acl
+  field). Fixes duplicate dialogs when commands are typed in chat.
+- v1.1 rev 5: Restrict bell policy to ACL 3+ (Trustee, Unowned wearer, Primary Owner).
   Public (ACL 1) and Owned wearer (ACL 2) no longer see the bell plugin in the menu,
   as bell settings are owner-imposed controls.
+- v1.1 rev 4: Namespaced internal message types (kernel.register, ui.dialog.open, etc.).
 - v1.1 rev 3: Honor soft_reset / soft_reset_all from KERNEL_LIFECYCLE so
   factory reset clears cached bell state.
 - v1.1 rev 2: Migrate dialog buttons to button_data format with context-based routing.
@@ -26,7 +51,7 @@ integer SETTINGS_BUS = 800;
 integer UI_BUS = 900;
 integer DIALOG_BUS = 950;
 
-string PLUGIN_CONTEXT = "bell";
+string PLUGIN_CONTEXT = "ui.core.bell";
 string PLUGIN_LABEL = "Bell";
 
 // Settings keys
@@ -78,7 +103,7 @@ float lsd_float(string lsd_key, float fallback) {
 
 /* -------------------- LSD POLICY HELPER -------------------- */
 list get_policy_buttons(string ctx, integer acl) {
-    string policy = llLinksetDataRead("policy:" + ctx);
+    string policy = llLinksetDataRead("acl.policycontext:" + ctx);
     if (policy == "") return [];
     string csv = llJsonGetValue(policy, [(string)acl]);
     if (csv == JSON_INVALID) return [];
@@ -129,7 +154,7 @@ show_menu(string context, string title, string body, list button_data) {
     MenuContext = context;
 
     llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
-        "type", "dialog_open",
+        "type", "ui.dialog.open",
         "session_id", SessionId,
         "user", (string)CurrentUser,
         "title", title,
@@ -140,29 +165,56 @@ show_menu(string context, string title, string body, list button_data) {
 }
 
 /* -------------------- PLUGIN REGISTRATION -------------------- */
+
+// Self-declared menu presence. kmod_ui enumerates via llLinksetDataFindKeys
+// and rebuilds its view tables on linkset_data events touching this key.
+write_plugin_reg(string label) {
+    string k = "plugin.reg." + PLUGIN_CONTEXT;
+    string v = llList2Json(JSON_OBJECT, [
+        "label",  label,
+        "script", llGetScriptName()
+    ]);
+    // Skip the write (and its linkset_data event) when the stored value
+    // is already what we would write. Idempotent re-registrations on
+    // state_entry or kernel.register.refresh then no longer trigger
+    // kmod_ui's debounced rebuild + session invalidation.
+    if (llLinksetDataRead(k) == v) return;
+    llLinksetDataWrite(k, v);
+}
+
 register_self() {
     // Write button visibility policy to LSD.
     // ACL 1 (Public) and ACL 2 (Owned wearer) are excluded — bell settings
     // are owner-imposed controls and should not be changed by the public
     // or by a wearer who is owned.
-    llLinksetDataWrite("policy:" + PLUGIN_CONTEXT, llList2Json(JSON_OBJECT, [
+    llLinksetDataWrite("acl.policycontext:" + PLUGIN_CONTEXT, llList2Json(JSON_OBJECT, [
         "3", "Show,Sound,Volume +,Volume -",
         "4", "Show,Sound,Volume +,Volume -",
         "5", "Show,Sound,Volume +,Volume -"
     ]));
 
-    // Register with kernel
+    // Self-declared menu presence for kmod_ui.
+    write_plugin_reg(PLUGIN_LABEL);
+
+    // Register with kernel (for ping/pong health tracking and alias table).
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
-        "type", "register",
+        "type", "kernel.register.declare",
         "context", PLUGIN_CONTEXT,
         "label", PLUGIN_LABEL,
         "script", llGetScriptName()
+    ]), NULL_KEY);
+
+    // Declare chat alias.
+    llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
+        "type",    "chat.alias.declare",
+        "alias",   "bell",
+        "context", PLUGIN_CONTEXT
     ]), NULL_KEY);
 }
 
 send_pong() {
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
-        "type", "pong",
+        "type", "kernel.pong",
         "context", PLUGIN_CONTEXT
     ]), NULL_KEY);
 }
@@ -209,10 +261,110 @@ persist_bell_setting(string setting_key, string value) {
     llLinksetDataWrite(setting_key, value);
 
     llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
-        "type", "set",
+        "type", "settings.set",
         "key", setting_key,
         "value", value
     ]), NULL_KEY);
+}
+
+/* -------------------- CHAT SUBCOMMAND HANDLING -------------------- */
+
+// Set bell visibility idempotently; gated by "Show" policy.
+set_bell_visible_state(key user, integer acl_level, integer target_visible) {
+    gPolicyButtons = get_policy_buttons(PLUGIN_CONTEXT, acl_level);
+    if (!btn_allowed("Show")) {
+        llRegionSayTo(user, 0, "Access denied.");
+        gPolicyButtons = [];
+        return;
+    }
+    gPolicyButtons = [];
+
+    if (BellVisible == target_visible) {
+        if (target_visible) llRegionSayTo(user, 0, "Bell already shown.");
+        else llRegionSayTo(user, 0, "Bell already hidden.");
+        return;
+    }
+
+    BellVisible = target_visible;
+    set_bell_visibility(BellVisible);
+    persist_bell_setting(KEY_BELL_VISIBLE, (string)BellVisible);
+    if (BellVisible) llRegionSayTo(user, 0, "Bell shown.");
+    else llRegionSayTo(user, 0, "Bell hidden.");
+}
+
+// Set bell sound enabled state idempotently; gated by "Sound" policy.
+set_bell_sound_state(key user, integer acl_level, integer target_enabled) {
+    gPolicyButtons = get_policy_buttons(PLUGIN_CONTEXT, acl_level);
+    if (!btn_allowed("Sound")) {
+        llRegionSayTo(user, 0, "Access denied.");
+        gPolicyButtons = [];
+        return;
+    }
+    gPolicyButtons = [];
+
+    if (BellSoundEnabled == target_enabled) {
+        if (target_enabled) llRegionSayTo(user, 0, "Bell sound already enabled.");
+        else llRegionSayTo(user, 0, "Bell sound already disabled.");
+        return;
+    }
+
+    BellSoundEnabled = target_enabled;
+    persist_bell_setting(KEY_BELL_SOUND_ENABLED, (string)BellSoundEnabled);
+    if (BellSoundEnabled) llRegionSayTo(user, 0, "Bell sound enabled.");
+    else llRegionSayTo(user, 0, "Bell sound disabled.");
+}
+
+// Adjust bell volume by delta; gated by the matching "Volume +/-" policy.
+adjust_bell_volume(key user, integer acl_level, float delta, string policy_label) {
+    gPolicyButtons = get_policy_buttons(PLUGIN_CONTEXT, acl_level);
+    if (!btn_allowed(policy_label)) {
+        llRegionSayTo(user, 0, "Access denied.");
+        gPolicyButtons = [];
+        return;
+    }
+    gPolicyButtons = [];
+
+    BellVolume = BellVolume + delta;
+    if (BellVolume > 1.0) BellVolume = 1.0;
+    if (BellVolume < 0.0) BellVolume = 0.0;
+    persist_bell_setting(KEY_BELL_VOLUME, (string)BellVolume);
+    llRegionSayTo(user, 0, "Volume: " + (string)((integer)(BellVolume * 100)) + "%");
+}
+
+handle_subpath(key user, integer acl_level, string subpath) {
+    if (subpath == "show") {
+        set_bell_visible_state(user, acl_level, TRUE);
+        return;
+    }
+    if (subpath == "hide") {
+        set_bell_visible_state(user, acl_level, FALSE);
+        return;
+    }
+    if (subpath == "sound") {
+        set_bell_sound_state(user, acl_level, TRUE);
+        return;
+    }
+    if (subpath == "silent") {
+        set_bell_sound_state(user, acl_level, FALSE);
+        return;
+    }
+    if (subpath == "vol.up") {
+        adjust_bell_volume(user, acl_level, 0.1, "Volume +");
+        return;
+    }
+    if (subpath == "vol.dn") {
+        adjust_bell_volume(user, acl_level, -0.1, "Volume -");
+        return;
+    }
+    if (subpath == "jingle") {
+        if (!BellSoundEnabled) {
+            llRegionSayTo(user, 0, "Bell sound is disabled.");
+            return;
+        }
+        play_jingle();
+        return;
+    }
+    llRegionSayTo(user, 0, "Unknown bell subcommand: " + subpath);
 }
 
 /* -------------------- BUTTON HANDLER -------------------- */
@@ -265,7 +417,7 @@ handle_button_click(string msg) {
 /* -------------------- NAVIGATION -------------------- */
 return_to_root() {
     llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
-        "type", "return",
+        "type", "ui.menu.return",
         "user", (string)CurrentUser
     ]), NULL_KEY);
     cleanup_session();
@@ -274,7 +426,7 @@ return_to_root() {
 cleanup_session() {
     if (SessionId != "") {
         llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
-            "type", "dialog_close",
+            "type", "ui.dialog.close",
             "session_id", SessionId
         ]), NULL_KEY);
     }
@@ -308,6 +460,11 @@ apply_settings_sync() {
 /* -------------------- EVENT HANDLERS -------------------- */
 default {
     state_entry() {
+        if (llGetObjectDesc() == "COLLAR_UPDATER") {
+            llSetScriptState(llGetScriptName(), FALSE);
+            return;
+        }
+
         cleanup_session();
 
         // Restore from LSD (persists through relog); fall back to safe defaults on first wear
@@ -348,21 +505,23 @@ default {
             string msg_type = llJsonGetValue(msg, ["type"]);
             if (msg_type == JSON_INVALID) return;
 
-            if (msg_type == "register_now") {
+            if (msg_type == "kernel.register.refresh") {
                 register_self();
                 return;
             }
 
-            if (msg_type == "ping") {
+            if (msg_type == "kernel.ping") {
                 send_pong();
                 return;
             }
 
-            if (msg_type == "soft_reset" || msg_type == "soft_reset_all") {
+            if (msg_type == "kernel.reset.soft" || msg_type == "kernel.reset.factory") {
                 string target_context = llJsonGetValue(msg, ["context"]);
                 if (target_context != JSON_INVALID) {
                     if (target_context != "" && target_context != PLUGIN_CONTEXT) return;
                 }
+                llLinksetDataDelete("plugin.reg." + PLUGIN_CONTEXT);
+                llLinksetDataDelete("acl.policycontext:" + PLUGIN_CONTEXT);
                 llResetScript();
             }
 
@@ -373,7 +532,7 @@ default {
             string msg_type = llJsonGetValue(msg, ["type"]);
             if (msg_type == JSON_INVALID) return;
 
-            if (msg_type == "settings_sync" || msg_type == "settings_delta") {
+            if (msg_type == "settings.sync" || msg_type == "settings.delta") {
                 apply_settings_sync();
                 return;
             }
@@ -385,12 +544,23 @@ default {
             string msg_type = llJsonGetValue(msg, ["type"]);
             if (msg_type == JSON_INVALID) return;
 
-            if (msg_type == "start") {
+            if (msg_type == "ui.menu.start") {
+                if (llJsonGetValue(msg, ["acl"]) == JSON_INVALID) return;
                 if (llJsonGetValue(msg, ["context"]) == JSON_INVALID) return;
                 if (llJsonGetValue(msg, ["context"]) != PLUGIN_CONTEXT) return;
 
                 CurrentUser = id;
                 UserAcl = (integer)llJsonGetValue(msg, ["acl"]);
+
+                string subpath = "";
+                string sp = llJsonGetValue(msg, ["subpath"]);
+                if (sp != JSON_INVALID) subpath = sp;
+
+                if (subpath != "") {
+                    handle_subpath(id, UserAcl, subpath);
+                    return;
+                }
+
                 show_main_menu();
                 return;
             }
@@ -402,7 +572,7 @@ default {
             string msg_type = llJsonGetValue(msg, ["type"]);
             if (msg_type == JSON_INVALID) return;
 
-            if (msg_type == "dialog_response") {
+            if (msg_type == "ui.dialog.response") {
                 if (llJsonGetValue(msg, ["session_id"]) == JSON_INVALID || llJsonGetValue(msg, ["button"]) == JSON_INVALID) return;
                 string response_session = llJsonGetValue(msg, ["session_id"]);
                 if (response_session != SessionId) return;
@@ -411,7 +581,7 @@ default {
                 return;
             }
 
-            if (msg_type == "dialog_timeout") {
+            if (msg_type == "ui.dialog.timeout") {
                 string timeout_session = llJsonGetValue(msg, ["session_id"]);
                 if (timeout_session == JSON_INVALID) return;
                 if (timeout_session != SessionId) return;

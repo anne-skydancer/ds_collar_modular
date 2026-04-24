@@ -1,10 +1,56 @@
 /*--------------------
 PLUGIN: plugin_relay.lsl
 VERSION: 1.10
-REVISION: 1
+REVISION: 13
 PURPOSE: Provide ORG-compliant RLV relay with hardcore mode and safeword hooks
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
+- v1.1 rev 13: write_plugin_reg guards idempotent writes (read-before-
+  write). Same-value re-registrations on state_entry and
+  kernel.register.refresh no longer fire linkset_data, so kmod_ui's
+  debounced rebuild + session invalidation stops triggering on
+  register.refresh cascades — wearer's open menu survives the event.
+- v1.1 rev 12: apply_settings_sync now mirrors the Mode-change side effects
+  from the menu handlers — calls clear_pending_ask() on any Mode change and
+  empties SessionTrustedKeys when Mode transitions to OFF. Previously a
+  notecard reload flipping Mode ASK→OFF left a live ASK dialog and stale
+  session-trusted senders in place; the wearer could click Allow on the
+  dialog and restore restrictions the reload was meant to block.
+- v1.1 rev 11: Add dormancy guard in state_entry — script parks itself
+  if the prim's object description is "COLLAR_UPDATER" so it stays dormant
+  when staged in an updater installer prim.
+- v1.1 rev 10: Self-declare menu presence via LSD (plugin.reg.<ctx>).
+  Label updates write the same LSD key directly; ui.label.update link_messages
+  are gone. Reset handlers delete plugin.reg.<ctx> and acl.policycontext:<ctx>
+  before llResetScript so kmod_ui drops the button immediately.
+- v1.1 rev 9: ASK mode now accepts provisionally — commands apply and
+  ack on arrival, the wearer dialog offers Allow (keep) or Deny
+  (revert via @clear + !release). Fixes capture-furniture having to
+  be re-used after authorization because its state machine timed out
+  while the wearer was reading the prompt.
+- v1.1 rev 8: Consistency pass — 3 user-facing notices (relay off,
+  reattach, SOS safeword) converted from llOwnerSay to
+  llRegionSayTo(llGetOwner(), 0, ...); "[RELAY]" and "[SOS]" source
+  prefixes dropped per project convention. RLV command forwarding and
+  @clear still use llOwnerSay (required by RLV delivery protocol).
+- v1.1 rev 7: Chat command support (Phase 3). Registers "relay" and
+  "safeword" aliases. "relay [on|off|ask]" sets mode (gated by
+  btn_allowed("Mode")); "safeword" performs emergency clear, bypasses
+  Hardcore, gated by btn_allowed("Safeword") OR btn_allowed("Unbind").
+- v1.1 rev 6: Wire sos.relay.clear handler on UI_BUS — triggers
+  safeword_clear_all() (bypasses Hardcore, matching the emergency intent).
+  Removed the orphan SOS_MSG_NUM=555 lane and its "sos.release" handler;
+  both were unreachable (no producer) since an earlier design that never
+  connected.
+- v1.1 rev 5: Wire-type rename (Phase 2). kernel.register→kernel.register.declare,
+  kernel.registernow→kernel.register.refresh, kernel.reset→kernel.reset.soft,
+  kernel.resetall→kernel.reset.factory.
+- v1.1 rev 4: Fix handle_ground_rez called on detach showing "rezzed on
+  ground" message. Now takes a reason string; detach passes "Collar detached"
+  and ground-rez passes "Collar rezzed on ground".
+- v1.1 rev 3: Guard ui.menu.start against raw kmod_chat broadcasts (no acl
+  field). Fixes duplicate dialogs when commands are typed in chat.
+- v1.1 rev 2: Namespace internal message type strings (kernel.*, ui.*, settings.*, sos.*).
 - v1.1 rev 1: Migrate settings reads from JSON broadcast to direct LSD reads.
   Remove apply_settings_delta(); fold side effects into apply_settings_sync()
   via previous-state comparison. Both settings_sync and settings_delta call
@@ -24,7 +70,7 @@ integer UI_BUS = 900;
 integer DIALOG_BUS = 950;
 
 /* -------------------- PLUGIN IDENTITY -------------------- */
-string PLUGIN_CONTEXT = "core_relay";
+string PLUGIN_CONTEXT = "ui.core.relay";
 string PLUGIN_LABEL = "RLV Relay";
 
 /* ACL levels for reference:
@@ -48,7 +94,6 @@ integer MODE_ASK = 2;
 
 integer ASK_TIMEOUT_SEC = 30;  // Wearer has 30 seconds to respond to an ASK dialog
 
-integer SOS_MSG_NUM = 555;  // SOS emergency channel
 
 // ORG relay spec wildcard UUID (accepts commands from any avatar)
 key WILDCARD_UUID = "ffffffff-ffff-ffff-ffff-ffffffffffff";
@@ -71,12 +116,12 @@ list Relays = [];
 // ASK mode: objects the wearer has accepted this session (not re-prompted)
 list SessionTrustedKeys = [];
 
-// ASK mode: one pending prompt at a time
-// Batches all commands from the same object until wearer responds
+// ASK mode: one pending prompt at a time. Restrictions from an untrusted
+// object are applied + acked on arrival (provisional accept); the prompt
+// asks the wearer to Allow (keep) or Deny (revert via @clear + !release).
 key PendingAskKey = NULL_KEY;
 string PendingAskName = "";
 integer PendingAskChan = 0;
-list PendingAskCommands = [];
 integer AskListenHandle = 0;
 integer AskDialogChan = 0;
 
@@ -108,7 +153,7 @@ string truncate_name(string name, integer max_len) {
 
 /* -------------------- LSD POLICY HELPER -------------------- */
 list get_policy_buttons(string ctx, integer acl) {
-    string policy = llLinksetDataRead("policy:" + ctx);
+    string policy = llLinksetDataRead("acl.policycontext:" + ctx);
     if (policy == "") return [];
     string csv = llJsonGetValue(policy, [(string)acl]);
     if (csv == JSON_INVALID) return [];
@@ -121,28 +166,59 @@ integer btn_allowed(string label) {
 
 /* -------------------- LIFECYCLE MANAGEMENT -------------------- */
 
+// Self-declared menu presence. kmod_ui enumerates via llLinksetDataFindKeys
+// and rebuilds its view tables on linkset_data events touching this key.
+write_plugin_reg(string label) {
+    string k = "plugin.reg." + PLUGIN_CONTEXT;
+    string v = llList2Json(JSON_OBJECT, [
+        "label",  label,
+        "script", llGetScriptName()
+    ]);
+    // Skip the write (and its linkset_data event) when the stored value
+    // is already what we would write. Idempotent re-registrations on
+    // state_entry or kernel.register.refresh then no longer trigger
+    // kmod_ui's debounced rebuild + session invalidation.
+    if (llLinksetDataRead(k) == v) return;
+    llLinksetDataWrite(k, v);
+}
+
 register_self() {
     // Write button visibility policy to LSD (default-deny per ACL level)
-    llLinksetDataWrite("policy:" + PLUGIN_CONTEXT, llList2Json(JSON_OBJECT, [
+    llLinksetDataWrite("acl.policycontext:" + PLUGIN_CONTEXT, llList2Json(JSON_OBJECT, [
         "2", "Mode,Bound by...,Safeword",
         "3", "Mode,Bound by...,Unbind,HC OFF,HC ON",
         "4", "Mode,Bound by...,Safeword",
         "5", "Mode,Bound by...,Unbind,HC OFF,HC ON"
     ]));
 
-    // Register with kernel
+    // Self-declared menu presence for kmod_ui.
+    write_plugin_reg(PLUGIN_LABEL);
+
+    // Register with kernel (for ping/pong health tracking and alias table).
     string msg = llList2Json(JSON_OBJECT, [
-        "type", "register",
+        "type", "kernel.register.declare",
         "context", PLUGIN_CONTEXT,
         "label", PLUGIN_LABEL,
         "script", llGetScriptName()
     ]);
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, msg, NULL_KEY);
+
+    // Declare chat aliases.
+    llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
+        "type",    "chat.alias.declare",
+        "alias",   "relay",
+        "context", PLUGIN_CONTEXT
+    ]), NULL_KEY);
+    llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
+        "type",    "chat.alias.declare",
+        "alias",   "safeword",
+        "context", PLUGIN_CONTEXT + ".safeword"
+    ]), NULL_KEY);
 }
 
 send_pong() {
     string msg = llList2Json(JSON_OBJECT, [
-        "type", "pong",
+        "type", "kernel.pong",
         "context", PLUGIN_CONTEXT
     ]);
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, msg, NULL_KEY);
@@ -262,48 +338,33 @@ show_ask_dialog() {
     if (AskListenHandle) llListenRemove(AskListenHandle);
     AskListenHandle = llListen(AskDialogChan, "", WearerKey, "");
 
-    integer cmd_count = llGetListLength(PendingAskCommands);
     string body = "[RELAY] " + PendingAskName +
-                  "\nwants to apply " + (string)cmd_count +
-                  " restriction(s).\n\nAllow or deny?";
+                  " applied RLV restrictions.\n\nAllow to keep them, or Deny to release.";
 
     // Three buttons: Deny left, Allow right, blank centre for spacing
     llDialog(WearerKey, body, ["Deny", " ", "Allow"], AskDialogChan);
     llSetTimerEvent((float)ASK_TIMEOUT_SEC);
 }
 
-// Wearer accepted: trust the object for this session and execute pending commands.
+// Wearer confirmed: trust the object for this session. Restrictions were
+// already applied on arrival (provisional accept), so nothing to forward.
 accept_ask() {
     if (llListFindList(SessionTrustedKeys, [(string)PendingAskKey]) == -1) {
         SessionTrustedKeys += [(string)PendingAskKey];
     }
-
-    add_relay(PendingAskKey, PendingAskName, PendingAskChan);
-
-    integer i = 0;
-    while (i < llGetListLength(PendingAskCommands)) {
-        string cmd = llList2String(PendingAskCommands, i);
-        store_restriction(PendingAskKey, cmd);
-        llOwnerSay(cmd);
-        llRegionSayTo(PendingAskKey, PendingAskChan,
-            "RLV," + (string)llGetKey() + "," + cmd + ",ok");
-        i++;
-    }
-
     llRegionSayTo(WearerKey, 0, "[RELAY] Allowed: " + PendingAskName);
     clear_pending_ask();
 }
 
-// Wearer declined or dialog timed out: reject all pending commands with ko.
+// Wearer declined or dialog timed out: revert the provisional restrictions
+// from this object and release it.
 decline_ask() {
-    integer i = 0;
-    while (i < llGetListLength(PendingAskCommands)) {
-        string cmd = llList2String(PendingAskCommands, i);
+    if (PendingAskKey != NULL_KEY) {
+        clear_restrictions(PendingAskKey);
+        remove_relay(PendingAskKey);
         llRegionSayTo(PendingAskKey, PendingAskChan,
-            "RLV," + (string)llGetKey() + "," + cmd + ",ko");
-        i++;
+            "RLV," + (string)llGetKey() + ",!release,ok");
     }
-
     llRegionSayTo(WearerKey, 0, "[RELAY] Denied: " + PendingAskName);
     clear_pending_ask();
 }
@@ -318,7 +379,6 @@ clear_pending_ask() {
     PendingAskKey = NULL_KEY;
     PendingAskName = "";
     PendingAskChan = 0;
-    PendingAskCommands = [];
     AskDialogChan = 0;
 }
 
@@ -332,8 +392,14 @@ apply_settings_sync() {
     Mode = lsd_int(KEY_RELAY_MODE, Mode);
     Hardcore = lsd_int(KEY_RELAY_HARDCORE, Hardcore);
 
-    // Side effect: relay mode changed — update listener state
+    // Side effects on Mode change — must mirror the OFF/ASK/ON menu handlers.
+    // Any live ASK dialog is stale once the mode changes, and an OFF
+    // transition clears session-trusted senders the same way the menu does.
     if (Mode != prev_mode) {
+        clear_pending_ask();
+        if (Mode == MODE_OFF) {
+            SessionTrustedKeys = [];
+        }
         update_relay_listen_state();
     }
 }
@@ -343,7 +409,7 @@ apply_settings_sync() {
 persist_mode(integer new_mode) {
     llLinksetDataWrite(KEY_RELAY_MODE, (string)new_mode);
     string msg = llList2Json(JSON_OBJECT, [
-        "type", "set",
+        "type", "settings.set",
         "key", KEY_RELAY_MODE,
         "value", (string)new_mode
     ]);
@@ -353,7 +419,7 @@ persist_mode(integer new_mode) {
 persist_hardcore(integer new_hardcore) {
     llLinksetDataWrite(KEY_RELAY_HARDCORE, (string)new_hardcore);
     string msg = llList2Json(JSON_OBJECT, [
-        "type", "set",
+        "type", "settings.set",
         "key", KEY_RELAY_HARDCORE,
         "value", (string)new_hardcore
     ]);
@@ -404,7 +470,7 @@ show_main_menu() {
     string buttons_json = llList2Json(JSON_ARRAY, buttons);
 
     string msg = llList2Json(JSON_OBJECT, [
-        "type", "dialog_open",
+        "type", "ui.dialog.open",
         "session_id", SessionId,
         "user", (string)CurrentUser,
         "title", PLUGIN_LABEL + " Menu",
@@ -453,7 +519,7 @@ show_mode_menu() {
     string buttons_json = llList2Json(JSON_ARRAY, buttons);
 
     string msg = llList2Json(JSON_OBJECT, [
-        "type", "dialog_open",
+        "type", "ui.dialog.open",
         "session_id", SessionId,
         "user", (string)CurrentUser,
         "title", "Relay Mode",
@@ -489,7 +555,7 @@ show_object_list() {
     string buttons_json = llList2Json(JSON_ARRAY, buttons);
 
     string msg = llList2Json(JSON_OBJECT, [
-        "type", "dialog_open",
+        "type", "ui.dialog.open",
         "session_id", SessionId,
         "user", (string)CurrentUser,
         "title", "Active Relays",
@@ -588,7 +654,7 @@ handle_button_click(string button) {
 
 return_to_root() {
     string msg = llList2Json(JSON_OBJECT, [
-        "type", "return",
+        "type", "ui.menu.return",
         "context", PLUGIN_CONTEXT,
         "user", (string)CurrentUser
     ]);
@@ -602,7 +668,7 @@ return_to_root() {
 cleanup_session() {
     if (SessionId != "") {
         llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
-            "type", "dialog_close",
+            "type", "ui.dialog.close",
             "session_id", SessionId
         ]), NULL_KEY);
     }
@@ -615,7 +681,7 @@ cleanup_session() {
 
 /* -------------------- GROUND REZ HANDLER -------------------- */
 
-handle_ground_rez() {
+handle_ground_rez(string reason) {
     // Dismiss any outstanding ASK prompt and clear session trust
     clear_pending_ask();
     SessionTrustedKeys = [];
@@ -634,12 +700,13 @@ handle_ground_rez() {
     // Update listen state
     update_relay_listen_state();
 
-    llOwnerSay("[RELAY] Collar rezzed on ground - Relay turned OFF");
+    if (reason != "") llRegionSayTo(llGetOwner(), 0, reason + " - Relay turned OFF");
 }
 
 /* -------------------- MESSAGE HANDLERS -------------------- */
 
 handle_start(string msg) {
+    if (llJsonGetValue(msg, ["acl"]) == JSON_INVALID) return;
     if (llJsonGetValue(msg, ["context"]) == JSON_INVALID) return;
     if (llJsonGetValue(msg, ["user"]) == JSON_INVALID) return;
 
@@ -647,11 +714,76 @@ handle_start(string msg) {
     if (context != PLUGIN_CONTEXT) return;
 
     key user = (key)llJsonGetValue(msg, ["user"]);
+    integer acl = (integer)llJsonGetValue(msg, ["acl"]);
+
+    string subpath = "";
+    string sp = llJsonGetValue(msg, ["subpath"]);
+    if (sp != JSON_INVALID) subpath = sp;
+
+    if (subpath != "") {
+        handle_subpath(user, acl, subpath);
+        return;
+    }
 
     // Start new session
     CurrentUser = user;
-    UserAcl = (integer)llJsonGetValue(msg, ["acl"]);
+    UserAcl = acl;
     show_main_menu();
+}
+
+// Chat subcommand handler. Called from handle_start when subpath is non-empty.
+handle_subpath(key user, integer acl_level, string subpath) {
+    CurrentUser = user;
+    UserAcl = acl_level;
+
+    gPolicyButtons = get_policy_buttons(PLUGIN_CONTEXT, acl_level);
+
+    if (subpath == "on" || subpath == "off" || subpath == "ask") {
+        if (!btn_allowed("Mode")) {
+            llRegionSayTo(user, 0, "Access denied.");
+            gPolicyButtons = [];
+            return;
+        }
+        clear_pending_ask();
+        if (subpath == "off") {
+            SessionTrustedKeys = [];
+            Mode = MODE_OFF;
+            Hardcore = FALSE;
+            persist_mode(MODE_OFF);
+            persist_hardcore(FALSE);
+        }
+        else if (subpath == "ask") {
+            Mode = MODE_ASK;
+            Hardcore = FALSE;
+            persist_mode(MODE_ASK);
+            persist_hardcore(FALSE);
+        }
+        else {
+            Mode = MODE_ON;
+            persist_mode(MODE_ON);
+        }
+        update_relay_listen_state();
+        llRegionSayTo(user, 0, "[RELAY] Mode set to " + llToUpper(subpath) + ".");
+        gPolicyButtons = [];
+        return;
+    }
+
+    if (subpath == "safeword") {
+        // Emergency panic verb. Bypasses Hardcore, matching the sos.relay.clear
+        // semantic. Gate: any user who could Safeword or Unbind via the menu.
+        if (!btn_allowed("Safeword") && !btn_allowed("Unbind")) {
+            llRegionSayTo(user, 0, "Access denied.");
+            gPolicyButtons = [];
+            return;
+        }
+        safeword_clear_all();
+        llRegionSayTo(user, 0, "[RELAY] Safeword used - all restrictions cleared.");
+        gPolicyButtons = [];
+        return;
+    }
+
+    llRegionSayTo(user, 0, "Unknown relay subcommand: " + subpath);
+    gPolicyButtons = [];
 }
 
 handle_dialog_response(string msg) {
@@ -744,35 +876,33 @@ handle_relay_message(key sender_id, string sender_name, string raw_msg) {
             return;
         }
 
-        // ASK mode: prompt wearer before executing restrictive commands from untrusted objects.
-        // Removal commands (=y, @clear) are always auto-accepted per ORG spec.
-        // Objects the wearer has accepted this session are also auto-accepted without re-prompting.
+        // ASK mode: provisional accept. Apply and ack on arrival so the
+        // object's state machine doesn't time out while the wearer reads
+        // the prompt. Wearer's Deny (or timeout) reverts via @clear +
+        // !release. Removal commands (=y, @clear) bypass the prompt.
+        // Objects already trusted this session skip the prompt entirely.
         if (Mode == MODE_ASK && !is_removal_command(command)) {
             integer already_trusted = (llListFindList(SessionTrustedKeys, [(string)sender_id]) != -1);
             if (!already_trusted) {
                 if (PendingAskKey == NULL_KEY) {
-                    // No active prompt — start one for this object
+                    // No active prompt — open one for this object
                     PendingAskKey = sender_id;
                     PendingAskName = sender_name;
                     PendingAskChan = session_chan;
-                    PendingAskCommands = [command];
                     show_ask_dialog();
                 }
-                else if (PendingAskKey == sender_id) {
-                    // Same object sent another command before wearer responded — batch it
-                    PendingAskCommands += [command];
-                }
-                else {
-                    // Different object arrived while a prompt is already open — reject
+                else if (PendingAskKey != sender_id) {
+                    // Different object arrived while a prompt is open — reject
                     llRegionSayTo(sender_id, session_chan,
                         "RLV," + (string)llGetKey() + "," + command + ",ko");
+                    return;
                 }
-                return;
+                // Fall through to apply (provisional accept)
             }
-            // already_trusted: fall through to accept below
         }
 
-        // Accept command (MODE_ON, or MODE_ASK for trusted objects / removal commands)
+        // Apply command. Reached in MODE_ON, or MODE_ASK either provisionally
+        // (untrusted object, prompt just opened) or directly (trusted / removal).
         add_relay(sender_id, sender_name, session_chan);
         store_restriction(sender_id, command);
         llOwnerSay(command);  // Forward to viewer
@@ -788,6 +918,11 @@ handle_relay_message(key sender_id, string sender_name, string raw_msg) {
 default
 {
     state_entry() {
+        if (llGetObjectDesc() == "COLLAR_UPDATER") {
+            llSetScriptState(llGetScriptName(), FALSE);
+            return;
+        }
+
         cleanup_session();
         clear_pending_ask();
         SessionTrustedKeys = [];
@@ -798,7 +933,7 @@ default
 
         if (!IsAttached) {
             // Ground rez: reset to safe defaults (LSD will be updated via handle_ground_rez)
-            handle_ground_rez();
+            handle_ground_rez("Collar rezzed on ground");
         }
         else {
             // Attached: restore runtime state from LSD immediately
@@ -828,14 +963,14 @@ default
             clear_pending_ask();
             SessionTrustedKeys = [];
             IsAttached = FALSE;
-            handle_ground_rez();
+            handle_ground_rez("");
         }
         else {
             // Attached
             IsAttached = TRUE;
             WearerKey = id;  // Update cached wearer UUID
             update_relay_listen_state();
-            llOwnerSay("[RELAY] Collar attached - Relay state restored");
+            llRegionSayTo(llGetOwner(), 0, "Collar attached - Relay state restored");
         }
     }
 
@@ -845,46 +980,47 @@ default
 
         /* -------------------- LIFECYCLE -------------------- */
         if (num == KERNEL_LIFECYCLE) {
-            if (msg_type == "register_now") {
+            if (msg_type == "kernel.register.refresh") {
                 register_self();
             }
-            else if (msg_type == "ping") {
+            else if (msg_type == "kernel.ping") {
                 send_pong();
             }
-            else if (msg_type == "soft_reset" || msg_type == "soft_reset_all") {
+            else if (msg_type == "kernel.reset.soft" || msg_type == "kernel.reset.factory") {
+                llLinksetDataDelete("plugin.reg." + PLUGIN_CONTEXT);
+                llLinksetDataDelete("acl.policycontext:" + PLUGIN_CONTEXT);
                 llResetScript();
             }
         }
 
         /* -------------------- SETTINGS -------------------- */
         else if (num == SETTINGS_BUS) {
-            if (msg_type == "settings_sync" || msg_type == "settings_delta") {
+            if (msg_type == "settings.sync" || msg_type == "settings.delta") {
                 apply_settings_sync();
             }
         }
 
         /* -------------------- UI -------------------- */
         else if (num == UI_BUS) {
-            if (msg_type == "start") {
+            if (msg_type == "ui.menu.start") {
                 handle_start(msg);
+            }
+            else if (msg_type == "sos.relay.clear") {
+                // Emergency safeword from plugin_sos (wearer-only gate
+                // enforced upstream). Bypasses Hardcore, matching the
+                // emergency-exit intent.
+                safeword_clear_all();
+                llRegionSayTo(llGetOwner(), 0, "All RLV restrictions cleared.");
             }
         }
 
         /* -------------------- DIALOG -------------------- */
         else if (num == DIALOG_BUS) {
-            if (msg_type == "dialog_response") {
+            if (msg_type == "ui.dialog.response") {
                 handle_dialog_response(msg);
             }
-            else if (msg_type == "dialog_timeout") {
+            else if (msg_type == "ui.dialog.timeout") {
                 handle_dialog_timeout(msg);
-            }
-        }
-
-        /* -------------------- SOS -------------------- */
-        else if (num == SOS_MSG_NUM) {
-            if (msg_type == "sos_release") {
-                safeword_clear_all();
-                llOwnerSay("[SOS] All RLV restrictions cleared.");
             }
         }
     }

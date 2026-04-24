@@ -1,10 +1,17 @@
 /*--------------------
 MODULE: kmod_menu.lsl
 VERSION: 1.10
-REVISION: 0
+REVISION: 3
 PURPOSE: Menu rendering and visual presentation service
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- v1.1 rev 3: Add dormancy guard in state_entry — script parks itself
+  if the prim's object description is "COLLAR_UPDATER" so it stays dormant
+  when staged in an updater installer prim.
+- v1.1 rev 2: Namespace context values. ROOT_CONTEXT → "ui.core.root",
+  SOS_CONTEXT → "ui.sos.root". Added ROOT_CONTEXT/SOS_CONTEXT constants
+  to replace the four former hardcoded literals in render_menu().
+- v1.1 rev 1: Namespace internal message type strings (dialog_open→ui.dialog.open, render_menu→ui.menu.render, show_message→ui.message.show).
 - v1.1 rev 0: Version bump for LSD policy architecture. No functional changes to this module.
 --------------------*/
 
@@ -12,6 +19,11 @@ CHANGES:
 /* -------------------- CONSOLIDATED ISP -------------------- */
 integer UI_BUS = 900;
 integer DIALOG_BUS = 950;
+
+/* -------------------- CONTEXT CONSTANTS -------------------- */
+// Must match ROOT_CONTEXT / SOS_CONTEXT in kmod_ui.lsl, control_hud.lsl, kmod_remote.lsl
+string ROOT_CONTEXT = "ui.core.root";
+string SOS_CONTEXT  = "ui.sos.root";
 
 /* -------------------- HELPERS -------------------- */
 
@@ -99,10 +111,10 @@ render_menu(string msg) {
     }
 
     string title = "";
-    if (menu_type == "core_root") {
+    if (menu_type == ROOT_CONTEXT) {
         title = "Main Menu";
     }
-    else if (menu_type == "sos_root") {
+    else if (menu_type == SOS_CONTEXT) {
         title = "Emergency Menu";
     }
     else {
@@ -114,10 +126,10 @@ render_menu(string msg) {
     }
 
     string body_text = "";
-    if (menu_type == "core_root") {
+    if (menu_type == ROOT_CONTEXT) {
         body_text = "Select an option:";
     }
-    else if (menu_type == "sos_root") {
+    else if (menu_type == SOS_CONTEXT) {
         body_text = "Emergency options:";
     }
     else {
@@ -127,7 +139,7 @@ render_menu(string msg) {
     string final_button_data_json = llList2Json(JSON_ARRAY, final_button_data);
 
     string dialog_msg = llList2Json(JSON_OBJECT, [
-        "type", "dialog_open",
+        "type", "ui.dialog.open",
         "session_id", session_id,
         "user", (string)user,
         "title", title,
@@ -155,6 +167,11 @@ show_message(string msg) {
 default
 {
     state_entry() {
+        if (llGetObjectDesc() == "COLLAR_UPDATER") {
+            llSetScriptState(llGetScriptName(), FALSE);
+            return;
+        }
+
     }
 
     link_message(integer sender_num, integer num, string msg, key id) {
@@ -162,10 +179,10 @@ default
         if (msg_type == "") return;
 
         if (num == UI_BUS) {
-            if (msg_type == "render_menu") {
+            if (msg_type == "ui.menu.render") {
                 render_menu(msg);
             }
-            else if (msg_type == "show_message") {
+            else if (msg_type == "ui.message.show") {
                 show_message(msg);
             }
         }

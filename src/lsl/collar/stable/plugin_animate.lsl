@@ -1,10 +1,38 @@
 /*--------------------
 PLUGIN: plugin_animate.lsl
 VERSION: 1.10
-REVISION: 1
+REVISION: 10
 PURPOSE: Paginated animation menu driven by inventory contents
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
+- v1.1 rev 10: write_plugin_reg guards idempotent writes (read-before-
+  write). Same-value re-registrations on state_entry and
+  kernel.register.refresh no longer fire linkset_data, so kmod_ui's
+  debounced rebuild + session invalidation stops triggering on
+  register.refresh cascades — wearer's open menu survives the event.
+- v1.1 rev 9: Add dormancy guard in state_entry — script parks itself
+  if the prim's object description is "COLLAR_UPDATER" so it stays dormant
+  when staged in an updater installer prim.
+- v1.1 rev 8: Self-declare menu presence via LSD (plugin.reg.<ctx>).
+  Label updates write the same LSD key directly; ui.label.update link_messages
+  are gone. Reset handlers delete plugin.reg.<ctx> and acl.policycontext:<ctx>
+  before llResetScript so kmod_ui drops the button immediately.
+- v1.1 rev 7: Consistency pass — inventory-overflow warning converted
+  from llOwnerSay to llRegionSayTo(llGetOwner(), 0, ...).
+- v1.1 rev 6: Add "stand" alias to stop animations. "<prefix> stand" stops
+  the current animation, equivalent to "<prefix> pose stop". Plugin
+  registers the alias via chat.alias.declare; handle_subpath recognises
+  both "stand" and "pose.stop" as stop signals.
+- v1.1 rev 5: Wire-type rename (Phase 2). kernel.register→kernel.register.declare,
+  kernel.registernow→kernel.register.refresh, kernel.reset→kernel.reset.soft,
+  kernel.resetall→kernel.reset.factory, chat.alias.register→chat.alias.declare.
+- v1.1 rev 4: Chat subcommand support. Registers "pose" alias via
+  chat.alias.register so "<prefix> pose nadu" routes here with
+  subpath "pose.nadu" and plays the named animation directly (no menu).
+  Empty subpath keeps existing menu behaviour.
+- v1.1 rev 3: Guard ui.menu.start against raw kmod_chat broadcasts (no acl
+  field). Fixes duplicate dialogs when commands are typed in chat.
+- v1.1 rev 2: Namespace internal message type strings (kernel.*, ui.*, settings.*).
 - v1.1 rev 1: Honor soft_reset / soft_reset_all from KERNEL_LIFECYCLE so
   factory reset clears cached state.
 - v1.1 rev 0: Self-declares button visibility policy to LSD on registration.
@@ -19,7 +47,7 @@ integer UI_BUS = 900;
 integer DIALOG_BUS = 950;
 
 /* -------------------- PLUGIN IDENTITY -------------------- */
-string PLUGIN_CONTEXT = "core_animate";
+string PLUGIN_CONTEXT = "ui.core.animate";
 string PLUGIN_LABEL = "Animate";
 
 /* -------------------- OTHER CONSTANTS -------------------- */
@@ -54,7 +82,7 @@ string generate_session_id() {
 
 /* -------------------- LSD POLICY HELPER -------------------- */
 list get_policy_buttons(string ctx, integer acl) {
-    string policy = llLinksetDataRead("policy:" + ctx);
+    string policy = llLinksetDataRead("acl.policycontext:" + ctx);
     if (policy == "") return [];
     string csv = llJsonGetValue(policy, [(string)acl]);
     if (csv == JSON_INVALID) return [];
@@ -69,7 +97,7 @@ refresh_animation_list() {
 
     // Safety cap to prevent stack-heap collision
     if (count > MAX_ANIMATIONS) {
-        llOwnerSay("WARNING: Too many animations (" + (string)count + "). Only loading first " + (string)MAX_ANIMATIONS + ".");
+        llRegionSayTo(llGetOwner(), 0, "WARNING: Too many animations (" + (string)count + "). Only loading first " + (string)MAX_ANIMATIONS + ".");
         count = MAX_ANIMATIONS;
     }
 
@@ -130,9 +158,25 @@ stop_all_animations() {
 
 /* -------------------- LIFECYCLE MANAGEMENT -------------------- */
 
+// Self-declared menu presence. kmod_ui enumerates via llLinksetDataFindKeys
+// and rebuilds its view tables on linkset_data events touching this key.
+write_plugin_reg(string label) {
+    string k = "plugin.reg." + PLUGIN_CONTEXT;
+    string v = llList2Json(JSON_OBJECT, [
+        "label",  label,
+        "script", llGetScriptName()
+    ]);
+    // Skip the write (and its linkset_data event) when the stored value
+    // is already what we would write. Idempotent re-registrations on
+    // state_entry or kernel.register.refresh then no longer trigger
+    // kmod_ui's debounced rebuild + session invalidation.
+    if (llLinksetDataRead(k) == v) return;
+    llLinksetDataWrite(k, v);
+}
+
 register_self() {
     // Write button visibility policy to LSD (all ACL levels see same buttons)
-    llLinksetDataWrite("policy:" + PLUGIN_CONTEXT, llList2Json(JSON_OBJECT, [
+    llLinksetDataWrite("acl.policycontext:" + PLUGIN_CONTEXT, llList2Json(JSON_OBJECT, [
         "1", "<<,>>,Stop",
         "2", "<<,>>,Stop",
         "3", "<<,>>,Stop",
@@ -140,18 +184,35 @@ register_self() {
         "5", "<<,>>,Stop"
     ]));
 
-    // Register with kernel
+    // Self-declared menu presence for kmod_ui.
+    write_plugin_reg(PLUGIN_LABEL);
+
+    // Register with kernel (for ping/pong health tracking and alias table).
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
-        "type", "register",
+        "type", "kernel.register.declare",
         "context", PLUGIN_CONTEXT,
         "label", PLUGIN_LABEL,
         "script", llGetScriptName()
+    ]), NULL_KEY);
+
+    // Declare chat subcommand roots. Consumed by kmod_chat only; invisible
+    // to the kernel plugin list, so these never render as root buttons.
+    // "pose <name>" plays the named animation; "stand" stops the current one.
+    llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
+        "type",    "chat.alias.declare",
+        "alias",   "pose",
+        "context", PLUGIN_CONTEXT + ".pose"
+    ]), NULL_KEY);
+    llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
+        "type",    "chat.alias.declare",
+        "alias",   "stand",
+        "context", PLUGIN_CONTEXT + ".stand"
     ]), NULL_KEY);
 }
 
 send_pong() {
     string msg = llList2Json(JSON_OBJECT, [
-        "type", "pong",
+        "type", "kernel.pong",
         "context", PLUGIN_CONTEXT
     ]);
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, msg, NULL_KEY);
@@ -174,7 +235,7 @@ show_animation_menu(integer page) {
         string buttons_json = llList2Json(JSON_ARRAY, buttons);
 
         string msg = llList2Json(JSON_OBJECT, [
-            "type", "dialog_open",
+            "type", "ui.dialog.open",
             "session_id", SessionId,
             "user", (string)CurrentUser,
             "title", PLUGIN_LABEL,
@@ -259,7 +320,7 @@ show_animation_menu(integer page) {
     }
 
     string msg = llList2Json(JSON_OBJECT, [
-        "type", "dialog_open",
+        "type", "ui.dialog.open",
         "session_id", SessionId,
         "user", (string)CurrentUser,
         "title", PLUGIN_LABEL,
@@ -269,6 +330,40 @@ show_animation_menu(integer page) {
     ]);
 
     llMessageLinked(LINK_SET, DIALOG_BUS, msg, NULL_KEY);
+}
+
+/* -------------------- CHAT SUBCOMMAND HANDLING -------------------- */
+
+// Execute a namespaced chat subcommand without opening the menu.
+// Examples:
+//   "pose.nadu"  -> play animation "nadu"
+//   "pose.stop"  -> stop current animation (equivalent to "stand")
+//   "stand"      -> stop current animation
+handle_subpath(string subpath) {
+    list tokens = llParseString2List(subpath, ["."], []);
+    if (llGetListLength(tokens) == 0) return;
+    string action = llList2String(tokens, 0);
+
+    if (action == "stand") {
+        stop_all_animations();
+        return;
+    }
+
+    if (action == "pose") {
+        if (llGetListLength(tokens) < 2) {
+            llRegionSayTo(CurrentUser, 0, "Usage: pose <animation name>");
+            return;
+        }
+        string anim = llDumpList2String(llList2List(tokens, 1, -1), ".");
+        if (anim == "stop") {
+            stop_all_animations();
+            return;
+        }
+        start_animation(anim);
+        return;
+    }
+
+    llRegionSayTo(CurrentUser, 0, "Unknown animate subcommand: " + action);
 }
 
 /* -------------------- BUTTON HANDLING -------------------- */
@@ -333,7 +428,7 @@ handle_button_click(string button) {
 
 ui_return_root() {
     string msg = llList2Json(JSON_OBJECT, [
-        "type", "return",
+        "type", "ui.menu.return",
         "user", (string)CurrentUser
     ]);
     llMessageLinked(LINK_SET, UI_BUS, msg, NULL_KEY);
@@ -344,7 +439,7 @@ ui_return_root() {
 cleanup_session() {
     if (SessionId != "") {
         llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
-            "type", "dialog_close",
+            "type", "ui.dialog.close",
             "session_id", SessionId
         ]), NULL_KEY);
     }
@@ -359,6 +454,11 @@ cleanup_session() {
 
 default {
     state_entry() {
+        if (llGetObjectDesc() == "COLLAR_UPDATER") {
+            llSetScriptState(llGetScriptName(), FALSE);
+            return;
+        }
+
         cleanup_session();
         refresh_animation_list();
         ensure_permissions();
@@ -408,22 +508,24 @@ default {
             if (msg_type == JSON_INVALID) return;
 
             // Registration request
-            if (msg_type == "register_now") {
+            if (msg_type == "kernel.register.refresh") {
                 register_self();
                 return;
             }
 
             // Heartbeat ping
-            if (msg_type == "ping") {
+            if (msg_type == "kernel.ping") {
                 send_pong();
                 return;
             }
 
-            if (msg_type == "soft_reset" || msg_type == "soft_reset_all") {
+            if (msg_type == "kernel.reset.soft" || msg_type == "kernel.reset.factory") {
                 string target_context = llJsonGetValue(msg, ["context"]);
                 if (target_context != JSON_INVALID) {
                     if (target_context != "" && target_context != PLUGIN_CONTEXT) return;
                 }
+                llLinksetDataDelete("plugin.reg." + PLUGIN_CONTEXT);
+                llLinksetDataDelete("acl.policycontext:" + PLUGIN_CONTEXT);
                 llResetScript();
             }
 
@@ -434,16 +536,26 @@ default {
             string msg_type = llJsonGetValue(msg, ["type"]);
             if (msg_type == JSON_INVALID) return;
 
-            if (msg_type == "start") {
+            if (msg_type == "ui.menu.start") {
+                if (llJsonGetValue(msg, ["acl"]) == JSON_INVALID) return;
                 if (llJsonGetValue(msg, ["context"]) == JSON_INVALID) return;
                 if (llJsonGetValue(msg, ["context"]) != PLUGIN_CONTEXT) return;
 
                 if (id == NULL_KEY) return;
 
                 CurrentUser = id;
-                CurrentPage = 0;
                 UserAcl = (integer)llJsonGetValue(msg, ["acl"]);
 
+                string subpath = "";
+                string sp = llJsonGetValue(msg, ["subpath"]);
+                if (sp != JSON_INVALID) subpath = sp;
+
+                if (subpath != "") {
+                    handle_subpath(subpath);
+                    return;
+                }
+
+                CurrentPage = 0;
                 show_animation_menu(0);
                 return;
             }
@@ -455,7 +567,7 @@ default {
             string msg_type = llJsonGetValue(msg, ["type"]);
             if (msg_type == JSON_INVALID) return;
 
-            if (msg_type == "dialog_response") {
+            if (msg_type == "ui.dialog.response") {
                 if (llJsonGetValue(msg, ["session_id"]) == JSON_INVALID) return;
                 if (llJsonGetValue(msg, ["session_id"]) != SessionId) return;
 
@@ -472,7 +584,7 @@ default {
                 return;
             }
 
-            if (msg_type == "dialog_timeout") {
+            if (msg_type == "ui.dialog.timeout") {
                 if (llJsonGetValue(msg, ["session_id"]) == JSON_INVALID) return;
                 if (llJsonGetValue(msg, ["session_id"]) != SessionId) return;
 

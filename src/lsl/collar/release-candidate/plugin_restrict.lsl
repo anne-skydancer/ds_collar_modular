@@ -1,10 +1,34 @@
 /*--------------------
 PLUGIN: plugin_restrict.lsl
 VERSION: 1.10
-REVISION: 2
+REVISION: 10
 PURPOSE: Manage RLV restriction toggles grouped by functional category
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
+- v1.1 rev 10: write_plugin_reg guards idempotent writes (read-before-
+  write). Same-value re-registrations on state_entry and
+  kernel.register.refresh no longer fire linkset_data, so kmod_ui's
+  debounced rebuild + session invalidation stops triggering on
+  register.refresh cascades — wearer's open menu survives the event.
+- v1.1 rev 9: Add dormancy guard in state_entry — script parks itself
+  if the prim's object description is "COLLAR_UPDATER" so it stays dormant
+  when staged in an updater installer prim.
+- v1.1 rev 8: Self-declare menu presence via LSD (plugin.reg.<ctx>).
+  Label updates write the same LSD key directly; ui.label.update link_messages
+  are gone. Reset handlers delete plugin.reg.<ctx> and acl.policycontext:<ctx>
+  before llResetScript so kmod_ui drops the button immediately.
+- v1.1 rev 7: Chat command support (Phase 3). Registers "restrict" alias.
+  "<prefix> restrict" opens menu; "<prefix> restrict clear" removes all
+  active RLV restrictions (same as the "Clear all" menu button; gated
+  by btn_allowed("Clear all")).
+- v1.1 rev 6: Honor kernel.reset.factory in addition to kernel.reset.soft,
+  and handle sos.restrict.clear by clearing all RLV restrictions. Factory
+  reset previously left cached state; SOS emergency clear wasn't wired.
+- v1.1 rev 5: Wire-type rename (Phase 2). kernel.register→kernel.register.declare,
+  kernel.registernow→kernel.register.refresh, kernel.reset→kernel.reset.soft.
+- v1.1 rev 4: Guard ui.menu.start against raw kmod_chat broadcasts (no acl
+  field). Fixes duplicate dialogs when commands are typed in chat.
+- v1.1 rev 3: Namespace internal message type strings (kernel.*, ui.*, settings.*).
 - v1.1 rev 2: Migrate dialog buttons to button_data format with context-based routing.
 - v1.1 rev 1: Migrate from JSON broadcast payloads to direct LSD reads.
   Remove apply_settings_delta() and request_settings_sync(). apply_settings_sync()
@@ -26,7 +50,7 @@ integer DIALOG_BUS       = 950;  // Centralized dialog management
 
 /* -------------------- PLUGIN IDENTITY -------------------- */
 
-string  PLUGIN_CONTEXT = "core_rlvrestrict";
+string  PLUGIN_CONTEXT = "ui.core.rlvrestrict";
 string  PLUGIN_LABEL   = "Restrict";
 
 /* -------------------- SETTINGS KEYS -------------------- */
@@ -87,7 +111,7 @@ string generate_session_id() {
 
 /* -------------------- LSD POLICY HELPER -------------------- */
 list get_policy_buttons(string ctx, integer acl) {
-    string policy = llLinksetDataRead("policy:" + ctx);
+    string policy = llLinksetDataRead("acl.policycontext:" + ctx);
     if (policy == "") return [];
     string csv = llJsonGetValue(policy, [(string)acl]);
     if (csv == JSON_INVALID) return [];
@@ -100,9 +124,25 @@ integer btn_allowed(string label) {
 
 /* -------------------- LIFECYCLE -------------------- */
 
+// Self-declared menu presence. kmod_ui enumerates via llLinksetDataFindKeys
+// and rebuilds its view tables on linkset_data events touching this key.
+write_plugin_reg(string label) {
+    string k = "plugin.reg." + PLUGIN_CONTEXT;
+    string v = llList2Json(JSON_OBJECT, [
+        "label",  label,
+        "script", llGetScriptName()
+    ]);
+    // Skip the write (and its linkset_data event) when the stored value
+    // is already what we would write. Idempotent re-registrations on
+    // state_entry or kernel.register.refresh then no longer trigger
+    // kmod_ui's debounced rebuild + session invalidation.
+    if (llLinksetDataRead(k) == v) return;
+    llLinksetDataWrite(k, v);
+}
+
 register_self() {
     // Write button visibility policy to LSD (default-deny per ACL level)
-    llLinksetDataWrite("policy:" + PLUGIN_CONTEXT, llList2Json(JSON_OBJECT, [
+    llLinksetDataWrite("acl.policycontext:" + PLUGIN_CONTEXT, llList2Json(JSON_OBJECT, [
         "1", "Force Sit,Force Unsit",
         "2", "Force Sit,Force Unsit",
         "3", "Inventory,Speech,Travel,Other,Clear all,Force Sit,Force Unsit",
@@ -110,18 +150,28 @@ register_self() {
         "5", "Inventory,Speech,Travel,Other,Clear all,Force Sit,Force Unsit"
     ]));
 
-    // Register with kernel
+    // Self-declared menu presence for kmod_ui.
+    write_plugin_reg(PLUGIN_LABEL);
+
+    // Register with kernel (for ping/pong health tracking and alias table).
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
-        "type", "register",
+        "type", "kernel.register.declare",
         "context", PLUGIN_CONTEXT,
         "label", PLUGIN_LABEL,
         "script", llGetScriptName()
+    ]), NULL_KEY);
+
+    // Declare chat alias.
+    llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
+        "type",    "chat.alias.declare",
+        "alias",   "restrict",
+        "context", PLUGIN_CONTEXT
     ]), NULL_KEY);
 }
 
 send_pong() {
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
-        "type", "pong",
+        "type", "kernel.pong",
         "context", PLUGIN_CONTEXT
     ]), NULL_KEY);
 }
@@ -129,7 +179,7 @@ send_pong() {
 cleanup_session() {
     if (SessionId != "") {
         llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
-            "type", "dialog_close",
+            "type", "ui.dialog.close",
             "session_id", SessionId
         ]), NULL_KEY);
     }
@@ -152,7 +202,7 @@ persist_restrictions() {
     llLinksetDataWrite(KEY_RESTRICTIONS, csv);
 
     llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
-        "type", "set",
+        "type", "settings.set",
         "key", KEY_RESTRICTIONS,
         "value", csv
     ]), NULL_KEY);
@@ -305,7 +355,7 @@ display_sit_targets() {
     }
 
     llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
-        "type", "dialog_open",
+        "type", "ui.dialog.open",
         "session_id", SessionId,
         "user", (string)CurrentUser,
         "title", "Force Sit",
@@ -331,7 +381,7 @@ force_unsit() {
 
 return_to_root() {
     llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
-        "type", "return",
+        "type", "ui.menu.return",
         "context", PLUGIN_CONTEXT,
         "user", (string)CurrentUser
     ]), NULL_KEY);
@@ -369,7 +419,7 @@ show_main() {
     }
 
     llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
-        "type", "dialog_open",
+        "type", "ui.dialog.open",
         "session_id", SessionId,
         "user", (string)CurrentUser,
         "title", PLUGIN_LABEL,
@@ -438,7 +488,7 @@ show_category_menu(string cat_name, integer page_num) {
     string body = cat_name + " (" + (string)(page_num + 1) + "/" + (string)(max_page + 1) + ")\n\nActive: " + (string)llGetListLength(Restrictions);
 
     llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
-        "type", "dialog_open",
+        "type", "ui.dialog.open",
         "session_id", SessionId,
         "user", (string)CurrentUser,
         "title", cat_name,
@@ -618,6 +668,11 @@ handle_dialog_timeout(string msg) {
 default
 {
     state_entry() {
+        if (llGetObjectDesc() == "COLLAR_UPDATER") {
+            llSetScriptState(llGetScriptName(), FALSE);
+            return;
+        }
+
         cleanup_session();
         apply_settings_sync();
         register_self();
@@ -639,42 +694,74 @@ default
 
         // Kernel lifecycle
         if (num == KERNEL_LIFECYCLE) {
-            if (type == "register_now") {
+            if (type == "kernel.register.refresh") {
                 register_self();
                 apply_settings_sync();
             }
-            else if (type == "ping") {
+            else if (type == "kernel.ping") {
                 send_pong();
             }
-            else if (type == "soft_reset") {
+            else if (type == "kernel.reset.soft" || type == "kernel.reset.factory") {
+                llLinksetDataDelete("plugin.reg." + PLUGIN_CONTEXT);
+                llLinksetDataDelete("acl.policycontext:" + PLUGIN_CONTEXT);
                 llResetScript();
             }
         }
         // Settings
         else if (num == SETTINGS_BUS) {
-            if (type == "settings_sync" || type == "settings_delta") {
+            if (type == "settings.sync" || type == "settings.delta") {
                 apply_settings_sync();
             }
         }
         // UI
         else if (num == UI_BUS) {
-            if (type == "start") {
+            if (type == "ui.menu.start") {
                 string context = llJsonGetValue(msg, ["context"]);
                 if (context == JSON_INVALID) return;
+                if (llJsonGetValue(msg, ["acl"]) == JSON_INVALID) return;
 
                 if (context == PLUGIN_CONTEXT) {
+                    integer acl = (integer)llJsonGetValue(msg, ["acl"]);
+
+                    string subpath = "";
+                    string sp = llJsonGetValue(msg, ["subpath"]);
+                    if (sp != JSON_INVALID) subpath = sp;
+
+                    if (subpath == "clear") {
+                        // Chat: <prefix> restrict clear. Gate via menu policy.
+                        gPolicyButtons = get_policy_buttons(PLUGIN_CONTEXT, acl);
+                        if (!btn_allowed("Clear all")) {
+                            llRegionSayTo(id, 0, "Access denied.");
+                            gPolicyButtons = [];
+                            return;
+                        }
+                        gPolicyButtons = [];
+                        remove_all_restrictions();
+                        llRegionSayTo(id, 0, "All restrictions removed.");
+                        return;
+                    }
+                    if (subpath != "") {
+                        llRegionSayTo(id, 0, "Unknown restrict subcommand: " + subpath);
+                        return;
+                    }
+
                     CurrentUser = id;
-                    UserAcl = (integer)llJsonGetValue(msg, ["acl"]);
+                    UserAcl = acl;
                     show_main();
                 }
+            }
+            else if (type == "sos.restrict.clear") {
+                // Emergency clear from plugin_sos (wearer-only gate enforced
+                // upstream). Drop every active RLV restriction.
+                remove_all_restrictions();
             }
         }
         // Dialogs
         else if (num == DIALOG_BUS) {
-            if (type == "dialog_response") {
+            if (type == "ui.dialog.response") {
                 handle_dialog_response(msg);
             }
-            else if (type == "dialog_timeout") {
+            else if (type == "ui.dialog.timeout") {
                 handle_dialog_timeout(msg);
             }
         }

@@ -1,10 +1,33 @@
 /*--------------------
 MODULE: kmod_particles.lsl
 VERSION: 1.10
-REVISION: 0
+REVISION: 6
 PURPOSE: Visual connection renderer with Lockmeister compatibility
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- v1.1 rev 6: Add dormancy guard in state_entry — script parks itself
+  if the prim's object description is "COLLAR_UPDATER" so it stays dormant
+  when staged in an updater installer prim.
+- v1.1 rev 5: Stop orphaning the rendering slot when the target goes
+  transiently missing. Periodic validation used to clear SourcePlugin
+  alongside TargetKey, which left a subsequent particles.stop with a
+  source mismatch — so unclip couldn't clear particles after a holder
+  detach/update cycle. Now we stop rendering but keep SourcePlugin so
+  the source plugin retains ownership and its stop succeeds. Also
+  restart the validation timer in handle_particles_update so a renderer
+  that resumes after a target-gone gap still gets periodic checks.
+  Drops rev 4 temporary diagnostic (regression was a sim crash).
+- v1.1 rev 4: Temporary diagnostic llOwnerSay in handle_particles_start —
+  remove once particles regression is resolved.
+- v1.1 rev 3: Sub-protocol rename (Phase 1). particles.lmenable→
+  particles.lm.enable, particles.lmdisable→particles.lm.disable,
+  particles.lmgrabbed→particles.lm.grabbed, particles.lmreleased→
+  particles.lm.released.
+- v1.1 rev 2: KERNEL_LIFECYCLE rename (Phase 1). kernel.reset→
+  kernel.reset.soft, kernel.resetall→kernel.reset.factory.
+- v1.1 rev 1: Namespace pass — align message vocabulary with dev peers
+  (particles.*, kernel.*) and update the native-priority source match from
+  "core_leash" to "ui.core.leash" to track kmod_leash's PLUGIN_CONTEXT.
 - v1.1 rev 0: Version bump for LSD policy architecture. No functional changes to this module.
 --------------------*/
 
@@ -49,7 +72,7 @@ integer now() {
 // Helper to determine if timer should be running
 integer needs_timer() {
     if (LmActive) return TRUE;  // Lockmeister needs pinging
-    if (SourcePlugin != "" && ParticlesActive) return TRUE;  // DS rendering active
+    if (SourcePlugin != "" && ParticlesActive) return TRUE;  // native rendering active
     return FALSE;
 }
 
@@ -116,7 +139,7 @@ handle_lm_message(key id, string msg) {
             
             // Notify leash plugin
             llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
-                "type", "lm_released"
+                "type", "particles.lm.released"
             ]), NULL_KEY);
             
             // Stop timer if no other source active
@@ -154,8 +177,8 @@ handle_lm_message(key id, string msg) {
         }
         
         
-        // Priority check: If DS native is already rendering to a holder prim, don't override
-        if (SourcePlugin == "core_leash" && TargetKey != NULL_KEY) {
+        // Priority check: If native is already rendering to a holder prim, don't override
+        if (SourcePlugin == "ui.core.leash" && TargetKey != NULL_KEY) {
             // Check if current target is a prim (not avatar)
             if (llGetAgentSize(TargetKey) == ZERO_VECTOR) {
                 return;
@@ -176,7 +199,7 @@ handle_lm_message(key id, string msg) {
         
         // Notify leash plugin
         string notify_msg = llList2Json(JSON_OBJECT, [
-            "type", "lm_grabbed",
+            "type", "particles.lm.grabbed",
             "controller", (string)owner_key,
             "prim", (string)id
         ]);
@@ -249,18 +272,18 @@ handle_particles_start(string msg) {
     if (llJsonGetValue(msg, ["source"]) == JSON_INVALID || llJsonGetValue(msg, ["target"]) == JSON_INVALID) {
         return;
     }
-    
+
     string source = llJsonGetValue(msg, ["source"]);
     key target = (key)llJsonGetValue(msg, ["target"]);
-    
+
     // Validate target exists in-world
     list details = llGetObjectDetails(target, [OBJECT_POS]);
     if (llGetListLength(details) == 0) {
         return;
     }
     
-    // Priority: Lockmeister < DS leash
-    if (SourcePlugin == "lockmeister" && source == "core_leash") {
+    // Priority: Lockmeister < native leash
+    if (SourcePlugin == "lockmeister" && source == "ui.core.leash") {
         if (LmActive) {
             LmActive = FALSE;
             LmController = NULL_KEY;
@@ -329,6 +352,7 @@ handle_particles_update(string msg) {
     if (new_target != TargetKey) {
         TargetKey = new_target;
         render_chain_particles(TargetKey);
+        llSetTimerEvent(PARTICLE_UPDATE_RATE);
     }
 }
 
@@ -379,6 +403,11 @@ handle_lm_disable() {
 default
 {
     state_entry() {
+        if (llGetObjectDesc() == "COLLAR_UPDATER") {
+            llSetScriptState(llGetScriptName(), FALSE);
+            return;
+        }
+
         ParticlesActive = FALSE;
         TargetKey = NULL_KEY;
         SourcePlugin = "";
@@ -423,7 +452,7 @@ default
 
         /* -------------------- KERNEL LIFECYCLE -------------------- */
         if (num == KERNEL_LIFECYCLE) {
-            if (msg_type == "soft_reset" || msg_type == "soft_reset_all") {
+            if (msg_type == "kernel.reset.soft" || msg_type == "kernel.reset.factory") {
                 llResetScript();
             }
             return;
@@ -432,19 +461,19 @@ default
         // Only listen on UI_BUS
         if (num != UI_BUS) return;
 
-        if (msg_type == "particles_start") {
+        if (msg_type == "particles.start") {
             handle_particles_start(msg);
         }
-        else if (msg_type == "particles_stop") {
+        else if (msg_type == "particles.stop") {
             handle_particles_stop(msg);
         }
-        else if (msg_type == "particles_update") {
+        else if (msg_type == "particles.update") {
             handle_particles_update(msg);
         }
-        else if (msg_type == "lm_enable") {
+        else if (msg_type == "particles.lm.enable") {
             handle_lm_enable(msg);
         }
-        else if (msg_type == "lm_disable") {
+        else if (msg_type == "particles.lm.disable") {
             handle_lm_disable();
         }
     }
@@ -465,9 +494,14 @@ default
         if (ParticlesActive && TargetKey != NULL_KEY) {
             list details = llGetObjectDetails(TargetKey, [OBJECT_POS]);
             if (llGetListLength(details) == 0) {
-                // Target disappeared (offsim or logged out)
+                // Target disappeared (offsim, detached, or logged out).
+                // Stop rendering, but do not clear SourcePlugin: the source
+                // plugin still owns the rendering slot. Clearing it here
+                // orphans a later particles.stop (source mismatch) and
+                // leaves particles stuck if the source plugin sends a
+                // follow-up particles.update with a fresh target.
                 render_chain_particles(NULL_KEY);
-                
+
                 // If Lockmeister was active, stop it
                 if (LmActive) {
                     LmActive = FALSE;
@@ -475,18 +509,14 @@ default
                     LmTargetPrim = NULL_KEY;
                     LmAuthorized = FALSE;
                     close_lm_listen();
-                    
-                    // Notify leash plugin
+
                     llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
-                        "type", "lm_released"
+                        "type", "particles.lm.released"
                     ]), NULL_KEY);
                 }
-                
-                // Always cleanup when target is lost
-                SourcePlugin = "";
+
                 TargetKey = NULL_KEY;
-                
-                // Only stop timer if nothing needs it
+
                 if (!needs_timer()) {
                     llSetTimerEvent(0.0);
                 }

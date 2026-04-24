@@ -1,10 +1,33 @@
 /*--------------------
 PLUGIN: plugin_status.lsl
 VERSION: 1.10
-REVISION: 4
+REVISION: 12
 PURPOSE: Read-only collar status display for owners and observers
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
+- v1.1 rev 12: write_plugin_reg guards idempotent writes (read-before-
+  write). Same-value re-registrations on state_entry and
+  kernel.register.refresh no longer fire linkset_data, so kmod_ui's
+  debounced rebuild + session invalidation stops triggering on
+  register.refresh cascades — wearer's open menu survives the event.
+- v1.1 rev 11: Add dormancy guard in state_entry — script parks itself
+  if the prim's object description is "COLLAR_UPDATER" so it stays dormant
+  when staged in an updater installer prim.
+- v1.1 rev 10: Self-declare menu presence via LSD (plugin.reg.<ctx>).
+  Label updates write the same LSD key directly; ui.label.update link_messages
+  are gone. Reset handlers delete plugin.reg.<ctx> and acl.policycontext:<ctx>
+  before llResetScript so kmod_ui drops the button immediately.
+- v1.1 rev 9: Chat command support (Phase 3). Registers "status" alias.
+  "<prefix> status" opens the status dialog (same as menu click); plugin
+  has no action-level subcommands, so any non-empty subpath is rejected.
+- v1.1 rev 8: Wire-type rename (Phase 2). kernel.register→kernel.register.declare,
+  kernel.registernow→kernel.register.refresh, kernel.reset→kernel.reset.soft,
+  kernel.resetall→kernel.reset.factory.
+- v1.1 rev 7: Add chat prefix and channel to status report (reads
+  chat.prefix, chat.public, and chat.channel from LSD).
+- v1.1 rev 6: Guard ui.menu.start against raw kmod_chat broadcasts (no acl
+  field). Fixes duplicate dialogs when commands are typed in chat.
+- v1.1 rev 5: Namespace internal message type strings (kernel.*, ui.*, settings.*).
 - v1.1 rev 4: Honor soft_reset / soft_reset_all from KERNEL_LIFECYCLE so
   factory reset clears cached session state.
 - v1.1 rev 3: Fix phantom owner/trustee count. llCSV2List("") returns
@@ -33,7 +56,7 @@ integer UI_BUS = 900;
 integer DIALOG_BUS = 950;
 
 /* -------------------- PLUGIN IDENTITY -------------------- */
-string PLUGIN_CONTEXT = "core_status";
+string PLUGIN_CONTEXT = "ui.core.status";
 string PLUGIN_LABEL = "Status";
 
 /* -------------------- SETTINGS KEYS -------------------- */
@@ -50,6 +73,9 @@ string KEY_TRUSTEE_HONORIFICS = "access.trusteehonorifics";
 string KEY_PUBLIC_ACCESS     = "public.mode";
 string KEY_LOCKED            = "lock.locked";
 string KEY_TPE_MODE          = "tpe.mode";
+string KEY_CHAT_PREFIX       = "chat.prefix";
+string KEY_CHAT_PUBLIC       = "chat.public";
+string KEY_CHAT_CHAN         = "chat.channel";
 
 /* -------------------- STATE -------------------- */
 // Session management
@@ -73,7 +99,7 @@ list csv_read(string lsd_key) {
 
 /* -------------------- LSD POLICY HELPER -------------------- */
 list get_policy_buttons(string ctx, integer acl) {
-    string policy = llLinksetDataRead("policy:" + ctx);
+    string policy = llLinksetDataRead("acl.policycontext:" + ctx);
     if (policy == "") return [];
     string csv = llJsonGetValue(policy, [(string)acl]);
     if (csv == JSON_INVALID) return [];
@@ -82,9 +108,25 @@ list get_policy_buttons(string ctx, integer acl) {
 
 /* -------------------- LIFECYCLE MANAGEMENT -------------------- */
 
+// Self-declared menu presence. kmod_ui enumerates via llLinksetDataFindKeys
+// and rebuilds its view tables on linkset_data events touching this key.
+write_plugin_reg(string label) {
+    string k = "plugin.reg." + PLUGIN_CONTEXT;
+    string v = llList2Json(JSON_OBJECT, [
+        "label",  label,
+        "script", llGetScriptName()
+    ]);
+    // Skip the write (and its linkset_data event) when the stored value
+    // is already what we would write. Idempotent re-registrations on
+    // state_entry or kernel.register.refresh then no longer trigger
+    // kmod_ui's debounced rebuild + session invalidation.
+    if (llLinksetDataRead(k) == v) return;
+    llLinksetDataWrite(k, v);
+}
+
 register_self() {
     // Write button visibility policy to LSD (view-only, empty button lists for all ACL levels)
-    llLinksetDataWrite("policy:" + PLUGIN_CONTEXT, llList2Json(JSON_OBJECT, [
+    llLinksetDataWrite("acl.policycontext:" + PLUGIN_CONTEXT, llList2Json(JSON_OBJECT, [
         "1", "",
         "2", "",
         "3", "",
@@ -92,19 +134,29 @@ register_self() {
         "5", ""
     ]));
 
-    // Register with kernel
+    // Self-declared menu presence for kmod_ui.
+    write_plugin_reg(PLUGIN_LABEL);
+
+    // Register with kernel (for ping/pong health tracking and alias table).
     string msg = llList2Json(JSON_OBJECT, [
-        "type", "register",
+        "type", "kernel.register.declare",
         "context", PLUGIN_CONTEXT,
         "label", PLUGIN_LABEL,
         "script", llGetScriptName()
     ]);
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, msg, NULL_KEY);
+
+    // Declare chat alias.
+    llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
+        "type",    "chat.alias.declare",
+        "alias",   "status",
+        "context", PLUGIN_CONTEXT
+    ]), NULL_KEY);
 }
 
 send_pong() {
     string msg = llList2Json(JSON_OBJECT, [
-        "type", "pong",
+        "type", "kernel.pong",
         "context", PLUGIN_CONTEXT
     ]);
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, msg, NULL_KEY);
@@ -189,6 +241,18 @@ string build_status_report() {
     if ((integer)llLinksetDataRead(KEY_TPE_MODE)) status_text += "TPE Mode: On\n";
     else                                           status_text += "TPE Mode: Off\n";
 
+    // Chat commands
+    string chat_prefix = llLinksetDataRead(KEY_CHAT_PREFIX);
+    if (chat_prefix == "") chat_prefix = "(auto)";
+    string chat_chan_raw = llLinksetDataRead(KEY_CHAT_CHAN);
+    string chat_chan;
+    if (chat_chan_raw == "") chat_chan = "1";
+    else chat_chan = chat_chan_raw;
+    string chat_public_label;
+    if ((integer)llLinksetDataRead(KEY_CHAT_PUBLIC)) chat_public_label = "on";
+    else chat_public_label = "off";
+    status_text += "Chat prefix: " + chat_prefix + "  channel: " + chat_chan + "  public: " + chat_public_label + "\n";
+
     return status_text;
 }
 
@@ -203,7 +267,7 @@ show_status_menu() {
     string buttons_json = llList2Json(JSON_ARRAY, buttons);
 
     string msg = llList2Json(JSON_OBJECT, [
-        "type", "dialog_open",
+        "type", "ui.dialog.open",
         "session_id", SessionId,
         "user", (string)CurrentUser,
         "title", PLUGIN_LABEL,
@@ -231,7 +295,7 @@ handle_button_click(string button) {
 
 ui_return_root() {
     string msg = llList2Json(JSON_OBJECT, [
-        "type", "return",
+        "type", "ui.menu.return",
         "user", (string)CurrentUser
     ]);
     llMessageLinked(LINK_SET, UI_BUS, msg, NULL_KEY);
@@ -242,7 +306,7 @@ ui_return_root() {
 cleanup_session() {
     if (SessionId != "") {
         llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
-            "type", "dialog_close",
+            "type", "ui.dialog.close",
             "session_id", SessionId
         ]), NULL_KEY);
     }
@@ -255,6 +319,11 @@ cleanup_session() {
 
 default {
     state_entry() {
+        if (llGetObjectDesc() == "COLLAR_UPDATER") {
+            llSetScriptState(llGetScriptName(), FALSE);
+            return;
+        }
+
         cleanup_session();
         register_self();
     }
@@ -274,21 +343,23 @@ default {
             string msg_type = llJsonGetValue(msg, ["type"]);
             if (msg_type == JSON_INVALID) return;
 
-            if (msg_type == "register_now") {
+            if (msg_type == "kernel.register.refresh") {
                 register_self();
                 return;
             }
 
-            if (msg_type == "ping") {
+            if (msg_type == "kernel.ping") {
                 send_pong();
                 return;
             }
 
-            if (msg_type == "soft_reset" || msg_type == "soft_reset_all") {
+            if (msg_type == "kernel.reset.soft" || msg_type == "kernel.reset.factory") {
                 string target_context = llJsonGetValue(msg, ["context"]);
                 if (target_context != JSON_INVALID) {
                     if (target_context != "" && target_context != PLUGIN_CONTEXT) return;
                 }
+                llLinksetDataDelete("plugin.reg." + PLUGIN_CONTEXT);
+                llLinksetDataDelete("acl.policycontext:" + PLUGIN_CONTEXT);
                 llResetScript();
             }
 
@@ -299,11 +370,19 @@ default {
             string msg_type = llJsonGetValue(msg, ["type"]);
             if (msg_type == JSON_INVALID) return;
 
-            if (msg_type == "start") {
+            if (msg_type == "ui.menu.start") {
+                if (llJsonGetValue(msg, ["acl"]) == JSON_INVALID) return;
                 if (llJsonGetValue(msg, ["context"]) == JSON_INVALID) return;
                 if (llJsonGetValue(msg, ["context"]) != PLUGIN_CONTEXT) return;
 
                 if (id == NULL_KEY) return;
+
+                // Reject non-empty subpath — no action-level subcommands here.
+                string sp = llJsonGetValue(msg, ["subpath"]);
+                if (sp != JSON_INVALID && sp != "") {
+                    llRegionSayTo(id, 0, "Unknown status subcommand: " + sp);
+                    return;
+                }
 
                 CurrentUser = id;
 
@@ -322,7 +401,7 @@ default {
             string msg_type = llJsonGetValue(msg, ["type"]);
             if (msg_type == JSON_INVALID) return;
 
-            if (msg_type == "dialog_response") {
+            if (msg_type == "ui.dialog.response") {
                 if (llJsonGetValue(msg, ["session_id"]) == JSON_INVALID) return;
                 if (llJsonGetValue(msg, ["session_id"]) != SessionId) return;
 
@@ -339,7 +418,7 @@ default {
                 return;
             }
 
-            if (msg_type == "dialog_timeout") {
+            if (msg_type == "ui.dialog.timeout") {
                 if (llJsonGetValue(msg, ["session_id"]) == JSON_INVALID) return;
                 if (llJsonGetValue(msg, ["session_id"]) != SessionId) return;
 

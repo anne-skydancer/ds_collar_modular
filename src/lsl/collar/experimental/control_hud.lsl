@@ -1,10 +1,15 @@
 /*--------------------
 SCRIPT: control_hud.lsl
 VERSION: 1.10
-REVISION: 0
+REVISION: 3
 PURPOSE: Auto-detect nearby collars and connect automatically
-ARCHITECTURE: RLV relay-style broadcast and listen workflow
+ARCHITECTURE: RLV relay-style broadcast and listen workflow, namespaced internal message protocol
 CHANGES:
+- v1.1 rev 3: Consistency pass — convert user-facing llOwnerSay notices
+  to llRegionSayTo(llGetOwner(), 0, ...). Matches project convention.
+- v1.1 rev 2: Namespace context values. ROOT_CONTEXT → "ui.core.root",
+  SOS_CONTEXT → "ui.sos.root".
+- v1.1 rev 1: Namespaced internal message types (remote.collarscan, auth.aclqueryexternal, etc.).
 - v1.1 rev 0: Version bump for LSD policy architecture. No functional changes to this module.
 --------------------*/
 
@@ -30,8 +35,8 @@ float LONG_TOUCH_THRESHOLD = 1.5;
 integer MAX_DIALOG_BUTTONS = 12;  // llDialog button limit
 
 /* -------------------- CONSTANTS -------------------- */
-string ROOT_CONTEXT = "core_root";
-string SOS_CONTEXT = "sos_root";
+string ROOT_CONTEXT = "ui.core.root";
+string SOS_CONTEXT = "ui.sos.root";
 
 /* -------------------- STATE -------------------- */
 key HudWearer = NULL_KEY;
@@ -105,7 +110,7 @@ broadcast_collar_scan(string context) {
 
     // Broadcast to find all nearby collars
     string json_msg = llList2Json(JSON_OBJECT, [
-        "type", "collar_scan",
+        "type", "remote.collarscan",
         "hud_wearer", (string)HudWearer
     ]);
 
@@ -121,7 +126,7 @@ broadcast_collar_scan(string context) {
     ScanningForCollars = TRUE;
     DetectedCollars = [];
     llSetTimerEvent(COLLAR_SCAN_TIME);
-    llOwnerSay("Scanning for nearby collars...");
+    llRegionSayTo(llGetOwner(), 0, "Scanning for nearby collars...");
 }
 
 process_scan_results() {
@@ -131,7 +136,7 @@ process_scan_results() {
     integer num_collars = llGetListLength(DetectedCollars) / COLLAR_STRIDE;
     
     if (num_collars == 0) {
-        llOwnerSay("No collars found nearby.");
+        llRegionSayTo(llGetOwner(), 0, "No collars found nearby.");
         cleanup_session();
         return;
     }
@@ -185,7 +190,7 @@ show_collar_selection_dialog() {
 
 request_acl_from_collar(key avatar_key) {
     string json_msg = llList2Json(JSON_OBJECT, [
-        "type", "acl_query_external",
+        "type", "auth.aclqueryexternal",
         "avatar", (string)HudWearer,
         "hud", (string)llGetKey(),
         "target_avatar", (string)avatar_key
@@ -208,7 +213,7 @@ request_acl_from_collar(key avatar_key) {
 
 trigger_collar_menu() {
     if (TargetCollarKey == NULL_KEY) {
-        llOwnerSay("Error: No collar connection established.");
+        llRegionSayTo(llGetOwner(), 0, "Error: No collar connection established.");
         return;
     }
 
@@ -243,7 +248,7 @@ process_acl_result(integer level) {
         trigger_collar_menu();
     }
     else {
-        llOwnerSay("Access denied.");
+        llRegionSayTo(llGetOwner(), 0, "Access denied.");
         cleanup_session();
     }
 }
@@ -257,7 +262,7 @@ default {
         HudWearer = llGetOwner();
         TouchStartTime = 0.0;
         RequestedContext = "";
-        llOwnerSay("Control HUD ready. Touch to scan for collars, long-touch for emergency access.");
+        llRegionSayTo(llGetOwner(), 0, "Control HUD ready. Touch to scan for collars, long-touch for emergency access.");
     }
     
     on_rez(integer start_param) {
@@ -281,12 +286,12 @@ default {
     
     touch_start(integer num_detected) {
         if (ScanningForCollars) {
-            llOwnerSay("Scan already in progress...");
+            llRegionSayTo(llGetOwner(), 0, "Scan already in progress...");
             return;
         }
 
         if (AclPending) {
-            llOwnerSay("Still waiting for collar response...");
+            llRegionSayTo(llGetOwner(), 0, "Still waiting for collar response...");
             return;
         }
 
@@ -323,7 +328,7 @@ default {
         if (channel == COLLAR_ACL_REPLY_CHAN && ScanningForCollars) {
             string msg_type = llJsonGetValue(message, ["type"]);
             if (msg_type == JSON_INVALID) return;
-            if (msg_type != "collar_scan_response") return;
+            if (msg_type != "remote.collarscanresponse") return;
             
             string collar_owner_str = llJsonGetValue(message, ["collar_owner"]);
             if (collar_owner_str == JSON_INVALID) return;
@@ -341,7 +346,7 @@ default {
             llSetTimerEvent(0.0);
             
             if (message == "Cancel") {
-                llOwnerSay("Selection cancelled.");
+                llRegionSayTo(llGetOwner(), 0, "Selection cancelled.");
                 cleanup_session();
                 return;
             }
@@ -364,7 +369,7 @@ default {
                 request_acl_from_collar(selected_avatar);
             }
             else {
-                llOwnerSay("Error: Selection not found.");
+                llRegionSayTo(llGetOwner(), 0, "Error: Selection not found.");
                 cleanup_session();
             }
             return;
@@ -374,7 +379,7 @@ default {
         if (channel == COLLAR_ACL_REPLY_CHAN && AclPending) {
             string msg_type = llJsonGetValue(message, ["type"]);
             if (msg_type == JSON_INVALID) return;
-            if (msg_type != "acl_result_external") return;
+            if (msg_type != "auth.aclresultexternal") return;
             
             string response_avatar_str = llJsonGetValue(message, ["avatar"]);
             if (response_avatar_str == JSON_INVALID) return;
@@ -419,11 +424,11 @@ default {
             }
 
             // Show simple connection message
-            llOwnerSay("Connected to " + data + "'s collar.");
+            llRegionSayTo(llGetOwner(), 0, "Connected to " + data + "'s collar.");
 
             // Send menu request to collar
             string json_msg = llList2Json(JSON_OBJECT, [
-                "type", "menu_request_external",
+                "type", "remote.menurequest",
                 "avatar", (string)HudWearer,
                 "context", RequestedContext
             ]);
@@ -439,16 +444,16 @@ default {
         }
         else {
             if (AclPending) {
-                llOwnerSay("Connection failed: No response from collar.");
+                llRegionSayTo(llGetOwner(), 0, "Connection failed: No response from collar.");
                 cleanup_session();
             }
             else {
                 if (DisplayNamePending) {
-                    llOwnerSay("Connection failed: Unable to retrieve name.");
+                    llRegionSayTo(llGetOwner(), 0, "Connection failed: Unable to retrieve name.");
                     cleanup_session();
                 }
                 else {
-                    llOwnerSay("Selection dialog timed out.");
+                    llRegionSayTo(llGetOwner(), 0, "Selection dialog timed out.");
                     cleanup_session();
                 }
             }

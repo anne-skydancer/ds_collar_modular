@@ -1,10 +1,35 @@
 /*--------------------
 PLUGIN: plugin_access.lsl
 VERSION: 1.10
-REVISION: 5
+REVISION: 12
 PURPOSE: Owner, trustee, and honorific management workflows
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
+- v1.1 rev 12: write_plugin_reg guards idempotent writes (read-before-
+  write). Same-value re-registrations on state_entry and
+  kernel.register.refresh no longer fire linkset_data, so kmod_ui's
+  debounced rebuild + session invalidation stops triggering on
+  register.refresh cascades — wearer's open menu survives the event.
+- v1.1 rev 11: Add dormancy guard in state_entry — script parks itself
+  if the prim's object description is "COLLAR_UPDATER" so it stays dormant
+  when staged in an updater installer prim.
+- v1.1 rev 10: Self-declare menu presence via LSD (plugin.reg.<ctx>).
+  Label updates write the same LSD key directly; ui.label.update link_messages
+  are gone. Reset handlers delete plugin.reg.<ctx> and acl.policycontext:<ctx>
+  before llResetScript so kmod_ui drops the button immediately.
+- v1.1 rev 9: Chat command support (Phase 3). Registers "access" alias.
+  "access add/rem owner/trustee" enter the corresponding menu flow
+  (sensor pick + consent/honorific dialogs). No username in chat —
+  target selection stays in the menu by design.
+- v1.1 rev 8: Wire-type rename (Phase 2). kernel.register→kernel.register.declare,
+  kernel.registernow→kernel.register.refresh, kernel.reset→kernel.reset.soft,
+  kernel.resetall→kernel.reset.factory, settings.setowner→settings.owner.set,
+  settings.clearowner→settings.owner.clear, settings.addtrustee→
+  settings.trustee.add, settings.removetrustee→settings.trustee.remove.
+- v1.1 rev 7: Guard ui.menu.start against raw kmod_chat broadcasts (no acl
+  field). Fixes duplicate dialogs when commands are typed in chat.
+- v1.1 rev 6: Namespace internal message type strings (kernel.*, settings.*,
+  ui.*) for bus-wide clarity. No behavioral changes.
 - v1.1 rev 5: Honor soft_reset / soft_reset_all from KERNEL_LIFECYCLE so
   factory reset wipes cached owner/trustee state, not just LSD.
 - v1.1 rev 4: Fix phantom-trustee count. llCSV2List("") returns [""] (a
@@ -36,7 +61,7 @@ integer UI_BUS = 900;
 integer DIALOG_BUS = 950;
 
 /* -------------------- IDENTITY -------------------- */
-string PLUGIN_CONTEXT = "core_owner";
+string PLUGIN_CONTEXT = "ui.core.owner";
 string PLUGIN_LABEL = "Access";
 
 /* -------------------- CONSTANTS -------------------- */
@@ -111,7 +136,7 @@ string gen_session() {
 
 /* -------------------- LSD POLICY HELPER -------------------- */
 list get_policy_buttons(string ctx, integer acl) {
-    string policy = llLinksetDataRead("policy:" + ctx);
+    string policy = llLinksetDataRead("acl.policycontext:" + ctx);
     if (policy == "") return [];
     string csv = llJsonGetValue(policy, [(string)acl]);
     if (csv == JSON_INVALID) return [];
@@ -176,27 +201,53 @@ string get_name(key k) {
 
 /* -------------------- LIFECYCLE -------------------- */
 
+// Self-declared menu presence. kmod_ui enumerates via llLinksetDataFindKeys
+// and rebuilds its view tables on linkset_data events touching this key.
+write_plugin_reg(string label) {
+    string k = "plugin.reg." + PLUGIN_CONTEXT;
+    string v = llList2Json(JSON_OBJECT, [
+        "label",  label,
+        "script", llGetScriptName()
+    ]);
+    // Skip the write (and its linkset_data event) when the stored value
+    // is already what we would write. Idempotent re-registrations on
+    // state_entry or kernel.register.refresh then no longer trigger
+    // kmod_ui's debounced rebuild + session invalidation.
+    if (llLinksetDataRead(k) == v) return;
+    llLinksetDataWrite(k, v);
+}
+
 register_self() {
     // Write button visibility policy to LSD
-    llLinksetDataWrite("policy:" + PLUGIN_CONTEXT, llList2Json(JSON_OBJECT, [
+    llLinksetDataWrite("acl.policycontext:" + PLUGIN_CONTEXT, llList2Json(JSON_OBJECT, [
         "2", "Add Owner,Runaway",
         "3", "Add Trustee,Rem Trustee,Release,Runaway: On,Runaway: Off",
         "4", "Add Owner,Runaway,Add Trustee,Rem Trustee",
         "5", "Transfer,Release,Runaway: On,Runaway: Off,Add Trustee,Rem Trustee"
     ]));
 
-    // Register with kernel
+    // Self-declared menu presence for kmod_ui.
+    write_plugin_reg(PLUGIN_LABEL);
+
+    // Register with kernel (for ping/pong health tracking and alias table).
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
-        "type", "register",
+        "type", "kernel.register.declare",
         "context", PLUGIN_CONTEXT,
         "label", PLUGIN_LABEL,
         "script", llGetScriptName()
+    ]), NULL_KEY);
+
+    // Declare chat alias.
+    llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
+        "type",    "chat.alias.declare",
+        "alias",   "access",
+        "context", PLUGIN_CONTEXT
     ]), NULL_KEY);
 }
 
 send_pong() {
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
-        "type", "pong",
+        "type", "kernel.pong",
         "context", PLUGIN_CONTEXT
     ]), NULL_KEY);
 }
@@ -249,7 +300,7 @@ apply_settings_sync() {
 
 persist_owner(key owner, string hon) {
     llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
-        "type", "set_owner",
+        "type", "settings.owner.set",
         "uuid", (string)owner,
         "honorific", hon
     ]), NULL_KEY);
@@ -257,7 +308,7 @@ persist_owner(key owner, string hon) {
 
 add_trustee(key trustee, string hon) {
     llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
-        "type", "add_trustee",
+        "type", "settings.trustee.add",
         "uuid", (string)trustee,
         "honorific", hon
     ]), NULL_KEY);
@@ -265,20 +316,20 @@ add_trustee(key trustee, string hon) {
 
 remove_trustee(key trustee) {
     llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
-        "type", "remove_trustee",
+        "type", "settings.trustee.remove",
         "uuid", (string)trustee
     ]), NULL_KEY);
 }
 
 clear_owner() {
     llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
-        "type", "clear_owner"
+        "type", "settings.owner.clear"
     ]), NULL_KEY);
 }
 
 trigger_runaway() {
     llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
-        "type", "runaway"
+        "type", "settings.runaway"
     ]), NULL_KEY);
 }
 
@@ -352,7 +403,7 @@ show_main() {
     if (btn_allowed("Rem Trustee")) button_data += [btn("Rem Trustee", "rem_trustee")];
 
     llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
-        "type", "dialog_open",
+        "type", "ui.dialog.open",
         "session_id", SessionId,
         "user", (string)CurrentUser,
         "title", PLUGIN_LABEL,
@@ -380,7 +431,7 @@ show_candidates(string context, string title, string prompt) {
     MenuContext = context;
 
     llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
-        "type", "dialog_open",
+        "type", "ui.dialog.open",
         "dialog_type", "numbered_list",
         "session_id", SessionId,
         "user", (string)CurrentUser,
@@ -400,7 +451,7 @@ show_honorific(key target, string context) {
     if (context == "trustee_hon") choices = TRUSTEE_HONORIFICS;
 
     llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
-        "type", "dialog_open",
+        "type", "ui.dialog.open",
         "dialog_type", "numbered_list",
         "session_id", SessionId,
         "user", (string)target,
@@ -416,7 +467,7 @@ show_confirm(string title, string body, string ctx) {
     MenuContext = ctx;
 
     llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
-        "type", "dialog_open",
+        "type", "ui.dialog.open",
         "session_id", SessionId,
         "user", (string)CurrentUser,
         "title", title,
@@ -424,6 +475,75 @@ show_confirm(string title, string body, string ctx) {
         "button_data", llList2Json(JSON_ARRAY, [btn("Yes", "confirm"), btn("No", "cancel")]),
         "timeout", 60
     ]), NULL_KEY);
+}
+
+// Chat subcommand handler. Routes into the existing menu flows by
+// setting session state and triggering the same code paths the
+// corresponding main-menu button would fire.
+handle_subpath(key user, integer acl_level, string subpath) {
+    list tokens = llParseString2List(subpath, ["."], []);
+    if (llGetListLength(tokens) < 2) {
+        llRegionSayTo(user, 0, "Usage: access <add|rem> <owner|trustee>");
+        return;
+    }
+    string verb = llList2String(tokens, 0);
+    string role = llList2String(tokens, 1);
+
+    gPolicyButtons = get_policy_buttons(PLUGIN_CONTEXT, acl_level);
+
+    // Session setup mirrors the menu flow entry.
+    CurrentUser = user;
+    UserAcl = acl_level;
+    MenuContext = "main";
+
+    if (verb == "add" && role == "owner") {
+        if (!btn_allowed("Add Owner")) {
+            llRegionSayTo(user, 0, "Access denied.");
+            gPolicyButtons = [];
+            return;
+        }
+        gPolicyButtons = [];
+        MenuContext = "set_scan";
+        CandidateKeys = [];
+        llSensor("", NULL_KEY, AGENT, 10.0, PI);
+        return;
+    }
+    if (verb == "rem" && role == "owner") {
+        if (!btn_allowed("Release")) {
+            llRegionSayTo(user, 0, "Access denied.");
+            gPolicyButtons = [];
+            return;
+        }
+        gPolicyButtons = [];
+        show_confirm("Confirm Release",
+            "Release " + get_name(llGetOwner()) + "?", "release_owner");
+        return;
+    }
+    if (verb == "add" && role == "trustee") {
+        if (!btn_allowed("Add Trustee")) {
+            llRegionSayTo(user, 0, "Access denied.");
+            gPolicyButtons = [];
+            return;
+        }
+        gPolicyButtons = [];
+        MenuContext = "trustee_scan";
+        CandidateKeys = [];
+        llSensor("", NULL_KEY, AGENT, 10.0, PI);
+        return;
+    }
+    if (verb == "rem" && role == "trustee") {
+        if (!btn_allowed("Rem Trustee")) {
+            llRegionSayTo(user, 0, "Access denied.");
+            gPolicyButtons = [];
+            return;
+        }
+        gPolicyButtons = [];
+        show_remove_trustee();
+        return;
+    }
+
+    gPolicyButtons = [];
+    llRegionSayTo(user, 0, "Unknown access subcommand: " + verb + " " + role);
 }
 
 show_remove_trustee() {
@@ -450,7 +570,7 @@ show_remove_trustee() {
     MenuContext = "remove_trustee";
 
     llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
-        "type", "dialog_open",
+        "type", "ui.dialog.open",
         "dialog_type", "numbered_list",
         "session_id", SessionId,
         "user", (string)CurrentUser,
@@ -469,7 +589,7 @@ handle_button(string cmd, string label) {
     if (cmd == "back" || (cmd == "" && label == "Back")) {
         if (MenuContext == "main") {
             llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
-                "type", "return", "user", (string)CurrentUser
+                "type", "ui.menu.return", "user", (string)CurrentUser
             ]), NULL_KEY);
             cleanup();
         }
@@ -506,7 +626,7 @@ handle_button(string cmd, string label) {
                 MenuContext = "runaway_disable_confirm";
 
                 llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
-                    "type", "dialog_open",
+                    "type", "ui.dialog.open",
                     "session_id", SessionId,
                     "user", (string)llGetOwner(),  // Send to WEARER, not CurrentUser
                     "title", "Disable Runaway",
@@ -521,7 +641,7 @@ handle_button(string cmd, string label) {
                 llLinksetDataWrite(KEY_RUNAWAY_ENABLED, "1");
 
                 llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
-                    "type", "set",
+                    "type", "settings.set",
                     "key", KEY_RUNAWAY_ENABLED,
                     "value", "1"
                 ]), NULL_KEY);
@@ -552,7 +672,7 @@ handle_button(string cmd, string label) {
             MenuContext = "set_accept";
 
             llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
-                "type", "dialog_open",
+                "type", "ui.dialog.open",
                 "session_id", SessionId,
                 "user", (string)PendingCandidate,
                 "title", "Accept Ownership",
@@ -576,7 +696,7 @@ handle_button(string cmd, string label) {
             MenuContext = "set_confirm";
 
             llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
-                "type", "dialog_open",
+                "type", "ui.dialog.open",
                 "session_id", SessionId,
                 "user", (string)llGetOwner(),
                 "title", "Confirm",
@@ -593,7 +713,7 @@ handle_button(string cmd, string label) {
             llRegionSayTo(llGetOwner(), 0, "You are now property of " + PendingHonorific + " " + get_name(PendingCandidate) + ".");
             cleanup();
             llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
-                "type", "return", "user", (string)CurrentUser
+                "type", "ui.menu.return", "user", (string)CurrentUser
             ]), NULL_KEY);
         }
         else show_main();
@@ -605,7 +725,7 @@ handle_button(string cmd, string label) {
             MenuContext = "transfer_accept";
 
             llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
-                "type", "dialog_open",
+                "type", "ui.dialog.open",
                 "session_id", SessionId,
                 "user", (string)PendingCandidate,
                 "title", "Accept Transfer",
@@ -639,7 +759,7 @@ handle_button(string cmd, string label) {
             MenuContext = "release_wearer";
 
             llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
-                "type", "dialog_open",
+                "type", "ui.dialog.open",
                 "session_id", SessionId,
                 "user", (string)llGetOwner(),
                 "title", "Confirm Release",
@@ -691,7 +811,7 @@ handle_button(string cmd, string label) {
             llLinksetDataWrite(KEY_RUNAWAY_ENABLED, "0");
 
             llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
-                "type", "set",
+                "type", "settings.set",
                 "key", KEY_RUNAWAY_ENABLED,
                 "value", "0"
             ]), NULL_KEY);
@@ -721,7 +841,7 @@ handle_button(string cmd, string label) {
             MenuContext = "trustee_accept";
 
             llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
-                "type", "dialog_open",
+                "type", "ui.dialog.open",
                 "session_id", SessionId,
                 "user", (string)PendingCandidate,
                 "title", "Accept Trustee",
@@ -764,7 +884,7 @@ handle_button(string cmd, string label) {
 cleanup() {
     if (SessionId != "") {
         llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
-            "type", "dialog_close",
+            "type", "ui.dialog.close",
             "session_id", SessionId
         ]), NULL_KEY);
     }
@@ -782,6 +902,11 @@ cleanup() {
 
 default {
     state_entry() {
+        if (llGetObjectDesc() == "COLLAR_UPDATER") {
+            llSetScriptState(llGetScriptName(), FALSE);
+            return;
+        }
+
         cleanup();
         register_self();
         apply_settings_sync();
@@ -800,32 +925,44 @@ default {
         if (type == JSON_INVALID) return;
 
         if (num == KERNEL_LIFECYCLE) {
-            if (type == "register_now") register_self();
-            else if (type == "ping") send_pong();
-            else if (type == "soft_reset" || type == "soft_reset_all") {
+            if (type == "kernel.register.refresh") register_self();
+            else if (type == "kernel.ping") send_pong();
+            else if (type == "kernel.reset.soft" || type == "kernel.reset.factory") {
                 string target_context = llJsonGetValue(msg, ["context"]);
                 if (target_context != JSON_INVALID) {
                     if (target_context != "" && target_context != PLUGIN_CONTEXT) return;
                 }
+                llLinksetDataDelete("plugin.reg." + PLUGIN_CONTEXT);
+                llLinksetDataDelete("acl.policycontext:" + PLUGIN_CONTEXT);
                 llResetScript();
             }
         }
         else if (num == SETTINGS_BUS) {
-            if (type == "settings_sync" || type == "settings_delta") apply_settings_sync();
+            if (type == "settings.sync" || type == "settings.delta") apply_settings_sync();
         }
         else if (num == UI_BUS) {
-            if (type == "start" && (llJsonGetValue(msg, ["context"]) != JSON_INVALID)) {
+            if (type == "ui.menu.start" && (llJsonGetValue(msg, ["context"]) != JSON_INVALID)) {
+                if (llJsonGetValue(msg, ["acl"]) == JSON_INVALID) return;
                 if (llJsonGetValue(msg, ["context"]) == PLUGIN_CONTEXT) {
-                    CurrentUser = id;
-                    // ACL level provided by UI module
-                    UserAcl = (integer)llJsonGetValue(msg, ["acl"]);
+                    integer acl = (integer)llJsonGetValue(msg, ["acl"]);
 
+                    string subpath = "";
+                    string sp = llJsonGetValue(msg, ["subpath"]);
+                    if (sp != JSON_INVALID) subpath = sp;
+
+                    if (subpath != "") {
+                        handle_subpath(id, acl, subpath);
+                        return;
+                    }
+
+                    CurrentUser = id;
+                    UserAcl = acl;
                     show_main();
                 }
             }
         }
         else if (num == DIALOG_BUS) {
-            if (type == "dialog_response") {
+            if (type == "ui.dialog.response") {
                 if (llJsonGetValue(msg, ["session_id"]) != JSON_INVALID) {
                     if (llJsonGetValue(msg, ["session_id"]) == SessionId) {
                         string resp_ctx = llJsonGetValue(msg, ["context"]);
@@ -836,7 +973,7 @@ default {
                     }
                 }
             }
-            else if (type == "dialog_timeout") {
+            else if (type == "ui.dialog.timeout") {
                 if ((llJsonGetValue(msg, ["session_id"]) != JSON_INVALID)) {
                     if (llJsonGetValue(msg, ["session_id"]) == SessionId) cleanup();
                 }

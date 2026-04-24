@@ -1,7 +1,7 @@
 /*--------------------
 MODULE: kmod_settings.lsl
 VERSION: 1.10
-REVISION: 3
+REVISION: 9
 PURPOSE: Notecard parser, validation guards, and LSD settings store
 ARCHITECTURE: Two-mode access model. Single-owner mode uses scalar keys
               (access.owner, access.ownername, access.ownerhonorific) and
@@ -11,6 +11,29 @@ ARCHITECTURE: Two-mode access model. Single-owner mode uses scalar keys
               Trustees and blacklist always use CSVs. Display names are
               resolved asynchronously via llRequestDisplayName.
 CHANGES:
+- v1.1 rev 9: settings.get now re-reads the notecard when one is present,
+  matching the UI contract that "Reload Settings" re-reads the notecard.
+  Previous behavior rebroadcast LSD only, so a wearer who had (e.g.)
+  unlocked the collar via menu would see "Reload Settings" do nothing for
+  lock state — the notecard's lock.locked=1 was never re-applied. Guarded
+  against concurrent reloads via IsLoadingNotecard.
+- v1.1 rev 8: Add dormancy guard in state_entry — script parks itself
+  if the prim's object description is "COLLAR_UPDATER" so it stays dormant
+  when staged in an updater installer prim.
+- v1.1 rev 7: Consistency pass — 6 ERROR/HINT notices (wearer-as-owner
+  guard, TPE guards, multi-owner menu guards) converted from llOwnerSay
+  to llRegionSayTo(llGetOwner(), 0, ...).
+- v1.1 rev 6: SETTINGS_BUS rename (Phase 1). Mutation handlers now
+  dispatch on namespaced family names: settings.setowner→settings.owner.set,
+  settings.clearowner→settings.owner.clear, settings.addtrustee→
+  settings.trustee.add, settings.removetrustee→settings.trustee.remove,
+  settings.blacklistadd→settings.blacklist.add, settings.blacklistremove→
+  settings.blacklist.remove. Generics (settings.sync/delta/get/set/runaway)
+  unchanged.
+- v1.1 rev 5: KERNEL_LIFECYCLE rename (Phase 1). kernel.resetall→
+  kernel.reset.factory, settings.notecardloaded→settings.notecard.loaded.
+- v1.1 rev 4: Namespace internal message type strings (e.g. "set" →
+  "settings.set", "settings_sync" → "settings.sync") for ISP clarity.
 - v1.1 rev 3: Replace JSON object owner/trustee storage with explicit
   two-mode flat scheme (scalars for single-owner, parallel CSVs for
   multi-owner). Async display name resolution. access.isowned = 0
@@ -128,7 +151,7 @@ integer is_multi_owner_mode() {
 
 broadcast_settings_changed() {
     llMessageLinked(LINK_SET, SETTINGS_BUS, llList2Json(JSON_OBJECT, [
-        "type", "settings_sync"
+        "type", "settings.sync"
     ]), NULL_KEY);
 }
 
@@ -157,7 +180,7 @@ factory_reset() {
 
     // Reset all scripts in the linkset
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
-        "type", "soft_reset_all",
+        "type", "kernel.reset.factory",
         "from", "factory_reset"
     ]), NULL_KEY);
 
@@ -260,7 +283,7 @@ handle_name_response(key query_id, string name) {
 integer set_single_owner(string uuid_str, string honorific) {
     if (uuid_str == "" || (key)uuid_str == NULL_KEY) return FALSE;
     if ((key)uuid_str == llGetOwner()) {
-        llOwnerSay("ERROR: Cannot add wearer as owner (role separation required)");
+        llRegionSayTo(llGetOwner(), 0, "ERROR: Cannot add wearer as owner (role separation required)");
         return FALSE;
     }
 
@@ -510,8 +533,8 @@ parse_notecard_line(string line) {
     if (key_name == KEY_TPE_MODE) {
         value = normalize_bool(value);
         if ((integer)value == 1 && !has_external_owner()) {
-            llOwnerSay("ERROR: Cannot enable TPE via notecard - requires external owner");
-            llOwnerSay("HINT: Set owner BEFORE tpe.mode in notecard");
+            llRegionSayTo(llGetOwner(), 0, "ERROR: Cannot enable TPE via notecard - requires external owner");
+            llRegionSayTo(llGetOwner(), 0, "HINT: Set owner BEFORE tpe.mode in notecard");
             return;
         }
         llLinksetDataWrite(KEY_TPE_MODE, value);
@@ -543,7 +566,15 @@ integer start_notecard_reading() {
 /* -------------------- MESSAGE HANDLERS -------------------- */
 
 handle_settings_get() {
-    broadcast_settings_changed();
+    // UI contract ("Reload Settings" button): re-read the notecard and let
+    // plugins resync from the refreshed LSD. Falling back to a plain
+    // rebroadcast when no notecard is present or a reload is already in
+    // flight — broadcast_settings_changed will also fire from the EOF
+    // branch of the dataserver handler once the in-flight read completes.
+    if (IsLoadingNotecard) return;
+    if (!start_notecard_reading()) {
+        broadcast_settings_changed();
+    }
 }
 
 // Generic scalar set for non-access keys (and a few access scalars).
@@ -579,7 +610,7 @@ handle_set(string msg) {
     if (key_name == KEY_TPE_MODE) {
         value = normalize_bool(value);
         if ((integer)value == 1 && !has_external_owner()) {
-            llOwnerSay("ERROR: Cannot enable TPE - requires external owner");
+            llRegionSayTo(llGetOwner(), 0, "ERROR: Cannot enable TPE - requires external owner");
             return;
         }
     }
@@ -597,7 +628,7 @@ handle_set(string msg) {
 
 handle_set_owner(string msg) {
     if (is_multi_owner_mode()) {
-        llOwnerSay("ERROR: Cannot set owner via menu in multi-owner mode (notecard managed)");
+        llRegionSayTo(llGetOwner(), 0, "ERROR: Cannot set owner via menu in multi-owner mode (notecard managed)");
         return;
     }
 
@@ -612,7 +643,7 @@ handle_set_owner(string msg) {
 
 handle_clear_owner() {
     if (is_multi_owner_mode()) {
-        llOwnerSay("ERROR: Cannot clear owner via menu in multi-owner mode (notecard managed)");
+        llRegionSayTo(llGetOwner(), 0, "ERROR: Cannot clear owner via menu in multi-owner mode (notecard managed)");
         return;
     }
     clear_single_owner();
@@ -665,6 +696,11 @@ handle_runaway() {
 default
 {
     state_entry() {
+        if (llGetObjectDesc() == "COLLAR_UPDATER") {
+            llSetScriptState(llGetScriptName(), FALSE);
+            return;
+        }
+
         LastOwner = llGetOwner();
         NotecardKey = llGetInventoryKey(NOTECARD_NAME);
 
@@ -732,7 +768,7 @@ default
 
                 // Trigger bootstrap completion
                 llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
-                    "type", "notecard_loaded"
+                    "type", "settings.notecard.loaded"
                 ]), NULL_KEY);
             }
             return;
@@ -747,14 +783,14 @@ default
         string msg_type = get_msg_type(msg);
         if (msg_type == "") return;
 
-        if      (msg_type == "settings_get")     handle_settings_get();
-        else if (msg_type == "set")              handle_set(msg);
-        else if (msg_type == "set_owner")        handle_set_owner(msg);
-        else if (msg_type == "clear_owner")      handle_clear_owner();
-        else if (msg_type == "add_trustee")      handle_add_trustee(msg);
-        else if (msg_type == "remove_trustee")   handle_remove_trustee(msg);
-        else if (msg_type == "blacklist_add")    handle_blacklist_add(msg);
-        else if (msg_type == "blacklist_remove") handle_blacklist_remove(msg);
-        else if (msg_type == "runaway")          handle_runaway();
+        if      (msg_type == "settings.get")            handle_settings_get();
+        else if (msg_type == "settings.set")            handle_set(msg);
+        else if (msg_type == "settings.owner.set")       handle_set_owner(msg);
+        else if (msg_type == "settings.owner.clear")     handle_clear_owner();
+        else if (msg_type == "settings.trustee.add")     handle_add_trustee(msg);
+        else if (msg_type == "settings.trustee.remove")  handle_remove_trustee(msg);
+        else if (msg_type == "settings.blacklist.add")   handle_blacklist_add(msg);
+        else if (msg_type == "settings.blacklist.remove") handle_blacklist_remove(msg);
+        else if (msg_type == "settings.runaway")        handle_runaway();
     }
 }

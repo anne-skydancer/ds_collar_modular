@@ -1,18 +1,36 @@
 /*--------------------
 PLUGIN: plugin_maint.lsl
 VERSION: 1.10
-REVISION: 6
+REVISION: 12
 PURPOSE: Maintenance and utility functions for collar management
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
-- v1.1 rev 6: Add confirmation dialog before force-releasing leash from
-  maintenance. Clear Leash is a security bypass; requiring wearer
-  confirmation prevents accidental or malicious triggers.
-- v1.1 rev 5: Change Clear Leash to send force_release instead of release.
-  The normal release action is gated on the user being the active leasher
-  or holding Unclip policy — which ACL 2 (owned wearer) does not have.
-  force_release is authorized by wearer identity or ACL >= 3, so it works
-  as the intended emergency escape from a bad-actor leash.
+- v1.1 rev 12: write_plugin_reg guards idempotent writes (read-before-
+  write). Same-value re-registrations on state_entry and
+  kernel.register.refresh no longer fire linkset_data, so kmod_ui's
+  debounced rebuild + session invalidation stops triggering on
+  register.refresh cascades — wearer's open menu survives the event.
+- v1.1 rev 11: Add dormancy guard in state_entry — script parks itself
+  if the prim's object description is "COLLAR_UPDATER" so it stays dormant
+  when staged in an updater installer prim.
+- v1.1 rev 10: Self-declare menu presence via LSD (plugin.reg.<ctx>).
+  Label updates write the same LSD key directly; ui.label.update link_messages
+  are gone. Reset handlers delete plugin.reg.<ctx> and acl.policycontext:<ctx>
+  before llResetScript so kmod_ui drops the button immediately.
+- v1.1 rev 9: Wire-type rename (Phase 2). kernel.register→kernel.register.declare,
+  kernel.registernow→kernel.register.refresh, kernel.reset→kernel.reset.soft,
+  kernel.resetall→kernel.reset.factory. (This plugin is the producer of both
+  soft and factory reset broadcasts from the maintenance menu.)
+- v1.1 rev 8: Fix Clear Leash confirmation dialog — wrong type "dialog_open"
+  should be "ui.dialog.open". kmod_dialogs ignored it so the dialog never
+  opened and the confirm button was never reachable.
+- v1.1 rev 7: Guard ui.menu.start against raw kmod_chat broadcasts (no acl
+  field). Fixes duplicate dialogs when commands are typed in chat.
+- v1.1 rev 6: Switch Clear Leash to force_release and add confirmation dialog.
+  force_release is authorized by wearer identity or ACL >= 3, bypassing the
+  leasher-identity check so it works on bad-actor leashes. Confirmation
+  dialog prevents accidental or malicious triggers.
+- v1.1 rev 5: Namespace internal message type strings (kernel.*, ui.*, etc.)
 - v1.1 rev 4: Fix phantom owner/trustee/blacklist count in View Settings
   and Access List. llCSV2List("") returns [""] (a single empty entry),
   not []. Routed all CSV reads through a csv_read() helper.
@@ -39,7 +57,7 @@ integer UI_BUS = 900;
 integer DIALOG_BUS = 950;
 
 /* -------------------- PLUGIN IDENTITY -------------------- */
-string PLUGIN_CONTEXT = "core_maintenance";
+string PLUGIN_CONTEXT = "ui.core.maintenance";
 string PLUGIN_LABEL = "Maintenance";
 
 /* ACL levels for reference:
@@ -79,7 +97,7 @@ list csv_read(string lsd_key) {
 
 /* -------------------- LSD POLICY HELPER -------------------- */
 list get_policy_buttons(string ctx, integer acl) {
-    string policy = llLinksetDataRead("policy:" + ctx);
+    string policy = llLinksetDataRead("acl.policycontext:" + ctx);
     if (policy == "") return [];
     string csv = llJsonGetValue(policy, [(string)acl]);
     if (csv == JSON_INVALID) return [];
@@ -92,9 +110,25 @@ integer btn_allowed(string label) {
 
 /* -------------------- LIFECYCLE -------------------- */
 
+// Self-declared menu presence. kmod_ui enumerates via llLinksetDataFindKeys
+// and rebuilds its view tables on linkset_data events touching this key.
+write_plugin_reg(string label) {
+    string k = "plugin.reg." + PLUGIN_CONTEXT;
+    string v = llList2Json(JSON_OBJECT, [
+        "label",  label,
+        "script", llGetScriptName()
+    ]);
+    // Skip the write (and its linkset_data event) when the stored value
+    // is already what we would write. Idempotent re-registrations on
+    // state_entry or kernel.register.refresh then no longer trigger
+    // kmod_ui's debounced rebuild + session invalidation.
+    if (llLinksetDataRead(k) == v) return;
+    llLinksetDataWrite(k, v);
+}
+
 register_self() {
     // Write button visibility policy to LSD (default-deny per ACL level)
-    llLinksetDataWrite("policy:" + PLUGIN_CONTEXT, llList2Json(JSON_OBJECT, [
+    llLinksetDataWrite("acl.policycontext:" + PLUGIN_CONTEXT, llList2Json(JSON_OBJECT, [
         "1", "Get HUD,User Manual",
         "2", "View Settings,Reload Settings,Access List,Reload Collar,Clear Leash,Get HUD,User Manual,Factory Reset",
         "3", "View Settings,Reload Settings,Access List,Reload Collar,Clear Leash,Get HUD,User Manual",
@@ -102,9 +136,12 @@ register_self() {
         "5", "View Settings,Reload Settings,Access List,Reload Collar,Clear Leash,Get HUD,User Manual"
     ]));
 
-    // Register with kernel
+    // Self-declared menu presence for kmod_ui.
+    write_plugin_reg(PLUGIN_LABEL);
+
+    // Register with kernel (for ping/pong health tracking and alias table).
     string msg = llList2Json(JSON_OBJECT, [
-        "type", "register",
+        "type", "kernel.register.declare",
         "context", PLUGIN_CONTEXT,
         "label", PLUGIN_LABEL,
         "script", llGetScriptName()
@@ -114,7 +151,7 @@ register_self() {
 
 send_pong() {
     string msg = llList2Json(JSON_OBJECT, [
-        "type", "pong",
+        "type", "kernel.pong",
         "context", PLUGIN_CONTEXT
     ]);
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, msg, NULL_KEY);
@@ -153,7 +190,7 @@ show_main_menu() {
     SessionId = generate_session_id();
 
     llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
-        "type", "dialog_open",
+        "type", "ui.dialog.open",
         "session_id", SessionId,
         "user", (string)CurrentUser,
         "title", "Maintenance",
@@ -372,7 +409,7 @@ show_factory_reset_confirm() {
     ];
 
     llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
-        "type", "dialog_open",
+        "type", "ui.dialog.open",
         "session_id", SessionId,
         "user", (string)CurrentUser,
         "title", "Factory Reset",
@@ -391,7 +428,7 @@ do_factory_reset() {
 
     // Reset all scripts in the linkset
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
-        "type", "soft_reset_all",
+        "type", "kernel.reset.factory",
         "from", "factory_reset"
     ]), NULL_KEY);
 
@@ -400,7 +437,7 @@ do_factory_reset() {
 
 do_reload_settings() {
     string msg = llList2Json(JSON_OBJECT, [
-        "type", "settings_get"
+        "type", "settings.get"
     ]);
     llMessageLinked(LINK_SET, SETTINGS_BUS, msg, NULL_KEY);
 
@@ -417,7 +454,7 @@ show_clear_leash_confirm() {
     ];
 
     llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
-        "type", "dialog_open",
+        "type", "ui.dialog.open",
         "session_id", SessionId,
         "user", (string)CurrentUser,
         "title", "Clear Leash",
@@ -434,7 +471,7 @@ do_clear_leash() {
     // allowing an owned wearer (ACL 2) to escape a bad-actor leash and
     // clearing stray leash particles in all cases.
     string msg = llList2Json(JSON_OBJECT, [
-        "type", "leash_action",
+        "type", "plugin.leash.action",
         "action", "force_release"
     ]);
     llMessageLinked(LINK_SET, UI_BUS, msg, CurrentUser);
@@ -445,7 +482,7 @@ do_clear_leash() {
 do_reload_collar() {
     // Broadcast soft reset to all plugins
     string msg = llList2Json(JSON_OBJECT, [
-        "type", "soft_reset",
+        "type", "kernel.reset.soft",
         "from", "maintenance"
     ]);
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, msg, NULL_KEY);
@@ -477,7 +514,7 @@ do_give_manual() {
 
 return_to_root() {
     string msg = llList2Json(JSON_OBJECT, [
-        "type", "return",
+        "type", "ui.menu.return",
         "user", (string)CurrentUser
     ]);
     llMessageLinked(LINK_SET, UI_BUS, msg, NULL_KEY);
@@ -490,7 +527,7 @@ cleanup_session() {
     // Close the dialog session in the dialog manager
     if (SessionId != "") {
         string msg = llList2Json(JSON_OBJECT, [
-            "type", "dialog_close",
+            "type", "ui.dialog.close",
             "session_id", SessionId
         ]);
         llMessageLinked(LINK_SET, DIALOG_BUS, msg, NULL_KEY);
@@ -598,6 +635,11 @@ handle_dialog_timeout(string msg) {
 
 default {
     state_entry() {
+        if (llGetObjectDesc() == "COLLAR_UPDATER") {
+            llSetScriptState(llGetScriptName(), FALSE);
+            return;
+        }
+
         cleanup_session();
         register_self();
     }
@@ -617,17 +659,17 @@ default {
             string msg_type = llJsonGetValue(msg, ["type"]);
             if (msg_type == JSON_INVALID) return;
 
-            if (msg_type == "register_now") {
+            if (msg_type == "kernel.register.refresh") {
                 register_self();
                 return;
             }
 
-            if (msg_type == "ping") {
+            if (msg_type == "kernel.ping") {
                 send_pong();
                 return;
             }
 
-            if (msg_type == "soft_reset" || msg_type == "soft_reset_all") {
+            if (msg_type == "kernel.reset.soft" || msg_type == "kernel.reset.factory") {
                 // Check if this is a targeted reset
                 string target_context = llJsonGetValue(msg, ["context"]);
                 if (target_context != JSON_INVALID) {
@@ -636,6 +678,8 @@ default {
                     }
                 }
                 // Either no context (broadcast) or matches our context
+                llLinksetDataDelete("plugin.reg." + PLUGIN_CONTEXT);
+                llLinksetDataDelete("acl.policycontext:" + PLUGIN_CONTEXT);
                 llResetScript();
             }
 
@@ -646,7 +690,8 @@ default {
             string msg_type = llJsonGetValue(msg, ["type"]);
             if (msg_type == JSON_INVALID) return;
 
-            if (msg_type == "start") {
+            if (msg_type == "ui.menu.start") {
+                if (llJsonGetValue(msg, ["acl"]) == JSON_INVALID) return;
                 if (llJsonGetValue(msg, ["context"]) == JSON_INVALID) return;
                 if (llJsonGetValue(msg, ["context"]) != PLUGIN_CONTEXT) return;
 
@@ -665,17 +710,17 @@ default {
             string msg_type = llJsonGetValue(msg, ["type"]);
             if (msg_type == JSON_INVALID) return;
 
-            if (msg_type == "dialog_response") {
+            if (msg_type == "ui.dialog.response") {
                 handle_dialog_response(msg);
                 return;
             }
 
-            if (msg_type == "dialog_timeout") {
+            if (msg_type == "ui.dialog.timeout") {
                 handle_dialog_timeout(msg);
                 return;
             }
 
-            if (msg_type == "dialog_close") {
+            if (msg_type == "ui.dialog.close") {
                 // Dialog was closed externally (e.g., replaced by another dialog)
                 // Clean up our session if it matches
                 string session = llJsonGetValue(msg, ["session_id"]);

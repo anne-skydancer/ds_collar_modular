@@ -1,10 +1,52 @@
 /*--------------------
 PLUGIN: plugin_leash.lsl
 VERSION: 1.10
-REVISION: 3
+REVISION: 13
 PURPOSE: User interface and configuration for the leashing system
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
+- v1.1 rev 13: Sort sensor-driven candidate lists by name, and reorder
+  the resulting buttons so they display top-to-bottom-left-to-right.
+  Pass/Offer (buildAvatarMenu) now collects all nearby avatars, sorts
+  alphabetically via llListSortStrided(SensorCandidates, 2, 0, TRUE),
+  then caps at 9. Coffle/Post (sensor event) sorts the same way before
+  pagination. A new reorder_item_buttons helper maps item buttons into
+  llDialog's bottom-left-to-top-right grid so the visual order matches
+  the sorted body text — this plugin talks to kmod_dialogs directly and
+  bypasses kmod_menu's reorder, so it has to do the mapping itself.
+- v1.1 rev 12: write_plugin_reg guards idempotent writes (read-before-
+  write). Same-value re-registrations on state_entry and
+  kernel.register.refresh no longer fire linkset_data, so kmod_ui's
+  debounced rebuild + session invalidation stops triggering on
+  register.refresh cascades — wearer's open menu survives the event.
+- v1.1 rev 11: Add dormancy guard in state_entry — script parks itself
+  if the prim's object description is "COLLAR_UPDATER" so it stays dormant
+  when staged in an updater installer prim.
+- v1.1 rev 10: Self-declare menu presence via LSD (plugin.reg.<ctx>).
+  Label updates write the same LSD key directly; ui.label.update link_messages
+  are gone. Reset handlers delete plugin.reg.<ctx> and acl.policycontext:<ctx>
+  before llResetScript so kmod_ui drops the button immediately.
+- v1.1 rev 9: Chat subcommands for coffle and post. Both reuse the
+  existing menu flow (showCoffleMenu / showPostMenu), so "leash coffle"
+  and "leash post" each trigger a sensor scan and return a dialog to
+  pick from — same UX as the menu buttons, just reachable from chat.
+- v1.1 rev 8: Chat command support (Phase 3). Registers "leash" alias.
+  "<prefix> leash" opens menu; subcommands: clip, unclip, turn,
+  length <m>, pass <username>. Username resolved via llName2Key
+  (avatar must be in-sim). kmod_leash does server-side ACL enforcement
+  on the resulting plugin.leash.action, so no duplicate gating here.
+- v1.1 rev 7: Wire-type rename (Phase 2). kernel.register→kernel.register.declare,
+  kernel.registernow→kernel.register.refresh, kernel.reset→kernel.reset.soft,
+  kernel.resetall→kernel.reset.factory, plugin.leash.offerpending→
+  plugin.leash.offer.pending.
+- v1.1 rev 6: Guard ui.menu.start against raw kmod_chat broadcasts (no acl
+  field). Fixes duplicate dialogs when commands are typed in chat.
+- v1.1 rev 5: Grant Unclip to ACL 1 (public) policy so a public user who
+  holds the leash can release it. The existing in-code guard still
+  restricts the button to the current leasher at public level. Also
+  make giveHolderObject tolerant of case and whitespace variations on
+  the "Leash holder" inventory item name.
+- v1.1 rev 4: Namespace internal message type strings (kernel.*, ui.*, plugin.*).
 - v1.1 rev 3: Coffle now scans for nearby AVATARS instead of scripted
   objects. Was scanning SCRIPTED objects, which surfaced random in-world
   scripted props instead of avatars wearing collars. Switched the
@@ -25,7 +67,7 @@ integer UI_BUS = 900;
 integer DIALOG_BUS = 950;
 
 /* -------------------- PLUGIN IDENTITY -------------------- */
-string PLUGIN_CONTEXT = "core_leash";
+string PLUGIN_CONTEXT = "ui.core.leash";
 string PLUGIN_LABEL = "Leash";
 
 /* -------------------- CONFIGURATION -------------------- */
@@ -72,7 +114,7 @@ string generate_session_id() {
 
 /* -------------------- LSD POLICY HELPER -------------------- */
 list get_policy_buttons(string ctx, integer acl) {
-    string policy = llLinksetDataRead("policy:" + ctx);
+    string policy = llLinksetDataRead("acl.policycontext:" + ctx);
     if (policy == "") return [];
     string csv = llJsonGetValue(policy, [(string)acl]);
     if (csv == JSON_INVALID) return [];
@@ -95,7 +137,7 @@ showMenu(string context, string title, string body, list button_data) {
     MenuContext = context;
 
     llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
-        "type", "dialog_open",
+        "type", "ui.dialog.open",
         "session_id", SessionId,
         "user", (string)CurrentUser,
         "title", title,
@@ -105,29 +147,99 @@ showMenu(string context, string title, string body, list button_data) {
     ]), NULL_KEY);
 }
 
+// Reorder items so that an llDialog rendered from the returned list shows
+// them top-to-bottom, left-to-right (matching the order the wearer reads
+// in the dialog's body text). This plugin talks directly to kmod_dialogs
+// rather than going through kmod_menu, so kmod_menu's reorder logic does
+// not apply here — we replicate the same idea with explicit target slot
+// mapping. Assumes 3 fixed nav buttons at indices 0–2 (bottom row); items
+// fill the three rows above in top-to-bottom order. Empty slots are
+// padded with a single-space filler per project dialog convention.
+list reorder_item_buttons(list nav_buttons, list item_buttons) {
+    integer item_count = llGetListLength(item_buttons);
+    integer total_buttons = 3 + item_count;
+
+    // Top row (indices 9,10,11), row 3 (6,7,8), row 2 (3,4,5). Add each
+    // slot only if the total fits — keeps trailing empty grid slots out.
+    list target_slots = [];
+    if (total_buttons > 9)  target_slots += [9];
+    if (total_buttons > 10) target_slots += [10];
+    if (total_buttons > 11) target_slots += [11];
+    if (total_buttons > 6)  target_slots += [6];
+    if (total_buttons > 7)  target_slots += [7];
+    if (total_buttons > 8)  target_slots += [8];
+    if (total_buttons > 3)  target_slots += [3];
+    if (total_buttons > 4)  target_slots += [4];
+    if (total_buttons > 5)  target_slots += [5];
+
+    list final = nav_buttons;
+    integer p = 0;
+    while (p < item_count) {
+        final += [" "];
+        p++;
+    }
+    integer i = 0;
+    while (i < item_count) {
+        integer slot = llList2Integer(target_slots, i);
+        final = llListReplaceList(final, [llList2String(item_buttons, i)], slot, slot);
+        i++;
+    }
+    return final;
+}
+
 /* -------------------- PLUGIN REGISTRATION -------------------- */
+
+// Self-declared menu presence. kmod_ui enumerates via llLinksetDataFindKeys
+// and rebuilds its view tables on linkset_data events touching this key.
+write_plugin_reg(string label) {
+    string k = "plugin.reg." + PLUGIN_CONTEXT;
+    string v = llList2Json(JSON_OBJECT, [
+        "label",  label,
+        "script", llGetScriptName()
+    ]);
+    // Skip the write (and its linkset_data event) when the stored value
+    // is already what we would write. Idempotent re-registrations on
+    // state_entry or kernel.register.refresh then no longer trigger
+    // kmod_ui's debounced rebuild + session invalidation.
+    if (llLinksetDataRead(k) == v) return;
+    llLinksetDataWrite(k, v);
+}
+
 register_self() {
-    // Write button visibility policy to LSD (default-deny per ACL level)
-    llLinksetDataWrite("policy:" + PLUGIN_CONTEXT, llList2Json(JSON_OBJECT, [
-        "1", "Clip,Post,Get Holder,Settings",
+    // Write button visibility policy to LSD (default-deny per ACL level).
+    // ACL 1 (public) may Unclip, but the in-code guard at showMainMenu
+    // limits the button to cases where CurrentUser == Leasher — so only
+    // a public user who holds the leash themselves can release it.
+    llLinksetDataWrite("acl.policycontext:" + PLUGIN_CONTEXT, llList2Json(JSON_OBJECT, [
+        "1", "Clip,Unclip,Post,Get Holder,Settings",
         "2", "Offer",
         "3", "Clip,Unclip,Pass,Yank,Take,Coffle,Post,Get Holder,Settings",
         "4", "Clip,Unclip,Pass,Yank,Coffle,Post,Get Holder,Settings",
         "5", "Clip,Unclip,Pass,Yank,Take,Coffle,Post,Get Holder,Settings"
     ]));
 
-    // Register with kernel
+    // Self-declared menu presence for kmod_ui.
+    write_plugin_reg(PLUGIN_LABEL);
+
+    // Register with kernel (for ping/pong health tracking and alias table).
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
-        "type", "register",
+        "type", "kernel.register.declare",
         "context", PLUGIN_CONTEXT,
         "label", PLUGIN_LABEL,
         "script", llGetScriptName()
+    ]), NULL_KEY);
+
+    // Declare chat alias.
+    llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
+        "type",    "chat.alias.declare",
+        "alias",   "leash",
+        "context", PLUGIN_CONTEXT
     ]), NULL_KEY);
 }
 
 send_pong() {
     llMessageLinked(LINK_SET, KERNEL_LIFECYCLE, llList2Json(JSON_OBJECT, [
-        "type", "pong",
+        "type", "kernel.pong",
         "context", PLUGIN_CONTEXT
     ]), NULL_KEY);
 }
@@ -222,16 +334,31 @@ buildAvatarMenu() {
     key wearer = llGetOwner();
     SensorCandidates = [];
     integer i = 0;
-    integer count = 0;
+    integer nearby_count = llGetListLength(nearby);
 
-    while (i < llGetListLength(nearby) && count < 9) {
+    // Collect all candidates first; sort next; then cap at the dialog's
+    // 9-button budget. Order inside llGetAgentList is not sorted, so
+    // capping before the sort would arbitrarily drop alphabetically-
+    // earlier names when more than 9 avatars are on the parcel.
+    while (i < nearby_count) {
         key detected = llList2Key(nearby, i);
         if (detected != wearer && detected != Leasher) {
             string name = llKey2Name(detected);
             SensorCandidates += [name, detected];
-            count++;
         }
         i++;
+    }
+
+    // Sort the [name, key] strided list by name (stride_index 0).
+    integer stride = 2;
+    if (llGetListLength(SensorCandidates) > stride) {
+        SensorCandidates = llListSortStrided(SensorCandidates, stride, 0, TRUE);
+    }
+
+    // Cap at 9 entries (= 18 strided items). Pass/Offer is a flat dialog
+    // with no pagination, so excess names just get dropped.
+    if (llGetListLength(SensorCandidates) > 18) {
+        SensorCandidates = llList2List(SensorCandidates, 0, 17);
     }
 
     if (llGetListLength(SensorCandidates) == 0) {
@@ -248,13 +375,15 @@ buildAvatarMenu() {
         i = i + 2;
     }
 
-    list button_data = [btn("<<", "prev"), btn(">>", "next"), btn("Back", "back")];
+    list nav_buttons = [btn("<<", "prev"), btn(">>", "next"), btn("Back", "back")];
+    list item_buttons = [];
     i = 0;
     while (i < llGetListLength(names)) {
         string avatar_name = llList2String(names, i);
-        button_data += [btn(avatar_name, "sel:" + avatar_name)];
+        item_buttons += [btn(avatar_name, "sel:" + avatar_name)];
         i++;
     }
+    list button_data = reorder_item_buttons(nav_buttons, item_buttons);
 
     string title = "";
     if (IsOfferMode) {
@@ -310,13 +439,17 @@ displayObjectMenu() {
         i++;
     }
 
-    // Build numbered buttons (only for items on this page)
-    list button_data = [btn("<<", "prev"), btn(">>", "next"), btn("Back", "back")];
+    // Build numbered buttons (only for items on this page) in the visual
+    // order the wearer reads in the body text, then reorder them into the
+    // llDialog grid so they appear top-to-bottom-left-to-right.
+    list nav_buttons = [btn("<<", "prev"), btn(">>", "next"), btn("Back", "back")];
+    list item_buttons = [];
     i = 1;
     while (i <= (end_index - start_index)) {
-        button_data += [btn((string)i, "sel:" + (string)i)];
+        item_buttons += [btn((string)i, "sel:" + (string)i)];
         i++;
     }
+    list button_data = reorder_item_buttons(nav_buttons, item_buttons);
 
     // Add pagination info to body
     if (total_pages > 1) {
@@ -345,7 +478,7 @@ showOfferDialog(key target, key originator) {
     string wearer_name = llKey2Name(wearer);
     
     llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
-        "type", "dialog_open",
+        "type", "ui.dialog.open",
         "session_id", OfferDialogSession,
         "user", (string)target,
         "title", "Leash Offer",
@@ -360,7 +493,7 @@ handleOfferResponse(string ctx) {
     if (ctx == "accept") {
         // Send grab action to kernel with target as leasher
         llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
-            "type", "leash_action",
+            "type", "plugin.leash.action",
             "action", "grab"
         ]), OfferTarget);
 
@@ -394,9 +527,26 @@ giveHolderObject() {
         return;
     }
 
-    string holder_name = "Leash holder";
-    if (llGetInventoryType(holder_name) != INVENTORY_OBJECT) {
-        llRegionSayTo(CurrentUser, 0, "Error: Holder object not found in collar inventory.");
+    // Tolerant inventory lookup: match case-insensitively and ignore
+    // leading/trailing whitespace, so the holder item doesn't need an
+    // exact "Leash holder" spelling in the collar's inventory.
+    string wanted = "leash holder";
+    string holder_name = "";
+    integer count = llGetInventoryNumber(INVENTORY_OBJECT);
+    integer i = 0;
+    while (i < count) {
+        string nm = llGetInventoryName(INVENTORY_OBJECT, i);
+        if (llToLower(llStringTrim(nm, STRING_TRIM)) == wanted) {
+            holder_name = nm;
+            i = count;
+        }
+        else {
+            i = i + 1;
+        }
+    }
+
+    if (holder_name == "") {
+        llRegionSayTo(CurrentUser, 0, "Error: Leash holder object not found in collar inventory.");
         return;
     }
     llGiveInventory(CurrentUser, holder_name);
@@ -405,14 +555,14 @@ giveHolderObject() {
 
 sendLeashAction(string action) {
     llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
-        "type", "leash_action",
+        "type", "plugin.leash.action",
         "action", action
     ]), CurrentUser);
 }
 
 sendLeashActionWithTarget(string action, key target) {
     llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
-        "type", "leash_action",
+        "type", "plugin.leash.action",
         "action", action,
         "target", (string)target
     ]), CurrentUser);
@@ -420,10 +570,76 @@ sendLeashActionWithTarget(string action, key target) {
 
 sendSetLength(integer length) {
     llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
-        "type", "leash_action",
+        "type", "plugin.leash.action",
         "action", "set_length",
         "length", (string)length
     ]), CurrentUser);
+}
+
+/* -------------------- CHAT SUBCOMMAND HANDLING -------------------- */
+
+// kmod_leash does server-side ACL verification on each action, so we just
+// translate chat verbs into plugin.leash.action messages.
+handle_subpath(key user, integer acl_level, string subpath) {
+    CurrentUser = user;
+    UserAcl = acl_level;
+
+    list tokens = llParseString2List(subpath, ["."], []);
+    integer n = llGetListLength(tokens);
+    if (n == 0) return;
+    string action = llList2String(tokens, 0);
+
+    if (action == "clip") {
+        sendLeashAction("grab");
+        return;
+    }
+    if (action == "unclip") {
+        sendLeashAction("release");
+        return;
+    }
+    if (action == "turn") {
+        sendLeashAction("toggle_turn");
+        return;
+    }
+    if (action == "length") {
+        if (n < 2) {
+            llRegionSayTo(user, 0, "Usage: leash length <meters>");
+            return;
+        }
+        integer len = (integer)llList2String(tokens, 1);
+        if (len < 1) {
+            llRegionSayTo(user, 0, "Length must be at least 1 meter.");
+            return;
+        }
+        sendSetLength(len);
+        return;
+    }
+    if (action == "pass") {
+        if (n < 2) {
+            llRegionSayTo(user, 0, "Usage: leash pass <username>");
+            return;
+        }
+        string username = llDumpList2String(llList2List(tokens, 1, -1), ".");
+        key target = llName2Key(username);
+        if (target == NULL_KEY) {
+            llRegionSayTo(user, 0, "User not found in sim: " + username);
+            return;
+        }
+        sendLeashActionWithTarget("pass", target);
+        return;
+    }
+    // coffle/post open the same sensor-menu flow as the dialog buttons.
+    // CurrentUser is already set above so the resulting menu goes to the
+    // chat user.
+    if (action == "coffle") {
+        showCoffleMenu();
+        return;
+    }
+    if (action == "post") {
+        showPostMenu();
+        return;
+    }
+    llRegionSayTo(user, 0, "Unknown leash subcommand: " + action);
 }
 
 /* -------------------- BUTTON HANDLERS -------------------- */
@@ -583,7 +799,7 @@ handleButtonClick(string ctx) {
 /* -------------------- NAVIGATION -------------------- */
 returnToRoot() {
     llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
-        "type", "return",
+        "type", "ui.menu.return",
         "user", (string)CurrentUser
     ]), NULL_KEY);
     cleanupSession();
@@ -592,7 +808,7 @@ returnToRoot() {
 cleanupSession() {
     if (SessionId != "") {
         llMessageLinked(LINK_SET, DIALOG_BUS, llList2Json(JSON_OBJECT, [
-            "type", "dialog_close",
+            "type", "ui.dialog.close",
             "session_id", SessionId
         ]), NULL_KEY);
     }
@@ -609,7 +825,7 @@ cleanupSession() {
 
 queryState() {
     llMessageLinked(LINK_SET, UI_BUS, llList2Json(JSON_OBJECT, [
-        "type", "leash_action",
+        "type", "plugin.leash.action",
         "action", "query_state"
     ]), NULL_KEY);
 }
@@ -626,6 +842,11 @@ scheduleStateQuery(string next_menu_context) {
 default
 {
     state_entry() {
+        if (llGetObjectDesc() == "COLLAR_UPDATER") {
+            llSetScriptState(llGetScriptName(), FALSE);
+            return;
+        }
+
         cleanupSession();
         register_self();
         queryState();
@@ -654,20 +875,22 @@ default
             string msg_type = llJsonGetValue(msg, ["type"]);
             if (msg_type == JSON_INVALID) return;
 
-            if (msg_type == "register_now") {
+            if (msg_type == "kernel.register.refresh") {
                 register_self();
                 IsRegistered = TRUE;
                 return;
             }
-            if (msg_type == "ping") {
+            if (msg_type == "kernel.ping") {
                 send_pong();
                 return;
             }
-            if (msg_type == "soft_reset" || msg_type == "soft_reset_all") {
+            if (msg_type == "kernel.reset.soft" || msg_type == "kernel.reset.factory") {
                 string target_context = llJsonGetValue(msg, ["context"]);
                 if (target_context != JSON_INVALID) {
                     if (target_context != "" && target_context != PLUGIN_CONTEXT) return;
                 }
+                llLinksetDataDelete("plugin.reg." + PLUGIN_CONTEXT);
+                llLinksetDataDelete("acl.policycontext:" + PLUGIN_CONTEXT);
                 llResetScript();
             }
             return;
@@ -677,16 +900,29 @@ default
             string msg_type = llJsonGetValue(msg, ["type"]);
             if (msg_type == JSON_INVALID) return;
 
-            if (msg_type == "start") {
+            if (msg_type == "ui.menu.start") {
+                if (llJsonGetValue(msg, ["acl"]) == JSON_INVALID) return;
                 if (llJsonGetValue(msg, ["context"]) == JSON_INVALID) return;
                 if (llJsonGetValue(msg, ["context"]) != PLUGIN_CONTEXT) return;
+
+                integer start_acl = (integer)llJsonGetValue(msg, ["acl"]);
+
+                string subpath = "";
+                string sp = llJsonGetValue(msg, ["subpath"]);
+                if (sp != JSON_INVALID) subpath = sp;
+
+                if (subpath != "") {
+                    handle_subpath(id, start_acl, subpath);
+                    return;
+                }
+
                 CurrentUser = id;
-                UserAcl = (integer)llJsonGetValue(msg, ["acl"]);
+                UserAcl = start_acl;
                 scheduleStateQuery("main");
                 return;
             }
 
-            if (msg_type == "leash_state") {
+            if (msg_type == "plugin.leash.state") {
                 string tmp = llJsonGetValue(msg, ["leashed"]);
                 if (tmp != JSON_INVALID) {
                     Leashed = (integer)tmp;
@@ -730,7 +966,7 @@ default
                 return;
             }
 
-            if (msg_type == "offer_pending") {
+            if (msg_type == "plugin.leash.offer.pending") {
                 if (llJsonGetValue(msg, ["target"]) == JSON_INVALID || llJsonGetValue(msg, ["originator"]) == JSON_INVALID) return;
                 key target = (key)llJsonGetValue(msg, ["target"]);
                 key originator = (key)llJsonGetValue(msg, ["originator"]);
@@ -743,7 +979,7 @@ default
             string msg_type = llJsonGetValue(msg, ["type"]);
             if (msg_type == JSON_INVALID) return;
 
-            if (msg_type == "dialog_response") {
+            if (msg_type == "ui.dialog.response") {
                 if (llJsonGetValue(msg, ["session_id"]) == JSON_INVALID || llJsonGetValue(msg, ["context"]) == JSON_INVALID) return;
 
                 string response_session = llJsonGetValue(msg, ["session_id"]);
@@ -761,7 +997,7 @@ default
                 return;
             }
 
-            if (msg_type == "dialog_timeout") {
+            if (msg_type == "ui.dialog.timeout") {
                 string timeout_session = llJsonGetValue(msg, ["session_id"]);
                 if (timeout_session == JSON_INVALID) return;
                 
@@ -801,6 +1037,15 @@ default
                 SensorCandidates += [name, detected];
             }
             i = i + 1;
+        }
+
+        // Sort by name (stride_index 0 in a [name, key] pair) so the
+        // paginated coffle/post menu shows results alphabetically.
+        // llSensor returns candidates in detection order, which is
+        // effectively arbitrary.
+        integer stride = 2;
+        if (llGetListLength(SensorCandidates) > stride) {
+            SensorCandidates = llListSortStrided(SensorCandidates, stride, 0, TRUE);
         }
 
         if (llGetListLength(SensorCandidates) == 0) {
