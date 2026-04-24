@@ -1,10 +1,17 @@
 /*--------------------
 MODULE: kmod_ui.lsl
 VERSION: 1.10
-REVISION: 16
+REVISION: 17
 PURPOSE: Session management, LSD policy filtering, and plugin list orchestration
 ARCHITECTURE: Consolidated message bus lanes
 CHANGES:
+- v1.1 rev 17: Sort plugin list by label, not by context key. Previous rev
+  sorted plugin.reg.<ctx> keys lexicographically, which put plugin_access
+  (context "ui.core.owner", label "Access") between Maintenance and Public
+  instead of near the top where the wearer expects it. Port the stable
+  branch's llListSortStrided(temp, 2, 1, TRUE) pattern: build a strided
+  [context, label, ...] list, sort by label (stride_index=1), then split
+  into PluginContexts / PluginLabels.
 - v1.1 rev 16: Drop the in-memory toggle state cache. Toggleable plugins
   now write plugin.<short>.state to LSD and kmod_dialogs reads it directly
   at render time via the existing buttonconfig path. PluginStateContexts /
@@ -313,21 +320,40 @@ rebuild_plugin_list_from_lsd() {
     ViewSosIndices = [];
 
     list keys = llLinksetDataFindKeys("^plugin\\.reg\\.", 0, -1);
-    // Sorted lexicographically → stable context ordering across reboots.
-    keys = llListSort(keys, 1, TRUE);
-
     integer prefix_len = llStringLength(LSD_PLUGIN_REG_PREFIX);
     integer n = llGetListLength(keys);
+
+    // Collect into a strided [context, label, ...] list so we can sort by
+    // the label (what the wearer reads on the button) rather than by the
+    // context key (which may differ — e.g. plugin_access's context is
+    // "ui.core.owner" but its label is "Access"; sorting by context puts
+    // Access between Maintenance and Public, which is wrong).
+    list temp = [];
+    integer SORT_STRIDE = 2;
     integer i = 0;
     while (i < n) {
         string k = llList2String(keys, i);
         string entry = llLinksetDataRead(k);
         string label = llJsonGetValue(entry, ["label"]);
         if (label != JSON_INVALID) {
-            PluginContexts += [llGetSubString(k, prefix_len, -1)];
-            PluginLabels += [label];
+            temp += [llGetSubString(k, prefix_len, -1), label];
         }
         i++;
+    }
+
+    // Sort by label (stride_index 1). Stable across reboots because label
+    // is set in register_self from a constant string per plugin.
+    if (llGetListLength(temp) > SORT_STRIDE) {
+        temp = llListSortStrided(temp, SORT_STRIDE, 1, TRUE);
+    }
+
+    // Split into parallel lists used by build_views / send_render_menu.
+    integer len = llGetListLength(temp);
+    i = 0;
+    while (i < len) {
+        PluginContexts += [llList2String(temp, i)];
+        PluginLabels   += [llList2String(temp, i + 1)];
+        i += SORT_STRIDE;
     }
 
     build_views();
