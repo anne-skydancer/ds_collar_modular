@@ -1,10 +1,16 @@
 /*--------------------
 PLUGIN: plugin_leash.lsl
 VERSION: 1.10
-REVISION: 12
+REVISION: 13
 PURPOSE: User interface and configuration for the leashing system
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
+- v1.1 rev 13: Sort sensor-driven candidate lists by name. Pass/Offer
+  (buildAvatarMenu) now collects all nearby avatars, sorts alphabetically
+  via llListSortStrided(SensorCandidates, 2, 0, TRUE), then caps at 9.
+  Coffle/Post (sensor event) sorts the same way before pagination. Both
+  paths previously returned candidates in detection order, which was
+  arbitrary.
 - v1.1 rev 12: write_plugin_reg guards idempotent writes (read-before-
   write). Same-value re-registrations on state_entry and
   kernel.register.refresh no longer fire linkset_data, so kmod_ui's
@@ -285,16 +291,31 @@ buildAvatarMenu() {
     key wearer = llGetOwner();
     SensorCandidates = [];
     integer i = 0;
-    integer count = 0;
+    integer nearby_count = llGetListLength(nearby);
 
-    while (i < llGetListLength(nearby) && count < 9) {
+    // Collect all candidates first; sort next; then cap at the dialog's
+    // 9-button budget. Order inside llGetAgentList is not sorted, so
+    // capping before the sort would arbitrarily drop alphabetically-
+    // earlier names when more than 9 avatars are on the parcel.
+    while (i < nearby_count) {
         key detected = llList2Key(nearby, i);
         if (detected != wearer && detected != Leasher) {
             string name = llKey2Name(detected);
             SensorCandidates += [name, detected];
-            count++;
         }
         i++;
+    }
+
+    // Sort the [name, key] strided list by name (stride_index 0).
+    integer stride = 2;
+    if (llGetListLength(SensorCandidates) > stride) {
+        SensorCandidates = llListSortStrided(SensorCandidates, stride, 0, TRUE);
+    }
+
+    // Cap at 9 entries (= 18 strided items). Pass/Offer is a flat dialog
+    // with no pagination, so excess names just get dropped.
+    if (llGetListLength(SensorCandidates) > 18) {
+        SensorCandidates = llList2List(SensorCandidates, 0, 17);
     }
 
     if (llGetListLength(SensorCandidates) == 0) {
@@ -967,6 +988,15 @@ default
                 SensorCandidates += [name, detected];
             }
             i = i + 1;
+        }
+
+        // Sort by name (stride_index 0 in a [name, key] pair) so the
+        // paginated coffle/post menu shows results alphabetically.
+        // llSensor returns candidates in detection order, which is
+        // effectively arbitrary.
+        integer stride = 2;
+        if (llGetListLength(SensorCandidates) > stride) {
+            SensorCandidates = llListSortStrided(SensorCandidates, stride, 0, TRUE);
         }
 
         if (llGetListLength(SensorCandidates) == 0) {
