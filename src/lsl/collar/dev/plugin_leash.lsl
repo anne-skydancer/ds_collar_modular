@@ -5,12 +5,15 @@ REVISION: 13
 PURPOSE: User interface and configuration for the leashing system
 ARCHITECTURE: Consolidated message bus lanes, LSD policy-driven button visibility
 CHANGES:
-- v1.1 rev 13: Sort sensor-driven candidate lists by name. Pass/Offer
-  (buildAvatarMenu) now collects all nearby avatars, sorts alphabetically
-  via llListSortStrided(SensorCandidates, 2, 0, TRUE), then caps at 9.
-  Coffle/Post (sensor event) sorts the same way before pagination. Both
-  paths previously returned candidates in detection order, which was
-  arbitrary.
+- v1.1 rev 13: Sort sensor-driven candidate lists by name, and reorder
+  the resulting buttons so they display top-to-bottom-left-to-right.
+  Pass/Offer (buildAvatarMenu) now collects all nearby avatars, sorts
+  alphabetically via llListSortStrided(SensorCandidates, 2, 0, TRUE),
+  then caps at 9. Coffle/Post (sensor event) sorts the same way before
+  pagination. A new reorder_item_buttons helper maps item buttons into
+  llDialog's bottom-left-to-top-right grid so the visual order matches
+  the sorted body text — this plugin talks to kmod_dialogs directly and
+  bypasses kmod_menu's reorder, so it has to do the mapping itself.
 - v1.1 rev 12: write_plugin_reg guards idempotent writes (read-before-
   write). Same-value re-registrations on state_entry and
   kernel.register.refresh no longer fire linkset_data, so kmod_ui's
@@ -142,6 +145,46 @@ showMenu(string context, string title, string body, list button_data) {
         "button_data", llList2Json(JSON_ARRAY, button_data),
         "timeout", 60
     ]), NULL_KEY);
+}
+
+// Reorder items so that an llDialog rendered from the returned list shows
+// them top-to-bottom, left-to-right (matching the order the wearer reads
+// in the dialog's body text). This plugin talks directly to kmod_dialogs
+// rather than going through kmod_menu, so kmod_menu's reorder logic does
+// not apply here — we replicate the same idea with explicit target slot
+// mapping. Assumes 3 fixed nav buttons at indices 0–2 (bottom row); items
+// fill the three rows above in top-to-bottom order. Empty slots are
+// padded with a single-space filler per project dialog convention.
+list reorder_item_buttons(list nav_buttons, list item_buttons) {
+    integer item_count = llGetListLength(item_buttons);
+    integer total_buttons = 3 + item_count;
+
+    // Top row (indices 9,10,11), row 3 (6,7,8), row 2 (3,4,5). Add each
+    // slot only if the total fits — keeps trailing empty grid slots out.
+    list target_slots = [];
+    if (total_buttons > 9)  target_slots += [9];
+    if (total_buttons > 10) target_slots += [10];
+    if (total_buttons > 11) target_slots += [11];
+    if (total_buttons > 6)  target_slots += [6];
+    if (total_buttons > 7)  target_slots += [7];
+    if (total_buttons > 8)  target_slots += [8];
+    if (total_buttons > 3)  target_slots += [3];
+    if (total_buttons > 4)  target_slots += [4];
+    if (total_buttons > 5)  target_slots += [5];
+
+    list final = nav_buttons;
+    integer p = 0;
+    while (p < item_count) {
+        final += [" "];
+        p++;
+    }
+    integer i = 0;
+    while (i < item_count) {
+        integer slot = llList2Integer(target_slots, i);
+        final = llListReplaceList(final, [llList2String(item_buttons, i)], slot, slot);
+        i++;
+    }
+    return final;
 }
 
 /* -------------------- PLUGIN REGISTRATION -------------------- */
@@ -332,13 +375,15 @@ buildAvatarMenu() {
         i = i + 2;
     }
 
-    list button_data = [btn("<<", "prev"), btn(">>", "next"), btn("Back", "back")];
+    list nav_buttons = [btn("<<", "prev"), btn(">>", "next"), btn("Back", "back")];
+    list item_buttons = [];
     i = 0;
     while (i < llGetListLength(names)) {
         string avatar_name = llList2String(names, i);
-        button_data += [btn(avatar_name, "sel:" + avatar_name)];
+        item_buttons += [btn(avatar_name, "sel:" + avatar_name)];
         i++;
     }
+    list button_data = reorder_item_buttons(nav_buttons, item_buttons);
 
     string title = "";
     if (IsOfferMode) {
@@ -394,13 +439,17 @@ displayObjectMenu() {
         i++;
     }
 
-    // Build numbered buttons (only for items on this page)
-    list button_data = [btn("<<", "prev"), btn(">>", "next"), btn("Back", "back")];
+    // Build numbered buttons (only for items on this page) in the visual
+    // order the wearer reads in the body text, then reorder them into the
+    // llDialog grid so they appear top-to-bottom-left-to-right.
+    list nav_buttons = [btn("<<", "prev"), btn(">>", "next"), btn("Back", "back")];
+    list item_buttons = [];
     i = 1;
     while (i <= (end_index - start_index)) {
-        button_data += [btn((string)i, "sel:" + (string)i)];
+        item_buttons += [btn((string)i, "sel:" + (string)i)];
         i++;
     }
+    list button_data = reorder_item_buttons(nav_buttons, item_buttons);
 
     // Add pagination info to body
     if (total_pages > 1) {
